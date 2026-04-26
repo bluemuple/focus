@@ -466,6 +466,28 @@
     font-size: .9rem;
   }
 
+  /* Matrix toolbar (toggle for expanded mode on phone) */
+  .matrix-toolbar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .matrix-toggle {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    color: #374151;
+    line-height: 1;
+    font-weight: 600;
+  }
+  .matrix-toggle:hover { background: #f3f4f6; }
+  .matrix-toggle:active { background: #e5e7eb; }
+  .matrix-scroll { overflow: visible; }
+
   /* ============ MOBILE LAYOUT FIXES ============ */
   @media (max-width: 700px) {
     main { padding: 10px; max-width: 100vw; overflow-x: hidden; }
@@ -490,6 +512,24 @@
     }
     .tab-text { display: none; }
     .tab-ico { display: inline; }
+
+    /* Matrix toolbar visible on phone; horizontal scroll wrapper */
+    .matrix-toolbar { display: flex; }
+    .matrix-toolbar .help { font-size: .75rem; }
+    .matrix-scroll {
+      overflow-x: auto;
+      overflow-y: visible;
+      touch-action: pan-x pan-y;
+      -webkit-overflow-scrolling: touch;
+      margin: 0 -10px;
+      padding: 0 10px;
+    }
+    /* When user taps the toggle, the matrix gets a min-width so it overflows
+       horizontally inside the scroll container, giving each cell more room. */
+    .matrix-wrap.expanded { min-width: 620px; }
+    .matrix-wrap.expanded .cell { padding: 12px; min-height: 220px; }
+    .matrix-wrap.expanded .cell h4 { font-size: .8rem; }
+    .matrix-wrap.expanded .col-headers { font-size: 1rem; }
 
     /* Matrix: stick row labels to the very left edge so cells get more width */
     .matrix-wrap { grid-template-columns: 18px 1fr; gap: 4px; }
@@ -562,15 +602,21 @@
     <div class="panel">
       <h2>Plan your tasks</h2>
       <p class="help">Add tasks into each quadrant of the Eisenhower Matrix. Tap a task to edit, the checkbox to mark done.</p>
-      <div class="matrix-wrap">
-        <div></div>
-        <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
-        <div class="row-labels"><span>Important</span><span>Not Important</span></div>
-        <div class="matrix">
-          <div class="cell q1"><h4>Important · Urgent</h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
-          <div class="cell q2"><h4>Important · Not Urgent</h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
-          <div class="cell q3"><h4>Not Important · Urgent</h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
-          <div class="cell q4"><h4>Not Important · Not Urgent</h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
+      <div class="matrix-toolbar">
+        <button class="matrix-toggle" id="matrix-toggle" aria-label="Toggle matrix size" title="Expand matrix">⤢</button>
+        <span class="help" id="matrix-toggle-hint">Tap to enlarge cells &amp; scroll horizontally</span>
+      </div>
+      <div class="matrix-scroll" id="matrix-scroll">
+        <div class="matrix-wrap">
+          <div></div>
+          <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
+          <div class="row-labels"><span>Important</span><span>Not Important</span></div>
+          <div class="matrix">
+            <div class="cell q1"><h4>Important · Urgent</h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
+            <div class="cell q2"><h4>Important · Not Urgent</h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
+            <div class="cell q3"><h4>Not Important · Urgent</h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
+            <div class="cell q4"><h4>Not Important · Not Urgent</h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
+          </div>
         </div>
       </div>
     </div>
@@ -839,7 +885,8 @@ const defaultState = () => ({
   activeTimer: null,  // { type: 'task-up'|'task-down'|'muncher', q,idx | manaIdx, startedAt }
   watchLog: [],
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
-  motivationalCurrent: null   // { text, selectedAt }
+  motivationalCurrent: null,  // { text, selectedAt }
+  matrixExpanded: false       // mobile: enlarge matrix cells & enable horizontal scroll
 });
 
 let state = loadState();
@@ -887,6 +934,7 @@ function migrateState() {
   // Starting Date & Time
   if (state.startDate == null) state.startDate = '';
   if (state.startTime == null) state.startTime = '';
+  if (state.matrixExpanded === undefined) state.matrixExpanded = false;
   saveState();
 }
 function ensureTaskTimers(task) {
@@ -970,6 +1018,33 @@ function renderTasks() {
     });
   });
 }
+/* ---- Matrix size toggle (phone) ---- */
+const matrixToggleEl = document.getElementById('matrix-toggle');
+const matrixToggleHintEl = document.getElementById('matrix-toggle-hint');
+function applyMatrixExpanded() {
+  const wrap = document.querySelector('.matrix-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('expanded', !!state.matrixExpanded);
+  if (matrixToggleEl) {
+    matrixToggleEl.textContent = state.matrixExpanded ? '⤡' : '⤢';
+    matrixToggleEl.title = state.matrixExpanded ? 'Compact view' : 'Expand view';
+    matrixToggleEl.setAttribute('aria-pressed', state.matrixExpanded ? 'true' : 'false');
+  }
+  if (matrixToggleHintEl) {
+    matrixToggleHintEl.textContent = state.matrixExpanded
+      ? 'Swipe sideways to reach the right-side cells'
+      : 'Tap to enlarge cells & scroll horizontally';
+  }
+}
+if (matrixToggleEl) {
+  matrixToggleEl.onclick = () => {
+    state.matrixExpanded = !state.matrixExpanded;
+    saveState();
+    applyMatrixExpanded();
+  };
+  applyMatrixExpanded();
+}
+
 document.querySelectorAll('.add-task').forEach(btn => {
   btn.onclick = () => {
     const q = btn.dataset.q;
