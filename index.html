@@ -1,0 +1,2095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concentration — Focus Companion</title>
+<style>
+  /* ============ BASE ============ */
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg: #fafaf7;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --q1: #ffe69a;   /* urgent + important */
+    --q2: #b9e6c4;   /* not urgent + important */
+    --q3: #b8dcf3;   /* urgent + not important */
+    --q4: #f6c2cf;   /* not urgent + not important */
+    --red: #dc2626;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05);
+    --r: 10px;
+  }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  h1, h2, h3, h4 { margin: 0 0 .5em; font-weight: 700; }
+  h1 { font-size: clamp(1.4rem, 4vw, 2rem); }
+  h2 { font-size: clamp(1.1rem, 3vw, 1.4rem); }
+  h3 { font-size: 1rem; color: #111827; }
+  h4 { font-size: .9rem; color: #374151; margin: .8em 0 .3em; }
+  button { font: inherit; cursor: pointer; }
+  input, button, select { font: inherit; }
+  .hidden { display: none !important; }
+
+  /* ============ NAV ============ */
+  header.topbar {
+    position: sticky; top: 0; z-index: 50;
+    background: #ffffffee; backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 16px;
+    /* 3-col grid: brand fills gauge-width (20%), motivation fills middle, tabs on right.
+       This makes the motivation start exactly where the gauge ends on the focus page. */
+    display: grid;
+    grid-template-columns: minmax(170px, 20%) 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .brand { font-weight: 800; letter-spacing: -.01em; }
+  .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .motivation {
+    color: #4b5563;
+    font-style: italic;
+    font-size: clamp(.8rem, 1.5vw, 1rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav.tabs button {
+    background: transparent; border: 1px solid transparent;
+    padding: 6px 12px; border-radius: 999px; color: var(--muted);
+  }
+  nav.tabs button.active {
+    background: var(--ink); color: #fff;
+  }
+  @media (max-width: 700px) {
+    header.topbar { grid-template-columns: auto 1fr auto; gap: 8px; }
+    .motivation { font-size: .8rem; }
+  }
+  #motivation-input {
+    width: 100%;
+    font: inherit;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    resize: vertical;
+    min-height: 100px;
+    box-sizing: border-box;
+  }
+
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+  }
+
+  /* ============ EISENHOWER MATRIX ============ */
+  .matrix-wrap { display: grid; grid-template-columns: 80px 1fr; gap: 8px; }
+  .matrix-wrap .col-headers {
+    grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    text-align: center; font-weight: 600; color: #374151;
+  }
+  .matrix-wrap .row-labels {
+    display: grid; grid-template-rows: 1fr 1fr; gap: 8px;
+    align-items: center; justify-items: center; font-weight: 600; color: #374151;
+  }
+  .matrix-wrap .row-labels span { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 8px; min-height: 380px;
+  }
+  .cell {
+    border-radius: var(--r); padding: 12px; display: flex; flex-direction: column;
+    border: 1px solid rgba(0,0,0,.06);
+  }
+  .cell.q1 { background: var(--q1); }
+  .cell.q2 { background: var(--q2); }
+  .cell.q3 { background: var(--q3); }
+  .cell.q4 { background: var(--q4); }
+  .cell h4 { font-size: .8rem; opacity: .65; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px; }
+  .cell .tasks { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 60px; }
+  .task-row {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.55); padding: 6px 8px; border-radius: 6px;
+  }
+  .task-row input[type="checkbox"] { transform: scale(1.1); }
+  .task-row .task-text { flex: 1; background: transparent; border: none; outline: none; min-width: 0; }
+  .task-row .task-text.done { text-decoration: line-through; opacity: .55; }
+  .task-row .task-text.running { font-weight: 700; }
+  .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; }
+  .add-task {
+    margin-top: 6px; background: rgba(255,255,255,.7); border: 1px dashed rgba(0,0,0,.15);
+    padding: 6px; border-radius: 6px; color: #374151; width: 100%;
+  }
+
+  /* ============ TIME GOALS ============ */
+  .time-goals { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  @media (max-width: 800px) { .time-goals { grid-template-columns: 1fr; } }
+  .time-goals .goal {
+    background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .time-goals .goal label { font-size: .85rem; color: #374151; font-weight: 600; }
+  .time-goals .goal input[type="time"],
+  .time-goals .goal input[type="date"] {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: #fff; font: inherit;
+  }
+  .time-goals .goal .countdown { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+  .time-goals .goal .countdown.overdue, .focus-time-goals .cd.overdue {
+    color: #dc2626; font-weight: 700;
+  }
+
+  /* ============ FACTORS ============ */
+  .factors-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .factors-grid { grid-template-columns: 1fr; } }
+  .factor-block { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fdfdfd; }
+  .score-display {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+  }
+  .score-display .num {
+    font-size: 1.4rem; font-weight: 700; min-width: 4ch; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .score-display input[type="range"] { flex: 1; }
+  .factor-group { margin-bottom: 10px; }
+  .factor-group h4 { display: flex; align-items: center; justify-content: space-between; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; font-size: .85rem; user-select: none;
+  }
+  .chip.active { background: #eef4ff; border-color: #c7d8ff; color: #1d4ed8; }
+  .chip .lbl { cursor: pointer; }
+  .chip .scr {
+    font-size: .75rem; color: #6b7280; background: #f3f4f6;
+    padding: 1px 6px; border-radius: 999px; cursor: pointer;
+  }
+  .chip.active .scr { background: #dbeafe; color: #1d4ed8; }
+  .row-input { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .row-input input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .row-input input[type="number"] { width: 70px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .row-input button { padding: 6px 10px; border: 1px solid var(--line); background: #fff; border-radius: 6px; }
+  .others-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .others-list .other {
+    display: flex; gap: 6px; align-items: center; font-size: .85rem;
+    background: #f9fafb; padding: 4px 8px; border-radius: 6px;
+  }
+  .others-list .other .scr { color: var(--accent); font-weight: 600; }
+  .others-list .other button { background: transparent; border: none; color: #9ca3af; }
+  .small-slider { display: flex; align-items: center; gap: 8px; }
+  .small-slider input[type="range"] { flex: 1; }
+  .small-slider .val { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+
+  /* ============ ACTIONS ============ */
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  .btn {
+    padding: 10px 18px; border-radius: 8px; border: 1px solid var(--line); background: #fff;
+    font-weight: 600;
+  }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.danger  { background: #fff; color: #dc2626; border-color: #fecaca; }
+
+  /* ============ PAGE 2 — FOCUS ============ */
+  #focus-page { display: none; }
+  .focus-layout {
+    display: grid; grid-template-columns: 20% 1fr; gap: 12px; align-items: start;
+  }
+  @media (max-width: 700px) {
+    .focus-layout { grid-template-columns: 60px 1fr; }
+  }
+  /* Calendar-style gauge */
+  .gauge-col {
+    position: sticky; top: 60px;
+    height: calc(100vh - 70px);
+    background: #ffffff;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+  }
+  .gauge-grid { position: absolute; inset: 0; pointer-events: none; }
+  .gauge-hour-line {
+    position: absolute; left: 38px; right: 0;
+    height: 1px;
+    background: #e5e7eb;
+  }
+  .gauge-hour-label {
+    position: absolute; left: 4px;
+    font-size: clamp(.7rem, 1.3vw, .85rem);
+    color: #6b7280;
+    font-weight: 600;
+    padding: 0 2px;
+    transform: translateY(-50%);
+    background: #fff;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .gauge-segments { position: absolute; left: 38px; right: 0; top: 0; bottom: 0; }
+  .gauge-segment {
+    position: absolute; left: 1px; right: 1px;
+    opacity: .92;
+    overflow: hidden;
+    border-radius: 3px;
+    display: flex; align-items: flex-start; justify-content: center;
+    cursor: help;
+  }
+  .gauge-task-label {
+    width: 100%;
+    font-size: clamp(.65rem, 1.2vw, .8rem);
+    font-weight: 700;
+    color: #1f2937;
+    text-align: center;
+    padding: 3px 4px;
+    word-break: break-word;
+    line-height: 1.15;
+  }
+  .gauge-line {
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: #ef4444;
+    z-index: 10;
+    pointer-events: none;
+    transition: top .9s linear;
+  }
+  .gauge-line-time {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: clamp(.65rem, 1.3vw, .8rem);
+    font-weight: 700;
+    color: #fff;
+    background: #ef4444;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  /* Blue lines on the gauge: deadline ("Go home") and bedtime ("Sleep") */
+  .gauge-line-blue {
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: #2563eb;
+    z-index: 9;
+    pointer-events: none;
+    transition: top .9s linear;
+  }
+  .gauge-line-blue .gauge-line-time {
+    background: #2563eb;
+  }
+
+  /* slider color by sign */
+  .num.pos { color: #2563eb; }
+  .num.neg { color: #dc2626; }
+  .num.zero { color: #111827; }
+  .small-slider .val.pos { color: #2563eb; }
+  .small-slider .val.neg { color: #dc2626; }
+  .small-slider .val.zero { color: #111827; }
+  .focus-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .scores { grid-template-columns: 1fr; } }
+  .score-card {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .score-card .face { width: 64px; height: 64px; flex-shrink: 0; }
+  .score-card .meta { flex: 1; min-width: 0; }
+  .score-card .meta h4 { margin: 0 0 6px; }
+  .score-bar {
+    position: relative; height: 12px; border-radius: 999px;
+    background: linear-gradient(to right, #ef4444, #f59e0b, #10b981, #3b82f6);
+  }
+  .score-bar .marker {
+    position: absolute; top: -3px; width: 4px; height: 18px;
+    background: #111827; border-radius: 2px;
+    transform: translateX(-50%);
+  }
+  .score-card .scoreval {
+    font-size: 1.1rem; font-weight: 700; min-width: 4ch; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .message-box {
+    background: #fffbeb; border: 1px solid #fde68a; padding: 10px 12px; border-radius: 8px;
+    font-weight: 600; color: #92400e;
+  }
+
+  /* Focus matrix display */
+  .focus-matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 700px) { .focus-matrix { grid-template-columns: 1fr; grid-template-rows: auto; } }
+  .focus-cell {
+    border-radius: 8px; padding: 10px; min-height: 100px;
+  }
+  .focus-cell.q1 { background: var(--q1); }
+  .focus-cell.q2 { background: var(--q2); }
+  .focus-cell.q3 { background: var(--q3); }
+  .focus-cell.q4 { background: var(--q4); }
+  .focus-cell h4 { font-size: .75rem; opacity: .7; text-transform: uppercase; }
+  .focus-cell .tasks { display: flex; flex-direction: column; gap: 4px; }
+  .focus-cell .task-row .task-text { cursor: pointer; }
+
+  /* Mana */
+  .mana { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .mana { grid-template-columns: 1fr; } }
+  .mana-col { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .mana-col h3 { display: flex; align-items: center; gap: 8px; }
+  .mana-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .mana-item {
+    display: flex; align-items: center; gap: 8px;
+    background: #f9fafb; border-radius: 6px; padding: 6px 8px;
+  }
+  .mana-item .lbl { flex: 1; }
+  .mana-item .scr { color: var(--accent); font-weight: 600; min-width: 3ch; text-align: right; }
+  .mana-item button { background: transparent; border: none; color: #9ca3af; cursor: pointer; }
+  .mana-item.muncher .scr { color: var(--red); }
+
+  /* Page 3 — Stats */
+  #stats-page { display: none; }
+  .stats-date-header {
+    margin: 16px 0 8px;
+    color: #6b7280;
+    font-size: 1rem;
+    font-weight: 700;
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 4px;
+  }
+  .stats-date-header:first-child { margin-top: 0; }
+  .stats-day {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; margin-bottom: 10px;
+  }
+  .stats-day.session { background: #f8fafc; }
+  .stats-day .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+  .stats-day .row .lbl { color: var(--muted); }
+  .stats-day .tasklist { margin-top: 6px; padding-left: 18px; }
+  .stats-day .tasklist li { margin: 2px 0; }
+  .pct-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 6px; }
+  .pct-bar .fill { height: 100%; background: var(--accent); }
+  .empty-state { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* small */
+  .help { color: var(--muted); font-size: .85rem; }
+  .row-flex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .double-tap-hint { font-size: .75rem; color: #9ca3af; margin-top: 4px; }
+
+  /* focus page time goals */
+  .focus-time-goals {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin-top: 10px; padding: 10px 12px;
+    background: #f8fafc; border: 1px solid var(--line); border-radius: 6px;
+    font-size: .9rem;
+  }
+  @media (max-width: 700px) { .focus-time-goals { grid-template-columns: 1fr; } }
+  .focus-time-goals .lbl { color: #6b7280; }
+  .focus-time-goals strong { font-variant-numeric: tabular-nums; margin: 0 6px; }
+  .focus-time-goals .cd { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* per-task timers */
+  .focus-cell .task-row { flex-wrap: wrap; }
+  .task-timers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; flex: 1 0 100%; }
+  .timer-block {
+    display: inline-flex; align-items: center; gap: 2px;
+    background: rgba(255,255,255,.55); padding: 2px 4px;
+    border-radius: 6px; font-size: .8rem;
+  }
+  .timer-block .ico { font-size: .85rem; padding: 2px 6px; opacity: .8; }
+  .timer-block .t-display {
+    font-variant-numeric: tabular-nums; font-weight: 700;
+    min-width: 5ch; text-align: center; padding: 0 2px;
+  }
+  .timer-block.done .t-display { color: #dc2626; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
+  .timer-block .t-input {
+    width: 2.4em; text-align: center; padding: 1px 2px;
+    border: 1px solid var(--line); border-radius: 4px;
+    font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .timer-block .t-btn {
+    background: transparent; border: none; padding: 2px 5px; cursor: pointer;
+    border-radius: 4px; line-height: 1; font-size: .9rem; color: #374151;
+  }
+  .timer-block .t-btn:hover { background: rgba(0,0,0,.06); }
+  .timer-block .t-btn.go {
+    background: #2563eb; color: #fff; padding: 2px 8px; font-weight: 600;
+  }
+
+  /* activity log */
+  .watch-log-entry {
+    display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px;
+    align-items: center;
+    font-size: .85rem; padding: 6px 10px;
+    border-radius: 6px; margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+    background: #f8fafc; border: 1px solid var(--line);
+  }
+  .watch-log-entry .badge {
+    font-size: .68rem; padding: 1px 6px; border-radius: 999px;
+    background: #e5e7eb; color: #374151; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .watch-log-entry .badge.q1 { background: var(--q1); color: #6b4f10; }
+  .watch-log-entry .badge.q2 { background: var(--q2); color: #1f5132; }
+  .watch-log-entry .badge.q3 { background: var(--q3); color: #1e4a72; }
+  .watch-log-entry .badge.q4 { background: var(--q4); color: #7a2848; }
+  .watch-log-entry .badge.muncher { background: #fee2e2; color: #991b1b; }
+  .watch-log-entry .name { font-weight: 600; color: #111827; }
+  .watch-log-entry .time-range { color: #6b7280; font-size: .8rem; }
+  .watch-log-entry .pen { color: #dc2626; font-weight: 700; min-width: 4ch; text-align: right; }
+  .watch-log-total {
+    font-size: .85rem; color: #6b7280; text-align: right; margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .yt-running .lbl { color: #dc2626; font-weight: 700; }
+  .timer-running .lbl { color: #dc2626; font-weight: 700; }
+
+  /* down timer minute input — wider for 2 digits */
+  .timer-block.down .t-input.min-only {
+    width: 3.4em; text-align: center;
+    padding: 2px 4px;
+    font-size: .9rem;
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Concentration<small>focus companion</small></div>
+  <div class="motivation" id="motivation-display"></div>
+  <nav class="tabs">
+    <button id="tab-setup" class="active">Setup</button>
+    <button id="tab-focus">Focus</button>
+    <button id="tab-stats">Statistics</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============================== PAGE 1 — SETUP ============================== -->
+  <section id="setup-page">
+
+    <div class="panel">
+      <h2>Plan your tasks</h2>
+      <p class="help">Add tasks into each quadrant of the Eisenhower Matrix. Tap a task to edit, the checkbox to mark done.</p>
+      <div class="matrix-wrap">
+        <div></div>
+        <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
+        <div class="row-labels"><span>Important</span><span>Not Important</span></div>
+        <div class="matrix">
+          <div class="cell q1"><h4>Important · Urgent</h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
+          <div class="cell q2"><h4>Important · Not Urgent</h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
+          <div class="cell q3"><h4>Not Important · Urgent</h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
+          <div class="cell q4"><h4>Not Important · Not Urgent</h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Time Start &amp; Goals</h2>
+      <div class="time-goals">
+        <div class="goal">
+          <label>Starting Date &amp; Time</label>
+          <input type="date" id="start-date">
+          <input type="time" id="start-time">
+          <div class="help">Gauge starts 30 min before this time</div>
+        </div>
+        <div class="goal">
+          <label for="deadline">I'll get things done by</label>
+          <input type="time" id="deadline">
+          <div class="countdown" id="deadline-cd">—</div>
+        </div>
+        <div class="goal">
+          <label for="bedtime">I'm going to sleep at</label>
+          <input type="time" id="bedtime">
+          <div class="countdown" id="bedtime-cd">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Focus level — based on factors</h2>
+      <p class="help">Tap a chip to toggle a factor. Double-tap a chip's label to rename it, double-tap its score to change the value.</p>
+      <div class="factors-grid">
+        <!-- EXTERNAL -->
+        <div class="factor-block">
+          <h3>External factors</h3>
+          <div class="score-display">
+            <input type="range" id="ext-slider" min="-100" max="100" value="0">
+            <div class="num" id="ext-num">0</div>
+          </div>
+          <div id="ext-groups"></div>
+          <h4>Others</h4>
+          <div class="row-input">
+            <input type="text" id="ext-other-text" placeholder="What else?">
+            <input type="number" id="ext-other-score" placeholder="±score">
+            <button id="ext-other-add">Add</button>
+          </div>
+          <div class="others-list" id="ext-others"></div>
+        </div>
+
+        <!-- INTERNAL -->
+        <div class="factor-block">
+          <h3>Internal factors</h3>
+          <div class="score-display">
+            <input type="range" id="int-slider" min="-100" max="100" value="70">
+            <div class="num" id="int-num">70</div>
+          </div>
+          <p class="help" id="int-default-msg"></p>
+          <div id="int-groups"></div>
+          <h4>Others</h4>
+          <div class="row-input">
+            <input type="text" id="int-other-text" placeholder="What else?">
+            <input type="number" id="int-other-score" placeholder="±score">
+            <button id="int-other-add">Add</button>
+          </div>
+          <div class="others-list" id="int-others"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Motivational quotes</h2>
+      <p class="help">One quote per line. A random one shows in the top bar — re-picked once an hour.</p>
+      <textarea id="motivation-input" rows="6" placeholder="Stay focused.&#10;You can do this.&#10;Keep going."></textarea>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="reset-all">Reset all</button>
+      <button class="btn primary" id="go-focus">Start focus session →</button>
+    </div>
+  </section>
+
+  <!-- ============================== PAGE 2 — FOCUS ============================== -->
+  <section id="focus-page">
+    <div class="focus-layout">
+      <div class="gauge-col" id="gauge-col">
+        <div class="gauge-grid" id="gauge-grid"></div>
+        <div class="gauge-segments" id="gauge-segments"></div>
+        <div class="gauge-line-blue" id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
+        <div class="gauge-line-blue" id="gauge-line-bedtime" style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
+        <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+      </div>
+
+      <div class="focus-right">
+        <div class="panel" style="margin: 0;">
+          <div class="scores">
+            <div class="score-card">
+              <div class="face" id="int-face"></div>
+              <div class="meta">
+                <h4>Internal</h4>
+                <div class="score-bar"><div class="marker" id="int-marker"></div></div>
+              </div>
+              <div class="scoreval" id="int-scoreval">0</div>
+            </div>
+            <div class="score-card">
+              <div class="face" id="ext-face"></div>
+              <div class="meta">
+                <h4>External</h4>
+                <div class="score-bar"><div class="marker" id="ext-marker"></div></div>
+              </div>
+              <div class="scoreval" id="ext-scoreval">0</div>
+            </div>
+          </div>
+          <div class="message-box" id="message-box" style="margin-top:10px;">—</div>
+          <div class="focus-time-goals" id="focus-time-goals">
+            <div>
+              <span class="lbl">Get things done by</span>
+              <strong id="focus-deadline-time">--:--</strong>
+              <span class="cd" id="focus-deadline-cd">—</span>
+            </div>
+            <div>
+              <span class="lbl">Sleep at</span>
+              <strong id="focus-bedtime-time">--:--</strong>
+              <span class="cd" id="focus-bedtime-cd">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin:0;">
+          <div class="row-flex" style="justify-content: space-between;">
+            <h3 style="margin:0;">Tasks</h3>
+            <button class="btn" id="edit-matrix">Edit matrix</button>
+          </div>
+          <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
+          <div class="double-tap-hint">Tap a task's text to start/stop its timer; tap the checkbox to complete.</div>
+        </div>
+
+        <div class="panel" style="margin:0;">
+          <h3>Mana Factors</h3>
+          <div class="mana">
+            <div class="mana-col">
+              <h3>Mana Multiplier</h3>
+              <div class="mana-list" id="mana-mult"></div>
+              <div class="row-input">
+                <input type="text" id="mult-text" placeholder="Factor">
+                <input type="number" id="mult-score" placeholder="±score">
+                <button id="mult-add">Add</button>
+              </div>
+            </div>
+            <div class="mana-col">
+              <h3>Mana Muncher</h3>
+              <div class="mana-list" id="mana-munch"></div>
+              <div class="row-input">
+                <input type="text" id="munch-text" placeholder="Factor">
+                <input type="number" id="munch-score" placeholder="±score">
+                <button id="munch-add">Add</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="watch-log-panel" style="margin:0; display:none;">
+          <h3>Activity log</h3>
+          <p class="help">Every timer (task ▲/▼ and mana muncher) is recorded here when it stops.</p>
+          <div id="watch-log-list"></div>
+          <div class="watch-log-total" id="watch-log-total"></div>
+        </div>
+
+        <div class="actions">
+          <button class="btn primary" id="finish-studying">Finish studying →</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== PAGE 3 — STATISTICS ============================== -->
+  <section id="stats-page">
+    <div class="panel">
+      <h2>Statistics</h2>
+      <p class="help">Daily summary of your focus sessions.</p>
+      <div id="stats-list"></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="clear-stats">Clear history</button>
+    </div>
+  </section>
+</main>
+
+<script>
+/* ===========================================================
+   STORAGE
+=========================================================== */
+const STORAGE_KEY = 'concentration-app-v1';
+const STATS_KEY   = 'concentration-stats-v1';
+
+const defaultState = () => ({
+  tasks: { q1: [], q2: [], q3: [], q4: [] },
+  deadline: '',
+  bedtime: '',
+  startDate: '',           // YYYY-MM-DD — Starting Date (setup page)
+  startTime: '',           // HH:MM      — Starting Time (setup page)
+  sessionStartMs: null,
+  timeSegments: [],
+  ext: {
+    slider: 0,
+    groups: {
+      'Internet': [
+        { lbl:'unrestricted', score:-10, active:true, exclusive:'Internet' },
+        { lbl:'restricted',   score: 10, active:false, exclusive:'Internet' }
+      ],
+      'Devices': [
+        { lbl:'PC',         score:-5, active:true },
+        { lbl:'Phone',      score:-5, active:false },
+        { lbl:'Tablet PC',  score:-4, active:false },
+        { lbl:'Earphones',  score:-4, active:false }
+      ],
+      'I am at': [
+        { lbl:'A library',   score: 7, active:false },
+        { lbl:'A clean desk',score: 4, active:false }
+      ],
+      'Social factors': [
+        { lbl:'studying with others',  score: 5, active:false },
+        { lbl:'being watched / supervised', score: 10, active:false },
+        { lbl:'people interrupting me', score:-5, active:false }
+      ]
+    },
+    others: []
+  },
+  int: {
+    slider: 70,
+    sliderUserSet: false,
+    groups: {
+      'Exercise last 7 days': [
+        { lbl:'Twice or more', score: 5, active:false, exclusive:'Exercise', hideScore:true },
+        { lbl:'Once',          score: 3, active:false, exclusive:'Exercise' },
+        { lbl:'Never',         score:-3, active:true,  exclusive:'Exercise' }
+      ],
+      'Healthy diet last 3 meals': [
+        { lbl:'Twice or more', score: 5, active:true,  exclusive:'Diet', hideScore:true },
+        { lbl:'Once',          score: 3, active:false, exclusive:'Diet' },
+        { lbl:'Never',         score:-3, active:false, exclusive:'Diet' }
+      ],
+      // Multi-select chips rendered under the Emotional Wellness slider.
+      // Skipped in the normal group iteration — see renderFactorGroups.
+      'Emotional Wellness practices': [
+        { lbl:'Prayer',     score: 3, active:false },
+        { lbl:'Thank Note', score: 3, active:false },
+        { lbl:'Diary',      score: 3, active:false }
+      ]
+    },
+    sleep: 6,        // 0..10 (capped: >9 → 7)
+    stress: 0,       // -7..7  (displayed as "Emotional Wellness")
+    energy: 0,       // 0/5 toggle
+    others: []
+  },
+  mana: {
+    multiplier: [
+      { lbl:'Drink water', score: 3 },
+      { lbl:'25 mins focus', score: 7 },
+      { lbl:'5 mins good break', score: 4 }
+    ],
+    muncher: [
+      { lbl:'Youtube/Netflix', kind: 'timer' },
+      { lbl:'Unrelated news',  kind: 'timer' }
+    ]
+  },
+  // Single-timer enforcement: at most one of these is "running" at a time.
+  // activeTimer represents the timer that is currently ticking.
+  activeTimer: null,  // { type: 'task-up'|'task-down'|'muncher', q,idx | manaIdx, startedAt }
+  watchLog: [],
+  motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
+  motivationalCurrent: null   // { text, selectedAt }
+});
+
+let state = loadState();
+let stats = loadStats();
+migrateState();
+function migrateState() {
+  if (state.mana && Array.isArray(state.mana.muncher)) {
+    // remove old split YT items
+    state.mana.muncher = state.mana.muncher.filter(x =>
+      x.lbl !== 'Youtube/Netflix 10m~30m' && x.lbl !== 'Youtube/Netflix 30m~1h');
+    // ensure YT exists and is a timer
+    let yt = state.mana.muncher.find(x => x.kind === 'yt' || x.kind === 'timer' && x.lbl === 'Youtube/Netflix');
+    if (!yt) state.mana.muncher.unshift({ lbl: 'Youtube/Netflix', kind: 'timer' });
+    else { yt.kind = 'timer'; delete yt.score; }
+    // ensure Unrelated news is a timer
+    let un = state.mana.muncher.find(x => x.lbl === 'Unrelated news');
+    if (un) { un.kind = 'timer'; delete un.score; }
+    else state.mana.muncher.push({ lbl: 'Unrelated news', kind: 'timer' });
+  }
+  // remove old yt single-timer state, replaced by activeTimer
+  delete state.ytTimer;
+  if (state.activeTimer === undefined) state.activeTimer = null;
+  if (!Array.isArray(state.watchLog)) state.watchLog = [];
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  // Ensure each task has timer fields
+  ['q1','q2','q3','q4'].forEach(q => {
+    (state.tasks[q] || []).forEach(ensureTaskTimers);
+  });
+  // Clamp sleep into new 0..10 range
+  if (state.int) {
+    if (state.int.sleep == null || state.int.sleep < 0) state.int.sleep = 6;
+    if (state.int.sleep > 10) state.int.sleep = 10;
+    // Add Emotional Wellness practices group if missing
+    if (!state.int.groups['Emotional Wellness practices']) {
+      state.int.groups['Emotional Wellness practices'] = [
+        { lbl:'Prayer',     score: 3, active:false },
+        { lbl:'Thank Note', score: 3, active:false },
+        { lbl:'Diary',      score: 3, active:false }
+      ];
+    }
+  }
+  // Motivational text fields
+  if (state.motivationalLines == null) state.motivationalLines = 'Stay focused.\nYou can do this.\nKeep going.';
+  if (state.motivationalCurrent === undefined) state.motivationalCurrent = null;
+  // Starting Date & Time
+  if (state.startDate == null) state.startDate = '';
+  if (state.startTime == null) state.startTime = '';
+  saveState();
+}
+function ensureTaskTimers(task) {
+  if (!task.upTimer) task.upTimer = { state: 'idle', accumulatedMs: 0, startedAt: 0 };
+  if (!task.downTimer) task.downTimer = { state: 'idle', durationMs: 0, remainingMs: 0, startedAt: 0, settingMin: 25, settingSec: 0 };
+  return task;
+}
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (s && s.tasks && s.ext && s.int) return s;
+  } catch(e){}
+  return defaultState();
+}
+function saveState() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){} }
+function loadStats() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY)) || []; } catch(e){ return []; }
+}
+function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch(e){} }
+
+/* ===========================================================
+   ROUTING
+=========================================================== */
+const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page' };
+function showPage(name) {
+  Object.entries(pages).forEach(([k,id]) => {
+    document.getElementById(id).style.display = (k===name) ? 'block' : 'none';
+  });
+  ['setup','focus','stats'].forEach(k => {
+    document.getElementById('tab-'+k).classList.toggle('active', k===name);
+  });
+  if (name === 'focus') initFocusPage();
+  if (name === 'stats') renderStats();
+}
+document.getElementById('tab-setup').onclick = ()=>showPage('setup');
+document.getElementById('tab-focus').onclick = ()=>showPage('focus');
+document.getElementById('tab-stats').onclick = ()=>showPage('stats');
+document.getElementById('go-focus').onclick = ()=>{
+  // Anchor the gauge: prefer the user-set Starting Date & Time on Setup.
+  // If empty, default both to "now" so the gauge has a definite anchor.
+  if (!state.startDate || !state.startTime) {
+    const now = new Date();
+    if (!state.startDate) state.startDate = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+    if (!state.startTime) state.startTime = String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    const sd = document.getElementById('start-date'); if (sd) sd.value = state.startDate;
+    const st = document.getElementById('start-time'); if (st) st.value = state.startTime;
+  }
+  state.sessionStartMs = Date.now();   // also stamp click time for record-keeping
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  saveState();
+  showPage('focus');
+};
+document.getElementById('edit-matrix').onclick = ()=>showPage('setup');
+document.getElementById('finish-studying').onclick = finishStudying;
+document.getElementById('reset-all').onclick = () => {
+  if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
+};
+document.getElementById('clear-stats').onclick = () => {
+  if (confirm('Clear all stats?')) { stats = []; saveStats(); renderStats(); }
+};
+
+/* ===========================================================
+   PAGE 1 — TASKS / MATRIX
+=========================================================== */
+function renderTasks() {
+  ['q1','q2','q3','q4'].forEach(q => {
+    const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+    wrap.innerHTML = '';
+    state.tasks[q].forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      row.innerHTML = `
+        <input type="checkbox" ${t.done?'checked':''}>
+        <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
+        <button class="x" title="delete">×</button>`;
+      const [cb, txt, del] = row.children;
+      cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); txt.classList.toggle('done', cb.checked); };
+      txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); };
+      del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); };
+      wrap.appendChild(row);
+    });
+  });
+}
+document.querySelectorAll('.add-task').forEach(btn => {
+  btn.onclick = () => {
+    const q = btn.dataset.q;
+    state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
+    saveState(); renderTasks();
+    const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+    const last = wrap.lastElementChild;
+    if (last) last.querySelector('.task-text').focus();
+  };
+});
+
+function escapeHTML(s) { return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ===========================================================
+   PAGE 1 — TIME GOALS
+=========================================================== */
+const dlInput = document.getElementById('deadline');
+const btInput = document.getElementById('bedtime');
+const sdInput = document.getElementById('start-date');
+const stInput = document.getElementById('start-time');
+dlInput.value = state.deadline || '';
+btInput.value = state.bedtime || '';
+if (sdInput) sdInput.value = state.startDate || '';
+if (stInput) stInput.value = state.startTime || '';
+dlInput.oninput = () => { state.deadline = dlInput.value; saveState(); updateCountdowns(); drawGauge(); };
+btInput.oninput = () => { state.bedtime  = btInput.value; saveState(); updateCountdowns(); drawGauge(); };
+if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); };
+if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); };
+
+function updateCountdowns() {
+  const now = new Date();
+  // Deadline display — shows "Get things done by hh:mm over" in red when past.
+  function fmtDeadline(timeStr) {
+    if (!timeStr) return { text: '—', overdue: false };
+    const [h, m] = timeStr.split(':').map(Number);
+    const t = new Date(now);
+    t.setHours(h, m, 0, 0);
+    if (t.getTime() < now.getTime()) {
+      return { text: `Get things done by ${timeStr} over`, overdue: true };
+    }
+    const diff = t.getTime() - now.getTime();
+    const hh = Math.floor(diff / 3600000);
+    const mm = Math.floor((diff % 3600000) / 60000);
+    return { text: `${hh}h ${mm.toString().padStart(2,'0')}m left`, overdue: false };
+  }
+  // Bedtime — rolls to tomorrow if past, no "over" message
+  function fmtRolling(timeStr) {
+    if (!timeStr) return { text: '—', overdue: false };
+    const [h, m] = timeStr.split(':').map(Number);
+    const t = new Date(now);
+    t.setHours(h, m, 0, 0);
+    if (t < now) t.setDate(t.getDate() + 1);
+    const diff = Math.max(0, t - now);
+    const hh = Math.floor(diff / 3600000);
+    const mm = Math.floor((diff % 3600000) / 60000);
+    return { text: `${hh}h ${mm.toString().padStart(2,'0')}m left`, overdue: false };
+  }
+  function setCd(elId, info) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.textContent = info.text;
+    el.classList.toggle('overdue', !!info.overdue);
+  }
+  function fmtClock(timeStr) { return timeStr || '--:--'; }
+
+  setCd('deadline-cd', fmtDeadline(dlInput.value));
+  setCd('bedtime-cd',  fmtRolling(btInput.value));
+
+  // Mirror to focus-page time goals
+  setCd('focus-deadline-cd', fmtDeadline(state.deadline));
+  setCd('focus-bedtime-cd',  fmtRolling(state.bedtime));
+  const fdlT = document.getElementById('focus-deadline-time');
+  const fbtT = document.getElementById('focus-bedtime-time');
+  if (fdlT) fdlT.textContent = fmtClock(state.deadline);
+  if (fbtT) fbtT.textContent = fmtClock(state.bedtime);
+}
+
+/* ===========================================================
+   PAGE 1 — FACTORS
+=========================================================== */
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function renderFactorGroup(side, gname, root) {
+  const groups = state[side].groups;
+  const block = document.createElement('div');
+  block.className = 'factor-group';
+  block.innerHTML = `<h4><span>${escapeHTML(gname)}</span></h4>`;
+  const chipRow = document.createElement('div');
+  chipRow.className = 'chip-row';
+  groups[gname].forEach((f, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (f.active ? ' active' : '');
+    const scoreText = f.hideScore ? '' : `<span class="scr">${f.score>0?'+':''}${f.score}</span>`;
+    chip.innerHTML = `<span class="lbl">${escapeHTML(f.lbl)}</span>${scoreText}`;
+    const lblEl = chip.querySelector('.lbl');
+    const scrEl = chip.querySelector('.scr');
+    lblEl.onclick = () => toggleFactor(side, gname, idx);
+    lblEl.ondblclick = () => editFactorLabel(side, gname, idx);
+    if (scrEl) scrEl.ondblclick = () => editFactorScore(side, gname, idx);
+    chipRow.appendChild(chip);
+  });
+  block.appendChild(chipRow);
+  root.appendChild(block);
+}
+function renderFactorGroups(side) {
+  const root = document.getElementById(side === 'ext' ? 'ext-groups' : 'int-groups');
+  root.innerHTML = '';
+  const groups = state[side].groups;
+  Object.keys(groups).forEach(gname => {
+    // Wellness practices is rendered inline under the Emotional Wellness slider below
+    if (gname === 'Emotional Wellness practices') return;
+    renderFactorGroup(side, gname, root);
+  });
+
+  // Internal-only sliders
+  if (side === 'int') {
+    const extras = document.createElement('div');
+    extras.innerHTML = `
+      <div class="factor-group">
+        <h4>Sleep <span class="help">(0…10, &gt;9 caps at 7; ×3 to internal)</span></h4>
+        <div class="small-slider">
+          <input type="range" id="int-sleep" min="0" max="10" value="${state.int.sleep}">
+          <span class="val ${signClass(state.int.sleep)}" id="int-sleep-val">${state.int.sleep>0?'+':''}${state.int.sleep}</span>
+        </div>
+      </div>
+      <div class="factor-group">
+        <h4>Emotional Wellness <span class="help">(-7…+7; ×3 to internal)</span></h4>
+        <div class="small-slider">
+          <input type="range" id="int-stress" min="-7" max="7" value="${state.int.stress}">
+          <span class="val ${signClass(state.int.stress)}" id="int-stress-val">${state.int.stress>0?'+':''}${state.int.stress}</span>
+        </div>
+      </div>
+      <div id="int-wellness-practices-mount"></div>
+      <div class="factor-group">
+        <h4>Physical condition (energy)</h4>
+        <div class="chip-row">
+          <div class="chip ${state.int.energy?'active':''}" id="int-energy">
+            <span class="lbl">High energy</span><span class="scr">+5</span>
+          </div>
+        </div>
+      </div>`;
+    root.appendChild(extras);
+    // Render Wellness practices chips at the placeholder
+    const mount = extras.querySelector('#int-wellness-practices-mount');
+    if (mount && state.int.groups['Emotional Wellness practices']) {
+      renderFactorGroup('int', 'Emotional Wellness practices', mount);
+    }
+    const sleepEl = extras.querySelector('#int-sleep'),
+          stressEl = extras.querySelector('#int-stress'),
+          sleepVal = extras.querySelector('#int-sleep-val'),
+          stressVal = extras.querySelector('#int-stress-val');
+    sleepEl.oninput = () => {
+      state.int.sleep = +sleepEl.value;
+      sleepVal.textContent = (state.int.sleep>0?'+':'') + state.int.sleep;
+      sleepVal.className = 'val ' + signClass(state.int.sleep);
+      saveState(); recomputeSlider('int');
+    };
+    stressEl.oninput = () => {
+      state.int.stress = +stressEl.value;
+      stressVal.textContent = (state.int.stress>0?'+':'') + state.int.stress;
+      stressVal.className = 'val ' + signClass(state.int.stress);
+      saveState(); recomputeSlider('int');
+    };
+    extras.querySelector('#int-energy').onclick = () => {
+      state.int.energy = state.int.energy ? 0 : 5;
+      saveState(); renderFactorGroups('int'); recomputeSlider('int');
+    };
+  }
+}
+function signClass(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero'; }
+
+function toggleFactor(side, gname, idx) {
+  const group = state[side].groups[gname];
+  const f = group[idx];
+  if (f.exclusive) {
+    group.forEach((g,i) => { if (i!==idx) g.active = false; });
+    f.active = !f.active;
+  } else {
+    f.active = !f.active;
+  }
+  saveState(); renderFactorGroups(side); recomputeSlider(side);
+}
+
+function editFactorLabel(side, gname, idx) {
+  const f = state[side].groups[gname][idx];
+  const v = prompt('Edit label:', f.lbl);
+  if (v !== null && v.trim()) { f.lbl = v.trim(); saveState(); renderFactorGroups(side); }
+}
+function editFactorScore(side, gname, idx) {
+  const f = state[side].groups[gname][idx];
+  const v = prompt('Edit score:', f.score);
+  if (v !== null && !isNaN(+v)) { f.score = +v; saveState(); renderFactorGroups(side); recomputeSlider(side); }
+}
+
+function effectiveSleep() {
+  // If sleep > 9, score caps at 7
+  return state.int.sleep > 9 ? 7 : state.int.sleep;
+}
+// Sleep and Emotional Wellness contribute 3 × slider value.
+const SLEEP_MULT = 3;
+const EMOTIONAL_MULT = 3;
+
+// Sum of scores for currently-selected factors / sliders (signed).
+function sumFactors(side) {
+  let sum = 0;
+  Object.values(state[side].groups).forEach(g => g.forEach(f => { if (f.active) sum += f.score; }));
+  state[side].others.forEach(o => sum += o.score);
+  if (side === 'int') {
+    sum += effectiveSleep() * SLEEP_MULT;
+    sum += state.int.stress * EMOTIONAL_MULT;
+    if (state.int.energy) sum += state.int.energy;
+  }
+  return sum;
+}
+
+// The maximum POSITIVE score this side could possibly contribute if the user
+// selected the best of every option / slider. Per group: exclusive groups use
+// their best option, multi-select groups sum all positive options.
+function maxPossibleScore(side) {
+  let sum = 0;
+  Object.values(state[side].groups).forEach(g => {
+    if (!g.length) return;
+    const isExclusive = !!g[0].exclusive;
+    if (isExclusive) {
+      sum += Math.max(0, ...g.map(f => f.score));
+    } else {
+      sum += g.reduce((a, f) => a + Math.max(0, f.score), 0);
+    }
+  });
+  if (side === 'int') {
+    sum += 7 * SLEEP_MULT;     // sleep effective max = 7 (capped at 7 if >9)
+    sum += 7 * EMOTIONAL_MULT; // emotional max = +7
+    sum += 5;                   // energy = +5
+  }
+  return sum;
+}
+
+function recomputeSlider(side) {
+  // Default-max formula: baseline = 100 − (sum of max possible from all options + sliders).
+  // Actual score = baseline + sum of currently selected. Clamped to [-100, 100].
+  const maxPos = maxPossibleScore(side);
+  const baseline = 100 - maxPos;
+  const sumSel = sumFactors(side);
+  const v = clamp(baseline + sumSel, -100, 100);
+  state[side].slider = v;
+  const sliderEl = document.getElementById(side+'-slider');
+  const numEl = document.getElementById(side+'-num');
+  if (sliderEl) sliderEl.value = v;
+  if (numEl) {
+    numEl.textContent = (v > 0 ? '+' : '') + v;
+    numEl.className = 'num ' + signClass(v);
+  }
+  if (side === 'int') {
+    const msg = document.getElementById('int-default-msg');
+    if (msg) msg.textContent = `Default max base = 100 − ${maxPos} = ${baseline}. Selections add: ${sumSel>=0?'+':''}${sumSel}.`;
+  }
+  saveState();
+}
+
+function getDefaultIntLevel() {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 9) return 100;
+  if (h >= 22 || h < 2) return 50;
+  return 70;
+}
+
+function setSliderColor(side) {
+  const numEl = document.getElementById(side+'-num');
+  const v = state[side].slider;
+  numEl.textContent = (v > 0 ? '+' : '') + v;
+  numEl.className = 'num ' + signClass(v);
+}
+document.getElementById('ext-slider').oninput = (e)=>{
+  state.ext.slider = +e.target.value;
+  setSliderColor('ext');
+  saveState();
+};
+document.getElementById('int-slider').oninput = (e)=>{
+  state.int.slider = +e.target.value;
+  state.int.sliderUserSet = true;
+  setSliderColor('int');
+  saveState();
+};
+
+/* Others lists */
+function renderOthers(side) {
+  const list = document.getElementById(side === 'ext' ? 'ext-others' : 'int-others');
+  list.innerHTML = '';
+  state[side].others.forEach((o, i) => {
+    const div = document.createElement('div');
+    div.className = 'other';
+    div.innerHTML = `<span style="flex:1">${escapeHTML(o.text)}</span><span class="scr">${o.score>0?'+':''}${o.score}</span><button>×</button>`;
+    div.querySelector('button').onclick = () => {
+      state[side].others.splice(i,1); saveState(); renderOthers(side); recomputeSlider(side);
+    };
+    list.appendChild(div);
+  });
+}
+function setupOtherAdd(side) {
+  document.getElementById(side+'-other-add').onclick = () => {
+    const t = document.getElementById(side+'-other-text');
+    const s = document.getElementById(side+'-other-score');
+    if (!t.value.trim() || s.value === '') return;
+    state[side].others.push({ text: t.value.trim(), score: +s.value });
+    t.value = ''; s.value = '';
+    saveState(); renderOthers(side); recomputeSlider(side);
+  };
+}
+setupOtherAdd('ext'); setupOtherAdd('int');
+
+/* ===========================================================
+   PAGE 2 — FOCUS SESSION
+=========================================================== */
+let focusTickHandle = null;
+
+function initFocusPage() {
+  if (!state.sessionStartMs) state.sessionStartMs = Date.now();
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  saveState();
+  renderFocusMatrix();
+  renderManaLists();
+  renderWatchLog();
+  renderScores();
+  updateCountdowns();
+  startFocusTicker();
+}
+function startFocusTicker() {
+  if (focusTickHandle) clearInterval(focusTickHandle);
+  drawGauge();
+  focusTickHandle = setInterval(() => { drawGauge(); }, 1000);
+}
+
+function fmtMs(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(totalSec / 60), s = totalSec % 60;
+  return `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
+}
+function fmtHMS(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function getUpMs(task) {
+  ensureTaskTimers(task);
+  if (state.activeTimer && state.activeTimer.type==='task-up'
+      && state.tasks[state.activeTimer.q][state.activeTimer.idx] === task) {
+    return task.upTimer.accumulatedMs + (Date.now() - state.activeTimer.startedAt);
+  }
+  return task.upTimer.accumulatedMs;
+}
+function getDownMs(task) {
+  ensureTaskTimers(task);
+  if (state.activeTimer && state.activeTimer.type==='task-down'
+      && state.tasks[state.activeTimer.q][state.activeTimer.idx] === task) {
+    return Math.max(0, task.downTimer.remainingMs - (Date.now() - state.activeTimer.startedAt));
+  }
+  return task.downTimer.remainingMs;
+}
+function resetUpFor(q, i) {
+  // Reset clears regardless of running state
+  if (state.activeTimer && state.activeTimer.type==='task-up'
+      && state.activeTimer.q===q && state.activeTimer.idx===i) {
+    stopActiveTimer('reset');
+  }
+  ensureTaskTimers(state.tasks[q][i]);
+  state.tasks[q][i].upTimer = { state: 'idle', accumulatedMs: 0, startedAt: 0 };
+  saveState(); renderFocusMatrix(); renderWatchLog(); drawGauge();
+}
+function resetDownFor(q, i) {
+  if (state.activeTimer && state.activeTimer.type==='task-down'
+      && state.activeTimer.q===q && state.activeTimer.idx===i) {
+    stopActiveTimer('reset');
+  }
+  ensureTaskTimers(state.tasks[q][i]);
+  const t = state.tasks[q][i];
+  t.downTimer = { state: 'idle', durationMs: 0, remainingMs: 0, startedAt: 0,
+    settingMin: t.downTimer.settingMin || 25, settingSec: 0 };
+  saveState(); renderFocusMatrix(); renderWatchLog(); drawGauge();
+}
+
+function renderFocusMatrix() {
+  const root = document.getElementById('focus-matrix');
+  const order = ['q1','q2','q3','q4'];
+  const titles = {
+    q1: 'Important · Urgent',
+    q2: 'Important · Not Urgent',
+    q3: 'Not Important · Urgent',
+    q4: 'Not Important · Not Urgent'
+  };
+  root.innerHTML = '';
+  order.forEach(q => {
+    const cell = document.createElement('div');
+    cell.className = 'focus-cell ' + q;
+    cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div>`;
+    const tasksDiv = cell.querySelector('.tasks');
+    state.tasks[q].forEach((t, i) => {
+      if (!t.text.trim()) return;
+      ensureTaskTimers(t);
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      const at = state.activeTimer;
+      const isRunning = at && (at.type==='task-text'||at.type==='task-up'||at.type==='task-down') && at.q===q && at.idx===i;
+      row.innerHTML = `
+        <input type="checkbox" ${t.done?'checked':''}>
+        <span class="task-text ${t.done?'done':''} ${isRunning?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>`;
+      const cb = row.children[0], textEl = row.children[1];
+      cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); renderFocusMatrix(); };
+      textEl.onclick = () => toggleTaskTimer(q, i);
+
+      // Timer controls (Down + Up)
+      const timers = document.createElement('div');
+      timers.className = 'task-timers';
+      timers.appendChild(buildDownBlock(q, i, t));
+      timers.appendChild(buildUpBlock(q, i, t));
+      row.appendChild(timers);
+
+      tasksDiv.appendChild(row);
+    });
+    if (state.tasks[q].length === 0) {
+      tasksDiv.innerHTML = `<div class="help">No tasks</div>`;
+    }
+    root.appendChild(cell);
+  });
+}
+
+function isThisTaskRunning(q, i, type) {
+  return state.activeTimer && state.activeTimer.type===type
+    && state.activeTimer.q===q && state.activeTimer.idx===i;
+}
+function buildDownBlock(q, i, t) {
+  const d = t.downTimer;
+  const block = document.createElement('div');
+  const running = isThisTaskRunning(q, i, 'task-down');
+  block.className = 'timer-block down' + (d.state === 'done' ? ' done' : '');
+  block.title = 'Countdown timer';
+  if (d.state === 'idle') {
+    block.innerHTML = `
+      <span class="ico">▼</span>
+      <input class="t-input min-only" type="number" min="0" max="999" value="${d.settingMin||25}" aria-label="minutes">
+      <span style="opacity:.5">m</span>
+      <button class="t-btn go" title="Start">Go</button>`;
+    const minIn = block.querySelector('.t-input');
+    const goBtn = block.querySelector('.go');
+    minIn.oninput = ()=>{ t.downTimer.settingMin = +minIn.value || 0; saveState(); };
+    goBtn.onclick = ()=> startTaskDownTimer(q, i, +minIn.value || 0);
+  } else {
+    const ms = getDownMs(t);
+    block.innerHTML = `
+      <span class="ico">▼</span>
+      <span class="t-display">${fmtMs(ms)}</span>
+      <button class="t-btn play-pause" title="${running?'Pause':'Resume'}">${running?'⏸':'▶'}</button>
+      <button class="t-btn reset" title="Reset">⟲</button>`;
+    block.querySelector('.play-pause').onclick = ()=>{
+      if (running) pauseTaskDown(q, i);
+      else resumeTaskDownTimer(q, i);
+    };
+    block.querySelector('.reset').onclick = ()=> resetDownFor(q, i);
+  }
+  return block;
+}
+
+function buildUpBlock(q, i, t) {
+  const u = t.upTimer;
+  const running = isThisTaskRunning(q, i, 'task-up');
+  const block = document.createElement('div');
+  block.className = 'timer-block up';
+  block.title = 'Stopwatch';
+  if (u.state === 'idle' && !running) {
+    block.innerHTML = `
+      <span class="ico">▲</span>
+      <span class="t-display">00m00s</span>
+      <button class="t-btn play-pause" title="Start">▶</button>`;
+    block.querySelector('.play-pause').onclick = ()=> startTaskUpTimer(q, i);
+  } else {
+    const ms = getUpMs(t);
+    block.innerHTML = `
+      <span class="ico">▲</span>
+      <span class="t-display">${fmtMs(ms)}</span>
+      <button class="t-btn play-pause" title="${running?'Pause':'Resume'}">${running?'⏸':'▶'}</button>
+      <button class="t-btn reset" title="Reset">⟲</button>`;
+    block.querySelector('.play-pause').onclick = ()=>{
+      if (running) pauseTaskUp(q, i);
+      else startTaskUpTimer(q, i);
+    };
+    block.querySelector('.reset').onclick = ()=> resetUpFor(q, i);
+  }
+  return block;
+}
+
+// Live tick: update visible timer displays without re-rendering whole matrix
+function tickTaskTimers() {
+  document.querySelectorAll('#focus-matrix .timer-block').forEach(block => {
+    const display = block.querySelector('.t-display');
+    if (!display) return;
+    // Find the corresponding task by walking up to row, then find by text
+    const row = block.closest('.task-row');
+    if (!row) return;
+    const textEl = row.querySelector('.task-text');
+    if (!textEl) return;
+    const text = textEl.textContent;
+    let task = null;
+    for (const q of ['q1','q2','q3','q4']) {
+      const f = state.tasks[q].find(x => (x.text||'(unnamed)') === text);
+      if (f) { task = f; break; }
+    }
+    if (!task) return;
+    if (block.classList.contains('down')) {
+      const ms = getDownMs(task);
+      display.textContent = fmtMs(ms);
+      if (task.downTimer.state === 'running' && ms <= 0) {
+        // hit zero — mark done and re-render
+        task.downTimer.state = 'done';
+        task.downTimer.remainingMs = 0;
+        saveState(); renderFocusMatrix();
+      }
+    } else if (block.classList.contains('up')) {
+      display.textContent = fmtMs(getUpMs(task));
+    }
+  });
+}
+
+/* ---- Single active-timer model ----
+   Only ONE timer ticks at a time. Starting any new timer stops the current
+   one (recording its session) before activating. */
+function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
+  const at = state.activeTimer;
+  if (!at) return null;
+  const now = Date.now();
+  const dur = now - at.startedAt;
+
+  // Record the session in timeSegments + watchLog
+  let logEntry = { startedAt: at.startedAt, endedAt: now, durationMs: dur, penalty: 0 };
+  if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+    const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (task) {
+      // Persist accumulated time to the right counter
+      if (at.type === 'task-up') {
+        ensureTaskTimers(task);
+        task.upTimer.accumulatedMs += dur;
+        task.upTimer.state = (reason === 'reset') ? 'idle' : 'paused';
+      } else if (at.type === 'task-down') {
+        ensureTaskTimers(task);
+        task.downTimer.remainingMs = Math.max(0, task.downTimer.remainingMs - dur);
+        task.downTimer.state = (reason === 'reset') ? 'idle' : 'paused';
+      } else { // task-text (legacy click-on-text tracker)
+        task.elapsedMs = (task.elapsedMs || 0) + dur;
+      }
+      logEntry.type = at.type;
+      logEntry.q = at.q;
+      logEntry.name = (task.text || '(task)') + (at.type === 'task-down' ? ' ▼' : at.type === 'task-up' ? ' ▲' : '');
+      // also push a segment for the gauge persistence
+      state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
+    }
+  } else if (at.type === 'muncher') {
+    const m = state.mana.muncher[at.manaIdx];
+    if (m) {
+      // Penalty: -3 per 5 min, applied to External
+      const minutes = dur / 60000;
+      logEntry.penalty = -Math.round(minutes * 3 / 5);
+      if (logEntry.penalty) {
+        state.ext.slider = clamp(state.ext.slider + logEntry.penalty, -100, 100);
+        flashScoreCard('ext');
+      }
+      logEntry.type = 'muncher';
+      logEntry.name = m.lbl;
+      state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: '#fecaca', name: m.lbl });
+    }
+  }
+  state.watchLog.push(logEntry);
+  state.activeTimer = null;
+  saveState();
+  return logEntry;
+}
+
+function startTaskUpTimer(q, i) {
+  ensureTaskTimers(state.tasks[q][i]);
+  stopActiveTimer('switch');
+  const t = state.tasks[q][i];
+  t.upTimer.state = 'running';
+  state.activeTimer = { type: 'task-up', q, idx: i, startedAt: Date.now() };
+  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function startTaskDownTimer(q, i, minutes) {
+  ensureTaskTimers(state.tasks[q][i]);
+  stopActiveTimer('switch');
+  const t = state.tasks[q][i];
+  const dur = (Math.max(0, +minutes || 0)) * 60 * 1000;
+  if (!dur) return;
+  t.downTimer = { state: 'running', durationMs: dur, remainingMs: dur, startedAt: Date.now(), settingMin: +minutes || 0, settingSec: 0 };
+  state.activeTimer = { type: 'task-down', q, idx: i, startedAt: Date.now() };
+  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function resumeTaskDownTimer(q, i) {
+  ensureTaskTimers(state.tasks[q][i]);
+  stopActiveTimer('switch');
+  const t = state.tasks[q][i];
+  t.downTimer.state = 'running';
+  state.activeTimer = { type: 'task-down', q, idx: i, startedAt: Date.now() };
+  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function startMuncherTimer(manaIdx) {
+  stopActiveTimer('switch');
+  state.activeTimer = { type: 'muncher', manaIdx, startedAt: Date.now() };
+  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function pauseTaskUp(q, i) {
+  if (state.activeTimer && state.activeTimer.type==='task-up' && state.activeTimer.q===q && state.activeTimer.idx===i) {
+    stopActiveTimer('pause');
+  } else {
+    // not the active timer — already paused; just no-op
+  }
+  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function pauseTaskDown(q, i) {
+  if (state.activeTimer && state.activeTimer.type==='task-down' && state.activeTimer.q===q && state.activeTimer.idx===i) {
+    stopActiveTimer('pause');
+  }
+  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function stopMuncherTimer(manaIdx) {
+  if (state.activeTimer && state.activeTimer.type==='muncher' && state.activeTimer.manaIdx===manaIdx) {
+    stopActiveTimer('pause');
+  }
+  renderManaList('muncher'); renderWatchLog(); drawGauge(); renderScores();
+}
+function clickMuncherTimer(manaIdx) {
+  const at = state.activeTimer;
+  if (at && at.type==='muncher' && at.manaIdx===manaIdx) stopMuncherTimer(manaIdx);
+  else startMuncherTimer(manaIdx);
+}
+// Legacy click-on-text task tracker (kept for backwards compatibility — also single-timer governed)
+function toggleTaskTimer(q, i) {
+  const at = state.activeTimer;
+  if (at && at.type === 'task-text' && at.q === q && at.idx === i) {
+    stopActiveTimer('finish');
+  } else {
+    stopActiveTimer('switch');
+    state.activeTimer = { type: 'task-text', q, idx: i, startedAt: Date.now() };
+    saveState();
+  }
+  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+
+function formatElapsed(ms) {
+  const m = Math.floor(ms/60000);
+  if (!m) return '';
+  const h = Math.floor(m/60);
+  return h ? `${h}h ${(m%60)}m` : `${m}m`;
+}
+
+/* ---- gauge drawing ---- */
+function getBedtimeMs() {
+  // returns the timestamp of the next bedtime (today or tomorrow)
+  if (!state.bedtime) return null;
+  const [h, m] = state.bedtime.split(':').map(Number);
+  const t = new Date();
+  t.setHours(h, m, 0, 0);
+  if (t.getTime() <= Date.now()) t.setDate(t.getDate() + 1);
+  return t.getTime();
+}
+function fmtTime(ms) {
+  // 24-hour, 5-char "HH:MM" — fits cleanly in narrow columns and never gets stretched.
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function fmtHourLabel(ms) {
+  const d = new Date(ms);
+  const h = d.getHours();
+  if (h === 0) return '12 AM';
+  if (h === 12) return 'Noon';
+  if (h < 12) return `${h} AM`;
+  return `${h - 12} PM`;
+}
+function fmtTimeShort(ms) {
+  // 12-hour with no leading zero, used inside the red current-time badge
+  const d = new Date(ms);
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2,'0');
+  const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+  return `${h12}:${m}`;
+}
+function getStartMs() {
+  if (state.startDate && state.startTime) {
+    const dt = new Date(state.startDate + 'T' + state.startTime);
+    if (!isNaN(dt.getTime())) return dt.getTime();
+  }
+  return state.sessionStartMs;
+}
+function getTimeOnDate(timeStr, anchorMs) {
+  if (!timeStr || !anchorMs) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  const d = new Date(anchorMs);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() < anchorMs) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+function drawGauge() {
+  const gridEl     = document.getElementById('gauge-grid');
+  const segmentsEl = document.getElementById('gauge-segments');
+  const lineEl     = document.getElementById('gauge-line');
+  const lineTimeEl = document.getElementById('gauge-line-time');
+  const dlLineEl   = document.getElementById('gauge-line-deadline');
+  const dlLabelEl  = document.getElementById('gauge-line-deadline-label');
+  const btLineEl   = document.getElementById('gauge-line-bedtime');
+  const btLabelEl  = document.getElementById('gauge-line-bedtime-label');
+  if (!segmentsEl || !lineEl || !gridEl) return;
+
+  const now = Date.now();
+  const start = getStartMs();
+  if (!start) {
+    gridEl.innerHTML = '';
+    segmentsEl.innerHTML = '';
+    lineEl.style.display = 'none';
+    if (dlLineEl) dlLineEl.style.display = 'none';
+    if (btLineEl) btLineEl.style.display = 'none';
+    return;
+  }
+  const topMs = start - 30 * 60 * 1000;     // 30 minutes before starting time
+  const total = 12 * 60 * 60 * 1000;        // 12 hours
+  const bottomMs = topMs + total;
+  const pct = (t) => Math.max(0, Math.min(100, ((t - topMs) / total) * 100));
+
+  // ---- Hour grid ----
+  gridEl.innerHTML = '';
+  const startHour = new Date(topMs);
+  startHour.setMinutes(0, 0, 0);
+  if (startHour.getTime() < topMs) startHour.setHours(startHour.getHours() + 1);
+  for (let cur = startHour.getTime(); cur <= bottomMs; cur += 3600000) {
+    const y = pct(cur);
+    const line = document.createElement('div');
+    line.className = 'gauge-hour-line';
+    line.style.top = y + '%';
+    gridEl.appendChild(line);
+    const lbl = document.createElement('div');
+    lbl.className = 'gauge-hour-label';
+    lbl.style.top = y + '%';
+    lbl.textContent = fmtHourLabel(cur);
+    gridEl.appendChild(lbl);
+  }
+
+  // ---- Segments (completed + active) ----
+  segmentsEl.innerHTML = '';
+  (state.timeSegments || []).forEach(seg => addGaugeSegment(segmentsEl, pct, seg, false));
+  if (state.activeTimer) {
+    const seg = activeTimerToSegment(state.activeTimer, now);
+    if (seg) addGaugeSegment(segmentsEl, pct, seg, true);
+  }
+
+  // ---- Current-time red line ----
+  lineEl.style.display = 'block';
+  lineEl.style.top = pct(now) + '%';
+  lineTimeEl.textContent = fmtTimeShort(now);
+
+  // ---- Blue lines: deadline ("Go home") and bedtime ("Sleep") ----
+  function placeBlueLine(line, label, timeStr, name) {
+    if (!line || !label) return;
+    if (!timeStr) { line.style.display = 'none'; return; }
+    const tMs = getTimeOnDate(timeStr, start);
+    if (tMs == null || tMs < topMs || tMs > bottomMs) {
+      line.style.display = 'none';
+      return;
+    }
+    line.style.display = 'block';
+    line.style.top = pct(tMs) + '%';
+    label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
+  }
+  placeBlueLine(dlLineEl, dlLabelEl, state.deadline, 'Go home');
+  placeBlueLine(btLineEl, btLabelEl, state.bedtime,  'Sleep');
+}
+
+function addGaugeSegment(parent, pct, seg, isActive) {
+  const div = document.createElement('div');
+  div.className = 'gauge-segment' + (isActive ? ' active' : '');
+  const top = pct(seg.startMs);
+  const height = Math.max(0, pct(seg.endMs) - top);
+  div.style.top = top + '%';
+  div.style.height = height + '%';
+  div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
+  div.title = seg.name || ''; // hover balloon shows name
+  if (height >= 3 && seg.name) {
+    const lbl = document.createElement('div');
+    lbl.className = 'gauge-task-label';
+    lbl.textContent = seg.name;
+    div.appendChild(lbl);
+  }
+  parent.appendChild(div);
+}
+
+function activeTimerToSegment(at, now) {
+  if (!at) return null;
+  if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+    const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (!t) return null;
+    return { startMs: at.startedAt, endMs: now, q: at.q, name: t.text || '(task)' };
+  } else if (at.type === 'muncher') {
+    const m = state.mana.muncher[at.manaIdx];
+    if (!m) return null;
+    return { startMs: at.startedAt, endMs: now, color: '#fecaca', name: m.lbl };
+  }
+  return null;
+}
+function qColor(q) {
+  return ({q1:'#ffe69a', q2:'#b9e6c4', q3:'#b8dcf3', q4:'#f6c2cf'})[q] || '#ddd';
+}
+
+/* ---- score / face rendering ---- */
+function scoreToIndex(score) {
+  // Image thresholds (0..100, negative scores clamp to 0):
+  //   0..27 → 0      55..63 → 4
+  //  28..36 → 1      64..72 → 5
+  //  37..45 → 2      73..100 → 6
+  //  46..54 → 3
+  const s = clamp(score, 0, 100);
+  if (s <= 27) return 0;
+  if (s <= 36) return 1;
+  if (s <= 45) return 2;
+  if (s <= 54) return 3;
+  if (s <= 63) return 4;
+  if (s <= 72) return 5;
+  return 6;
+}
+function renderScores() {
+  const e = state.ext.slider;
+  const i = state.int.slider;
+  document.getElementById('ext-scoreval').textContent = (e>0?'+':'') + e;
+  document.getElementById('int-scoreval').textContent = (i>0?'+':'') + i;
+  // Score bar runs 0 (left) → 100 (right). Negative scores pin to the left edge.
+  document.getElementById('ext-marker').style.left = clamp(e, 0, 100) + '%';
+  document.getElementById('int-marker').style.left = clamp(i, 0, 100) + '%';
+  const eIdx = scoreToIndex(e), iIdx = scoreToIndex(i);
+  // <img> with onerror → fallback SVG
+  document.getElementById('ext-face').innerHTML =
+    `<img src="external${eIdx}.png" alt="external focus level ${eIdx}"
+       style="width:100%;height:100%;object-fit:contain;"
+       onerror="this.outerHTML=window.__renderHouse(${eIdx});">`;
+  document.getElementById('int-face').innerHTML =
+    `<img src="internal${iIdx}.png" alt="internal focus level ${iIdx}"
+       style="width:100%;height:100%;object-fit:contain;"
+       onerror="this.outerHTML=window.__renderFace(${iIdx});">`;
+  const overall = e + i;
+  const overallStr = (overall > 0 ? '+' : '') + overall;
+  document.getElementById('message-box').textContent =
+    `${overallStr}  ·  ${focusMessage(Math.round(overall / 2))}`;
+}
+window.__renderHouse = (lvl) => renderHouse(lvl);
+window.__renderFace  = (lvl) => renderFace(lvl);
+function focusMessage(score) {
+  // Score ranges (-100 to +100):
+  // -100..-60 → Go home or sleep.
+  //  -59..-20 → Take a 5min break
+  //  -19..+19 → Do something good and try to get on track.
+  //  +20..+59 → You're almost in the zone.
+  //  +60..+100 → You're amazing.
+  if (score <= -60) return 'Go home or sleep.';
+  if (score <= -20) return 'Take a 5min break';
+  if (score <=  19) return 'Do something good and try to get on track.';
+  if (score <=  59) return "You're almost in the zone.";
+  return "You're amazing.";
+}
+
+/* SVG illustrations — house and face that change with score level (0..6) */
+function renderHouse(level) {
+  // 0 = ruined, 6 = sparkly mansion
+  const palettes = [
+    { wall:'#7a6a55', roof:'#3b2f25', door:'#231a10', accent:'#5b4630' },
+    { wall:'#a08a72', roof:'#4a3b2c', door:'#3a2e22', accent:'#6f5944' },
+    { wall:'#c5b598', roof:'#5b4a39', door:'#4a3a2a', accent:'#7e6a52' },
+    { wall:'#e2d6b9', roof:'#6b5947', door:'#5a4633', accent:'#8e7659' },
+    { wall:'#f4ead0', roof:'#7c684f', door:'#5a4633', accent:'#a48766' },
+    { wall:'#f8f1de', roof:'#52443a', door:'#3a2e22', accent:'#bfa37b' },
+    { wall:'#ffffff', roof:'#1f2937', door:'#0f172a', accent:'#d4b78b' }
+  ];
+  const p = palettes[level];
+  const cracks = level >= 3 ? '' : `<path d="M22 28 L26 38 M30 24 L34 36 M40 30 L44 40" stroke="#1c130b" stroke-width=".7"/>`;
+  const sparkles = level === 6 ? `
+    <g fill="#facc15">
+      <circle cx="8" cy="8" r="1.4"/><circle cx="56" cy="6" r="1.2"/><circle cx="60" cy="22" r="1"/>
+    </g>` : '';
+  const grass = level >= 3 ? `<rect x="0" y="58" width="64" height="6" fill="#86b97c"/>` : `<rect x="0" y="58" width="64" height="6" fill="#a6a08c"/>`;
+  return `
+  <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    ${grass}
+    <polygon points="8,28 32,10 56,28" fill="${p.roof}"/>
+    <rect x="12" y="28" width="40" height="30" fill="${p.wall}" stroke="${p.accent}" stroke-width="1"/>
+    <rect x="28" y="40" width="8" height="18" fill="${p.door}"/>
+    <rect x="16" y="34" width="8" height="8" fill="#a8c4d6"/>
+    <rect x="40" y="34" width="8" height="8" fill="#a8c4d6"/>
+    ${cracks}
+    ${sparkles}
+  </svg>`;
+}
+function renderFace(level) {
+  // 0 = exhausted, 6 = bright/sparkly
+  const skin = ['#d8b59a','#dfba9f','#e6c0a4','#ecc7a9','#f0cdaf','#f4d3b4','#f7d8b8'][level];
+  const eyeBag = level <= 2 ? `<path d="M22 38 q4 3 8 0 M34 38 q4 3 8 0" stroke="#7d6557" fill="none" stroke-width="1.2"/>` : '';
+  const mouth = (() => {
+    if (level <= 1) return `<path d="M24 47 q8 -2 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    if (level <= 3) return `<path d="M24 46 q8 0 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    if (level <= 5) return `<path d="M24 45 q8 4 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    return `<path d="M22 44 q10 7 20 0" stroke="#5d4634" fill="#f87171" stroke-width="1.5"/>`;
+  })();
+  const sparkles = level === 6 ? `
+    <g fill="#facc15">
+      <path d="M6 12 l1 -3 l1 3 l3 1 l-3 1 l-1 3 l-1 -3 l-3 -1z"/>
+      <path d="M52 8 l1 -3 l1 3 l3 1 l-3 1 l-1 3 l-1 -3 l-3 -1z"/>
+    </g>` : '';
+  return `
+  <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    ${sparkles}
+    <ellipse cx="32" cy="34" rx="22" ry="24" fill="${skin}"/>
+    <path d="M10 24 q22 -22 44 0 q-2 -8 -10 -12 q-12 -6 -24 0 q-8 4 -10 12z" fill="#1f2937"/>
+    <circle cx="24" cy="34" r="2" fill="#1f2937"/>
+    <circle cx="40" cy="34" r="2" fill="#1f2937"/>
+    ${eyeBag}
+    ${mouth}
+  </svg>`;
+}
+
+/* ---- mana lists ---- */
+function flashScoreCard(side) {
+  // Cards order in DOM: [Internal, External]
+  const card = document.querySelectorAll('.score-card')[side==='int'?0:1];
+  if (!card) return;
+  card.style.transition = 'box-shadow .35s ease';
+  card.style.boxShadow = side==='int' ? '0 0 0 3px #2563eb55' : '0 0 0 3px #dc262655';
+  setTimeout(()=>{ card.style.boxShadow = ''; }, 350);
+}
+function applyManaScore(kind, score) {
+  // Multiplier → internal; Muncher → external
+  if (kind === 'multiplier') {
+    state.int.slider = clamp(state.int.slider + score, -100, 100);
+    flashScoreCard('int');
+  } else {
+    state.ext.slider = clamp(state.ext.slider + score, -100, 100);
+    flashScoreCard('ext');
+  }
+  saveState(); renderScores();
+}
+function getMuncherRunningMs(manaIdx) {
+  const at = state.activeTimer;
+  if (at && at.type === 'muncher' && at.manaIdx === manaIdx) {
+    return Date.now() - at.startedAt;
+  }
+  return 0;
+}
+function renderWatchLog() {
+  const wrap = document.getElementById('watch-log-panel');
+  const list = document.getElementById('watch-log-list');
+  const total = document.getElementById('watch-log-total');
+  if (!wrap) return;
+  if (!state.watchLog || !state.watchLog.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  list.innerHTML = '';
+  let totalMs = 0, totalPen = 0;
+  state.watchLog.slice().reverse().forEach(entry => {
+    totalMs += entry.durationMs;
+    totalPen += (entry.penalty || 0);
+    const row = document.createElement('div');
+    row.className = 'watch-log-entry';
+    let badge = '';
+    if (entry.type === 'task-up') badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'task-text') badge = `<span class="badge ${entry.q||''}">★ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'muncher') badge = `<span class="badge muncher">muncher</span>`;
+    row.innerHTML = `
+      ${badge}
+      <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
+      <span class="pen">${entry.penalty ? entry.penalty : ''}</span>`;
+    list.appendChild(row);
+  });
+  total.textContent = `Total: ${fmtHMS(totalMs)} · External penalty applied: ${totalPen}`;
+}
+
+function renderManaList(kind) {
+  const list = document.getElementById(kind === 'multiplier' ? 'mana-mult' : 'mana-munch');
+  list.innerHTML = '';
+  state.mana[kind].forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'mana-item' + (kind==='muncher'?' muncher':'');
+    row.style.cursor = 'pointer';
+
+    if (m.kind === 'timer') {
+      // Time-tracking muncher (Youtube/Netflix, Unrelated news, etc).
+      // Applies -3 per 5 min penalty to External on stop.
+      const running = state.activeTimer && state.activeTimer.type === 'muncher' && state.activeTimer.manaIdx === i;
+      const liveMs = running ? getMuncherRunningMs(i) : 0;
+      row.classList.toggle('timer-running', running);
+      row.title = running
+        ? 'Tap to stop — recorded in activity log; External penalty applied'
+        : 'Tap to start tracker (-3 per 5 min when stopped)';
+      row.innerHTML = `
+        <span class="lbl">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
+        <span class="scr" style="color:${running?'#dc2626':'#9ca3af'};">${running?'●':'○'}</span>
+        <button title="Remove">×</button>`;
+      row.onclick = (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        clickMuncherTimer(i);
+      };
+      row.querySelector('.lbl').ondblclick = (e) => {
+        e.stopPropagation();
+        const v = prompt('Edit name:', m.lbl);
+        if (v !== null && v.trim()) { m.lbl = v.trim(); saveState(); renderManaList(kind); }
+      };
+      row.querySelector('button').onclick = (e) => {
+        e.stopPropagation();
+        if (running) stopMuncherTimer(i);
+        state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+      };
+      list.appendChild(row);
+      return;
+    }
+
+    row.title = kind === 'multiplier'
+      ? 'Tap to apply +score to Internal focus'
+      : 'Tap to apply score to External focus';
+    row.innerHTML = `<span class="lbl">${escapeHTML(m.lbl)}</span><span class="scr">${m.score>0?'+':''}${m.score}</span><button>×</button>`;
+    row.onclick = (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      applyManaScore(kind, m.score);
+    };
+    row.querySelector('.lbl').ondblclick = (e) => {
+      e.stopPropagation();
+      const v = prompt('Edit name:', m.lbl);
+      if (v !== null && v.trim()) { m.lbl = v.trim(); saveState(); renderManaList(kind); }
+    };
+    row.querySelector('.scr').ondblclick = (e) => {
+      e.stopPropagation();
+      const v = prompt('Edit score:', m.score);
+      if (v !== null && !isNaN(+v)) { m.score = +v; saveState(); renderManaList(kind); }
+    };
+    row.querySelector('button').onclick = (e) => {
+      e.stopPropagation();
+      state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+    };
+    list.appendChild(row);
+  });
+}
+function renderManaLists() { renderManaList('multiplier'); renderManaList('muncher'); }
+
+document.getElementById('mult-add').onclick = () => {
+  const t = document.getElementById('mult-text').value.trim();
+  const s = document.getElementById('mult-score').value;
+  if (!t || s==='') return;
+  state.mana.multiplier.push({ lbl:t, score: Math.abs(+s) });
+  document.getElementById('mult-text').value=''; document.getElementById('mult-score').value='';
+  saveState(); renderManaList('multiplier');
+};
+document.getElementById('munch-add').onclick = () => {
+  const t = document.getElementById('munch-text').value.trim();
+  const s = document.getElementById('munch-score').value;
+  if (!t || s==='') return;
+  state.mana.muncher.push({ lbl:t, score: -Math.abs(+s) });
+  document.getElementById('munch-text').value=''; document.getElementById('munch-score').value='';
+  saveState(); renderManaList('muncher');
+};
+
+/* ---- finish session ---- */
+function finishStudying() {
+  if (state.activeTimer) stopActiveTimer('finish');
+  const todayKey = new Date().toISOString().slice(0,10);
+  const totalTasks = ['q1','q2','q3','q4'].reduce((n,q)=>n+state.tasks[q].filter(t=>t.text.trim()).length, 0);
+  const doneTasks  = ['q1','q2','q3','q4'].reduce((n,q)=>n+state.tasks[q].filter(t=>t.text.trim()&&t.done).length, 0);
+  const completedTexts = ['q1','q2','q3','q4'].flatMap(q => state.tasks[q].filter(t=>t.text.trim()&&t.done).map(t=>t.text));
+  const entry = {
+    date: todayKey,
+    timestamp: Date.now(),
+    ext: state.ext.slider,
+    int: state.int.slider,
+    tasksTotal: totalTasks,
+    tasksDone: doneTasks,
+    completed: completedTexts,
+    pct: totalTasks ? Math.round(100*doneTasks/totalTasks) : 0
+  };
+  stats.unshift(entry);
+  saveStats();
+  // reset session-level state but keep factors for convenience
+  state.sessionStartMs = null;
+  state.timeSegments = [];
+  state.activeTimer = null;
+  saveState();
+  showPage('stats');
+}
+
+/* ===========================================================
+   PAGE 3 — STATISTICS
+=========================================================== */
+function renderStats() {
+  const list = document.getElementById('stats-list');
+  if (!stats.length) {
+    list.innerHTML = `<div class="empty-state">No sessions yet. Finish a focus session to see your statistics here.</div>`;
+    return;
+  }
+  // Sort latest-first
+  const sorted = stats.slice().sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+  // Group by date
+  const grouped = {};
+  sorted.forEach(s => {
+    const d = s.date || new Date(s.timestamp).toISOString().slice(0,10);
+    (grouped[d] || (grouped[d] = [])).push(s);
+  });
+
+  list.innerHTML = '';
+  Object.keys(grouped).forEach(date => {
+    const header = document.createElement('h3');
+    header.className = 'stats-date-header';
+    header.textContent = `${date}  ·  ${grouped[date].length} session${grouped[date].length>1?'s':''}`;
+    list.appendChild(header);
+    grouped[date].forEach((s, idx) => {
+      const div = document.createElement('div');
+      div.className = 'stats-day session';
+      const time = new Date(s.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      div.innerHTML = `
+        <div class="row"><strong>Session ${idx+1} — finished ${time}</strong></div>
+        <div class="row"><span class="lbl">External focus</span><span>${s.ext>0?'+':''}${s.ext}</span></div>
+        <div class="row"><span class="lbl">Internal focus</span><span>${s.int>0?'+':''}${s.int}</span></div>
+        <div class="row"><span class="lbl">Tasks completed</span><span>${s.tasksDone}/${s.tasksTotal} (${s.pct}%)</span></div>
+        <div class="pct-bar"><div class="fill" style="width:${s.pct}%"></div></div>
+        ${s.completed.length ? `<ul class="tasklist">${s.completed.map(t=>`<li>${escapeHTML(t)}</li>`).join('')}</ul>` : ''}
+      `;
+      list.appendChild(div);
+    });
+  });
+}
+
+/* ===========================================================
+   INIT
+=========================================================== */
+/* ===========================================================
+   Motivational text — randomized once an hour
+=========================================================== */
+function refreshMotivation(force) {
+  const lines = (state.motivationalLines || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const el = document.getElementById('motivation-display');
+  if (!el) return;
+  if (!lines.length) { el.textContent = ''; return; }
+  const now = Date.now();
+  const cur = state.motivationalCurrent;
+  const stale = !cur
+    || force
+    || (now - (cur.selectedAt || 0)) > 3600000   // > 1 hour
+    || !lines.includes(cur.text);
+  if (stale) {
+    state.motivationalCurrent = {
+      text: lines[Math.floor(Math.random() * lines.length)],
+      selectedAt: now
+    };
+    saveState();
+  }
+  el.textContent = state.motivationalCurrent.text;
+}
+const motInputEl = document.getElementById('motivation-input');
+if (motInputEl) {
+  motInputEl.value = state.motivationalLines || '';
+  motInputEl.oninput = () => {
+    state.motivationalLines = motInputEl.value;
+    saveState();
+    refreshMotivation();   // re-pick if necessary
+  };
+}
+// re-evaluate every minute (only changes when an hour boundary or list change is detected)
+setInterval(() => refreshMotivation(false), 60 * 1000);
+
+function renderAll() {
+  renderTasks();
+  document.getElementById('deadline').value = state.deadline || '';
+  document.getElementById('bedtime').value  = state.bedtime  || '';
+  renderFactorGroups('ext');
+  renderFactorGroups('int');
+  renderOthers('ext'); renderOthers('int');
+  recomputeSlider('ext');
+  recomputeSlider('int');
+  setSliderColor('ext'); setSliderColor('int');
+  document.getElementById('ext-slider').value = state.ext.slider;
+  document.getElementById('int-slider').value = state.int.slider;
+  updateCountdowns();
+}
+renderAll();
+refreshMotivation(false);
+showPage('setup');
+
+setInterval(updateCountdowns, 30000); // refresh setup-page countdowns every 30s
+setInterval(() => {
+  if (document.getElementById('focus-page').style.display !== 'none') {
+    drawGauge();
+    renderScores();
+    updateCountdowns();
+    tickTaskTimers();
+    // live update active muncher row (Youtube/Netflix, Unrelated news, etc.)
+    const at = state.activeTimer;
+    if (at && at.type === 'muncher') {
+      const row = document.querySelectorAll('#mana-munch .mana-item')[at.manaIdx];
+      const lbl = row && row.querySelector('.lbl');
+      const m = state.mana.muncher[at.manaIdx];
+      if (lbl && m) lbl.textContent = m.lbl + ' ' + fmtHMS(getMuncherRunningMs(at.manaIdx));
+    }
+  }
+}, 1000);
+</script>
+</body>
+</html>
