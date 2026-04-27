@@ -529,30 +529,33 @@
   .gauge-hour-label {
     position: absolute; left: 4px;
     font-size: clamp(.7rem, 1.3vw, .85rem);
-    color: #6b7280;
-    font-weight: 600;
-    padding: 0 2px;
+    color: #374151;
+    font-weight: 700;
+    padding: 1px 4px;
     transform: translateY(-50%);
-    background: #fff;
-    z-index: 3;
+    background: rgba(255,255,255,.95);
+    border-radius: 3px;
+    z-index: 5;
     pointer-events: none;
   }
-  .gauge-segments { position: absolute; left: 38px; right: 0; top: 0; bottom: 0; }
+  /* Bands span the FULL width of the gauge column (over the hour labels area)
+     so the task name has plenty of horizontal space. Hour labels sit on top via z-index. */
+  .gauge-segments { position: absolute; left: 0; right: 0; top: 0; bottom: 0; }
   .gauge-segment {
-    position: absolute; left: 1px; right: 1px;
+    position: absolute; left: 0; right: 0;
     opacity: .92;
     overflow: hidden;
-    border-radius: 3px;
-    display: flex; align-items: flex-start; justify-content: center;
+    border-radius: 0;
+    display: flex; align-items: center; justify-content: flex-start;
     cursor: help;
   }
   .gauge-task-label {
     width: 100%;
-    font-size: clamp(.65rem, 1.2vw, .8rem);
+    font-size: clamp(.7rem, 1.3vw, .9rem);
     font-weight: 700;
     color: #1f2937;
-    text-align: center;
-    padding: 3px 4px;
+    text-align: left;
+    padding: 3px 6px 3px 44px;  /* left padding leaves room for hour labels */
     word-break: break-word;
     line-height: 1.15;
   }
@@ -1273,6 +1276,7 @@ const STORAGE_KEY = 'concentration-app-v1';
 const STATS_KEY   = 'concentration-stats-v1';
 
 const defaultState = () => ({
+  currentPage: 'setup',  // last viewed page — restored on refresh
   tasks: { q1: [], q2: [], q3: [], q4: [] },
   deadline: '',
   deadlineDate: '',        // optional date for the deadline (defaults to today)
@@ -1413,6 +1417,7 @@ function migrateState() {
   if (state.sbUserId == null) state.sbUserId = 'me';
   if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
+  if (!['setup','focus','stats'].includes(state.currentPage)) state.currentPage = 'setup';
   // Clear out any legacy task-up/task-down/task-text active timers
   if (state.activeTimer && ['task-up','task-down','task-text'].includes(state.activeTimer.type)) {
     state.activeTimer = null;
@@ -1445,7 +1450,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -1778,6 +1783,9 @@ function showPage(name) {
   ['setup','focus','stats'].forEach(k => {
     document.getElementById('tab-'+k).classList.toggle('active', k===name);
   });
+  // Remember the last viewed page so refresh restores it
+  state.currentPage = name;
+  saveState();
   if (name === 'focus') initFocusPage();
   if (name === 'stats') {
     renderStats();
@@ -2544,7 +2552,14 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   state.watchLog.push(logEntry);
   state.activeTimer = null;
   saveState();
-  markSettingsChanged(); debouncedPushSettings();
+  markSettingsChanged();
+  // Flush any pending debounced push and send immediately so the
+  // colored band + activity log appear on other devices right away.
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
+  pushSettingsToCloud();
   return logEntry;
 }
 
@@ -3775,7 +3790,7 @@ function renderAll() {
 }
 renderAll();
 refreshMotivation(false);
-showPage('setup');
+showPage(state.currentPage || 'setup');
 
 setInterval(updateCountdowns, 30000); // refresh setup-page countdowns every 30s
 setInterval(() => {
