@@ -154,6 +154,106 @@
   /* Make gauge segments visibly clickable */
   .gauge-segment { cursor: pointer; }
 
+  /* Drag handle for task reordering */
+  .drag-handle {
+    cursor: grab; color: #9ca3af; user-select: none;
+    padding: 0 6px;
+    font-size: 1.05rem; line-height: 1; font-weight: 700;
+  }
+  .drag-handle:hover { color: #4b5563; }
+  .drag-handle:active { cursor: grabbing; }
+  .task-row.dragging { opacity: 0.4; }
+  .task-row.drag-over { box-shadow: 0 -2px 0 0 #2563eb inset, 0 2px 0 0 #2563eb inset; }
+
+  /* ---- Statistics: per-session mini gauge ---- */
+  .session-mini-gauge {
+    position: relative; background: #fff; border: 1px solid var(--line);
+    border-radius: 6px; height: 140px; margin-top: 8px;
+    overflow: hidden;
+  }
+  .session-mini-gauge .mg-hour-line {
+    position: absolute; left: 32px; right: 0; height: 1px; background: #f3f4f6;
+  }
+  .session-mini-gauge .mg-hour-label {
+    position: absolute; left: 2px;
+    font-size: .65rem; color: #9ca3af;
+    transform: translateY(-50%);
+    background: #fff; padding: 0 2px;
+  }
+  .session-mini-gauge .mg-segment {
+    position: absolute; left: 32px; right: 1px;
+    border-radius: 2px; opacity: .9; overflow: hidden;
+  }
+  .session-mini-gauge .mg-seg-label {
+    font-size: .65rem; padding: 1px 3px; color: #1f2937; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---- Statistics: view toggle ---- */
+  .stats-view-toggle { display: flex; gap: 4px; margin: 0 0 12px; }
+  .stats-view-toggle .btn { padding: 6px 14px; }
+  .stats-view-toggle .btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .stats-view.hidden { display: none; }
+
+  /* ---- Weekly view ---- */
+  .week-controls {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    margin-bottom: 12px; font-weight: 600;
+  }
+  .week-controls .btn { padding: 4px 12px; min-width: 36px; }
+  .week-grid {
+    display: grid;
+    grid-template-columns: 38px repeat(7, minmax(0, 1fr));
+    gap: 2px;
+  }
+  .week-cell { display: flex; flex-direction: column; }
+  .week-day-header {
+    text-align: center; padding: 4px 0; font-size: .8rem;
+    border-bottom: 1px solid var(--line); margin-bottom: 4px;
+  }
+  .week-day-header .wd-name { color: #6b7280; font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; }
+  .week-day-header .wd-date { color: #111827; font-weight: 700; }
+  .week-day-header.today .wd-date { color: #2563eb; }
+  .week-axis-cell {
+    height: 28px;  /* matches week-day-header */
+    border-bottom: 1px solid transparent;
+    margin-bottom: 4px;
+  }
+  .week-axis {
+    position: relative; height: 420px;
+    font-size: .65rem; color: #6b7280;
+  }
+  .week-hour-label {
+    position: absolute; right: 4px;
+    transform: translateY(-50%);
+    background: #fff; padding: 0 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .week-day-gauge {
+    position: relative; height: 420px;
+    background: #fff; border: 1px solid var(--line); border-radius: 4px;
+    overflow: hidden;
+  }
+  .week-day-gauge .mg-hour-line {
+    position: absolute; left: 0; right: 0; height: 1px; background: #f3f4f6;
+  }
+  .week-day-gauge .mg-segment {
+    position: absolute; left: 1px; right: 1px;
+    border-radius: 2px; opacity: .92; overflow: hidden;
+    cursor: help;
+  }
+  .week-day-gauge .mg-seg-label {
+    font-size: .6rem; padding: 1px 3px; color: #1f2937; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  @media (max-width: 700px) {
+    .week-grid { grid-template-columns: 28px repeat(7, minmax(0, 1fr)); gap: 1px; }
+    .week-day-header { font-size: .7rem; }
+    .week-day-header .wd-name { font-size: .6rem; }
+    .week-day-gauge, .week-axis { height: 320px; }
+    .week-hour-label { font-size: .55rem; }
+  }
+
   main { padding: 16px; max-width: 1200px; margin: 0 auto; }
   .panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
@@ -797,8 +897,13 @@
   tasks_done int,
   completed_tasks jsonb,
   pct int,
+  session_start_ms bigint,
+  segments jsonb,
   created_at timestamptz default now()
 );
+-- If you ran the older schema previously, also run:
+alter table focus_sessions add column if not exists session_start_ms bigint;
+alter table focus_sessions add column if not exists segments jsonb;
 alter table focus_sessions enable row level security;
 create policy "anon read"   on focus_sessions for select using (true);
 create policy "anon insert" on focus_sessions for insert with check (true);
@@ -933,8 +1038,19 @@ create policy "anon delete s" on user_settings for delete using (true);</pre>
   <section id="stats-page">
     <div class="panel">
       <h2>Statistics</h2>
-      <p class="help">Daily summary of your focus sessions.</p>
-      <div id="stats-list"></div>
+      <div class="stats-view-toggle">
+        <button class="btn" id="stats-view-list-btn">List view</button>
+        <button class="btn" id="stats-view-week-btn">Weekly view</button>
+      </div>
+      <div id="stats-list" class="stats-view"></div>
+      <div id="stats-week" class="stats-view hidden">
+        <div class="week-controls">
+          <button class="btn" id="week-prev">←</button>
+          <span id="week-label">—</span>
+          <button class="btn" id="week-next">→</button>
+        </div>
+        <div class="week-grid" id="week-grid"></div>
+      </div>
     </div>
     <div class="actions">
       <button class="btn danger" id="clear-stats">Erase all data</button>
@@ -1173,7 +1289,9 @@ async function pushStatToCloud(entry) {
       tasks_total: entry.tasksTotal,
       tasks_done: entry.tasksDone,
       completed_tasks: entry.completed,
-      pct: entry.pct
+      pct: entry.pct,
+      session_start_ms: entry.sessionStartMs,
+      segments: entry.segments || []
     });
     if (error) { console.warn('Supabase insert error:', error); return false; }
     return true;
@@ -1196,7 +1314,9 @@ async function fetchStatsFromCloud() {
       tasksTotal: r.tasks_total,
       tasksDone: r.tasks_done,
       completed: r.completed_tasks || [],
-      pct: r.pct
+      pct: r.pct,
+      sessionStartMs: r.session_start_ms ? Number(r.session_start_ms) : null,
+      segments: Array.isArray(r.segments) ? r.segments : []
     }));
   } catch(e) { console.warn('Supabase fetch failed:', e); throw e; }
 }
@@ -1314,9 +1434,14 @@ function showPage(name) {
   if (name === 'focus') initFocusPage();
   if (name === 'stats') {
     renderStats();
+    // also refresh whichever view (list/week) is currently visible
+    if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
     // Background sync from Supabase if configured (don't block initial render)
     if (state.sbUrl && state.sbKey) {
-      syncStatsBidi().then(() => renderStats()).catch(()=>{});
+      syncStatsBidi().then(() => {
+        renderStats();
+        if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
+      }).catch(()=>{});
     }
   }
 }
@@ -1356,6 +1481,59 @@ document.getElementById('clear-stats').onclick = async () => {
 /* ===========================================================
    PAGE 1 — TASKS / MATRIX
 =========================================================== */
+/* ---- Drag-and-drop reordering for task rows ----
+   The handle (≡) is draggable; the row accepts drops. Reordering is allowed
+   only within the same quadrant for now. */
+let _draggedTask = null;
+function attachDragHandlers(row, handle, q, i) {
+  if (handle) {
+    handle.ondragstart = (e) => {
+      _draggedTask = { q, idx: i };
+      try { e.dataTransfer.setData('text/plain', `${q}:${i}`); } catch (_){}
+      try { e.dataTransfer.effectAllowed = 'move'; } catch (_){}
+      try { e.dataTransfer.setDragImage(row, 10, 10); } catch (_){}
+      row.classList.add('dragging');
+    };
+    handle.ondragend = () => {
+      _draggedTask = null;
+      row.classList.remove('dragging');
+      document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
+    };
+    // Prevent click from triggering pomodoro when releasing on handle
+    handle.onclick = (e) => e.stopPropagation();
+  }
+  row.ondragover = (e) => {
+    if (!_draggedTask) return;
+    if (_draggedTask.q !== q) return;   // same-quadrant reorder only
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch (_){}
+    row.classList.add('drag-over');
+  };
+  row.ondragleave = () => row.classList.remove('drag-over');
+  row.ondrop = (e) => {
+    e.preventDefault();
+    row.classList.remove('drag-over');
+    if (!_draggedTask || _draggedTask.q !== q) return;
+    if (_draggedTask.idx === i) return;
+    const arr = state.tasks[q];
+    const fromIdx = _draggedTask.idx;
+    const [moved] = arr.splice(fromIdx, 1);
+    const insertAt = i > fromIdx ? i - 1 : i;
+    arr.splice(insertAt, 0, moved);
+    // If active pomodoro is on the moved task, update its idx
+    const at = state.activeTimer;
+    if (at && (at.type === 'pomodoro') && at.q === q) {
+      if (at.idx === fromIdx) at.idx = insertAt;
+      else if (fromIdx < at.idx && insertAt >= at.idx) at.idx -= 1;
+      else if (fromIdx > at.idx && insertAt <= at.idx) at.idx += 1;
+    }
+    _draggedTask = null;
+    saveState(); markSettingsChanged(); pushSettingsToCloud();
+    if (document.getElementById('setup-page').style.display !== 'none') renderTasks();
+    if (document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
+  };
+}
+
 function renderTasks() {
   ['q1','q2','q3','q4'].forEach(q => {
     const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
@@ -1363,27 +1541,47 @@ function renderTasks() {
     state.tasks[q].forEach((t, i) => {
       const row = document.createElement('div');
       row.className = 'task-row';
+      row.dataset.q = q;
+      row.dataset.idx = i;
       row.innerHTML = `
         <input type="checkbox" ${t.done?'checked':''}>
         <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
-        <button class="x" title="delete">×</button>`;
-      const [cb, txt, del] = row.children;
+        <button class="x" title="delete">×</button>
+        <span class="drag-handle" draggable="true" title="Drag to reorder">≡</span>`;
+      const cb = row.children[0], txt = row.children[1], del = row.children[2], handle = row.children[3];
       cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); txt.classList.toggle('done', cb.checked); markSettingsChanged(); debouncedPushSettings(); };
       txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); markSettingsChanged(); debouncedPushSettings(); };
       txt.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
           e.preventDefault();
-          // Add a new empty task in the same quadrant and focus its input
           state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
           saveState(); renderTasks();
-          const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
-          if (wrap && wrap.lastElementChild) {
-            const newInput = wrap.lastElementChild.querySelector('.task-text');
+          const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+          if (wrap2 && wrap2.lastElementChild) {
+            const newInput = wrap2.lastElementChild.querySelector('.task-text');
             if (newInput) newInput.focus();
+          }
+        } else if (e.key === 'Backspace' && !txt.value && !e.isComposing) {
+          // Delete empty task and move cursor to end of previous task in the same quadrant
+          e.preventDefault();
+          state.tasks[q].splice(i, 1);
+          saveState(); markSettingsChanged(); pushSettingsToCloud();
+          renderTasks();
+          const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+          if (wrap2) {
+            const inputs = wrap2.querySelectorAll('.task-text');
+            const targetIdx = Math.max(0, i - 1);
+            const target = inputs[targetIdx];
+            if (target) {
+              target.focus();
+              const len = target.value.length;
+              try { target.setSelectionRange(len, len); } catch(_){}
+            }
           }
         }
       };
       del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
+      attachDragHandlers(row, handle, q, i);
       wrap.appendChild(row);
     });
   });
@@ -1817,6 +2015,8 @@ function renderFocusMatrix() {
       if (!t.text.trim()) return;
       const row = document.createElement('div');
       row.className = 'task-row';
+      row.dataset.q = q;
+      row.dataset.idx = i;
       const at = state.activeTimer;
       const isPomo = at && at.type==='pomodoro' && at.q===q && at.idx===i;
       row.innerHTML = `
@@ -1841,6 +2041,15 @@ function renderFocusMatrix() {
         display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}</span>`;
         row.appendChild(display);
       }
+
+      // Drag handle for reordering (rightmost)
+      const handle = document.createElement('span');
+      handle.className = 'drag-handle';
+      handle.draggable = true;
+      handle.title = 'Drag to reorder';
+      handle.textContent = '≡';
+      row.appendChild(handle);
+      attachDragHandlers(row, handle, q, i);
 
       tasksDiv.appendChild(row);
     });
@@ -2152,17 +2361,27 @@ function addGaugeSegment(parent, pct, seg, isActive) {
   div.style.height = height + '%';
   div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
   div.title = seg.name || '';
-  if (height >= 3 && seg.name) {
+  // Show task name on the colored area (always for active, threshold for completed)
+  if (seg.name && (isActive || height >= 3)) {
     const lbl = document.createElement('div');
     lbl.className = 'gauge-task-label';
     lbl.textContent = seg.name;
     div.appendChild(lbl);
   }
-  // Click to edit (only completed/past segments — active timer should be stopped first)
+  // Click to edit:
+  //   - completed segments → open edit modal directly
+  //   - active segment    → stop the timer first, then open edit on the just-logged segment
   if (!isActive) {
     div.onclick = (e) => { e.stopPropagation(); openSegmentEditModal(seg); };
   } else {
-    div.title = (seg.name || '') + ' (running — tap the task in the list to stop)';
+    div.title = (seg.name || '') + ' (running — click to stop & edit)';
+    div.onclick = (e) => {
+      e.stopPropagation();
+      if (state.activeTimer) stopActiveTimer('finish');
+      renderFocusMatrix(); renderWatchLog(); drawGauge();
+      const last = state.timeSegments[state.timeSegments.length - 1];
+      if (last) openSegmentEditModal(last);
+    };
   }
   parent.appendChild(div);
 }
@@ -2511,7 +2730,10 @@ function finishStudying() {
     tasksTotal: totalTasks,
     tasksDone: doneTasks,
     completed: completedTexts,
-    pct: totalTasks ? Math.round(100*doneTasks/totalTasks) : 0
+    pct: totalTasks ? Math.round(100*doneTasks/totalTasks) : 0,
+    // Gauge data — used by Statistics for per-session view & weekly view
+    sessionStartMs: getStartMs() || state.sessionStartMs || Date.now(),
+    segments: (state.timeSegments || []).slice()
   };
   stats.unshift(entry);
   saveStats();
@@ -2561,10 +2783,212 @@ function renderStats() {
         <div class="pct-bar"><div class="fill" style="width:${s.pct}%"></div></div>
         ${s.completed.length ? `<ul class="tasklist">${s.completed.map(t=>`<li>${escapeHTML(t)}</li>`).join('')}</ul>` : ''}
       `;
+      // Per-session mini gauge (text/data form of the vertical gauge)
+      if (Array.isArray(s.segments) && s.segments.length) {
+        const mg = buildSessionMiniGauge(s);
+        if (mg) div.appendChild(mg);
+      }
       list.appendChild(div);
     });
   });
 }
+
+/* ---- Per-session mini vertical gauge ---- */
+function buildSessionMiniGauge(s) {
+  const segs = s.segments || [];
+  if (!segs.length) return null;
+  // Determine range: from sessionStartMs (or earliest segment) to latest segment end + a bit
+  const earliest = Math.min(s.sessionStartMs || Infinity, ...segs.map(x => x.startMs));
+  const latest = Math.max(...segs.map(x => x.endMs));
+  if (!isFinite(earliest) || !isFinite(latest)) return null;
+  const startMs = earliest - 30 * 60 * 1000; // 30 min before
+  const endMs = latest + 30 * 60 * 1000;     // 30 min after
+  const total = endMs - startMs;
+  if (total <= 0) return null;
+  const pct = (t) => Math.max(0, Math.min(100, ((t - startMs) / total) * 100));
+
+  const wrap = document.createElement('div');
+  wrap.className = 'session-mini-gauge';
+
+  // Hour gridlines + labels
+  const startHour = new Date(startMs);
+  startHour.setMinutes(0, 0, 0);
+  if (startHour.getTime() < startMs) startHour.setHours(startHour.getHours() + 1);
+  for (let cur = startHour.getTime(); cur <= endMs; cur += 3600000) {
+    const y = pct(cur);
+    const line = document.createElement('div');
+    line.className = 'mg-hour-line';
+    line.style.top = y + '%';
+    wrap.appendChild(line);
+    const lbl = document.createElement('div');
+    lbl.className = 'mg-hour-label';
+    lbl.style.top = y + '%';
+    lbl.textContent = fmtHourLabel(cur);
+    wrap.appendChild(lbl);
+  }
+  // Segments
+  segs.forEach(seg => {
+    const top = pct(seg.startMs);
+    const height = Math.max(0, pct(seg.endMs) - top);
+    if (height <= 0) return;
+    const div = document.createElement('div');
+    div.className = 'mg-segment';
+    div.style.top = top + '%';
+    div.style.height = height + '%';
+    div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
+    div.title = seg.name || '';
+    if (height >= 5 && seg.name) {
+      const lbl = document.createElement('div');
+      lbl.className = 'mg-seg-label';
+      lbl.textContent = seg.name;
+      div.appendChild(lbl);
+    }
+    wrap.appendChild(div);
+  });
+  return wrap;
+}
+
+/* ---- Weekly view ---- */
+let weekViewOffset = 0; // 0 = current week, -1 = last week, etc.
+function getMondayOfWeek(refDate, offset) {
+  const d = new Date(refDate);
+  const dow = d.getDay();
+  const mondayDelta = dow === 0 ? -6 : 1 - dow;
+  d.setDate(d.getDate() + mondayDelta + (offset || 0) * 7);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function renderWeekView() {
+  const grid = document.getElementById('week-grid');
+  const label = document.getElementById('week-label');
+  if (!grid) return;
+  const monday = getMondayOfWeek(new Date(), weekViewOffset);
+  const days = Array.from({length: 7}, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+  // Week label
+  const sunday = days[6];
+  if (label) {
+    label.textContent = `${monday.toLocaleDateString([], { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' })}`;
+  }
+  // Time range: 6 AM to midnight (18 hours)
+  const startHour = 6, endHour = 24, totalH = endHour - startHour;
+  // Collect segments per day (key by local YYYY-MM-DD)
+  const dayKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const segsByDay = {};
+  stats.forEach(s => {
+    if (!Array.isArray(s.segments)) return;
+    s.segments.forEach(seg => {
+      const k = dayKey(new Date(seg.startMs));
+      (segsByDay[k] || (segsByDay[k] = [])).push(seg);
+    });
+  });
+  const todayKey = dayKey(new Date());
+
+  // Build grid
+  grid.innerHTML = '';
+  // Top-left empty corner
+  const corner = document.createElement('div');
+  corner.className = 'week-axis-cell';
+  grid.appendChild(corner);
+  // Date headers
+  days.forEach(d => {
+    const hdr = document.createElement('div');
+    hdr.className = 'week-day-header' + (dayKey(d) === todayKey ? ' today' : '');
+    hdr.innerHTML = `
+      <div class="wd-name">${d.toLocaleDateString([], { weekday: 'short' })}</div>
+      <div class="wd-date">${d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })}</div>`;
+    grid.appendChild(hdr);
+  });
+  // Y-axis with hour labels
+  const axis = document.createElement('div');
+  axis.className = 'week-axis';
+  for (let h = startHour; h <= endHour; h++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'week-hour-label';
+    lbl.style.top = ((h - startHour) / totalH * 100) + '%';
+    let txt;
+    if (h === 0 || h === 24) txt = '12 AM';
+    else if (h === 12) txt = '12 PM';
+    else if (h < 12) txt = h + ' AM';
+    else txt = (h - 12) + ' PM';
+    lbl.textContent = txt;
+    axis.appendChild(lbl);
+  }
+  grid.appendChild(axis);
+  // Day gauges
+  days.forEach(d => {
+    const gauge = document.createElement('div');
+    gauge.className = 'week-day-gauge';
+    const dayStartMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startHour, 0, 0).getTime();
+    const dayTotalMs = totalH * 3600 * 1000;
+    const pct = (t) => Math.max(0, Math.min(100, ((t - dayStartMs) / dayTotalMs) * 100));
+    // Hour grid lines
+    for (let h = startHour; h <= endHour; h++) {
+      const line = document.createElement('div');
+      line.className = 'mg-hour-line';
+      line.style.top = ((h - startHour) / totalH * 100) + '%';
+      gauge.appendChild(line);
+    }
+    // Segments for this day
+    const daySegs = segsByDay[dayKey(d)] || [];
+    daySegs.forEach(seg => {
+      const top = pct(seg.startMs);
+      const height = Math.max(0, pct(seg.endMs) - top);
+      if (height <= 0) return;
+      const segDiv = document.createElement('div');
+      segDiv.className = 'mg-segment';
+      segDiv.style.top = top + '%';
+      segDiv.style.height = height + '%';
+      segDiv.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
+      segDiv.title = (seg.name || '') + ' · ' +
+        new Date(seg.startMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '–' +
+        new Date(seg.endMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      if (height >= 4 && seg.name) {
+        const lbl = document.createElement('div');
+        lbl.className = 'mg-seg-label';
+        lbl.textContent = seg.name;
+        segDiv.appendChild(lbl);
+      }
+      gauge.appendChild(segDiv);
+    });
+    grid.appendChild(gauge);
+  });
+}
+function setStatsView(name) {
+  const listEl = document.getElementById('stats-list');
+  const weekEl = document.getElementById('stats-week');
+  const listBtn = document.getElementById('stats-view-list-btn');
+  const weekBtn = document.getElementById('stats-view-week-btn');
+  if (name === 'week') {
+    listEl.classList.add('hidden');
+    weekEl.classList.remove('hidden');
+    listBtn.classList.remove('active');
+    weekBtn.classList.add('active');
+    renderWeekView();
+  } else {
+    listEl.classList.remove('hidden');
+    weekEl.classList.add('hidden');
+    listBtn.classList.add('active');
+    weekBtn.classList.remove('active');
+    renderStats();
+  }
+}
+// Wire view toggles + week navigation
+(function () {
+  const listBtn = document.getElementById('stats-view-list-btn');
+  const weekBtn = document.getElementById('stats-view-week-btn');
+  const prevBtn = document.getElementById('week-prev');
+  const nextBtn = document.getElementById('week-next');
+  if (listBtn) listBtn.onclick = () => setStatsView('list');
+  if (weekBtn) weekBtn.onclick = () => setStatsView('week');
+  if (prevBtn) prevBtn.onclick = () => { weekViewOffset--; renderWeekView(); };
+  if (nextBtn) nextBtn.onclick = () => { weekViewOffset++; renderWeekView(); };
+  // default active button
+  if (listBtn) listBtn.classList.add('active');
+})();
 
 /* ===========================================================
    INIT
