@@ -169,6 +169,18 @@
   /* Make gauge segments visibly clickable */
   .gauge-segment { cursor: pointer; }
 
+  /* Login modal styling */
+  .login-modal-content { width: 380px; max-width: 92vw; }
+  .login-modal-content .auth-form {
+    display: grid; gap: 8px;
+  }
+  .login-modal-content input {
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; box-sizing: border-box; width: 100%;
+  }
+  .login-modal-content input:focus { outline: 2px solid #c7d8ff; outline-offset: -1px; }
+  #login-status { font-size: .8rem; }
+
   /* Drag handle for task reordering */
   .drag-handle {
     cursor: grab; color: #9ca3af; user-select: none;
@@ -331,6 +343,15 @@
     font-size: .9rem; color: #9ca3af; cursor: pointer; font-weight: 700;
   }
   .time-goals .goal .reset-btn:hover { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
+  .time-goals .goal .goal-actions { display: flex; gap: 4px; align-items: center; }
+  .quick-btn {
+    background: #eef4ff; color: #1d4ed8;
+    border: 1px solid #c7d8ff;
+    padding: 2px 9px; height: 22px; line-height: 1; border-radius: 999px;
+    font-size: .75rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .quick-btn:hover { background: #dbeafe; }
+  .quick-btn:active { background: #bfdbfe; }
   .time-goals .goal input[type="time"],
   .time-goals .goal input[type="date"] {
     border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: #fff; font: inherit;
@@ -816,7 +837,10 @@
         <div class="goal">
           <div class="goal-head">
             <label>Starting Date &amp; Time</label>
-            <button class="reset-btn" data-reset="start" type="button" title="Clear">×</button>
+            <div class="goal-actions">
+              <button class="quick-btn" id="start-now" type="button" title="Set to current date and time">Now</button>
+              <button class="reset-btn" data-reset="start" type="button" title="Clear">×</button>
+            </div>
           </div>
           <input type="date" id="start-date">
           <input type="time" id="start-time">
@@ -825,7 +849,11 @@
         <div class="goal">
           <div class="goal-head">
             <label for="deadline">I'll get things done by</label>
-            <button class="reset-btn" data-reset="deadline" type="button" title="Clear">×</button>
+            <div class="goal-actions">
+              <button class="quick-btn" id="deadline-plus-30m" type="button" title="Add 30 minutes">+30m</button>
+              <button class="quick-btn" id="deadline-plus-1h"  type="button" title="Add 1 hour">+1h</button>
+              <button class="reset-btn" data-reset="deadline" type="button" title="Clear">×</button>
+            </div>
           </div>
           <input type="date" id="deadline-date">
           <input type="time" id="deadline">
@@ -891,102 +919,26 @@
     </div>
 
     <div class="panel">
-      <h2>Account &amp; Cloud sync</h2>
-      <p class="help">Sign in with email + password to sync everything across devices automatically.</p>
-
-      <!-- Auth: signed-out form -->
-      <div id="auth-logged-out" class="auth-section">
-        <div class="auth-form">
-          <input type="email"    id="auth-email"    placeholder="Email" autocomplete="email">
-          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
-          <div class="row-flex">
-            <button class="btn primary" id="auth-signin">Sign in</button>
-            <button class="btn" id="auth-signup">Sign up</button>
-            <span id="auth-status" class="help"></span>
-          </div>
-        </div>
-        <p class="help" style="margin-top: 8px;">Passwords are stored encrypted by Supabase Auth (bcrypt). Your session persists across page refreshes.</p>
-      </div>
-
-      <!-- Auth: signed-in state -->
+      <h2>Account</h2>
+      <!-- Signed-in state (the only visible state on the setup page now) -->
       <div id="auth-logged-in" class="auth-section hidden">
         <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
-        <p class="help">Tasks, gauge, statistics — everything syncs automatically. Refresh anytime; you stay logged in.</p>
+        <p class="help">Tasks, gauge, statistics — everything syncs automatically.</p>
         <div class="row-flex">
           <button class="btn" id="auth-signout">Sign out</button>
           <button class="btn" id="auth-resync">Force resync</button>
           <span id="auth-status2" class="help"></span>
         </div>
       </div>
-
-      <details class="sb-help" style="margin-top: 14px;">
-        <summary>How to set up Supabase (one-time)</summary>
-        <ol style="padding-left: 20px;">
-          <li>Create a free project at <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>.</li>
-          <li>Open the project's <em>SQL Editor</em> and run the schema below.</li>
-          <li>(Recommended) <em>Authentication → Providers → Email</em>: turn off "Confirm email" for instant sign-up.</li>
-          <li>Open <em>Project Settings → API</em>, copy the <strong>Project URL</strong> and the <strong>anon public</strong> key.</li>
-          <li>Paste them into the Advanced section below, then sign up above with your email + password.</li>
-        </ol>
-        <pre>create table if not exists focus_sessions (
-  id bigserial primary key,
-  user_id text not null default 'me',
-  date text not null,
-  timestamp bigint not null,
-  ext_score int,
-  int_score int,
-  tasks_total int,
-  tasks_done int,
-  completed_tasks jsonb,
-  pct int,
-  session_start_ms bigint,
-  segments jsonb,
-  created_at timestamptz default now()
-);
--- If you ran the older schema previously, also run:
-alter table focus_sessions add column if not exists session_start_ms bigint;
-alter table focus_sessions add column if not exists segments jsonb;
-alter table focus_sessions enable row level security;
-create policy "anon read"   on focus_sessions for select using (true);
-create policy "anon insert" on focus_sessions for insert with check (true);
-create policy "anon delete" on focus_sessions for delete using (true);
-
--- Settings sync (motivational quotes + custom Others factors)
-create table if not exists user_settings (
-  user_id text primary key,
-  motivational_lines text,
-  ext_others jsonb,
-  int_others jsonb,
-  tasks jsonb,
-  time_goals jsonb,
-  ext_factors jsonb,
-  int_factors jsonb,
-  updated_at timestamptz default now()
-);
--- If you ran the older schema previously, also run:
-alter table user_settings add column if not exists tasks jsonb;
-alter table user_settings add column if not exists time_goals jsonb;
-alter table user_settings add column if not exists ext_factors jsonb;
-alter table user_settings add column if not exists int_factors jsonb;
-alter table user_settings enable row level security;
-create policy "anon read s"   on user_settings for select using (true);
-create policy "anon insert s" on user_settings for insert with check (true);
-create policy "anon update s" on user_settings for update using (true);
-create policy "anon delete s" on user_settings for delete using (true);</pre>
-        <p class="help" style="margin-top:6px;">Note: with the anon key + permissive policies above, anyone holding the key can read/write rows. For a personal app this is fine; use Supabase Auth for stricter isolation.</p>
-      </details>
-      <details>
-        <summary style="cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0;">Advanced (Project URL + Anon key)</summary>
-        <div class="sb-form">
-          <label>Project URL <input type="url" id="sb-url" placeholder="https://your-project.supabase.co"></label>
-          <label>Anon (public) key <input type="password" id="sb-key" placeholder="eyJhbGciOi..."></label>
-          <label>User ID <span class="help" style="font-weight: normal;">(only used when not signed in)</span><input type="text" id="sb-user" placeholder="me"></label>
-          <div class="row-flex">
-            <button class="btn" id="sb-test">Test &amp; sync now</button>
-            <span id="sb-status" class="help"></span>
-          </div>
-        </div>
-      </details>
+      <!-- Hidden placeholders kept for backward-compatible JS — never visible -->
+      <div id="auth-logged-out" class="hidden" aria-hidden="true">
+        <input id="auth-email"><input id="auth-password"><span id="auth-status"></span>
+        <button id="auth-signin"></button><button id="auth-signup"></button>
+      </div>
+      <div class="hidden" aria-hidden="true">
+        <input id="sb-url"><input id="sb-key"><input id="sb-user">
+        <button id="sb-test"></button><span id="sb-status"></span>
+      </div>
     </div>
 
     <div class="actions">
@@ -1108,6 +1060,25 @@ create policy "anon delete s" on user_settings for delete using (true);</pre>
     </div>
   </section>
 </main>
+
+<!-- Login modal (shown automatically if not signed in) -->
+<div class="modal hidden" id="login-modal" aria-hidden="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content login-modal-content">
+    <h3 style="margin-top:0;">Welcome to Concentration</h3>
+    <p class="help" style="margin:0 0 14px;">Sign in or create an account to sync everything across devices.</p>
+    <div class="auth-form">
+      <input type="email" id="login-email" placeholder="Email" autocomplete="email">
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+      <div class="row-flex" style="grid-column: 1 / -1;">
+        <button class="btn primary" id="login-signin">Sign in</button>
+        <button class="btn" id="login-signup">Sign up</button>
+        <span id="login-status" class="help"></span>
+      </div>
+    </div>
+    <p class="help" style="margin-top: 12px; font-size: .75rem;">Passwords are encrypted by Supabase Auth (bcrypt). Your session persists across page refreshes.</p>
+  </div>
+</div>
 
 <!-- Segment edit modal -->
 <div class="modal hidden" id="segment-edit-modal" aria-hidden="true">
@@ -1372,19 +1343,19 @@ async function getAuthSession() {
   return session;
 }
 function updateAuthUI(user) {
-  const out = document.getElementById('auth-logged-out');
   const inEl = document.getElementById('auth-logged-in');
   const emailDisplay = document.getElementById('auth-email-display');
-  if (!out || !inEl) return;
+  const loginModal = document.getElementById('login-modal');
   if (user) {
-    out.classList.add('hidden');
-    inEl.classList.remove('hidden');
+    if (inEl) inEl.classList.remove('hidden');
     if (emailDisplay) emailDisplay.textContent = user.email || user.id;
+    if (loginModal) loginModal.classList.add('hidden');
     _currentAuthUserId = user.id;
     _currentAuthEmail = user.email || null;
   } else {
-    out.classList.remove('hidden');
-    inEl.classList.add('hidden');
+    if (inEl) inEl.classList.add('hidden');
+    // Show login modal if Supabase is configured (which it should be by default)
+    if (loginModal && isSbConfigured()) loginModal.classList.remove('hidden');
     _currentAuthUserId = null;
     _currentAuthEmail = null;
   }
@@ -1850,6 +1821,39 @@ document.querySelectorAll('.time-goals .reset-btn[data-reset]').forEach(btn => {
     markSettingsChanged(); pushSettingsToCloud();
   };
 });
+
+// "Now" button — set Starting Date & Time to current
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtDateLocal(d) { return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()); }
+function fmtTimeLocal(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+const startNowBtn = document.getElementById('start-now');
+if (startNowBtn) startNowBtn.onclick = () => {
+  const now = new Date();
+  state.startDate = fmtDateLocal(now);
+  state.startTime = fmtTimeLocal(now);
+  if (sdInput) sdInput.value = state.startDate;
+  if (stInput) stInput.value = state.startTime;
+  saveState(); drawGauge();
+  markSettingsChanged(); pushSettingsToCloud();
+};
+
+// "+1h" / "+30m" buttons — add increment to deadline (or starts from now if empty)
+function bumpDeadlineBy(addMs) {
+  const baseMs = (state.deadline)
+    ? (combineDateTime(state.deadlineDate, state.deadline) || Date.now())
+    : Date.now();
+  const t = new Date(baseMs + addMs);
+  state.deadlineDate = fmtDateLocal(t);
+  state.deadline     = fmtTimeLocal(t);
+  if (dlInput)     dlInput.value     = state.deadline;
+  if (dlDateInput) dlDateInput.value = state.deadlineDate;
+  saveState(); updateCountdowns(); drawGauge();
+  markSettingsChanged(); debouncedPushSettings();
+}
+const dlPlus1h  = document.getElementById('deadline-plus-1h');
+const dlPlus30m = document.getElementById('deadline-plus-30m');
+if (dlPlus1h)  dlPlus1h.onclick  = () => bumpDeadlineBy(60 * 60 * 1000);
+if (dlPlus30m) dlPlus30m.onclick = () => bumpDeadlineBy(30 * 60 * 1000);
 
 // Combine an optional date (YYYY-MM-DD) and time (HH:MM) into a timestamp.
 // If date is missing, treats the time as today's time.
@@ -3316,6 +3320,59 @@ if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
   el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSignIn(); } };
 });
 
+/* Login modal handlers */
+const loginEmailInput = document.getElementById('login-email');
+const loginPasswordInput = document.getElementById('login-password');
+const loginStatusEl = document.getElementById('login-status');
+function setLoginStatus(text, color) {
+  if (!loginStatusEl) return;
+  loginStatusEl.textContent = text || '';
+  loginStatusEl.style.color = color || '';
+}
+async function handleLoginModalSignIn() {
+  const email = (loginEmailInput && loginEmailInput.value || '').trim();
+  const password = loginPasswordInput && loginPasswordInput.value || '';
+  if (!email || !password) { setLoginStatus('Enter email and password', '#dc2626'); return; }
+  setLoginStatus('Signing in...', '#6b7280');
+  try {
+    const user = await authSignIn(email, password);
+    updateAuthUI(user);
+    setLoginStatus('');
+    if (loginPasswordInput) loginPasswordInput.value = '';
+    await pullEverythingFromCloud();
+  } catch (e) {
+    setLoginStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
+  }
+}
+async function handleLoginModalSignUp() {
+  const email = (loginEmailInput && loginEmailInput.value || '').trim();
+  const password = loginPasswordInput && loginPasswordInput.value || '';
+  if (!email || !password) { setLoginStatus('Enter email and password', '#dc2626'); return; }
+  if (password.length < 6) { setLoginStatus('Password must be at least 6 chars', '#dc2626'); return; }
+  setLoginStatus('Creating account...', '#6b7280');
+  try {
+    const user = await authSignUp(email, password);
+    if (user && user.id) {
+      updateAuthUI(user);
+      setLoginStatus('✓ Account created.' + (user.confirmed_at ? '' : ' Check email if confirmation is on.'), '#059669');
+      if (loginPasswordInput) loginPasswordInput.value = '';
+      await pullEverythingFromCloud();
+    } else {
+      setLoginStatus('Account requested — check your email.', '#059669');
+    }
+  } catch (e) {
+    setLoginStatus('✗ ' + (e.message || 'Sign-up failed'), '#dc2626');
+  }
+}
+const loginSigninBtn = document.getElementById('login-signin');
+const loginSignupBtn = document.getElementById('login-signup');
+if (loginSigninBtn) loginSigninBtn.onclick = handleLoginModalSignIn;
+if (loginSignupBtn) loginSignupBtn.onclick = handleLoginModalSignUp;
+[loginEmailInput, loginPasswordInput].forEach(el => {
+  if (!el) return;
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleLoginModalSignIn(); } };
+});
+
 // Restore session on page load (if Supabase is configured)
 (async function autoSyncOnLoad() {
   if (!isSbConfigured()) return;
@@ -3325,6 +3382,9 @@ if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
       updateAuthUI(session.user);
       // Background: pull everything so the UI matches the cloud
       pullEverythingFromCloud().catch(()=>{});
+    } else {
+      // No session — show the login modal
+      updateAuthUI(null);
     }
     // Listen for auth changes (e.g., token refresh, sign-out from another tab)
     const sb = await getSupabaseClient();
