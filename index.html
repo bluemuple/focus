@@ -106,6 +106,54 @@
   .btn.danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; font-weight: 700; }
   .btn.danger:hover { background: #fee2e2; }
 
+  /* Pomodoro inline display on a task row */
+  .pomodoro-display {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+    font-size: .85rem; font-weight: 600;
+    margin-left: auto;
+  }
+  .pomodoro-display.work       { background: #fff7e6; border-color: #fcd34d; color: #92400e; }
+  .pomodoro-display.short-break{ background: #ecfdf5; border-color: #6ee7b7; color: #065f46; }
+  .pomodoro-display.long-break { background: #ede9fe; border-color: #c4b5fd; color: #5b21b6; }
+  .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
+  .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
+
+  /* Modal */
+  .modal {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .modal.hidden { display: none; }
+  .modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .modal-content {
+    position: relative; background: #fff;
+    padding: 22px;
+    border-radius: 12px;
+    min-width: 280px; max-width: 92vw; width: 360px;
+    box-shadow: 0 4px 32px rgba(0,0,0,.25);
+  }
+  .modal-content h3 { font-size: 1.1rem; }
+  .time-edit-inputs { display: grid; gap: 10px; margin-bottom: 16px; }
+  .time-edit-inputs label {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-weight: 600; color: #374151; font-size: .9rem;
+  }
+  .time-edit-inputs input[type="time"] {
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; font-variant-numeric: tabular-nums;
+  }
+
+  /* Make gauge segments visibly clickable */
+  .gauge-segment { cursor: pointer; }
+
   main { padding: 16px; max-width: 1200px; margin: 0 auto; }
   .panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
@@ -159,6 +207,15 @@
     display: flex; flex-direction: column; gap: 6px;
   }
   .time-goals .goal label { font-size: .85rem; color: #374151; font-weight: 600; }
+  .time-goals .goal .goal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .time-goals .goal .reset-btn {
+    background: transparent; border: 1px solid var(--line);
+    padding: 0 7px; height: 22px; line-height: 1; border-radius: 999px;
+    font-size: .9rem; color: #9ca3af; cursor: pointer; font-weight: 700;
+  }
+  .time-goals .goal .reset-btn:hover { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
   .time-goals .goal input[type="time"],
   .time-goals .goal input[type="date"] {
     border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: #fff; font: inherit;
@@ -642,19 +699,28 @@
       <h2>Time Start &amp; Goals</h2>
       <div class="time-goals">
         <div class="goal">
-          <label>Starting Date &amp; Time</label>
+          <div class="goal-head">
+            <label>Starting Date &amp; Time</label>
+            <button class="reset-btn" data-reset="start" type="button" title="Clear">×</button>
+          </div>
           <input type="date" id="start-date">
           <input type="time" id="start-time">
           <div class="help">Gauge starts 30 min before this time</div>
         </div>
         <div class="goal">
-          <label for="deadline">I'll get things done by</label>
+          <div class="goal-head">
+            <label for="deadline">I'll get things done by</label>
+            <button class="reset-btn" data-reset="deadline" type="button" title="Clear">×</button>
+          </div>
           <input type="date" id="deadline-date">
           <input type="time" id="deadline">
           <div class="countdown" id="deadline-cd">—</div>
         </div>
         <div class="goal">
-          <label for="bedtime">I'm going to sleep at</label>
+          <div class="goal-head">
+            <label for="bedtime">I'm going to sleep at</label>
+            <button class="reset-btn" data-reset="bedtime" type="button" title="Clear">×</button>
+          </div>
           <input type="date" id="bedtime-date">
           <input type="time" id="bedtime">
           <div class="countdown" id="bedtime-cd">—</div>
@@ -736,7 +802,24 @@
 alter table focus_sessions enable row level security;
 create policy "anon read"   on focus_sessions for select using (true);
 create policy "anon insert" on focus_sessions for insert with check (true);
-create policy "anon delete" on focus_sessions for delete using (true);</pre>
+create policy "anon delete" on focus_sessions for delete using (true);
+
+-- Settings sync (motivational quotes + custom Others factors)
+create table if not exists user_settings (
+  user_id text primary key,
+  motivational_lines text,
+  ext_others jsonb,
+  int_others jsonb,
+  tasks jsonb,
+  updated_at timestamptz default now()
+);
+-- If you ran the older schema previously, also run:
+alter table user_settings add column if not exists tasks jsonb;
+alter table user_settings enable row level security;
+create policy "anon read s"   on user_settings for select using (true);
+create policy "anon insert s" on user_settings for insert with check (true);
+create policy "anon update s" on user_settings for update using (true);
+create policy "anon delete s" on user_settings for delete using (true);</pre>
         <p class="help" style="margin-top:6px;">Note: with the anon key + permissive policies above, anyone holding the key can read/write rows. For a personal app this is fine; use Supabase Auth for stricter isolation.</p>
       </details>
       <div class="sb-form">
@@ -803,12 +886,9 @@ create policy "anon delete" on focus_sessions for delete using (true);</pre>
         </div>
 
         <div class="panel" style="margin:0;">
-          <div class="row-flex" style="justify-content: space-between;">
-            <h3 style="margin:0;">Tasks</h3>
-            <button class="btn" id="edit-matrix">Edit matrix</button>
-          </div>
+          <h3 style="margin:0;">Tasks</h3>
           <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
-          <div class="double-tap-hint">Tap a task's text to start/stop its timer; tap the checkbox to complete.</div>
+          <div class="double-tap-hint">Tap a task to start a 25-min Pomodoro (Work → Good Break → ...). Tap again to stop.</div>
         </div>
 
         <div class="panel" style="margin:0;">
@@ -861,6 +941,24 @@ create policy "anon delete" on focus_sessions for delete using (true);</pre>
     </div>
   </section>
 </main>
+
+<!-- Segment edit modal -->
+<div class="modal hidden" id="segment-edit-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="segment-modal-backdrop"></div>
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Edit segment time</h3>
+    <p class="help" id="segment-edit-name" style="margin:0 0 12px;"></p>
+    <div class="time-edit-inputs">
+      <label><span>Starting time</span><input type="time" id="segment-start"></label>
+      <label><span>Ending time</span><input type="time" id="segment-end"></label>
+    </div>
+    <div class="actions">
+      <button class="btn danger" id="segment-delete">Delete</button>
+      <button class="btn" id="segment-cancel">Cancel</button>
+      <button class="btn primary" id="segment-save">Save</button>
+    </div>
+  </div>
+</div>
 
 <script>
 /* ===========================================================
@@ -944,7 +1042,8 @@ const defaultState = () => ({
   },
   // Single-timer enforcement: at most one of these is "running" at a time.
   // activeTimer represents the timer that is currently ticking.
-  activeTimer: null,  // { type: 'task-up'|'task-down'|'muncher', q,idx | manaIdx, startedAt }
+  activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
+  pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work session, resets after long break
   watchLog: [],
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
   motivationalCurrent: null,  // { text, selectedAt }
@@ -952,7 +1051,8 @@ const defaultState = () => ({
   // Cloud sync (Supabase) — all optional. Empty = local-only.
   sbUrl: '',
   sbKey: '',
-  sbUserId: 'me'
+  sbUserId: 'me',
+  settingsUpdatedAt: 0   // last local change to settings (motivation/others) for last-write-wins sync
 });
 
 let state = loadState();
@@ -1006,6 +1106,12 @@ function migrateState() {
   if (state.sbUrl == null) state.sbUrl = '';
   if (state.sbKey == null) state.sbKey = '';
   if (state.sbUserId == null) state.sbUserId = 'me';
+  if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
+  if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
+  // Clear out any legacy task-up/task-down/task-text active timers
+  if (state.activeTimer && ['task-up','task-down','task-text'].includes(state.activeTimer.type)) {
+    state.activeTimer = null;
+  }
   saveState();
 }
 function ensureTaskTimers(task) {
@@ -1098,10 +1204,11 @@ async function deleteAllStatsFromCloud() {
   try {
     const sb = await getSupabaseClient();
     if (!sb) return;
-    const { error } = await sb.from(SB_TABLE)
-      .delete()
-      .eq('user_id', state.sbUserId || 'me');
-    if (error) console.warn('Supabase delete error:', error);
+    const userId = state.sbUserId || 'me';
+    const r1 = await sb.from(SB_TABLE).delete().eq('user_id', userId);
+    if (r1.error) console.warn('Supabase delete error (sessions):', r1.error);
+    const r2 = await sb.from(SB_SETTINGS_TABLE).delete().eq('user_id', userId);
+    if (r2.error) console.warn('Supabase delete error (settings):', r2.error);
   } catch(e) { console.warn('Supabase delete failed:', e); }
 }
 // Pull from cloud, then push any local entries not yet there.
@@ -1114,6 +1221,83 @@ async function syncStatsBidi() {
   const final = (await fetchStatsFromCloud()) || remote;
   stats = final.sort((a, b) => b.timestamp - a.timestamp);
   saveStats();
+  // Also sync user settings (motivational quotes + Others factors)
+  await syncSettingsBidi();
+}
+
+/* ---- Settings sync (motivational quotes, ext.others, int.others) ---- */
+const SB_SETTINGS_TABLE = 'user_settings';
+function markSettingsChanged() {
+  state.settingsUpdatedAt = Date.now();
+  saveState();
+}
+async function pushSettingsToCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return false;
+    const ts = state.settingsUpdatedAt || Date.now();
+    const { error } = await sb.from(SB_SETTINGS_TABLE).upsert({
+      user_id: state.sbUserId || 'me',
+      motivational_lines: state.motivationalLines || '',
+      ext_others: state.ext.others || [],
+      int_others: state.int.others || [],
+      tasks: state.tasks || { q1: [], q2: [], q3: [], q4: [] },
+      updated_at: new Date(ts).toISOString()
+    }, { onConflict: 'user_id' });
+    if (error) { console.warn('Settings push error:', error); return false; }
+    return true;
+  } catch (e) { console.warn('Settings push failed:', e); return false; }
+}
+async function fetchSettingsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return null;
+    const { data, error } = await sb.from(SB_SETTINGS_TABLE)
+      .select('*')
+      .eq('user_id', state.sbUserId || 'me')
+      .maybeSingle();
+    if (error) { console.warn('Settings fetch error:', error); return null; }
+    return data;
+  } catch (e) { console.warn('Settings fetch failed:', e); return null; }
+}
+async function syncSettingsBidi() {
+  const remote = await fetchSettingsFromCloud();
+  const localTs = state.settingsUpdatedAt || 0;
+  if (remote) {
+    const remoteTs = new Date(remote.updated_at).getTime();
+    if (remoteTs > localTs) {
+      // Cloud is newer — apply to local
+      if (typeof remote.motivational_lines === 'string') {
+        state.motivationalLines = remote.motivational_lines;
+        if (motInputEl) motInputEl.value = state.motivationalLines;
+      }
+      if (Array.isArray(remote.ext_others)) state.ext.others = remote.ext_others;
+      if (Array.isArray(remote.int_others)) state.int.others = remote.int_others;
+      if (remote.tasks && typeof remote.tasks === 'object') {
+        ['q1','q2','q3','q4'].forEach(q => {
+          if (Array.isArray(remote.tasks[q])) state.tasks[q] = remote.tasks[q];
+        });
+      }
+      state.settingsUpdatedAt = remoteTs;
+      saveState();
+      if (typeof renderOthers === 'function') {
+        renderOthers('ext'); recomputeSlider('ext');
+        renderOthers('int'); recomputeSlider('int');
+      }
+      if (typeof renderTasks === 'function') renderTasks();
+      refreshMotivation(false);
+      return;
+    }
+  }
+  // Cloud missing or older — push local
+  await pushSettingsToCloud();
+}
+// Debounced settings push (useful for fast-typing in motivational textarea)
+let _settingsPushTimer = null;
+function debouncedPushSettings() {
+  markSettingsChanged();
+  if (_settingsPushTimer) clearTimeout(_settingsPushTimer);
+  _settingsPushTimer = setTimeout(() => pushSettingsToCloud(), 800);
 }
 
 /* ===========================================================
@@ -1154,7 +1338,6 @@ document.getElementById('go-focus').onclick = ()=>{
   saveState();
   showPage('focus');
 };
-document.getElementById('edit-matrix').onclick = ()=>showPage('setup');
 document.getElementById('finish-studying').onclick = finishStudying;
 document.getElementById('reset-all').onclick = () => {
   if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
@@ -1185,9 +1368,22 @@ function renderTasks() {
         <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
         <button class="x" title="delete">×</button>`;
       const [cb, txt, del] = row.children;
-      cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); txt.classList.toggle('done', cb.checked); };
-      txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); };
-      del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); };
+      cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); txt.classList.toggle('done', cb.checked); markSettingsChanged(); debouncedPushSettings(); };
+      txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); markSettingsChanged(); debouncedPushSettings(); };
+      txt.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          // Add a new empty task in the same quadrant and focus its input
+          state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
+          saveState(); renderTasks();
+          const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+          if (wrap && wrap.lastElementChild) {
+            const newInput = wrap.lastElementChild.querySelector('.task-text');
+            if (newInput) newInput.focus();
+          }
+        }
+      };
+      del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
       wrap.appendChild(row);
     });
   });
@@ -1224,6 +1420,7 @@ document.querySelectorAll('.add-task').forEach(btn => {
     const q = btn.dataset.q;
     state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
     saveState(); renderTasks();
+    markSettingsChanged(); pushSettingsToCloud();
     const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
     const last = wrap.lastElementChild;
     if (last) last.querySelector('.task-text').focus();
@@ -1253,6 +1450,27 @@ if (dlDateInput) dlDateInput.oninput = () => { state.deadlineDate = dlDateInput.
 if (btDateInput) btDateInput.oninput = () => { state.bedtimeDate = btDateInput.value; saveState(); updateCountdowns(); drawGauge(); };
 if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); };
 if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); };
+
+// Reset (clear) buttons in the time-goal headers
+document.querySelectorAll('.time-goals .reset-btn[data-reset]').forEach(btn => {
+  btn.onclick = () => {
+    const which = btn.dataset.reset;
+    if (which === 'start') {
+      state.startDate = ''; state.startTime = '';
+      if (sdInput) sdInput.value = '';
+      if (stInput) stInput.value = '';
+    } else if (which === 'deadline') {
+      state.deadline = ''; state.deadlineDate = '';
+      dlInput.value = '';
+      if (dlDateInput) dlDateInput.value = '';
+    } else if (which === 'bedtime') {
+      state.bedtime = ''; state.bedtimeDate = '';
+      btInput.value = '';
+      if (btDateInput) btDateInput.value = '';
+    }
+    saveState(); updateCountdowns(); drawGauge();
+  };
+});
 
 // Combine an optional date (YYYY-MM-DD) and time (HH:MM) into a timestamp.
 // If date is missing, treats the time as today's time.
@@ -1528,6 +1746,7 @@ function renderOthers(side) {
     div.innerHTML = `<span style="flex:1">${escapeHTML(o.text)}</span><span class="scr">${o.score>0?'+':''}${o.score}</span><button>×</button>`;
     div.querySelector('button').onclick = () => {
       state[side].others.splice(i,1); saveState(); renderOthers(side); recomputeSlider(side);
+      markSettingsChanged(); pushSettingsToCloud();
     };
     list.appendChild(div);
   });
@@ -1540,6 +1759,7 @@ function setupOtherAdd(side) {
     state[side].others.push({ text: t.value.trim(), score: +s.value });
     t.value = ''; s.value = '';
     saveState(); renderOthers(side); recomputeSlider(side);
+    markSettingsChanged(); pushSettingsToCloud();
   };
 }
 setupOtherAdd('ext'); setupOtherAdd('int');
@@ -1578,44 +1798,6 @@ function fmtHMS(ms) {
   const s = totalSec % 60;
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
 }
-function getUpMs(task) {
-  ensureTaskTimers(task);
-  if (state.activeTimer && state.activeTimer.type==='task-up'
-      && state.tasks[state.activeTimer.q][state.activeTimer.idx] === task) {
-    return task.upTimer.accumulatedMs + (Date.now() - state.activeTimer.startedAt);
-  }
-  return task.upTimer.accumulatedMs;
-}
-function getDownMs(task) {
-  ensureTaskTimers(task);
-  if (state.activeTimer && state.activeTimer.type==='task-down'
-      && state.tasks[state.activeTimer.q][state.activeTimer.idx] === task) {
-    return Math.max(0, task.downTimer.remainingMs - (Date.now() - state.activeTimer.startedAt));
-  }
-  return task.downTimer.remainingMs;
-}
-function resetUpFor(q, i) {
-  // Reset clears regardless of running state
-  if (state.activeTimer && state.activeTimer.type==='task-up'
-      && state.activeTimer.q===q && state.activeTimer.idx===i) {
-    stopActiveTimer('reset');
-  }
-  ensureTaskTimers(state.tasks[q][i]);
-  state.tasks[q][i].upTimer = { state: 'idle', accumulatedMs: 0, startedAt: 0 };
-  saveState(); renderFocusMatrix(); renderWatchLog(); drawGauge();
-}
-function resetDownFor(q, i) {
-  if (state.activeTimer && state.activeTimer.type==='task-down'
-      && state.activeTimer.q===q && state.activeTimer.idx===i) {
-    stopActiveTimer('reset');
-  }
-  ensureTaskTimers(state.tasks[q][i]);
-  const t = state.tasks[q][i];
-  t.downTimer = { state: 'idle', durationMs: 0, remainingMs: 0, startedAt: 0,
-    settingMin: t.downTimer.settingMin || 25, settingSec: 0 };
-  saveState(); renderFocusMatrix(); renderWatchLog(); drawGauge();
-}
-
 function renderFocusMatrix() {
   const root = document.getElementById('focus-matrix');
   const order = ['q1','q2','q3','q4'];
@@ -1633,24 +1815,32 @@ function renderFocusMatrix() {
     const tasksDiv = cell.querySelector('.tasks');
     state.tasks[q].forEach((t, i) => {
       if (!t.text.trim()) return;
-      ensureTaskTimers(t);
       const row = document.createElement('div');
       row.className = 'task-row';
       const at = state.activeTimer;
-      const isRunning = at && (at.type==='task-text'||at.type==='task-up'||at.type==='task-down') && at.q===q && at.idx===i;
+      const isPomo = at && at.type==='pomodoro' && at.q===q && at.idx===i;
       row.innerHTML = `
         <input type="checkbox" ${t.done?'checked':''}>
-        <span class="task-text ${t.done?'done':''} ${isRunning?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>`;
+        <span class="task-text ${t.done?'done':''} ${isPomo?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>`;
       const cb = row.children[0], textEl = row.children[1];
-      cb.onchange = () => { state.tasks[q][i].done = cb.checked; saveState(); renderFocusMatrix(); };
+      cb.onchange = () => {
+        state.tasks[q][i].done = cb.checked;
+        saveState();
+        markSettingsChanged(); debouncedPushSettings();
+        renderFocusMatrix();
+      };
       textEl.onclick = () => toggleTaskTimer(q, i);
 
-      // Timer controls (Down + Up)
-      const timers = document.createElement('div');
-      timers.className = 'task-timers';
-      timers.appendChild(buildDownBlock(q, i, t));
-      timers.appendChild(buildUpBlock(q, i, t));
-      row.appendChild(timers);
+      // Inline pomodoro display when this task is currently running
+      if (isPomo) {
+        const remaining = getPomodoroRemainingMs();
+        const totalSec = Math.max(0, Math.floor(remaining / 1000));
+        const m = Math.floor(totalSec / 60), s = totalSec % 60;
+        const display = document.createElement('span');
+        display.className = `pomodoro-display ${at.phase}`;
+        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}</span>`;
+        row.appendChild(display);
+      }
 
       tasksDiv.appendChild(row);
     });
@@ -1661,105 +1851,35 @@ function renderFocusMatrix() {
   });
 }
 
-function isThisTaskRunning(q, i, type) {
-  return state.activeTimer && state.activeTimer.type===type
-    && state.activeTimer.q===q && state.activeTimer.idx===i;
-}
-function buildDownBlock(q, i, t) {
-  const d = t.downTimer;
-  const block = document.createElement('div');
-  const running = isThisTaskRunning(q, i, 'task-down');
-  block.className = 'timer-block down' + (d.state === 'done' ? ' done' : '');
-  block.title = 'Countdown timer';
-  if (d.state === 'idle') {
-    block.innerHTML = `
-      <span class="ico">▼</span>
-      <input class="t-input min-only" type="number" min="0" max="999" value="${d.settingMin||25}" aria-label="minutes">
-      <span style="opacity:.5">m</span>
-      <button class="t-btn go" title="Start">Go</button>`;
-    const minIn = block.querySelector('.t-input');
-    const goBtn = block.querySelector('.go');
-    minIn.oninput = ()=>{ t.downTimer.settingMin = +minIn.value || 0; saveState(); };
-    goBtn.onclick = ()=> startTaskDownTimer(q, i, +minIn.value || 0);
-  } else {
-    const ms = getDownMs(t);
-    block.innerHTML = `
-      <span class="ico">▼</span>
-      <span class="t-display">${fmtMs(ms)}</span>
-      <button class="t-btn play-pause" title="${running?'Pause':'Resume'}">${running?'⏸':'▶'}</button>
-      <button class="t-btn reset" title="Reset">⟲</button>`;
-    block.querySelector('.play-pause').onclick = ()=>{
-      if (running) pauseTaskDown(q, i);
-      else resumeTaskDownTimer(q, i);
-    };
-    block.querySelector('.reset').onclick = ()=> resetDownFor(q, i);
-  }
-  return block;
-}
-
-function buildUpBlock(q, i, t) {
-  const u = t.upTimer;
-  const running = isThisTaskRunning(q, i, 'task-up');
-  const block = document.createElement('div');
-  block.className = 'timer-block up';
-  block.title = 'Stopwatch';
-  if (u.state === 'idle' && !running) {
-    block.innerHTML = `
-      <span class="ico">▲</span>
-      <span class="t-display">00m00s</span>
-      <button class="t-btn play-pause" title="Start">▶</button>`;
-    block.querySelector('.play-pause').onclick = ()=> startTaskUpTimer(q, i);
-  } else {
-    const ms = getUpMs(t);
-    block.innerHTML = `
-      <span class="ico">▲</span>
-      <span class="t-display">${fmtMs(ms)}</span>
-      <button class="t-btn play-pause" title="${running?'Pause':'Resume'}">${running?'⏸':'▶'}</button>
-      <button class="t-btn reset" title="Reset">⟲</button>`;
-    block.querySelector('.play-pause').onclick = ()=>{
-      if (running) pauseTaskUp(q, i);
-      else startTaskUpTimer(q, i);
-    };
-    block.querySelector('.reset').onclick = ()=> resetUpFor(q, i);
-  }
-  return block;
-}
-
-// Live tick: update visible timer displays without re-rendering whole matrix
+// Live tick: update visible pomodoro display without re-rendering whole matrix
 function tickTaskTimers() {
-  document.querySelectorAll('#focus-matrix .timer-block').forEach(block => {
-    const display = block.querySelector('.t-display');
-    if (!display) return;
-    // Find the corresponding task by walking up to row, then find by text
-    const row = block.closest('.task-row');
-    if (!row) return;
-    const textEl = row.querySelector('.task-text');
-    if (!textEl) return;
-    const text = textEl.textContent;
-    let task = null;
-    for (const q of ['q1','q2','q3','q4']) {
-      const f = state.tasks[q].find(x => (x.text||'(unnamed)') === text);
-      if (f) { task = f; break; }
+  // Phase transitions handled separately
+  tickPomodoro();
+  // Live update the inline pomodoro time display (avoid full re-render every second)
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro') {
+    const display = document.querySelector('#focus-matrix .pomodoro-display');
+    if (display) {
+      const remaining = getPomodoroRemainingMs();
+      const totalSec = Math.max(0, Math.floor(remaining / 1000));
+      const m = Math.floor(totalSec / 60), s = totalSec % 60;
+      const timeEl = display.querySelector('.time');
+      if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
+      // Update class if phase changed without full rerender
+      display.className = `pomodoro-display ${at.phase}`;
+      const phaseEl = display.querySelector('.phase-name');
+      if (phaseEl) phaseEl.textContent = '· ' + pomodoroPhaseLabel(at.phase);
     }
-    if (!task) return;
-    if (block.classList.contains('down')) {
-      const ms = getDownMs(task);
-      display.textContent = fmtMs(ms);
-      if (task.downTimer.state === 'running' && ms <= 0) {
-        // hit zero — mark done and re-render
-        task.downTimer.state = 'done';
-        task.downTimer.remainingMs = 0;
-        saveState(); renderFocusMatrix();
-      }
-    } else if (block.classList.contains('up')) {
-      display.textContent = fmtMs(getUpMs(task));
-    }
-  });
+  }
 }
 
 /* ---- Single active-timer model ----
    Only ONE timer ticks at a time. Starting any new timer stops the current
    one (recording its session) before activating. */
+const POMO_WORK_MS  = 25 * 60 * 1000;
+const POMO_SHORT_MS =  5 * 60 * 1000;
+const POMO_LONG_MS  = 15 * 60 * 1000;
+
 function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   const at = state.activeTimer;
   if (!at) return null;
@@ -1768,25 +1888,23 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
 
   // Record the session in timeSegments + watchLog
   let logEntry = { startedAt: at.startedAt, endedAt: now, durationMs: dur, penalty: 0 };
-  if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+  if (at.type === 'pomodoro') {
     const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (task) {
-      // Persist accumulated time to the right counter
-      if (at.type === 'task-up') {
-        ensureTaskTimers(task);
-        task.upTimer.accumulatedMs += dur;
-        task.upTimer.state = (reason === 'reset') ? 'idle' : 'paused';
-      } else if (at.type === 'task-down') {
-        ensureTaskTimers(task);
-        task.downTimer.remainingMs = Math.max(0, task.downTimer.remainingMs - dur);
-        task.downTimer.state = (reason === 'reset') ? 'idle' : 'paused';
-      } else { // task-text (legacy click-on-text tracker)
-        task.elapsedMs = (task.elapsedMs || 0) + dur;
-      }
+      task.elapsedMs = (task.elapsedMs || 0) + dur;
+      logEntry.type = 'pomodoro';
+      logEntry.q = at.q;
+      logEntry.name = task.text || '(task)';
+      state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
+    }
+  } else if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+    // Legacy timer types — kept just for backwards-compat cleanup
+    const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (task) {
+      task.elapsedMs = (task.elapsedMs || 0) + dur;
       logEntry.type = at.type;
       logEntry.q = at.q;
-      logEntry.name = (task.text || '(task)') + (at.type === 'task-down' ? ' ▼' : at.type === 'task-up' ? ' ▲' : '');
-      // also push a segment for the gauge persistence
+      logEntry.name = task.text || '(task)';
       state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
     }
   } else if (at.type === 'muncher') {
@@ -1810,50 +1928,61 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   return logEntry;
 }
 
-function startTaskUpTimer(q, i) {
-  ensureTaskTimers(state.tasks[q][i]);
+/* ---- Pomodoro timer ----
+   Click task → 25m work → auto 5m break → stop.
+   After 4 work sessions in a row, the next break is 15m ("Sweet Long Break"),
+   then the cycle counter resets. The whole work+break is logged as one segment. */
+function startPomodoro(q, i) {
   stopActiveTimer('switch');
-  const t = state.tasks[q][i];
-  t.upTimer.state = 'running';
-  state.activeTimer = { type: 'task-up', q, idx: i, startedAt: Date.now() };
-  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+  const now = Date.now();
+  state.activeTimer = {
+    type: 'pomodoro',
+    q, idx: i,
+    startedAt: now,           // start of the WHOLE pomodoro (work + break)
+    phase: 'work',
+    phaseStartedAt: now,
+    phaseDurationMs: POMO_WORK_MS
+  };
+  saveState();
+  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
 }
-function startTaskDownTimer(q, i, minutes) {
-  ensureTaskTimers(state.tasks[q][i]);
-  stopActiveTimer('switch');
-  const t = state.tasks[q][i];
-  const dur = (Math.max(0, +minutes || 0)) * 60 * 1000;
-  if (!dur) return;
-  t.downTimer = { state: 'running', durationMs: dur, remainingMs: dur, startedAt: Date.now(), settingMin: +minutes || 0, settingSec: 0 };
-  state.activeTimer = { type: 'task-down', q, idx: i, startedAt: Date.now() };
-  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+function getPomodoroRemainingMs() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return 0;
+  return Math.max(0, at.phaseDurationMs - (Date.now() - at.phaseStartedAt));
 }
-function resumeTaskDownTimer(q, i) {
-  ensureTaskTimers(state.tasks[q][i]);
-  stopActiveTimer('switch');
-  const t = state.tasks[q][i];
-  t.downTimer.state = 'running';
-  state.activeTimer = { type: 'task-down', q, idx: i, startedAt: Date.now() };
-  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+function pomodoroPhaseLabel(phase) {
+  if (phase === 'work') return 'Work';
+  if (phase === 'short-break') return 'Good Break';
+  if (phase === 'long-break') return 'Sweet Long Break';
+  return '';
 }
+function tickPomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return;
+  if (getPomodoroRemainingMs() > 0) return;
+  // Phase ended — transition.
+  if (at.phase === 'work') {
+    const isLong = (state.pomodoroSessionsInCycle || 0) >= 3;
+    at.phase = isLong ? 'long-break' : 'short-break';
+    at.phaseStartedAt = Date.now();
+    at.phaseDurationMs = isLong ? POMO_LONG_MS : POMO_SHORT_MS;
+    saveState();
+    renderFocusMatrix();
+  } else {
+    // Break finished — log the whole pomodoro and reset/increment counter.
+    const wasLong = at.phase === 'long-break';
+    if (wasLong) state.pomodoroSessionsInCycle = 0;
+    else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
+    stopActiveTimer('finish');
+    renderFocusMatrix(); renderWatchLog(); drawGauge();
+  }
+}
+
 function startMuncherTimer(manaIdx) {
   stopActiveTimer('switch');
   state.activeTimer = { type: 'muncher', manaIdx, startedAt: Date.now() };
   saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
-}
-function pauseTaskUp(q, i) {
-  if (state.activeTimer && state.activeTimer.type==='task-up' && state.activeTimer.q===q && state.activeTimer.idx===i) {
-    stopActiveTimer('pause');
-  } else {
-    // not the active timer — already paused; just no-op
-  }
-  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
-}
-function pauseTaskDown(q, i) {
-  if (state.activeTimer && state.activeTimer.type==='task-down' && state.activeTimer.q===q && state.activeTimer.idx===i) {
-    stopActiveTimer('pause');
-  }
-  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
 }
 function stopMuncherTimer(manaIdx) {
   if (state.activeTimer && state.activeTimer.type==='muncher' && state.activeTimer.manaIdx===manaIdx) {
@@ -1866,17 +1995,16 @@ function clickMuncherTimer(manaIdx) {
   if (at && at.type==='muncher' && at.manaIdx===manaIdx) stopMuncherTimer(manaIdx);
   else startMuncherTimer(manaIdx);
 }
-// Legacy click-on-text task tracker (kept for backwards compatibility — also single-timer governed)
+// Click on task text → toggle pomodoro
 function toggleTaskTimer(q, i) {
   const at = state.activeTimer;
-  if (at && at.type === 'task-text' && at.q === q && at.idx === i) {
+  if (at && at.type === 'pomodoro' && at.q === q && at.idx === i) {
+    // Already running for this task — stop and log
     stopActiveTimer('finish');
+    renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
   } else {
-    stopActiveTimer('switch');
-    state.activeTimer = { type: 'task-text', q, idx: i, startedAt: Date.now() };
-    saveState();
+    startPomodoro(q, i);
   }
-  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
 }
 
 function formatElapsed(ms) {
@@ -2023,15 +2151,82 @@ function addGaugeSegment(parent, pct, seg, isActive) {
   div.style.top = top + '%';
   div.style.height = height + '%';
   div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
-  div.title = seg.name || ''; // hover balloon shows name
+  div.title = seg.name || '';
   if (height >= 3 && seg.name) {
     const lbl = document.createElement('div');
     lbl.className = 'gauge-task-label';
     lbl.textContent = seg.name;
     div.appendChild(lbl);
   }
+  // Click to edit (only completed/past segments — active timer should be stopped first)
+  if (!isActive) {
+    div.onclick = (e) => { e.stopPropagation(); openSegmentEditModal(seg); };
+  } else {
+    div.title = (seg.name || '') + ' (running — tap the task in the list to stop)';
+  }
   parent.appendChild(div);
 }
+
+/* ---- Segment edit modal ---- */
+let _editingSegment = null;
+function msToHHMM(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function openSegmentEditModal(seg) {
+  _editingSegment = seg;
+  const modal = document.getElementById('segment-edit-modal');
+  const nameEl = document.getElementById('segment-edit-name');
+  const startIn = document.getElementById('segment-start');
+  const endIn = document.getElementById('segment-end');
+  if (nameEl) nameEl.textContent = seg.name || '(segment)';
+  if (startIn) startIn.value = msToHHMM(seg.startMs);
+  if (endIn)   endIn.value   = msToHHMM(seg.endMs);
+  modal.classList.remove('hidden');
+}
+function closeSegmentEditModal() {
+  _editingSegment = null;
+  document.getElementById('segment-edit-modal').classList.add('hidden');
+}
+function saveSegmentEdit() {
+  if (!_editingSegment) return;
+  const startStr = document.getElementById('segment-start').value;
+  const endStr = document.getElementById('segment-end').value;
+  if (!startStr || !endStr) { closeSegmentEditModal(); return; }
+  const seg = _editingSegment;
+  // Apply HH:MM to the same calendar dates that the segment originally used.
+  function applyTime(orig, hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    const d = new Date(orig);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  }
+  let newStart = applyTime(seg.startMs, startStr);
+  let newEnd   = applyTime(seg.endMs,   endStr);
+  if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000; // crossed midnight
+  seg.startMs = newStart;
+  seg.endMs   = newEnd;
+  saveState();
+  drawGauge(); renderWatchLog();
+  closeSegmentEditModal();
+}
+function deleteSegmentEdit() {
+  if (!_editingSegment) return;
+  const idx = state.timeSegments.indexOf(_editingSegment);
+  if (idx >= 0) state.timeSegments.splice(idx, 1);
+  saveState();
+  drawGauge(); renderWatchLog();
+  closeSegmentEditModal();
+}
+// Wire the modal once
+(function () {
+  const modal = document.getElementById('segment-edit-modal');
+  if (!modal) return;
+  document.getElementById('segment-cancel').onclick = closeSegmentEditModal;
+  document.getElementById('segment-save').onclick   = saveSegmentEdit;
+  document.getElementById('segment-delete').onclick = deleteSegmentEdit;
+  document.getElementById('segment-modal-backdrop').onclick = closeSegmentEditModal;
+})();
 
 function activeTimerToSegment(at, now) {
   if (!at) return null;
@@ -2403,7 +2598,8 @@ if (motInputEl) {
   motInputEl.oninput = () => {
     state.motivationalLines = motInputEl.value;
     saveState();
-    refreshMotivation();   // re-pick if necessary
+    refreshMotivation();    // re-pick if necessary
+    debouncedPushSettings(); // sync to cloud (debounced)
   };
 }
 
