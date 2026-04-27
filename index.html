@@ -130,9 +130,9 @@
     font-size: .85rem; font-weight: 600;
     margin-left: auto;
   }
-  .pomodoro-display.work       { background: #fff7e6; border-color: #fcd34d; color: #92400e; }
-  .pomodoro-display.short-break{ background: #ecfdf5; border-color: #6ee7b7; color: #065f46; }
-  .pomodoro-display.long-break { background: #ede9fe; border-color: #c4b5fd; color: #5b21b6; }
+  .pomodoro-display.work       { background: #fce7f3; border-color: #fbcfe8; color: #9d174d; }  /* pink */
+  .pomodoro-display.short-break{ background: #d1fae5; border-color: #86efac; color: #065f46; }  /* light green */
+  .pomodoro-display.long-break { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }  /* light blue */
   .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
   .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
 
@@ -733,13 +733,20 @@
 
   /* activity log */
   .watch-log-entry {
-    display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px;
+    display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 6px;
     align-items: center;
     font-size: .85rem; padding: 6px 10px;
     border-radius: 6px; margin-bottom: 4px;
     font-variant-numeric: tabular-nums;
     background: #f8fafc; border: 1px solid var(--line);
   }
+  .watch-log-entry .watch-action-btn {
+    background: transparent; border: none; cursor: pointer;
+    color: #6b7280; padding: 3px 7px; border-radius: 4px;
+    font-size: .85rem; line-height: 1;
+  }
+  .watch-log-entry .watch-action-btn:hover { background: #e5e7eb; color: #2563eb; }
+  .watch-log-entry .watch-action-btn.danger:hover { background: #fef2f2; color: #dc2626; }
   .watch-log-entry .badge {
     font-size: .68rem; padding: 1px 6px; border-radius: 999px;
     background: #e5e7eb; color: #374151; font-weight: 700;
@@ -856,6 +863,10 @@
     .row-input button { padding: 6px 8px; font-size: .85rem; }
     .chip { font-size: .8rem; padding: 3px 8px; }
     .chip .scr { font-size: .7rem; padding: 0 5px; }
+
+    /* Pomodoro: hide phase text on phone — color is enough */
+    .pomodoro-display .phase-name { display: none; }
+    .pomodoro-display { padding: 3px 10px; gap: 0; }
 
     /* Mana — keep .mana-col strictly inside its parent .panel */
     .mana { gap: 8px; max-width: 100%; min-width: 0; }
@@ -1434,7 +1445,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -1630,6 +1641,9 @@ async function pushSettingsToCloud() {
         stress: state.int.stress,
         energy: state.int.energy
       },
+      // Mana Factors (multiplier + muncher) and Activity log
+      mana:      state.mana,
+      watch_log: state.watchLog || [],
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
     if (error) { console.warn('Settings push error:', error); return false; }
@@ -1698,6 +1712,13 @@ async function syncSettingsBidi() {
         if (typeof remote.int_factors.stress === 'number') state.int.stress = remote.int_factors.stress;
         if (typeof remote.int_factors.energy === 'number') state.int.energy = remote.int_factors.energy;
       }
+      // Mana Factors
+      if (remote.mana && typeof remote.mana === 'object') {
+        if (Array.isArray(remote.mana.multiplier)) state.mana.multiplier = remote.mana.multiplier;
+        if (Array.isArray(remote.mana.muncher))    state.mana.muncher    = remote.mana.muncher;
+      }
+      // Activity log
+      if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
       state.settingsUpdatedAt = remoteTs;
       saveState();
       if (typeof renderOthers === 'function') {
@@ -1712,6 +1733,8 @@ async function syncSettingsBidi() {
       if (typeof updateCountdowns === 'function') updateCountdowns();
       if (typeof drawGauge === 'function') drawGauge();
       if (typeof renderTasks === 'function') renderTasks();
+      if (typeof renderManaLists === 'function') renderManaLists();
+      if (typeof renderWatchLog === 'function') renderWatchLog();
       refreshMotivation(false);
       return;
     }
@@ -2504,6 +2527,7 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   state.watchLog.push(logEntry);
   state.activeTimer = null;
   saveState();
+  markSettingsChanged(); debouncedPushSettings();
   return logEntry;
 }
 
@@ -2758,12 +2782,14 @@ function addGaugeSegment(parent, pct, seg, isActive) {
 
 /* ---- Segment edit modal ---- */
 let _editingSegment = null;
+let _editingWatchLogEntry = null;
 function msToHHMM(ms) {
   const d = new Date(ms);
   return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 function openSegmentEditModal(seg) {
   _editingSegment = seg;
+  _editingWatchLogEntry = null;
   const modal = document.getElementById('segment-edit-modal');
   const nameEl = document.getElementById('segment-edit-name');
   const startIn = document.getElementById('segment-start');
@@ -2773,39 +2799,109 @@ function openSegmentEditModal(seg) {
   if (endIn)   endIn.value   = msToHHMM(seg.endMs);
   modal.classList.remove('hidden');
 }
+// Open the same modal for an Activity Log entry. Saving updates BOTH the entry
+// and the matching segment in state.timeSegments (matched by startedAt timestamp).
+function openWatchLogEditModal(entry) {
+  if (!entry) return;
+  _editingWatchLogEntry = entry;
+  // Find a matching segment to keep gauge in sync
+  _editingSegment = (state.timeSegments || []).find(s => s.startMs === entry.startedAt) || null;
+  const modal = document.getElementById('segment-edit-modal');
+  const nameEl = document.getElementById('segment-edit-name');
+  const startIn = document.getElementById('segment-start');
+  const endIn = document.getElementById('segment-end');
+  if (nameEl) nameEl.textContent = entry.name || '(activity)';
+  if (startIn) startIn.value = msToHHMM(entry.startedAt);
+  if (endIn)   endIn.value   = msToHHMM(entry.endedAt);
+  modal.classList.remove('hidden');
+}
 function closeSegmentEditModal() {
   _editingSegment = null;
+  _editingWatchLogEntry = null;
   document.getElementById('segment-edit-modal').classList.add('hidden');
 }
 function saveSegmentEdit() {
-  if (!_editingSegment) return;
   const startStr = document.getElementById('segment-start').value;
   const endStr = document.getElementById('segment-end').value;
   if (!startStr || !endStr) { closeSegmentEditModal(); return; }
-  const seg = _editingSegment;
-  // Apply HH:MM to the same calendar dates that the segment originally used.
   function applyTime(orig, hhmm) {
     const [h, m] = hhmm.split(':').map(Number);
     const d = new Date(orig);
     d.setHours(h, m, 0, 0);
     return d.getTime();
   }
-  let newStart = applyTime(seg.startMs, startStr);
-  let newEnd   = applyTime(seg.endMs,   endStr);
-  if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000; // crossed midnight
-  seg.startMs = newStart;
-  seg.endMs   = newEnd;
-  saveState();
-  drawGauge(); renderWatchLog();
+  // Editing a watch-log entry — also update the matching segment if any
+  if (_editingWatchLogEntry) {
+    const e = _editingWatchLogEntry;
+    let newStart = applyTime(e.startedAt, startStr);
+    let newEnd   = applyTime(e.endedAt,   endStr);
+    if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    e.startedAt   = newStart;
+    e.endedAt     = newEnd;
+    e.durationMs  = newEnd - newStart;
+    if (_editingSegment) {
+      _editingSegment.startMs = newStart;
+      _editingSegment.endMs   = newEnd;
+    }
+    saveState();
+    renderWatchLog(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+    return;
+  }
+  // Plain segment edit (clicked directly on the gauge)
+  if (_editingSegment) {
+    const seg = _editingSegment;
+    let newStart = applyTime(seg.startMs, startStr);
+    let newEnd   = applyTime(seg.endMs,   endStr);
+    if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    seg.startMs = newStart;
+    seg.endMs   = newEnd;
+    // Also update matching watch-log entry
+    const entry = (state.watchLog || []).find(x => x.startedAt === seg.startMs || x.endedAt === seg.endMs);
+    saveState();
+    drawGauge(); renderWatchLog();
+    markSettingsChanged(); pushSettingsToCloud();
+  }
   closeSegmentEditModal();
 }
 function deleteSegmentEdit() {
-  if (!_editingSegment) return;
-  const idx = state.timeSegments.indexOf(_editingSegment);
-  if (idx >= 0) state.timeSegments.splice(idx, 1);
+  // Delete from watch-log if editing a watch-log entry; otherwise delete segment
+  if (_editingWatchLogEntry) {
+    const entry = _editingWatchLogEntry;
+    const idx = state.watchLog.indexOf(entry);
+    if (idx >= 0) state.watchLog.splice(idx, 1);
+    if (_editingSegment) {
+      const sIdx = state.timeSegments.indexOf(_editingSegment);
+      if (sIdx >= 0) state.timeSegments.splice(sIdx, 1);
+    }
+    saveState();
+    renderWatchLog(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+    return;
+  }
+  if (_editingSegment) {
+    const idx = state.timeSegments.indexOf(_editingSegment);
+    if (idx >= 0) state.timeSegments.splice(idx, 1);
+    saveState();
+    drawGauge(); renderWatchLog();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+  }
+}
+// Convenience: delete a watch-log entry by index without opening the modal
+function deleteWatchLogEntry(idx) {
+  if (idx < 0 || idx >= state.watchLog.length) return;
+  if (!confirm('Delete this activity log entry?')) return;
+  const entry = state.watchLog[idx];
+  // Remove matching segment too
+  const sIdx = state.timeSegments.findIndex(s => s.startMs === entry.startedAt);
+  if (sIdx >= 0) state.timeSegments.splice(sIdx, 1);
+  state.watchLog.splice(idx, 1);
   saveState();
-  drawGauge(); renderWatchLog();
-  closeSegmentEditModal();
+  renderWatchLog(); drawGauge();
+  markSettingsChanged(); pushSettingsToCloud();
 }
 // Wire the modal once
 (function () {
@@ -2983,7 +3079,7 @@ function renderWatchLog() {
   wrap.style.display = '';
   list.innerHTML = '';
   let totalMs = 0, totalPen = 0;
-  state.watchLog.slice().reverse().forEach(entry => {
+  state.watchLog.slice().reverse().forEach((entry, reversedIdx) => {
     totalMs += entry.durationMs;
     totalPen += (entry.penalty || 0);
     const row = document.createElement('div');
@@ -2992,11 +3088,18 @@ function renderWatchLog() {
     if (entry.type === 'task-up') badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
     else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
     else if (entry.type === 'task-text') badge = `<span class="badge ${entry.q||''}">★ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'pomodoro') badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
     else if (entry.type === 'muncher') badge = `<span class="badge muncher">muncher</span>`;
+    // Find the real index (since we iterate reversed)
+    const realIdx = state.watchLog.length - 1 - reversedIdx;
     row.innerHTML = `
       ${badge}
       <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
-      <span class="pen">${entry.penalty ? entry.penalty : ''}</span>`;
+      <span class="pen">${entry.penalty ? entry.penalty : ''}</span>
+      <button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>
+      <button class="watch-action-btn danger" data-act="delete" data-idx="${realIdx}" title="Delete entry">×</button>`;
+    row.querySelector('[data-act="edit"]').onclick   = () => openWatchLogEditModal(state.watchLog[realIdx]);
+    row.querySelector('[data-act="delete"]').onclick = () => deleteWatchLogEntry(realIdx);
     list.appendChild(row);
   });
   total.textContent = `Total: ${fmtHMS(totalMs)} · External penalty applied: ${totalPen}`;
@@ -3052,16 +3155,23 @@ function renderManaList(kind) {
     row.querySelector('.lbl').ondblclick = (e) => {
       e.stopPropagation();
       const v = prompt('Edit name:', m.lbl);
-      if (v !== null && v.trim()) { m.lbl = v.trim(); saveState(); renderManaList(kind); }
+      if (v !== null && v.trim()) {
+        m.lbl = v.trim(); saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
+      }
     };
     row.querySelector('.scr').ondblclick = (e) => {
       e.stopPropagation();
       const v = prompt('Edit score:', m.score);
-      if (v !== null && !isNaN(+v)) { m.score = +v; saveState(); renderManaList(kind); }
+      if (v !== null && !isNaN(+v)) {
+        m.score = +v; saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
+      }
     };
     row.querySelector('button').onclick = (e) => {
       e.stopPropagation();
       state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+      markSettingsChanged(); pushSettingsToCloud();
     };
     list.appendChild(row);
   });
@@ -3072,17 +3182,19 @@ document.getElementById('mult-add').onclick = () => {
   const t = document.getElementById('mult-text').value.trim();
   const s = document.getElementById('mult-score').value;
   if (!t || s==='') return;
-  state.mana.multiplier.push({ lbl:t, score: Math.abs(+s) });
+  state.mana.multiplier.push({ lbl:t, score: +s });
   document.getElementById('mult-text').value=''; document.getElementById('mult-score').value='';
   saveState(); renderManaList('multiplier');
+  markSettingsChanged(); pushSettingsToCloud();
 };
 document.getElementById('munch-add').onclick = () => {
   const t = document.getElementById('munch-text').value.trim();
   const s = document.getElementById('munch-score').value;
   if (!t || s==='') return;
-  state.mana.muncher.push({ lbl:t, score: -Math.abs(+s) });
+  state.mana.muncher.push({ lbl:t, score: +s });
   document.getElementById('munch-text').value=''; document.getElementById('munch-score').value='';
   saveState(); renderManaList('muncher');
+  markSettingsChanged(); pushSettingsToCloud();
 };
 
 /* ---- finish session ---- */
