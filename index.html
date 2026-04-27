@@ -1644,6 +1644,13 @@ async function pushSettingsToCloud() {
       // Mana Factors (multiplier + muncher) and Activity log
       mana:      state.mana,
       watch_log: state.watchLog || [],
+      // Live focus session state — Pomodoro timer + gauge segments
+      session_state: {
+        activeTimer:             state.activeTimer || null,
+        pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
+        timeSegments:            state.timeSegments || [],
+        sessionStartMs:          state.sessionStartMs || null
+      },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
     if (error) { console.warn('Settings push error:', error); return false; }
@@ -1719,6 +1726,14 @@ async function syncSettingsBidi() {
       }
       // Activity log
       if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
+      // Live session state (Pomodoro timer + gauge segments)
+      if (remote.session_state && typeof remote.session_state === 'object') {
+        const ss = remote.session_state;
+        if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
+        if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
+        if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
+        if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
+      }
       state.settingsUpdatedAt = remoteTs;
       saveState();
       if (typeof renderOthers === 'function') {
@@ -1735,6 +1750,8 @@ async function syncSettingsBidi() {
       if (typeof renderTasks === 'function') renderTasks();
       if (typeof renderManaLists === 'function') renderManaLists();
       if (typeof renderWatchLog === 'function') renderWatchLog();
+      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+      if (typeof drawGauge === 'function') drawGauge();
       refreshMotivation(false);
       return;
     }
@@ -2547,6 +2564,7 @@ function startPomodoro(q, i) {
     phaseDurationMs: POMO_WORK_MS
   };
   saveState();
+  markSettingsChanged(); pushSettingsToCloud();
   renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
 }
 function getPomodoroRemainingMs() {
@@ -2571,6 +2589,7 @@ function tickPomodoro() {
     at.phaseStartedAt = Date.now();
     at.phaseDurationMs = isLong ? POMO_LONG_MS : POMO_SHORT_MS;
     saveState();
+    markSettingsChanged(); debouncedPushSettings();
     renderFocusMatrix();
   } else {
     // Break finished — log the whole pomodoro and reset/increment counter.
