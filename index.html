@@ -958,10 +958,16 @@ create table if not exists user_settings (
   ext_others jsonb,
   int_others jsonb,
   tasks jsonb,
+  time_goals jsonb,
+  ext_factors jsonb,
+  int_factors jsonb,
   updated_at timestamptz default now()
 );
 -- If you ran the older schema previously, also run:
 alter table user_settings add column if not exists tasks jsonb;
+alter table user_settings add column if not exists time_goals jsonb;
+alter table user_settings add column if not exists ext_factors jsonb;
+alter table user_settings add column if not exists int_factors jsonb;
 alter table user_settings enable row level security;
 create policy "anon read s"   on user_settings for select using (true);
 create policy "anon insert s" on user_settings for insert with check (true);
@@ -1301,7 +1307,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -1476,6 +1482,27 @@ async function pushSettingsToCloud() {
       ext_others: state.ext.others || [],
       int_others: state.int.others || [],
       tasks: state.tasks || { q1: [], q2: [], q3: [], q4: [] },
+      // Time Start & Goals
+      time_goals: {
+        startDate:    state.startDate    || '',
+        startTime:    state.startTime    || '',
+        deadline:     state.deadline     || '',
+        deadlineDate: state.deadlineDate || '',
+        bedtime:      state.bedtime      || '',
+        bedtimeDate:  state.bedtimeDate  || ''
+      },
+      // Focus level factors (with active states + sliders)
+      ext_factors: {
+        groups: state.ext.groups,
+        slider: state.ext.slider
+      },
+      int_factors: {
+        groups: state.int.groups,
+        slider: state.int.slider,
+        sleep:  state.int.sleep,
+        stress: state.int.stress,
+        energy: state.int.energy
+      },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
     if (error) { console.warn('Settings push error:', error); return false; }
@@ -1512,12 +1539,51 @@ async function syncSettingsBidi() {
           if (Array.isArray(remote.tasks[q])) state.tasks[q] = remote.tasks[q];
         });
       }
+      // Time Start & Goals
+      if (remote.time_goals && typeof remote.time_goals === 'object') {
+        const tg = remote.time_goals;
+        if ('startDate'    in tg) state.startDate    = tg.startDate    || '';
+        if ('startTime'    in tg) state.startTime    = tg.startTime    || '';
+        if ('deadline'     in tg) state.deadline     = tg.deadline     || '';
+        if ('deadlineDate' in tg) state.deadlineDate = tg.deadlineDate || '';
+        if ('bedtime'      in tg) state.bedtime      = tg.bedtime      || '';
+        if ('bedtimeDate'  in tg) state.bedtimeDate  = tg.bedtimeDate  || '';
+        if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = state.startDate;
+        if (typeof stInput !== 'undefined' && stInput) stInput.value = state.startTime;
+        if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = state.deadline;
+        if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = state.deadlineDate;
+        if (typeof btInput !== 'undefined' && btInput) btInput.value = state.bedtime;
+        if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = state.bedtimeDate;
+      }
+      // Focus level factors
+      if (remote.ext_factors && typeof remote.ext_factors === 'object') {
+        if (remote.ext_factors.groups && typeof remote.ext_factors.groups === 'object') {
+          state.ext.groups = remote.ext_factors.groups;
+        }
+        if (typeof remote.ext_factors.slider === 'number') state.ext.slider = remote.ext_factors.slider;
+      }
+      if (remote.int_factors && typeof remote.int_factors === 'object') {
+        if (remote.int_factors.groups && typeof remote.int_factors.groups === 'object') {
+          state.int.groups = remote.int_factors.groups;
+        }
+        if (typeof remote.int_factors.slider === 'number') state.int.slider = remote.int_factors.slider;
+        if (typeof remote.int_factors.sleep  === 'number') state.int.sleep  = remote.int_factors.sleep;
+        if (typeof remote.int_factors.stress === 'number') state.int.stress = remote.int_factors.stress;
+        if (typeof remote.int_factors.energy === 'number') state.int.energy = remote.int_factors.energy;
+      }
       state.settingsUpdatedAt = remoteTs;
       saveState();
       if (typeof renderOthers === 'function') {
-        renderOthers('ext'); recomputeSlider('ext');
-        renderOthers('int'); recomputeSlider('int');
+        renderOthers('ext'); renderOthers('int');
       }
+      if (typeof renderFactorGroups === 'function') {
+        renderFactorGroups('ext'); renderFactorGroups('int');
+      }
+      if (typeof recomputeSlider === 'function') {
+        recomputeSlider('ext'); recomputeSlider('int');
+      }
+      if (typeof updateCountdowns === 'function') updateCountdowns();
+      if (typeof drawGauge === 'function') drawGauge();
       if (typeof renderTasks === 'function') renderTasks();
       refreshMotivation(false);
       return;
@@ -1756,12 +1822,12 @@ if (dlDateInput) dlDateInput.value = state.deadlineDate || '';
 if (btDateInput) btDateInput.value = state.bedtimeDate || '';
 if (sdInput) sdInput.value = state.startDate || '';
 if (stInput) stInput.value = state.startTime || '';
-dlInput.oninput = () => { state.deadline = dlInput.value; saveState(); updateCountdowns(); drawGauge(); };
-btInput.oninput = () => { state.bedtime  = btInput.value; saveState(); updateCountdowns(); drawGauge(); };
-if (dlDateInput) dlDateInput.oninput = () => { state.deadlineDate = dlDateInput.value; saveState(); updateCountdowns(); drawGauge(); };
-if (btDateInput) btDateInput.oninput = () => { state.bedtimeDate = btDateInput.value; saveState(); updateCountdowns(); drawGauge(); };
-if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); };
-if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); };
+dlInput.oninput = () => { state.deadline = dlInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+btInput.oninput = () => { state.bedtime  = btInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (dlDateInput) dlDateInput.oninput = () => { state.deadlineDate = dlDateInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (btDateInput) btDateInput.oninput = () => { state.bedtimeDate = btDateInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
 
 // Reset (clear) buttons in the time-goal headers
 document.querySelectorAll('.time-goals .reset-btn[data-reset]').forEach(btn => {
@@ -1781,6 +1847,7 @@ document.querySelectorAll('.time-goals .reset-btn[data-reset]').forEach(btn => {
       if (btDateInput) btDateInput.value = '';
     }
     saveState(); updateCountdowns(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
   };
 });
 
@@ -1920,16 +1987,19 @@ function renderFactorGroups(side) {
       sleepVal.textContent = (state.int.sleep>0?'+':'') + state.int.sleep;
       sleepVal.className = 'val ' + signClass(state.int.sleep);
       saveState(); recomputeSlider('int');
+      markSettingsChanged(); debouncedPushSettings();
     };
     stressEl.oninput = () => {
       state.int.stress = +stressEl.value;
       stressVal.textContent = (state.int.stress>0?'+':'') + state.int.stress;
       stressVal.className = 'val ' + signClass(state.int.stress);
       saveState(); recomputeSlider('int');
+      markSettingsChanged(); debouncedPushSettings();
     };
     extras.querySelector('#int-energy').onclick = () => {
       state.int.energy = state.int.energy ? 0 : 5;
       saveState(); renderFactorGroups('int'); recomputeSlider('int');
+      markSettingsChanged(); pushSettingsToCloud();
     };
   }
 }
@@ -1945,17 +2015,24 @@ function toggleFactor(side, gname, idx) {
     f.active = !f.active;
   }
   saveState(); renderFactorGroups(side); recomputeSlider(side);
+  markSettingsChanged(); debouncedPushSettings();
 }
 
 function editFactorLabel(side, gname, idx) {
   const f = state[side].groups[gname][idx];
   const v = prompt('Edit label:', f.lbl);
-  if (v !== null && v.trim()) { f.lbl = v.trim(); saveState(); renderFactorGroups(side); }
+  if (v !== null && v.trim()) {
+    f.lbl = v.trim(); saveState(); renderFactorGroups(side);
+    markSettingsChanged(); pushSettingsToCloud();
+  }
 }
 function editFactorScore(side, gname, idx) {
   const f = state[side].groups[gname][idx];
   const v = prompt('Edit score:', f.score);
-  if (v !== null && !isNaN(+v)) { f.score = +v; saveState(); renderFactorGroups(side); recomputeSlider(side); }
+  if (v !== null && !isNaN(+v)) {
+    f.score = +v; saveState(); renderFactorGroups(side); recomputeSlider(side);
+    markSettingsChanged(); pushSettingsToCloud();
+  }
 }
 
 function effectiveSleep() {
@@ -2040,12 +2117,14 @@ document.getElementById('ext-slider').oninput = (e)=>{
   state.ext.slider = +e.target.value;
   setSliderColor('ext');
   saveState();
+  markSettingsChanged(); debouncedPushSettings();
 };
 document.getElementById('int-slider').oninput = (e)=>{
   state.int.slider = +e.target.value;
   state.int.sliderUserSet = true;
   setSliderColor('int');
   saveState();
+  markSettingsChanged(); debouncedPushSettings();
 };
 
 /* Others lists */
