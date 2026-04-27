@@ -632,11 +632,13 @@
         </div>
         <div class="goal">
           <label for="deadline">I'll get things done by</label>
+          <input type="date" id="deadline-date">
           <input type="time" id="deadline">
           <div class="countdown" id="deadline-cd">—</div>
         </div>
         <div class="goal">
           <label for="bedtime">I'm going to sleep at</label>
+          <input type="date" id="bedtime-date">
           <input type="time" id="bedtime">
           <div class="countdown" id="bedtime-cd">—</div>
         </div>
@@ -812,7 +814,9 @@ const STATS_KEY   = 'concentration-stats-v1';
 const defaultState = () => ({
   tasks: { q1: [], q2: [], q3: [], q4: [] },
   deadline: '',
+  deadlineDate: '',        // optional date for the deadline (defaults to today)
   bedtime: '',
+  bedtimeDate: '',         // optional date for the bedtime (defaults to today)
   startDate: '',           // YYYY-MM-DD — Starting Date (setup page)
   startTime: '',           // HH:MM      — Starting Time (setup page)
   sessionStartMs: null,
@@ -934,6 +938,8 @@ function migrateState() {
   // Starting Date & Time
   if (state.startDate == null) state.startDate = '';
   if (state.startTime == null) state.startTime = '';
+  if (state.deadlineDate == null) state.deadlineDate = '';
+  if (state.bedtimeDate == null) state.bedtimeDate = '';
   if (state.matrixExpanded === undefined) state.matrixExpanded = false;
   saveState();
 }
@@ -1063,44 +1069,59 @@ function escapeHTML(s) { return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<
 =========================================================== */
 const dlInput = document.getElementById('deadline');
 const btInput = document.getElementById('bedtime');
+const dlDateInput = document.getElementById('deadline-date');
+const btDateInput = document.getElementById('bedtime-date');
 const sdInput = document.getElementById('start-date');
 const stInput = document.getElementById('start-time');
 dlInput.value = state.deadline || '';
 btInput.value = state.bedtime || '';
+if (dlDateInput) dlDateInput.value = state.deadlineDate || '';
+if (btDateInput) btDateInput.value = state.bedtimeDate || '';
 if (sdInput) sdInput.value = state.startDate || '';
 if (stInput) stInput.value = state.startTime || '';
 dlInput.oninput = () => { state.deadline = dlInput.value; saveState(); updateCountdowns(); drawGauge(); };
 btInput.oninput = () => { state.bedtime  = btInput.value; saveState(); updateCountdowns(); drawGauge(); };
+if (dlDateInput) dlDateInput.oninput = () => { state.deadlineDate = dlDateInput.value; saveState(); updateCountdowns(); drawGauge(); };
+if (btDateInput) btDateInput.oninput = () => { state.bedtimeDate = btDateInput.value; saveState(); updateCountdowns(); drawGauge(); };
 if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); };
 if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); };
 
-function updateCountdowns() {
-  const now = new Date();
-  // Deadline display — shows "Get things done by hh:mm over" in red when past.
-  function fmtDeadline(timeStr) {
-    if (!timeStr) return { text: '—', overdue: false };
-    const [h, m] = timeStr.split(':').map(Number);
-    const t = new Date(now);
-    t.setHours(h, m, 0, 0);
-    if (t.getTime() < now.getTime()) {
-      return { text: `Get things done by ${timeStr} over`, overdue: true };
-    }
-    const diff = t.getTime() - now.getTime();
-    const hh = Math.floor(diff / 3600000);
-    const mm = Math.floor((diff % 3600000) / 60000);
-    return { text: `${hh}h ${mm.toString().padStart(2,'0')}m left`, overdue: false };
+// Combine an optional date (YYYY-MM-DD) and time (HH:MM) into a timestamp.
+// If date is missing, treats the time as today's time.
+function combineDateTime(dateStr, timeStr, options) {
+  if (!timeStr) return null;
+  options = options || {};
+  if (dateStr) {
+    const dt = new Date(dateStr + 'T' + timeStr);
+    return isNaN(dt.getTime()) ? null : dt.getTime();
   }
-  // Bedtime — rolls to tomorrow if past, no "over" message
-  function fmtRolling(timeStr) {
+  const anchor = options.anchor || Date.now();
+  const [h, m] = timeStr.split(':').map(Number);
+  const d = new Date(anchor);
+  d.setHours(h, m, 0, 0);
+  if (options.rolling && d.getTime() < anchor) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+// Render duration as "HH:MM" (always two digits each).
+function fmtDuration(diffMs) {
+  const totalMin = Math.floor(Math.abs(diffMs) / 60000);
+  const hh = Math.floor(totalMin / 60);
+  const mm = totalMin % 60;
+  return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+
+function updateCountdowns() {
+  // Universal goal-time formatter.
+  // Future → "HH:MM is left", past → "HH:MM over" (in red).
+  function fmtGoal(timeStr, dateStr) {
     if (!timeStr) return { text: '—', overdue: false };
-    const [h, m] = timeStr.split(':').map(Number);
-    const t = new Date(now);
-    t.setHours(h, m, 0, 0);
-    if (t < now) t.setDate(t.getDate() + 1);
-    const diff = Math.max(0, t - now);
-    const hh = Math.floor(diff / 3600000);
-    const mm = Math.floor((diff % 3600000) / 60000);
-    return { text: `${hh}h ${mm.toString().padStart(2,'0')}m left`, overdue: false };
+    const target = combineDateTime(dateStr, timeStr);
+    if (target == null) return { text: '—', overdue: false };
+    const now = Date.now();
+    if (target < now) {
+      return { text: `${fmtDuration(now - target)} over`, overdue: true };
+    }
+    return { text: `${fmtDuration(target - now)} is left`, overdue: false };
   }
   function setCd(elId, info) {
     const el = document.getElementById(elId);
@@ -1110,12 +1131,12 @@ function updateCountdowns() {
   }
   function fmtClock(timeStr) { return timeStr || '--:--'; }
 
-  setCd('deadline-cd', fmtDeadline(dlInput.value));
-  setCd('bedtime-cd',  fmtRolling(btInput.value));
+  setCd('deadline-cd', fmtGoal(dlInput.value, dlDateInput && dlDateInput.value));
+  setCd('bedtime-cd',  fmtGoal(btInput.value, btDateInput && btDateInput.value));
 
   // Mirror to focus-page time goals
-  setCd('focus-deadline-cd', fmtDeadline(state.deadline));
-  setCd('focus-bedtime-cd',  fmtRolling(state.bedtime));
+  setCd('focus-deadline-cd', fmtGoal(state.deadline, state.deadlineDate));
+  setCd('focus-bedtime-cd',  fmtGoal(state.bedtime,  state.bedtimeDate));
   const fdlT = document.getElementById('focus-deadline-time');
   const fbtT = document.getElementById('focus-bedtime-time');
   if (fdlT) fdlT.textContent = fmtClock(state.deadline);
@@ -1801,10 +1822,12 @@ function drawGauge() {
   lineTimeEl.textContent = fmtTimeShort(now);
 
   // ---- Blue lines: deadline ("Go home") and bedtime ("Sleep") ----
-  function placeBlueLine(line, label, timeStr, name) {
+  function placeBlueLine(line, label, timeStr, dateStr, name) {
     if (!line || !label) return;
     if (!timeStr) { line.style.display = 'none'; return; }
-    const tMs = getTimeOnDate(timeStr, start);
+    // Use combined datetime if user supplied a date; otherwise fall back to
+    // the rolling logic (anchor on the gauge's start time).
+    const tMs = combineDateTime(dateStr, timeStr, { anchor: start, rolling: true });
     if (tMs == null || tMs < topMs || tMs > bottomMs) {
       line.style.display = 'none';
       return;
@@ -1820,8 +1843,8 @@ function drawGauge() {
       label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
     }
   }
-  placeBlueLine(dlLineEl, dlLabelEl, state.deadline, 'Go home');
-  placeBlueLine(btLineEl, btLabelEl, state.bedtime,  'Sleep');
+  placeBlueLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
+  placeBlueLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
 }
 
 function addGaugeSegment(parent, pct, seg, isActive) {
