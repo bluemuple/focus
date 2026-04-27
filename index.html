@@ -89,6 +89,21 @@
     box-sizing: border-box;
   }
 
+  /* Auth section */
+  .auth-section.hidden { display: none; }
+  .auth-form {
+    display: grid; gap: 8px;
+    grid-template-columns: 1fr 1fr;
+  }
+  @media (max-width: 700px) { .auth-form { grid-template-columns: 1fr; } }
+  .auth-form input {
+    padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; box-sizing: border-box; width: 100%;
+  }
+  .auth-form .row-flex { grid-column: 1 / -1; }
+  #auth-logged-in p strong { color: #059669; }
+
   /* Supabase config form */
   .sb-form { display: grid; gap: 10px; margin-top: 10px; }
   .sb-form label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: #374151; font-weight: 600; }
@@ -876,15 +891,42 @@
     </div>
 
     <div class="panel">
-      <h2>Cloud sync (Supabase)</h2>
-      <p class="help">Optional. Save your Statistics to a Supabase project so they're available across devices.</p>
-      <details class="sb-help">
-        <summary>How to set up</summary>
+      <h2>Account &amp; Cloud sync</h2>
+      <p class="help">Sign in with email + password to sync everything across devices automatically.</p>
+
+      <!-- Auth: signed-out form -->
+      <div id="auth-logged-out" class="auth-section">
+        <div class="auth-form">
+          <input type="email"    id="auth-email"    placeholder="Email" autocomplete="email">
+          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
+          <div class="row-flex">
+            <button class="btn primary" id="auth-signin">Sign in</button>
+            <button class="btn" id="auth-signup">Sign up</button>
+            <span id="auth-status" class="help"></span>
+          </div>
+        </div>
+        <p class="help" style="margin-top: 8px;">Passwords are stored encrypted by Supabase Auth (bcrypt). Your session persists across page refreshes.</p>
+      </div>
+
+      <!-- Auth: signed-in state -->
+      <div id="auth-logged-in" class="auth-section hidden">
+        <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
+        <p class="help">Tasks, gauge, statistics — everything syncs automatically. Refresh anytime; you stay logged in.</p>
+        <div class="row-flex">
+          <button class="btn" id="auth-signout">Sign out</button>
+          <button class="btn" id="auth-resync">Force resync</button>
+          <span id="auth-status2" class="help"></span>
+        </div>
+      </div>
+
+      <details class="sb-help" style="margin-top: 14px;">
+        <summary>How to set up Supabase (one-time)</summary>
         <ol style="padding-left: 20px;">
           <li>Create a free project at <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>.</li>
           <li>Open the project's <em>SQL Editor</em> and run the schema below.</li>
+          <li>(Recommended) <em>Authentication → Providers → Email</em>: turn off "Confirm email" for instant sign-up.</li>
           <li>Open <em>Project Settings → API</em>, copy the <strong>Project URL</strong> and the <strong>anon public</strong> key.</li>
-          <li>Paste them into the form below, set a User ID (any string), and click "Test &amp; sync".</li>
+          <li>Paste them into the Advanced section below, then sign up above with your email + password.</li>
         </ol>
         <pre>create table if not exists focus_sessions (
   id bigserial primary key,
@@ -927,15 +969,18 @@ create policy "anon update s" on user_settings for update using (true);
 create policy "anon delete s" on user_settings for delete using (true);</pre>
         <p class="help" style="margin-top:6px;">Note: with the anon key + permissive policies above, anyone holding the key can read/write rows. For a personal app this is fine; use Supabase Auth for stricter isolation.</p>
       </details>
-      <div class="sb-form">
-        <label>Project URL <input type="url" id="sb-url" placeholder="https://your-project.supabase.co"></label>
-        <label>Anon (public) key <input type="password" id="sb-key" placeholder="eyJhbGciOi..."></label>
-        <label>User ID <input type="text" id="sb-user" placeholder="me"></label>
-        <div class="row-flex">
-          <button class="btn" id="sb-test">Test &amp; sync now</button>
-          <span id="sb-status" class="help"></span>
+      <details>
+        <summary style="cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0;">Advanced (Project URL + Anon key)</summary>
+        <div class="sb-form">
+          <label>Project URL <input type="url" id="sb-url" placeholder="https://your-project.supabase.co"></label>
+          <label>Anon (public) key <input type="password" id="sb-key" placeholder="eyJhbGciOi..."></label>
+          <label>User ID <span class="help" style="font-weight: normal;">(only used when not signed in)</span><input type="text" id="sb-user" placeholder="me"></label>
+          <div class="row-flex">
+            <button class="btn" id="sb-test">Test &amp; sync now</button>
+            <span id="sb-status" class="help"></span>
+          </div>
         </div>
-      </div>
+      </details>
     </div>
 
     <div class="actions">
@@ -1273,15 +1318,72 @@ async function getSupabaseClient() {
   supabaseClient = lib.createClient(state.sbUrl, state.sbKey);
   return supabaseClient;
 }
-function resetSupabaseClient() { supabaseClient = null; }
+function resetSupabaseClient() { supabaseClient = null; _currentAuthUserId = null; }
 const SB_TABLE = 'focus_sessions';
+
+/* ---- Supabase Auth (email + password) ---- */
+let _currentAuthUserId = null;
+let _currentAuthEmail = null;
+function getEffectiveUserId() {
+  return _currentAuthUserId || getEffectiveUserId();
+}
+async function authSignUp(email, password) {
+  const sb = await getSupabaseClient();
+  if (!sb) throw new Error('Configure Project URL and anon key first.');
+  const { data, error } = await sb.auth.signUp({ email, password });
+  if (error) throw error;
+  return data.user;
+}
+async function authSignIn(email, password) {
+  const sb = await getSupabaseClient();
+  if (!sb) throw new Error('Configure Project URL and anon key first.');
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data.user;
+}
+async function authSignOut() {
+  const sb = await getSupabaseClient();
+  if (!sb) return;
+  await sb.auth.signOut();
+  _currentAuthUserId = null; _currentAuthEmail = null;
+}
+async function getAuthSession() {
+  const sb = await getSupabaseClient();
+  if (!sb) return null;
+  const { data: { session } } = await sb.auth.getSession();
+  return session;
+}
+function updateAuthUI(user) {
+  const out = document.getElementById('auth-logged-out');
+  const inEl = document.getElementById('auth-logged-in');
+  const emailDisplay = document.getElementById('auth-email-display');
+  if (!out || !inEl) return;
+  if (user) {
+    out.classList.add('hidden');
+    inEl.classList.remove('hidden');
+    if (emailDisplay) emailDisplay.textContent = user.email || user.id;
+    _currentAuthUserId = user.id;
+    _currentAuthEmail = user.email || null;
+  } else {
+    out.classList.remove('hidden');
+    inEl.classList.add('hidden');
+    _currentAuthUserId = null;
+    _currentAuthEmail = null;
+  }
+}
+function setAuthStatus(text, color) {
+  const el = document.getElementById('auth-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = color || '';
+}
 
 async function pushStatToCloud(entry) {
   try {
     const sb = await getSupabaseClient();
     if (!sb) return false;
     const { error } = await sb.from(SB_TABLE).insert({
-      user_id: state.sbUserId || 'me',
+      user_id: getEffectiveUserId(),
       date: entry.date,
       timestamp: entry.timestamp,
       ext_score: entry.ext,
@@ -1303,7 +1405,7 @@ async function fetchStatsFromCloud() {
     if (!sb) return null;
     const { data, error } = await sb.from(SB_TABLE)
       .select('*')
-      .eq('user_id', state.sbUserId || 'me')
+      .eq('user_id', getEffectiveUserId())
       .order('timestamp', { ascending: false });
     if (error) throw error;
     return (data || []).map(r => ({
@@ -1324,7 +1426,7 @@ async function deleteAllStatsFromCloud() {
   try {
     const sb = await getSupabaseClient();
     if (!sb) return;
-    const userId = state.sbUserId || 'me';
+    const userId = getEffectiveUserId();
     const r1 = await sb.from(SB_TABLE).delete().eq('user_id', userId);
     if (r1.error) console.warn('Supabase delete error (sessions):', r1.error);
     const r2 = await sb.from(SB_SETTINGS_TABLE).delete().eq('user_id', userId);
@@ -1357,7 +1459,7 @@ async function pushSettingsToCloud() {
     if (!sb) return false;
     const ts = state.settingsUpdatedAt || Date.now();
     const { error } = await sb.from(SB_SETTINGS_TABLE).upsert({
-      user_id: state.sbUserId || 'me',
+      user_id: getEffectiveUserId(),
       motivational_lines: state.motivationalLines || '',
       ext_others: state.ext.others || [],
       int_others: state.int.others || [],
@@ -1374,7 +1476,7 @@ async function fetchSettingsFromCloud() {
     if (!sb) return null;
     const { data, error } = await sb.from(SB_SETTINGS_TABLE)
       .select('*')
-      .eq('user_id', state.sbUserId || 'me')
+      .eq('user_id', getEffectiveUserId())
       .maybeSingle();
     if (error) { console.warn('Settings fetch error:', error); return null; }
     return data;
@@ -3035,10 +3137,115 @@ const sbStatusEl = document.getElementById('sb-status');
 const sbTestBtn = document.getElementById('sb-test');
 if (sbUrlInput) sbUrlInput.value = state.sbUrl || '';
 if (sbKeyInput) sbKeyInput.value = state.sbKey || '';
-if (sbUserInput) sbUserInput.value = state.sbUserId || 'me';
+if (sbUserInput) sbUserInput.value = getEffectiveUserId();
 if (sbUrlInput) sbUrlInput.oninput = () => { state.sbUrl = sbUrlInput.value.trim(); resetSupabaseClient(); saveState(); };
 if (sbKeyInput) sbKeyInput.oninput = () => { state.sbKey = sbKeyInput.value.trim(); resetSupabaseClient(); saveState(); };
 if (sbUserInput) sbUserInput.oninput = () => { state.sbUserId = sbUserInput.value.trim() || 'me'; resetSupabaseClient(); saveState(); };
+// Auth form handlers
+const authEmailInput = document.getElementById('auth-email');
+const authPasswordInput = document.getElementById('auth-password');
+const authSigninBtn = document.getElementById('auth-signin');
+const authSignupBtn = document.getElementById('auth-signup');
+const authSignoutBtn = document.getElementById('auth-signout');
+const authResyncBtn = document.getElementById('auth-resync');
+
+async function pullEverythingFromCloud() {
+  // syncStatsBidi pulls focus_sessions and (via syncSettingsBidi) user_settings
+  // including motivational_lines, ext_others, int_others, tasks. After pulling
+  // we re-render every part of the UI.
+  await syncStatsBidi();
+  renderAll();
+  if (typeof renderTasks === 'function') renderTasks();
+  if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  if (typeof renderManaLists === 'function') renderManaLists();
+  if (typeof renderWatchLog === 'function') renderWatchLog();
+  if (typeof renderScores === 'function') renderScores();
+  if (typeof drawGauge === 'function') drawGauge();
+  if (typeof renderStats === 'function') renderStats();
+  refreshMotivation(false);
+}
+
+async function handleSignIn() {
+  const email = (authEmailInput && authEmailInput.value || '').trim();
+  const password = authPasswordInput && authPasswordInput.value || '';
+  if (!email || !password) { setAuthStatus('Enter email and password', '#dc2626'); return; }
+  setAuthStatus('Signing in...', '#6b7280');
+  try {
+    const user = await authSignIn(email, password);
+    updateAuthUI(user);
+    setAuthStatus('');
+    await pullEverythingFromCloud();
+  } catch (e) {
+    setAuthStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
+  }
+}
+async function handleSignUp() {
+  const email = (authEmailInput && authEmailInput.value || '').trim();
+  const password = authPasswordInput && authPasswordInput.value || '';
+  if (!email || !password) { setAuthStatus('Enter email and password', '#dc2626'); return; }
+  if (password.length < 6) { setAuthStatus('Password must be at least 6 chars', '#dc2626'); return; }
+  setAuthStatus('Creating account...', '#6b7280');
+  try {
+    const user = await authSignUp(email, password);
+    if (user && user.id) {
+      // Either auto-signed-in or pending email confirmation
+      updateAuthUI(user);
+      setAuthStatus('✓ Account created. ' + (user.confirmed_at ? '' : '(Check email if confirmation is enabled in Supabase.)'), '#059669');
+      await pullEverythingFromCloud();
+    } else {
+      setAuthStatus('Account requested — check your email.', '#059669');
+    }
+  } catch (e) {
+    setAuthStatus('✗ ' + (e.message || 'Sign-up failed'), '#dc2626');
+  }
+}
+async function handleSignOut() {
+  await authSignOut();
+  updateAuthUI(null);
+  setAuthStatus('Signed out');
+}
+async function handleForceResync() {
+  const el = document.getElementById('auth-status2');
+  if (el) { el.textContent = 'Syncing...'; el.style.color = '#6b7280'; }
+  try {
+    await pullEverythingFromCloud();
+    if (el) { el.textContent = '✓ Synced'; el.style.color = '#059669'; }
+  } catch (e) {
+    if (el) { el.textContent = '✗ ' + (e.message || 'Sync failed'); el.style.color = '#dc2626'; }
+  }
+}
+
+if (authSigninBtn) authSigninBtn.onclick = handleSignIn;
+if (authSignupBtn) authSignupBtn.onclick = handleSignUp;
+if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
+if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
+// Allow pressing Enter in either field to sign in
+[authEmailInput, authPasswordInput].forEach(el => {
+  if (!el) return;
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSignIn(); } };
+});
+
+// Restore session on page load (if Supabase is configured)
+(async function autoSyncOnLoad() {
+  if (!state.sbUrl || !state.sbKey) return;
+  try {
+    const session = await getAuthSession();
+    if (session && session.user) {
+      updateAuthUI(session.user);
+      // Background: pull everything so the UI matches the cloud
+      pullEverythingFromCloud().catch(()=>{});
+    }
+    // Listen for auth changes (e.g., token refresh, sign-out from another tab)
+    const sb = await getSupabaseClient();
+    if (sb && sb.auth && sb.auth.onAuthStateChange) {
+      sb.auth.onAuthStateChange((event, sess) => {
+        if (sess && sess.user) updateAuthUI(sess.user);
+        else updateAuthUI(null);
+      });
+    }
+  } catch (e) { console.warn('Auto-sync skipped:', e); }
+})();
+
 if (sbTestBtn) sbTestBtn.onclick = async () => {
   if (!state.sbUrl || !state.sbKey) {
     sbStatusEl.textContent = 'Enter URL and anon key first';
