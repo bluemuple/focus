@@ -1294,8 +1294,18 @@ function loadStats() {
 function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch(e){} }
 
 /* ===========================================================
-   SUPABASE — optional cloud sync for Statistics
+   SUPABASE — cloud sync + auth
+   ----------------------------------------------------------
+   ↓↓↓ FILL THESE IN once with your own Supabase project values, then push to
+   GitHub. Sign up / sign in will then work on any device without further
+   configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
+const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
+function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
+function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
+function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
+
 let supabaseClient = null;
 let sbScriptPromise = null;
 async function loadSupabaseLib() {
@@ -1312,10 +1322,12 @@ async function loadSupabaseLib() {
   return sbScriptPromise;
 }
 async function getSupabaseClient() {
-  if (!state.sbUrl || !state.sbKey) return null;
+  const url = getSbUrl();
+  const key = getSbKey();
+  if (!url || !key) return null;
   if (supabaseClient) return supabaseClient;
   const lib = await loadSupabaseLib();
-  supabaseClient = lib.createClient(state.sbUrl, state.sbKey);
+  supabaseClient = lib.createClient(url, key);
   return supabaseClient;
 }
 function resetSupabaseClient() { supabaseClient = null; _currentAuthUserId = null; }
@@ -1539,7 +1551,7 @@ function showPage(name) {
     // also refresh whichever view (list/week) is currently visible
     if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
     // Background sync from Supabase if configured (don't block initial render)
-    if (state.sbUrl && state.sbKey) {
+    if (isSbConfigured()) {
       syncStatsBidi().then(() => {
         renderStats();
         if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
@@ -1575,7 +1587,7 @@ document.getElementById('clear-stats').onclick = async () => {
   saveStats();
   renderStats();
   // Also wipe from Supabase if configured
-  if (state.sbUrl && state.sbKey) {
+  if (isSbConfigured()) {
     await deleteAllStatsFromCloud();
   }
 };
@@ -3227,7 +3239,7 @@ if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
 
 // Restore session on page load (if Supabase is configured)
 (async function autoSyncOnLoad() {
-  if (!state.sbUrl || !state.sbKey) return;
+  if (!isSbConfigured()) return;
   try {
     const session = await getAuthSession();
     if (session && session.user) {
@@ -3247,7 +3259,7 @@ if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
 })();
 
 if (sbTestBtn) sbTestBtn.onclick = async () => {
-  if (!state.sbUrl || !state.sbKey) {
+  if (!isSbConfigured()) {
     sbStatusEl.textContent = 'Enter URL and anon key first';
     sbStatusEl.style.color = '#dc2626'; return;
   }
