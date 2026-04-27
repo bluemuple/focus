@@ -89,6 +89,23 @@
     box-sizing: border-box;
   }
 
+  /* Supabase config form */
+  .sb-form { display: grid; gap: 10px; margin-top: 10px; }
+  .sb-form label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: #374151; font-weight: 600; }
+  .sb-form input {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; font-weight: normal; box-sizing: border-box; width: 100%;
+  }
+  .sb-help summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0; }
+  .sb-help pre {
+    background: #f3f4f6; padding: 10px; border-radius: 6px; font-size: .72rem;
+    overflow-x: auto; white-space: pre-wrap; line-height: 1.4; margin: 6px 0;
+  }
+  .sb-help ol li { margin: 4px 0; }
+  #sb-status { font-variant-numeric: tabular-nums; }
+  .btn.danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; font-weight: 700; }
+  .btn.danger:hover { background: #fee2e2; }
+
   main { padding: 16px; max-width: 1200px; margin: 0 auto; }
   .panel {
     background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
@@ -692,6 +709,47 @@
       <textarea id="motivation-input" rows="6" placeholder="Stay focused.&#10;You can do this.&#10;Keep going."></textarea>
     </div>
 
+    <div class="panel">
+      <h2>Cloud sync (Supabase)</h2>
+      <p class="help">Optional. Save your Statistics to a Supabase project so they're available across devices.</p>
+      <details class="sb-help">
+        <summary>How to set up</summary>
+        <ol style="padding-left: 20px;">
+          <li>Create a free project at <a href="https://supabase.com" target="_blank" rel="noopener">supabase.com</a>.</li>
+          <li>Open the project's <em>SQL Editor</em> and run the schema below.</li>
+          <li>Open <em>Project Settings → API</em>, copy the <strong>Project URL</strong> and the <strong>anon public</strong> key.</li>
+          <li>Paste them into the form below, set a User ID (any string), and click "Test &amp; sync".</li>
+        </ol>
+        <pre>create table if not exists focus_sessions (
+  id bigserial primary key,
+  user_id text not null default 'me',
+  date text not null,
+  timestamp bigint not null,
+  ext_score int,
+  int_score int,
+  tasks_total int,
+  tasks_done int,
+  completed_tasks jsonb,
+  pct int,
+  created_at timestamptz default now()
+);
+alter table focus_sessions enable row level security;
+create policy "anon read"   on focus_sessions for select using (true);
+create policy "anon insert" on focus_sessions for insert with check (true);
+create policy "anon delete" on focus_sessions for delete using (true);</pre>
+        <p class="help" style="margin-top:6px;">Note: with the anon key + permissive policies above, anyone holding the key can read/write rows. For a personal app this is fine; use Supabase Auth for stricter isolation.</p>
+      </details>
+      <div class="sb-form">
+        <label>Project URL <input type="url" id="sb-url" placeholder="https://your-project.supabase.co"></label>
+        <label>Anon (public) key <input type="password" id="sb-key" placeholder="eyJhbGciOi..."></label>
+        <label>User ID <input type="text" id="sb-user" placeholder="me"></label>
+        <div class="row-flex">
+          <button class="btn" id="sb-test">Test &amp; sync now</button>
+          <span id="sb-status" class="help"></span>
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn" id="reset-all">Reset all</button>
       <button class="btn primary" id="go-focus">Start focus session →</button>
@@ -799,7 +857,7 @@
       <div id="stats-list"></div>
     </div>
     <div class="actions">
-      <button class="btn" id="clear-stats">Clear history</button>
+      <button class="btn danger" id="clear-stats">Erase all data</button>
     </div>
   </section>
 </main>
@@ -890,7 +948,11 @@ const defaultState = () => ({
   watchLog: [],
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
   motivationalCurrent: null,  // { text, selectedAt }
-  matrixExpanded: false       // mobile: enlarge matrix cells & enable horizontal scroll
+  matrixExpanded: false,      // mobile: enlarge matrix cells & enable horizontal scroll
+  // Cloud sync (Supabase) — all optional. Empty = local-only.
+  sbUrl: '',
+  sbKey: '',
+  sbUserId: 'me'
 });
 
 let state = loadState();
@@ -941,6 +1003,9 @@ function migrateState() {
   if (state.deadlineDate == null) state.deadlineDate = '';
   if (state.bedtimeDate == null) state.bedtimeDate = '';
   if (state.matrixExpanded === undefined) state.matrixExpanded = false;
+  if (state.sbUrl == null) state.sbUrl = '';
+  if (state.sbKey == null) state.sbKey = '';
+  if (state.sbUserId == null) state.sbUserId = 'me';
   saveState();
 }
 function ensureTaskTimers(task) {
@@ -962,6 +1027,96 @@ function loadStats() {
 function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch(e){} }
 
 /* ===========================================================
+   SUPABASE — optional cloud sync for Statistics
+=========================================================== */
+let supabaseClient = null;
+let sbScriptPromise = null;
+async function loadSupabaseLib() {
+  if (window.supabase) return window.supabase;
+  if (!sbScriptPromise) {
+    sbScriptPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      s.onload = () => resolve(window.supabase);
+      s.onerror = () => reject(new Error('Failed to load Supabase library'));
+      document.head.appendChild(s);
+    });
+  }
+  return sbScriptPromise;
+}
+async function getSupabaseClient() {
+  if (!state.sbUrl || !state.sbKey) return null;
+  if (supabaseClient) return supabaseClient;
+  const lib = await loadSupabaseLib();
+  supabaseClient = lib.createClient(state.sbUrl, state.sbKey);
+  return supabaseClient;
+}
+function resetSupabaseClient() { supabaseClient = null; }
+const SB_TABLE = 'focus_sessions';
+
+async function pushStatToCloud(entry) {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return false;
+    const { error } = await sb.from(SB_TABLE).insert({
+      user_id: state.sbUserId || 'me',
+      date: entry.date,
+      timestamp: entry.timestamp,
+      ext_score: entry.ext,
+      int_score: entry.int,
+      tasks_total: entry.tasksTotal,
+      tasks_done: entry.tasksDone,
+      completed_tasks: entry.completed,
+      pct: entry.pct
+    });
+    if (error) { console.warn('Supabase insert error:', error); return false; }
+    return true;
+  } catch(e) { console.warn('Supabase push failed:', e); return false; }
+}
+async function fetchStatsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return null;
+    const { data, error } = await sb.from(SB_TABLE)
+      .select('*')
+      .eq('user_id', state.sbUserId || 'me')
+      .order('timestamp', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(r => ({
+      date: r.date,
+      timestamp: Number(r.timestamp),
+      ext: r.ext_score,
+      int: r.int_score,
+      tasksTotal: r.tasks_total,
+      tasksDone: r.tasks_done,
+      completed: r.completed_tasks || [],
+      pct: r.pct
+    }));
+  } catch(e) { console.warn('Supabase fetch failed:', e); throw e; }
+}
+async function deleteAllStatsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return;
+    const { error } = await sb.from(SB_TABLE)
+      .delete()
+      .eq('user_id', state.sbUserId || 'me');
+    if (error) console.warn('Supabase delete error:', error);
+  } catch(e) { console.warn('Supabase delete failed:', e); }
+}
+// Pull from cloud, then push any local entries not yet there.
+async function syncStatsBidi() {
+  const remote = await fetchStatsFromCloud();
+  if (remote == null) return;
+  const remoteTs = new Set(remote.map(s => s.timestamp));
+  const localOnly = stats.filter(s => !remoteTs.has(s.timestamp));
+  for (const e of localOnly) await pushStatToCloud(e);
+  const final = (await fetchStatsFromCloud()) || remote;
+  stats = final.sort((a, b) => b.timestamp - a.timestamp);
+  saveStats();
+}
+
+/* ===========================================================
    ROUTING
 =========================================================== */
 const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page' };
@@ -973,7 +1128,13 @@ function showPage(name) {
     document.getElementById('tab-'+k).classList.toggle('active', k===name);
   });
   if (name === 'focus') initFocusPage();
-  if (name === 'stats') renderStats();
+  if (name === 'stats') {
+    renderStats();
+    // Background sync from Supabase if configured (don't block initial render)
+    if (state.sbUrl && state.sbKey) {
+      syncStatsBidi().then(() => renderStats()).catch(()=>{});
+    }
+  }
 }
 document.getElementById('tab-setup').onclick = ()=>showPage('setup');
 document.getElementById('tab-focus').onclick = ()=>showPage('focus');
@@ -998,8 +1159,15 @@ document.getElementById('finish-studying').onclick = finishStudying;
 document.getElementById('reset-all').onclick = () => {
   if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
 };
-document.getElementById('clear-stats').onclick = () => {
-  if (confirm('Clear all stats?')) { stats = []; saveStats(); renderStats(); }
+document.getElementById('clear-stats').onclick = async () => {
+  if (!confirm('Erase ALL focus session data? This cannot be undone.')) return;
+  stats = [];
+  saveStats();
+  renderStats();
+  // Also wipe from Supabase if configured
+  if (state.sbUrl && state.sbKey) {
+    await deleteAllStatsFromCloud();
+  }
 };
 
 /* ===========================================================
@@ -2152,6 +2320,8 @@ function finishStudying() {
   };
   stats.unshift(entry);
   saveStats();
+  // Fire-and-forget cloud sync (if Supabase configured)
+  pushStatToCloud(entry);
   // reset session-level state but keep factors for convenience
   state.sessionStartMs = null;
   state.timeSegments = [];
@@ -2236,6 +2406,36 @@ if (motInputEl) {
     refreshMotivation();   // re-pick if necessary
   };
 }
+
+/* Supabase form wiring */
+const sbUrlInput = document.getElementById('sb-url');
+const sbKeyInput = document.getElementById('sb-key');
+const sbUserInput = document.getElementById('sb-user');
+const sbStatusEl = document.getElementById('sb-status');
+const sbTestBtn = document.getElementById('sb-test');
+if (sbUrlInput) sbUrlInput.value = state.sbUrl || '';
+if (sbKeyInput) sbKeyInput.value = state.sbKey || '';
+if (sbUserInput) sbUserInput.value = state.sbUserId || 'me';
+if (sbUrlInput) sbUrlInput.oninput = () => { state.sbUrl = sbUrlInput.value.trim(); resetSupabaseClient(); saveState(); };
+if (sbKeyInput) sbKeyInput.oninput = () => { state.sbKey = sbKeyInput.value.trim(); resetSupabaseClient(); saveState(); };
+if (sbUserInput) sbUserInput.oninput = () => { state.sbUserId = sbUserInput.value.trim() || 'me'; resetSupabaseClient(); saveState(); };
+if (sbTestBtn) sbTestBtn.onclick = async () => {
+  if (!state.sbUrl || !state.sbKey) {
+    sbStatusEl.textContent = 'Enter URL and anon key first';
+    sbStatusEl.style.color = '#dc2626'; return;
+  }
+  sbStatusEl.textContent = 'Connecting...';
+  sbStatusEl.style.color = '#6b7280';
+  try {
+    await syncStatsBidi();
+    sbStatusEl.textContent = `✓ Connected · ${stats.length} session${stats.length===1?'':'s'} synced`;
+    sbStatusEl.style.color = '#059669';
+    if (document.getElementById('stats-page').style.display !== 'none') renderStats();
+  } catch (e) {
+    sbStatusEl.textContent = '✗ ' + (e && e.message ? e.message : 'Connection failed');
+    sbStatusEl.style.color = '#dc2626';
+  }
+};
 // re-evaluate every minute (only changes when an hour boundary or list change is detected)
 setInterval(() => refreshMotivation(false), 60 * 1000);
 
