@@ -518,7 +518,18 @@
     background: #ffffff;
     border-radius: 8px;
     border: 1px solid #e5e7eb;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  /* Inner tall container — 24 hours × ~70px per hour. The .gauge-col scrolls
+     internally so the user can see any hour without losing the column itself. */
+  .gauge-inner {
+    position: relative;
+    height: calc(70px * 24);
+    width: 100%;
+  }
+  @media (max-width: 700px) {
+    .gauge-inner { height: calc(56px * 24); }
   }
   .gauge-grid { position: absolute; inset: 0; pointer-events: none; }
   .gauge-hour-line {
@@ -551,13 +562,13 @@
   }
   .gauge-task-label {
     width: 100%;
-    font-size: clamp(.7rem, 1.3vw, .9rem);
+    font-size: clamp(.85rem, 1.4vw, 1rem);
     font-weight: 700;
     color: #1f2937;
     text-align: left;
-    padding: 3px 6px 3px 44px;  /* left padding leaves room for hour labels */
+    padding: 6px 8px 6px 48px;  /* left padding leaves room for hour labels */
     word-break: break-word;
-    line-height: 1.15;
+    line-height: 1.2;
   }
   .gauge-line {
     position: absolute; left: 0; right: 0;
@@ -682,10 +693,36 @@
   }
   .legend-swatch.ext { background: #bfdbfe; }
   .legend-swatch.int { background: #fbcfe8; }
+  .bar-chart-wrap {
+    display: flex; align-items: stretch; gap: 4px;
+  }
+  .bar-y-axis {
+    display: flex; flex-direction: column-reverse;
+    justify-content: space-between;
+    font-size: .65rem; color: #6b7280;
+    padding: 4px 4px 18px 0;
+    width: 26px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-toggle {
+    display: inline-flex; margin-left: auto;
+  }
+  .bar-toggle button {
+    border: 1px solid var(--line); background: #fff;
+    padding: 2px 10px; font-size: .72rem; cursor: pointer; color: #374151;
+    line-height: 1.3;
+  }
+  .bar-toggle button:first-child { border-radius: 999px 0 0 999px; }
+  .bar-toggle button:last-child  { border-radius: 0 999px 999px 0; border-left: none; }
+  .bar-toggle button.active {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
   .bar-chart {
-    display: flex; align-items: flex-end; gap: 3px; height: 220px;
+    display: flex; align-items: flex-end; gap: 2px; height: 220px;
     padding: 8px 4px 0; background: #fafafa;
     border: 1px solid var(--line); border-radius: 6px;
+    flex: 1;
   }
   .bar-col {
     flex: 1; display: flex; flex-direction: column; align-items: stretch;
@@ -721,6 +758,18 @@
   .stats-day .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
   .stats-day .row .lbl { color: var(--muted); }
   .stats-day .tasklist { margin-top: 6px; padding-left: 18px; }
+  .stats-day .tasklist-with-time {
+    list-style: none; padding-left: 0;
+  }
+  .stats-day .tasklist-with-time li {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 8px; border-radius: 6px;
+    background: #f8fafc; margin-bottom: 4px;
+    font-size: .9rem;
+  }
+  .stats-day .tasklist-with-time .task-time {
+    color: #2563eb; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
   .stats-day .tasklist li { margin: 2px 0; }
   .pct-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 6px; }
   .pct-bar .fill { height: 100%; background: var(--accent); }
@@ -1101,11 +1150,13 @@
   <section id="focus-page">
     <div class="focus-layout">
       <div class="gauge-col" id="gauge-col">
-        <div class="gauge-grid" id="gauge-grid"></div>
-        <div class="gauge-segments" id="gauge-segments"></div>
-        <div class="gauge-line-blue" id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
-        <div class="gauge-line-blue" id="gauge-line-bedtime" style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
-        <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+        <div class="gauge-inner" id="gauge-inner">
+          <div class="gauge-grid" id="gauge-grid"></div>
+          <div class="gauge-segments" id="gauge-segments"></div>
+          <div class="gauge-line-blue" id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
+          <div class="gauge-line-blue" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
+          <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+        </div>
       </div>
 
       <div class="focus-right">
@@ -1492,7 +1543,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -2465,6 +2516,19 @@ function initFocusPage() {
   renderScores();
   updateCountdowns();
   startFocusTicker();
+  // Scroll the gauge to the current time line
+  setTimeout(scrollGaugeToCurrentTime, 50);
+}
+function scrollGaugeToCurrentTime() {
+  const col = document.getElementById('gauge-col');
+  const inner = document.getElementById('gauge-inner');
+  const line = document.getElementById('gauge-line');
+  if (!col || !inner || !line || line.style.display === 'none') return;
+  const lineTopPct = parseFloat(line.style.top) || 0; // "%"
+  const innerHeight = inner.offsetHeight;
+  const linePixel = (lineTopPct / 100) * innerHeight;
+  const colHeight = col.offsetHeight;
+  col.scrollTop = Math.max(0, linePixel - colHeight / 2);
 }
 function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
@@ -3363,7 +3427,8 @@ function finishStudying() {
     2) bar chart of internal+external scores per 2h block
     3) activity log filtered to that day
    Activities that started on the day are shown there even if they crossed midnight. */
-let dailyViewDate = null;  // YYYY-MM-DD; null = today
+let dailyViewDate = null;       // YYYY-MM-DD; null = today
+let dailyChartStepHours = 2;    // 1h or 2h step for the focus-scores chart
 
 function renderStats() {
   const list = document.getElementById('stats-list');
@@ -3419,29 +3484,66 @@ function renderStats() {
   }
 
   // ---- Tasks completed panel ----
+  // For each completed task, total the time spent on it from the watchLog.
+  function timeSpentOnTask(taskName) {
+    const ms = (state.watchLog || [])
+      .filter(e => entryDayKey(e) === dayKey
+                && e.type === 'pomodoro'
+                && (e.name || '') === taskName)
+      .reduce((sum, e) => sum + (e.durationMs || 0), 0);
+    return ms;
+  }
+  function fmtTaskTime(ms) {
+    if (!ms) return '';
+    const totalMin = Math.round(ms / 60000);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    if (h && m) return `${h}h ${m}m`;
+    if (h)      return `${h}h`;
+    return `${m}m`;
+  }
   const completedDiv = document.createElement('div');
   completedDiv.className = 'stats-day session';
   completedDiv.innerHTML = `
     <div class="row"><strong>Tasks completed</strong></div>
     ${completedTasks.length
-      ? `<ul class="tasklist">${completedTasks.map(t=>`<li>${escapeHTML(t)}</li>`).join('')}</ul>`
+      ? `<ul class="tasklist tasklist-with-time">${completedTasks.map(t => {
+          const ms = timeSpentOnTask(t);
+          const tt = fmtTaskTime(ms);
+          return `<li><span class="task-name">${escapeHTML(t)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
+        }).join('')}</ul>`
       : `<div class="help">No tasks completed.</div>`}`;
   list.appendChild(completedDiv);
 
   // ---- Bar chart ----
   const chartDiv = document.createElement('div');
   chartDiv.className = 'stats-day session';
-  const chartStartMs = combineDateTime(state.startDate, state.startTime) || dayStart;
-  const chartEndMs   = Math.max(lastEndMs, chartStartMs + 2 * 3600 * 1000); // at least 2h wide
   chartDiv.innerHTML = `
-    <div class="row"><strong>Focus scores (every 2 hours)</strong></div>
+    <div class="row" style="align-items: center;">
+      <strong>Focus scores</strong>
+      <span class="bar-toggle" id="bar-toggle">
+        <button data-step="1" class="${dailyChartStepHours===1?'active':''}">1h</button>
+        <button data-step="2" class="${dailyChartStepHours===2?'active':''}">2h</button>
+      </span>
+    </div>
     <div class="bar-legend">
       <span class="legend-swatch ext"></span> External
       <span class="legend-swatch int"></span> Internal
     </div>
-    <div class="bar-chart" id="daily-bar-chart"></div>`;
+    <div class="bar-chart-wrap">
+      <div class="bar-y-axis">
+        <span>0</span><span>50</span><span>100</span><span>150</span><span>200</span>
+      </div>
+      <div class="bar-chart" id="daily-bar-chart"></div>
+    </div>`;
   list.appendChild(chartDiv);
-  renderDailyBarChart(document.getElementById('daily-bar-chart'), chartStartMs, chartEndMs);
+  // Wire toggle
+  chartDiv.querySelectorAll('#bar-toggle button').forEach(b => {
+    b.onclick = () => {
+      dailyChartStepHours = +b.dataset.step;
+      renderStats();
+    };
+  });
+  renderDailyBarChart(document.getElementById('daily-bar-chart'), dayStart, dayEnd);
 
   // ---- Activity log for this day ----
   const logDiv = document.createElement('div');
@@ -3483,14 +3585,14 @@ function shiftDailyDate(deltaDays) {
   renderStats();
 }
 
-function renderDailyBarChart(container, startMs, endMs) {
+function renderDailyBarChart(container, dayStart, dayEnd) {
   if (!container) return;
   container.innerHTML = '';
-  const windowMs = 2 * 60 * 60 * 1000;
-  const numWindows = Math.max(1, Math.ceil((endMs - startMs) / windowMs));
+  const stepH  = dailyChartStepHours || 2;
+  const stepMs = stepH * 60 * 60 * 1000;
+  const numWindows = Math.round((dayEnd - dayStart) / stepMs);  // 24/step
   const log = state.scoreLog || [];
 
-  // Find latest snapshot at or before given time. If none, return current scores.
   function scoresAt(t) {
     let latest = null;
     for (let i = log.length - 1; i >= 0; i--) {
@@ -3500,21 +3602,24 @@ function renderDailyBarChart(container, startMs, endMs) {
     return { ext: state.ext.slider || 0, int: state.int.slider || 0 };
   }
 
-  // Each bar: total = ext + int (clamped to [0, 200])
+  // Y-axis max = 200 (each score 0..100; stacked total 0..200)
   for (let i = 0; i < numWindows; i++) {
-    const winStart = startMs + i * windowMs;
-    const winEnd   = winStart + windowMs;
+    const winStart = dayStart + i * stepMs;
+    const winEnd   = winStart + stepMs;
     const sc = scoresAt(winEnd);
     const extC = Math.max(0, Math.min(100, sc.ext));
     const intC = Math.max(0, Math.min(100, sc.int));
     const col = document.createElement('div');
     col.className = 'bar-col';
+    const startH = new Date(winStart).getHours();
+    // Show every other label when step=1h to avoid clutter
+    const showLabel = (stepH === 2) || (startH % 2 === 0);
     col.innerHTML = `
       <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${sc.int}, ext ${sc.ext}">
         <div class="bar-int" style="height:${intC/2}%"></div>
         <div class="bar-ext" style="height:${extC/2}%"></div>
       </div>
-      <div class="bar-time">${new Date(winStart).getHours()}h</div>`;
+      <div class="bar-time">${showLabel ? startH : ''}</div>`;
     container.appendChild(col);
   }
 }
