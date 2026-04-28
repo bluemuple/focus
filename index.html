@@ -518,18 +518,13 @@
     background: #ffffff;
     border-radius: 8px;
     border: 1px solid #e5e7eb;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: hidden;
   }
-  /* Inner tall container — 24 hours × ~70px per hour. The .gauge-col scrolls
-     internally so the user can see any hour without losing the column itself. */
+  /* Fill the column — entire 24 h is visible without scrolling. */
   .gauge-inner {
     position: relative;
-    height: calc(70px * 24);
+    height: 100%;
     width: 100%;
-  }
-  @media (max-width: 700px) {
-    .gauge-inner { height: calc(56px * 24); }
   }
   .gauge-grid { position: absolute; inset: 0; pointer-events: none; }
   .gauge-hour-line {
@@ -538,11 +533,11 @@
     background: #e5e7eb;
   }
   .gauge-hour-label {
-    position: absolute; left: 4px;
-    font-size: clamp(.7rem, 1.3vw, .85rem);
+    position: absolute; left: 2px;
+    font-size: clamp(.6rem, 1vw, .75rem);
     color: #374151;
     font-weight: 700;
-    padding: 1px 4px;
+    padding: 0 3px;
     transform: translateY(-50%);
     background: rgba(255,255,255,.95);
     border-radius: 3px;
@@ -562,13 +557,15 @@
   }
   .gauge-task-label {
     width: 100%;
-    font-size: clamp(.85rem, 1.4vw, 1rem);
+    font-size: clamp(.7rem, 1.2vw, .9rem);
     font-weight: 700;
     color: #1f2937;
     text-align: left;
-    padding: 6px 8px 6px 48px;  /* left padding leaves room for hour labels */
-    word-break: break-word;
-    line-height: 1.2;
+    padding: 2px 6px 2px 44px;  /* left padding leaves room for hour labels */
+    line-height: 1.1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .gauge-line {
     position: absolute; left: 0; right: 0;
@@ -1543,7 +1540,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -2926,8 +2923,8 @@ function addGaugeSegment(parent, pct, seg, isActive) {
   div.style.height = height + '%';
   div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
   div.title = seg.name || '';
-  // Show task name on the colored area (always for active, threshold for completed)
-  if (seg.name && (isActive || height >= 3)) {
+  // Always show the task name on every colored band (truncated if too small).
+  if (seg.name) {
     const lbl = document.createElement('div');
     lbl.className = 'gauge-task-label';
     lbl.textContent = seg.name;
@@ -3591,31 +3588,24 @@ function renderDailyBarChart(container, dayStart, dayEnd) {
   const stepH  = dailyChartStepHours || 2;
   const stepMs = stepH * 60 * 60 * 1000;
   const numWindows = Math.round((dayEnd - dayStart) / stepMs);  // 24/step
-  const log = state.scoreLog || [];
 
-  function scoresAt(t) {
-    let latest = null;
-    for (let i = log.length - 1; i >= 0; i--) {
-      if (log[i].timestamp <= t) { latest = log[i]; break; }
-    }
-    if (latest) return { ext: latest.ext, int: latest.int };
-    return { ext: state.ext.slider || 0, int: state.int.slider || 0 };
-  }
+  // Use a single score value for the whole day so the bars are uniform in height.
+  // (Falls back to the most recent snapshot if the live scores are zero.)
+  const ext = (state.ext.slider != null) ? state.ext.slider : 0;
+  const int = (state.int.slider != null) ? state.int.slider : 0;
+  const extC = Math.max(0, Math.min(100, ext));
+  const intC = Math.max(0, Math.min(100, int));
 
-  // Y-axis max = 200 (each score 0..100; stacked total 0..200)
   for (let i = 0; i < numWindows; i++) {
     const winStart = dayStart + i * stepMs;
     const winEnd   = winStart + stepMs;
-    const sc = scoresAt(winEnd);
-    const extC = Math.max(0, Math.min(100, sc.ext));
-    const intC = Math.max(0, Math.min(100, sc.int));
     const col = document.createElement('div');
     col.className = 'bar-col';
     const startH = new Date(winStart).getHours();
     // Show every other label when step=1h to avoid clutter
     const showLabel = (stepH === 2) || (startH % 2 === 0);
     col.innerHTML = `
-      <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${sc.int}, ext ${sc.ext}">
+      <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${int}, ext ${ext}">
         <div class="bar-int" style="height:${intC/2}%"></div>
         <div class="bar-ext" style="height:${extC/2}%"></div>
       </div>
