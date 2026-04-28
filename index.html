@@ -1622,7 +1622,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -4359,6 +4359,13 @@ function snapshotDayToStats(dayKey) {
   stats.unshift(entry);
   saveStats();
   pushStatToCloud(entry).catch(()=>{});
+  // Clear completed tasks from the live matrix — they're preserved in the
+  // stats entry above, but on the new day the matrix should start fresh.
+  ['q1','q2','q3','q4'].forEach(q => {
+    state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
+  });
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
 }
 function maybeAutoSnapshot() {
   const today = getCurrentDayKey();
@@ -4369,6 +4376,9 @@ function maybeAutoSnapshot() {
     snapshotDayToStats(state.lastSnapshotDate);
     state.lastSnapshotDate = today;
     saveState();
+    // After clearing completed tasks: re-render the matrix on whichever page is open
+    if (typeof renderTasks === 'function') renderTasks();
+    if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
     if (typeof renderStats === 'function' &&
         document.getElementById('stats-page').style.display !== 'none') renderStats();
   }
