@@ -1603,7 +1603,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -2475,12 +2475,17 @@ function maxPossibleScore(side) {
 function pushScoreSnapshot() {
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   const last = state.scoreLog[state.scoreLog.length - 1];
+  const now = Date.now();
   if (last && last.ext === state.ext.slider && last.int === state.int.slider) return;
-  state.scoreLog.push({
-    timestamp: Date.now(),
-    ext: state.ext.slider,
-    int: state.int.slider
-  });
+  // If the last snapshot is very recent (rapid burst from initialization or
+  // multiple recompute calls), update it in place rather than push a new one.
+  if (last && now - last.timestamp < 5000) {
+    last.timestamp = now;
+    last.ext = state.ext.slider;
+    last.int = state.int.slider;
+  } else {
+    state.scoreLog.push({ timestamp: now, ext: state.ext.slider, int: state.int.slider });
+  }
   if (state.scoreLog.length > 1000) state.scoreLog = state.scoreLog.slice(-1000);
 }
 function recomputeSlider(side) {
@@ -3689,28 +3694,48 @@ function renderDailyBarChart(container, dayStart, dayEnd) {
   const stepH  = dailyChartStepHours || 2;
   const stepMs = stepH * 60 * 60 * 1000;
   const numWindows = Math.round((dayEnd - dayStart) / stepMs);  // 24/step
+  const log = state.scoreLog || [];
+  const isToday = (dayStart === getDayBoundsForKey(getCurrentDayKey())[0]);
+  const now = Date.now();
 
-  // Use a single score value for the whole day so the bars are uniform in height.
-  // (Falls back to the most recent snapshot if the live scores are zero.)
-  const ext = (state.ext.slider != null) ? state.ext.slider : 0;
-  const int = (state.int.slider != null) ? state.int.slider : 0;
-  const extC = Math.max(0, Math.min(100, ext));
-  const intC = Math.max(0, Math.min(100, int));
+  // Returns { ext, int } that were active at time t — i.e. the latest snapshot at or before t.
+  // For windows in the future of "now" on today, return null so we draw nothing.
+  function scoresAt(t) {
+    if (isToday && t > now) return null;
+    let latest = null;
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i].timestamp <= t) { latest = log[i]; break; }
+    }
+    if (latest) return { ext: latest.ext, int: latest.int };
+    // Before any snapshot — use the first snapshot (extrapolate backwards) so
+    // the user sees something rather than empty bars.
+    if (log.length) return { ext: log[0].ext, int: log[0].int };
+    return null;
+  }
 
   for (let i = 0; i < numWindows; i++) {
     const winStart = dayStart + i * stepMs;
     const winEnd   = winStart + stepMs;
+    const sc = scoresAt(winEnd);
+    const startH = new Date(winStart).getHours();
+    const showLabel = (stepH === 2) || (startH % 2 === 0);
     const col = document.createElement('div');
     col.className = 'bar-col';
-    const startH = new Date(winStart).getHours();
-    // Show every other label when step=1h to avoid clutter
-    const showLabel = (stepH === 2) || (startH % 2 === 0);
-    col.innerHTML = `
-      <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${int}, ext ${ext}">
-        <div class="bar-int" style="height:${intC/2}%"></div>
-        <div class="bar-ext" style="height:${extC/2}%"></div>
-      </div>
-      <div class="bar-time">${showLabel ? startH : ''}</div>`;
+    if (sc == null) {
+      // future window on today — empty bar
+      col.innerHTML = `
+        <div class="bar-stack future" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}"></div>
+        <div class="bar-time">${showLabel ? startH : ''}</div>`;
+    } else {
+      const extC = Math.max(0, Math.min(100, sc.ext));
+      const intC = Math.max(0, Math.min(100, sc.int));
+      col.innerHTML = `
+        <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${sc.int}, ext ${sc.ext}">
+          <div class="bar-int" style="height:${intC/2}%"></div>
+          <div class="bar-ext" style="height:${extC/2}%"></div>
+        </div>
+        <div class="bar-time">${showLabel ? startH : ''}</div>`;
+    }
     container.appendChild(col);
   }
 }
