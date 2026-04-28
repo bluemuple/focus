@@ -743,6 +743,9 @@
   .bar-time {
     text-align: center; font-size: .65rem; color: #6b7280;
     padding-top: 3px; font-variant-numeric: tabular-nums;
+    height: 16px;          /* always reserve space, even when empty */
+    line-height: 13px;
+    box-sizing: border-box;
   }
 
   .stats-date-header {
@@ -773,6 +776,59 @@
   }
   .stats-day .tasklist-with-time .task-time {
     color: #2563eb; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+
+  /* Statistics matrix view (Eisenhower 2×2) */
+  .stats-matrix-wrap {
+    display: grid; grid-template-columns: 28px 1fr; gap: 6px; margin-top: 8px;
+  }
+  .stats-matrix-wrap .col-headers {
+    grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    text-align: center; font-weight: 600; color: #374151; font-size: .8rem;
+  }
+  .stats-matrix-wrap .row-labels {
+    display: grid; grid-template-rows: 1fr 1fr; gap: 6px;
+    align-items: center; justify-items: start; font-weight: 600; color: #374151; font-size: .8rem;
+  }
+  .stats-matrix-wrap .row-labels span { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .stats-matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 6px;
+  }
+  .stats-matrix .cell {
+    border-radius: 8px; padding: 10px;
+    border: 1px solid rgba(0,0,0,.06);
+    min-height: 80px;
+  }
+  .stats-matrix .cell.q1 { background: var(--q1); }
+  .stats-matrix .cell.q2 { background: var(--q2); }
+  .stats-matrix .cell.q3 { background: var(--q3); }
+  .stats-matrix .cell.q4 { background: var(--q4); }
+  .stats-matrix .cell h4 {
+    font-size: .68rem; opacity: .65; text-transform: uppercase;
+    letter-spacing: .04em; margin: 0 0 6px;
+  }
+  .stats-matrix-tasks {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .stats-matrix-tasks li {
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 4px 8px; border-radius: 5px;
+    background: rgba(255,255,255,.55);
+    font-size: .85rem; color: #1f2937;
+  }
+  .stats-matrix-tasks .task-name { flex: 1; min-width: 0; word-break: break-word; }
+  .stats-matrix-tasks .task-time {
+    color: #1d4ed8; font-weight: 700; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .stats-matrix-empty { padding: 4px 0; color: #9ca3af; font-size: .8rem; }
+  @media (max-width: 700px) {
+    .stats-matrix-wrap { grid-template-columns: 18px 1fr; gap: 4px; }
+    .stats-matrix { gap: 4px; }
+    .stats-matrix .cell { padding: 8px; }
+    .stats-matrix .cell h4 { font-size: .6rem; }
+    .stats-matrix-tasks li { font-size: .8rem; padding: 3px 6px; }
   }
   .stats-day .tasklist li { margin: 2px 0; }
   .pct-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 6px; }
@@ -1547,7 +1603,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -3466,36 +3522,40 @@ function renderStats() {
     ? Math.max(...todayWatch.map(e => e.endedAt))
     : dayEnd;
 
-  // Tasks completed today (try both live state and any stats entry for this date)
+  // Tasks completed on this day, with quadrant info: [{ name, q }]
   let completedTasks = [];
-  // Live: tasks marked done; group by completedAt date if present, fall back to "today" if no timestamp
   const isToday = dayKey === getCurrentDayKey();
   if (isToday) {
     ['q1','q2','q3','q4'].forEach(q => {
       (state.tasks[q] || []).forEach(t => {
         if (!t.text || !t.text.trim() || !t.done) return;
         if (t.completedAt) {
-          if (fmtDateLocal(new Date(t.completedAt)) === dayKey) completedTasks.push(t.text);
+          if (fmtDateLocal(new Date(t.completedAt)) === dayKey) {
+            completedTasks.push({ name: t.text, q });
+          }
         } else {
-          completedTasks.push(t.text); // legacy task without timestamp
+          completedTasks.push({ name: t.text, q }); // legacy task without timestamp
         }
       });
     });
   } else {
     // Past day: use the saved stats entry's completed list
     const entry = (stats || []).find(s => s.date === dayKey);
-    if (entry && Array.isArray(entry.completed)) completedTasks = entry.completed.slice();
+    if (entry && Array.isArray(entry.completed)) {
+      completedTasks = entry.completed.map(item => {
+        if (typeof item === 'string') return { name: item, q: null };
+        return { name: item.name, q: item.q || null };
+      });
+    }
   }
 
-  // ---- Tasks completed panel ----
-  // For each completed task, total the time spent on it from the watchLog.
+  // ---- Tasks completed panel — Eisenhower-matrix layout ----
   function timeSpentOnTask(taskName) {
-    const ms = (state.watchLog || [])
+    return (state.watchLog || [])
       .filter(e => entryDayKey(e) === dayKey
                 && e.type === 'pomodoro'
                 && (e.name || '') === taskName)
       .reduce((sum, e) => sum + (e.durationMs || 0), 0);
-    return ms;
   }
   function fmtTaskTime(ms) {
     if (!ms) return '';
@@ -3505,17 +3565,51 @@ function renderStats() {
     if (h)      return `${h}h`;
     return `${m}m`;
   }
+  // Group by quadrant
+  const byQ = { q1: [], q2: [], q3: [], q4: [], unknown: [] };
+  completedTasks.forEach(t => {
+    const q = t.q || 'unknown';
+    (byQ[q] || (byQ[q] = [])).push(t);
+  });
+  const quadrantTitles = {
+    q1: 'Important · Urgent',
+    q2: 'Important · Not Urgent',
+    q3: 'Not Important · Urgent',
+    q4: 'Not Important · Not Urgent'
+  };
+  function renderQuadrantTasks(q) {
+    const items = byQ[q] || [];
+    if (!items.length) return `<div class="stats-matrix-empty help">—</div>`;
+    return `<ul class="stats-matrix-tasks">${items.map(t => {
+      const ms = timeSpentOnTask(t.name);
+      const tt = fmtTaskTime(ms);
+      return `<li><span class="task-name">${escapeHTML(t.name)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
+    }).join('')}</ul>`;
+  }
   const completedDiv = document.createElement('div');
   completedDiv.className = 'stats-day session';
   completedDiv.innerHTML = `
     <div class="row"><strong>Tasks completed</strong></div>
-    ${completedTasks.length
-      ? `<ul class="tasklist tasklist-with-time">${completedTasks.map(t => {
-          const ms = timeSpentOnTask(t);
+    ${completedTasks.length ? `
+      <div class="stats-matrix-wrap">
+        <div></div>
+        <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
+        <div class="row-labels"><span>Important</span><span>Not Important</span></div>
+        <div class="stats-matrix">
+          <div class="cell q1"><h4>${quadrantTitles.q1}</h4>${renderQuadrantTasks('q1')}</div>
+          <div class="cell q2"><h4>${quadrantTitles.q2}</h4>${renderQuadrantTasks('q2')}</div>
+          <div class="cell q3"><h4>${quadrantTitles.q3}</h4>${renderQuadrantTasks('q3')}</div>
+          <div class="cell q4"><h4>${quadrantTitles.q4}</h4>${renderQuadrantTasks('q4')}</div>
+        </div>
+      </div>
+      ${(byQ.unknown && byQ.unknown.length) ? `
+        <div class="row" style="margin-top: 10px;"><span class="lbl help">Other (no quadrant)</span></div>
+        <ul class="stats-matrix-tasks">${byQ.unknown.map(t => {
+          const ms = timeSpentOnTask(t.name);
           const tt = fmtTaskTime(ms);
-          return `<li><span class="task-name">${escapeHTML(t)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
-        }).join('')}</ul>`
-      : `<div class="help">No tasks completed.</div>`}`;
+          return `<li><span class="task-name">${escapeHTML(t.name)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
+        }).join('')}</ul>` : ''}
+    ` : `<div class="help">No tasks completed.</div>`}`;
   list.appendChild(completedDiv);
 
   // ---- Bar chart ----
@@ -4116,7 +4210,7 @@ function snapshotDayToStats(dayKey) {
     (state.tasks[q] || []).forEach(t => {
       if (!t.done || !t.text || !t.text.trim()) return;
       const ts = t.completedAt;
-      if (ts && fmtDateLocal(new Date(ts)) === dayKey) completed.push(t.text);
+      if (ts && fmtDateLocal(new Date(ts)) === dayKey) completed.push({ name: t.text, q });
     });
   });
   const totalTasks = ['q1','q2','q3','q4'].reduce(
