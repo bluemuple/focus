@@ -1271,6 +1271,11 @@
                 <input type="number" id="mult-score" placeholder="±score">
                 <button id="mult-add">Add</button>
               </div>
+              <div class="row-input">
+                <input type="text" id="mult-tracker-text" placeholder="Tap to Start Tracker">
+                <input type="number" id="mult-tracker-rate" placeholder="±/5min">
+                <button id="mult-tracker-add">Add tracker</button>
+              </div>
             </div>
             <div class="mana-col">
               <h3>Mana Muncher</h3>
@@ -1279,6 +1284,11 @@
                 <input type="text" id="munch-text" placeholder="Factor">
                 <input type="number" id="munch-score" placeholder="±score">
                 <button id="munch-add">Add</button>
+              </div>
+              <div class="row-input">
+                <input type="text" id="munch-tracker-text" placeholder="Tap to Start Tracker">
+                <input type="number" id="munch-tracker-rate" placeholder="±/5min">
+                <button id="munch-tracker-add">Add tracker</button>
               </div>
             </div>
           </div>
@@ -1531,6 +1541,15 @@ function migrateState() {
     let un = state.mana.muncher.find(x => x.lbl === 'Unrelated news');
     if (un) { un.kind = 'timer'; delete un.score; }
     else state.mana.muncher.push({ lbl: 'Unrelated news', kind: 'timer' });
+    // Default pointsPer5Min for legacy timer trackers (so the new field exists)
+    state.mana.muncher.forEach(m => {
+      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = -3;
+    });
+  }
+  if (state.mana && Array.isArray(state.mana.multiplier)) {
+    state.mana.multiplier.forEach(m => {
+      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = 3;
+    });
   }
   // remove old yt single-timer state, replaced by activeTimer
   delete state.ytTimer;
@@ -1603,7 +1622,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -2734,19 +2753,29 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logEntry.name = task.text || '(task)';
       state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
     }
-  } else if (at.type === 'muncher') {
-    const m = state.mana.muncher[at.manaIdx];
+  } else if (at.type === 'muncher' || at.type === 'multiplier') {
+    const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+    const m = state.mana[side] && state.mana[side][at.manaIdx];
     if (m) {
-      // Penalty: -3 per 5 min, applied to External
       const minutes = dur / 60000;
-      logEntry.penalty = -Math.round(minutes * 3 / 5);
-      if (logEntry.penalty) {
-        state.ext.slider = clamp(state.ext.slider + logEntry.penalty, -100, 100);
-        flashScoreCard('ext');
+      // Each tracker has its own points-per-5-min rate. Default for legacy
+      // muncher trackers is -3 per 5 min. Multiplier trackers default to +3.
+      const rate = (typeof m.pointsPer5Min === 'number')
+        ? m.pointsPer5Min
+        : (side === 'multiplier' ? 3 : -3);
+      const adjustment = Math.round(minutes * rate / 5);
+      logEntry.penalty = adjustment;
+      if (adjustment) {
+        // Multiplier trackers affect Internal; Muncher trackers affect External.
+        const targetSide = (side === 'multiplier') ? 'int' : 'ext';
+        state[targetSide].slider = clamp(state[targetSide].slider + adjustment, -100, 100);
+        flashScoreCard(targetSide);
       }
-      logEntry.type = 'muncher';
+      logEntry.type = at.type;
       logEntry.name = m.lbl;
-      state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: '#fecaca', name: m.lbl });
+      // Gauge band color: blue when rate is positive, red when negative.
+      const segColor = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+      state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: segColor, name: m.lbl });
     }
   }
   state.watchLog.push(logEntry);
@@ -2816,22 +2845,35 @@ function tickPomodoro() {
   }
 }
 
-function startMuncherTimer(manaIdx) {
+function startManaTimer(side, manaIdx) {
   stopActiveTimer('switch');
-  state.activeTimer = { type: 'muncher', manaIdx, startedAt: Date.now() };
-  saveState(); renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+  state.activeTimer = {
+    type: (side === 'multiplier') ? 'multiplier' : 'muncher',
+    manaIdx,
+    startedAt: Date.now()
+  };
+  saveState();
+  // Immediate cloud push so the other device sees the running tracker on next refresh.
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix(); renderManaLists(); renderWatchLog(); drawGauge();
 }
-function stopMuncherTimer(manaIdx) {
-  if (state.activeTimer && state.activeTimer.type==='muncher' && state.activeTimer.manaIdx===manaIdx) {
+function stopManaTimer(side, manaIdx) {
+  const expectedType = (side === 'multiplier') ? 'multiplier' : 'muncher';
+  if (state.activeTimer && state.activeTimer.type === expectedType && state.activeTimer.manaIdx === manaIdx) {
     stopActiveTimer('pause');
   }
-  renderManaList('muncher'); renderWatchLog(); drawGauge(); renderScores();
+  renderManaLists(); renderWatchLog(); drawGauge(); renderScores();
 }
-function clickMuncherTimer(manaIdx) {
+function clickManaTimer(side, manaIdx) {
+  const expectedType = (side === 'multiplier') ? 'multiplier' : 'muncher';
   const at = state.activeTimer;
-  if (at && at.type==='muncher' && at.manaIdx===manaIdx) stopMuncherTimer(manaIdx);
-  else startMuncherTimer(manaIdx);
+  if (at && at.type === expectedType && at.manaIdx === manaIdx) stopManaTimer(side, manaIdx);
+  else startManaTimer(side, manaIdx);
 }
+// Backwards-compat wrappers
+function startMuncherTimer(idx) { return startManaTimer('muncher', idx); }
+function stopMuncherTimer(idx)  { return stopManaTimer('muncher', idx); }
+function clickMuncherTimer(idx) { return clickManaTimer('muncher', idx); }
 // Click on task text → toggle pomodoro
 function toggleTaskTimer(q, i) {
   const at = state.activeTimer;
@@ -3151,14 +3193,20 @@ function deleteWatchLogEntry(idx) {
 
 function activeTimerToSegment(at, now) {
   if (!at) return null;
-  if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+  if (at.type === 'pomodoro' || at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
     const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (!t) return null;
     return { startMs: at.startedAt, endMs: now, q: at.q, name: t.text || '(task)' };
-  } else if (at.type === 'muncher') {
-    const m = state.mana.muncher[at.manaIdx];
+  } else if (at.type === 'muncher' || at.type === 'multiplier') {
+    const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+    const m = state.mana[side] && state.mana[side][at.manaIdx];
     if (!m) return null;
-    return { startMs: at.startedAt, endMs: now, color: '#fecaca', name: m.lbl };
+    // Color matches the sign of the tracker's pointsPer5Min: blue (+), red (−), gray (0)
+    const rate = (typeof m.pointsPer5Min === 'number')
+      ? m.pointsPer5Min
+      : (side === 'multiplier' ? 3 : -3);
+    const color = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+    return { startMs: at.startedAt, endMs: now, color, name: m.lbl };
   }
   return null;
 }
@@ -3368,31 +3416,54 @@ function renderManaList(kind) {
     row.style.cursor = 'pointer';
 
     if (m.kind === 'timer') {
-      // Time-tracking muncher (Youtube/Netflix, Unrelated news, etc).
-      // Applies -3 per 5 min penalty to External on stop.
-      const running = state.activeTimer && state.activeTimer.type === 'muncher' && state.activeTimer.manaIdx === i;
-      const liveMs = running ? getMuncherRunningMs(i) : 0;
+      // Time-tracking item. Multiplier trackers affect Internal; Muncher trackers affect External.
+      // Each tracker has its own pointsPer5Min rate.
+      const expectedType = (kind === 'multiplier') ? 'multiplier' : 'muncher';
+      const running = state.activeTimer && state.activeTimer.type === expectedType && state.activeTimer.manaIdx === i;
+      const liveMs = running ? (Date.now() - state.activeTimer.startedAt) : 0;
+      const rate = (typeof m.pointsPer5Min === 'number')
+        ? m.pointsPer5Min
+        : (kind === 'multiplier' ? 3 : -3);
+      const targetLabel = (kind === 'multiplier') ? 'Internal' : 'External';
       row.classList.toggle('timer-running', running);
       row.title = running
-        ? 'Tap to stop — recorded in activity log; External penalty applied'
-        : 'Tap to start tracker (-3 per 5 min when stopped)';
+        ? `Tap to stop — recorded in activity log; ${targetLabel} adjustment applied`
+        : `Tap to start tracker (${rate>0?'+':''}${rate} per 5 min on ${targetLabel})`;
+      const rateBadge = `${rate>0?'+':''}${rate}/5m`;
+      // Color text/time/dot based on the rate's sign:
+      //   positive → blue,  negative → red,  zero → gray
+      const baseColor = (rate > 0) ? '#2563eb'
+                      : (rate < 0) ? '#dc2626'
+                      : '#6b7280';
       row.innerHTML = `
-        <span class="lbl">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
-        <span class="scr" style="color:${running?'#dc2626':'#9ca3af'};">${running?'●':'○'}</span>
+        <span class="lbl" style="color:${baseColor}; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
+        <span class="scr" style="color:${baseColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:600; color:#6b7280;">${rateBadge}</small></span>
         <button title="Remove">×</button>`;
       row.onclick = (e) => {
         if (e.target.tagName === 'BUTTON') return;
-        clickMuncherTimer(i);
+        clickManaTimer(kind, i);
       };
       row.querySelector('.lbl').ondblclick = (e) => {
         e.stopPropagation();
         const v = prompt('Edit name:', m.lbl);
-        if (v !== null && v.trim()) { m.lbl = v.trim(); saveState(); renderManaList(kind); }
+        if (v !== null && v.trim()) {
+          m.lbl = v.trim(); saveState(); renderManaList(kind);
+          markSettingsChanged(); pushSettingsToCloud();
+        }
+      };
+      row.querySelector('.scr').ondblclick = (e) => {
+        e.stopPropagation();
+        const v = prompt('Edit ± points per 5 min:', m.pointsPer5Min);
+        if (v !== null && !isNaN(+v)) {
+          m.pointsPer5Min = +v; saveState(); renderManaList(kind);
+          markSettingsChanged(); pushSettingsToCloud();
+        }
       };
       row.querySelector('button').onclick = (e) => {
         e.stopPropagation();
-        if (running) stopMuncherTimer(i);
+        if (running) stopManaTimer(kind, i);
         state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
       };
       list.appendChild(row);
       return;
@@ -3450,6 +3521,30 @@ document.getElementById('munch-add').onclick = () => {
   saveState(); renderManaList('muncher');
   markSettingsChanged(); pushSettingsToCloud();
 };
+
+// "Add tracker" buttons — adds a kind:'timer' item with custom pointsPer5Min rate.
+function addMultTracker() {
+  const t = document.getElementById('mult-tracker-text').value.trim();
+  const r = document.getElementById('mult-tracker-rate').value;
+  if (!t || r === '') return;
+  state.mana.multiplier.push({ lbl: t, kind: 'timer', pointsPer5Min: +r });
+  document.getElementById('mult-tracker-text').value = '';
+  document.getElementById('mult-tracker-rate').value = '';
+  saveState(); renderManaList('multiplier');
+  markSettingsChanged(); pushSettingsToCloud();
+}
+function addMunchTracker() {
+  const t = document.getElementById('munch-tracker-text').value.trim();
+  const r = document.getElementById('munch-tracker-rate').value;
+  if (!t || r === '') return;
+  state.mana.muncher.push({ lbl: t, kind: 'timer', pointsPer5Min: +r });
+  document.getElementById('munch-tracker-text').value = '';
+  document.getElementById('munch-tracker-rate').value = '';
+  saveState(); renderManaList('muncher');
+  markSettingsChanged(); pushSettingsToCloud();
+}
+document.getElementById('mult-tracker-add').onclick  = addMultTracker;
+document.getElementById('munch-tracker-add').onclick = addMunchTracker;
 
 /* ---- finish session ---- */
 function finishStudying() {
@@ -4288,13 +4383,15 @@ setInterval(() => {
     renderScores();
     updateCountdowns();
     tickTaskTimers();
-    // live update active muncher row (Youtube/Netflix, Unrelated news, etc.)
+    // live update active mana tracker row (multiplier or muncher)
     const at = state.activeTimer;
-    if (at && at.type === 'muncher') {
-      const row = document.querySelectorAll('#mana-munch .mana-item')[at.manaIdx];
+    if (at && (at.type === 'muncher' || at.type === 'multiplier')) {
+      const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+      const listId = (side === 'multiplier') ? 'mana-mult' : 'mana-munch';
+      const row = document.querySelectorAll('#' + listId + ' .mana-item')[at.manaIdx];
       const lbl = row && row.querySelector('.lbl');
-      const m = state.mana.muncher[at.manaIdx];
-      if (lbl && m) lbl.textContent = m.lbl + ' ' + fmtHMS(getMuncherRunningMs(at.manaIdx));
+      const m = state.mana[side] && state.mana[side][at.manaIdx];
+      if (lbl && m) lbl.textContent = m.lbl + ' ' + fmtHMS(Date.now() - at.startedAt);
     }
   }
 }, 1000);
