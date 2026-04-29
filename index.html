@@ -390,7 +390,7 @@
     .preview-section h3            { display: none; }
     .preview-section               { margin: 0 0 10px; }
     .preview-track-wrap            { padding: 8px 0; border-radius: 10px; }
-    .preview-slide img             { height: 260px; }
+    .preview-slide img             { height: 400px; }
     .preview-dots                  { margin-top: 6px; }
     .preview-arrow                 { display: none; }
   }
@@ -2313,7 +2313,10 @@ async function pushSettingsToCloud() {
         // scoreLog drives the Statistics → Focus scores line chart. Synced so
         // points recorded on one device are visible on another, and don't
         // disappear after a refresh on a fresh client.
-        scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : []
+        scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
+        // The currently picked motivational quote + when it was selected.
+        // Synced so all devices show the same quote in real time.
+        motivationalCurrent:     state.motivationalCurrent || null
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
@@ -2415,6 +2418,8 @@ async function syncSettingsBidi() {
         if (Array.isArray(ss.scoreLog)) {
           state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
         }
+        // Motivational quote currently shown.
+        if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
       }
       state.settingsUpdatedAt = remoteTs;
       saveState();
@@ -2465,6 +2470,7 @@ async function pollCloudForUpdates() {
     const localTs = state.settingsUpdatedAt || 0;
     if (remoteTs <= localTs) return;  // nothing new
     let changed = false;
+    let motivationChanged = false;
     // Live tracker / Pomodoro state
     if (remote.session_state && typeof remote.session_state === 'object') {
       const ss = remote.session_state;
@@ -2472,6 +2478,20 @@ async function pollCloudForUpdates() {
       if (typeof ss.pomodoroSessionsInCycle === 'number') { state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle; changed = true; }
       if (Array.isArray(ss.timeSegments)) { state.timeSegments = ss.timeSegments; changed = true; }
       if ('sessionStartMs' in ss) { state.sessionStartMs = ss.sessionStartMs || null; changed = true; }
+      // Motivational quote currently selected (synced so devices stay in lockstep).
+      if ('motivationalCurrent' in ss) {
+        const before = state.motivationalCurrent && state.motivationalCurrent.text;
+        state.motivationalCurrent = ss.motivationalCurrent || null;
+        const after  = state.motivationalCurrent && state.motivationalCurrent.text;
+        if (before !== after) { motivationChanged = true; changed = true; }
+      }
+    }
+    // Motivational quote LIST (the source pool).
+    if (typeof remote.motivational_lines === 'string' && remote.motivational_lines !== state.motivationalLines) {
+      state.motivationalLines = remote.motivational_lines;
+      const motInput = document.getElementById('motivation-input');
+      if (motInput && document.activeElement !== motInput) motInput.value = state.motivationalLines;
+      motivationChanged = true; changed = true;
     }
     // Mana lists (so ratePerMin and added/removed trackers appear too)
     if (remote.mana && typeof remote.mana === 'object') {
@@ -2488,16 +2508,14 @@ async function pollCloudForUpdates() {
       if (typeof renderWatchLog === 'function')    renderWatchLog();
       if (typeof drawGauge === 'function')         drawGauge();
       if (typeof renderScores === 'function')      renderScores();
+      if (motivationChanged && typeof refreshMotivation === 'function') refreshMotivation(false);
     }
   } catch (e) { /* silent — this is best-effort polling */ }
 }
-// Poll roughly every 12s while the focus page is open
-setInterval(() => {
-  if (document.getElementById('focus-page')
-      && document.getElementById('focus-page').style.display !== 'none') {
-    pollCloudForUpdates();
-  }
-}, 12000);
+// Poll roughly every 12s on any page — the topbar motivational quote is always
+// visible, and other near-realtime fields (active timer, watch log) are cheap
+// to keep current. Throttling inside pollCloudForUpdates prevents over-fetch.
+setInterval(pollCloudForUpdates, 12000);
 // Also pull immediately when the tab regains focus
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
@@ -4773,6 +4791,11 @@ function refreshMotivation(force) {
       selectedAt: now
     };
     saveState();
+    // Push the new pick so other devices show the same quote in real time.
+    try {
+      if (typeof markSettingsChanged === 'function') markSettingsChanged();
+      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+    } catch(_) {}
   }
   // Wrap in an inner span so we can animate transform without affecting layout.
   el.innerHTML = `<span class="motivation-track">${escapeHTML(state.motivationalCurrent.text)}</span>`;
