@@ -133,6 +133,8 @@
   .pomodoro-display.work       { background: #fce7f3; border-color: #fbcfe8; color: #9d174d; }  /* pink */
   .pomodoro-display.short-break{ background: #d1fae5; border-color: #86efac; color: #065f46; }  /* light green */
   .pomodoro-display.long-break { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }  /* light blue */
+  .pomodoro-display { cursor: pointer; }
+  .pomodoro-display.paused { opacity: .6; filter: grayscale(0.3); }
   .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
   .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
 
@@ -700,11 +702,61 @@
   .legend-swatch.ext-line { background: #3b82f6; }
   .legend-swatch.int-line { background: #ec4899; }
   .line-chart {
-    width: 100%; height: 240px; background: #fafafa;
-    border: 1px solid var(--line); border-radius: 6px; padding: 4px;
+    position: relative;
+    width: 100%; height: 240px;
+    background: #fafafa;
+    border: 1px solid var(--line); border-radius: 6px;
     box-sizing: border-box;
   }
-  .line-chart-svg { width: 100%; height: 100%; }
+  /* Inner area where the lines and dots live (offset for axis labels) */
+  .line-chart .chart-inner {
+    position: absolute;
+    top: 8px; left: 32px;
+    right: 8px; bottom: 24px;
+  }
+  .line-chart-svg { width: 100%; height: 100%; display: block; }
+  /* Y-axis labels — fixed font size, never stretched */
+  .chart-y-axis {
+    position: absolute;
+    top: 8px; left: 0;
+    bottom: 24px;
+    width: 28px;
+    pointer-events: none;
+  }
+  .chart-y-axis span {
+    position: absolute;
+    right: 4px;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+  }
+  /* X-axis labels — fixed font size */
+  .chart-x-axis {
+    position: absolute;
+    left: 32px; right: 8px;
+    bottom: 4px;
+    height: 18px;
+    pointer-events: none;
+  }
+  .chart-x-axis span {
+    position: absolute;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* Round dots — HTML so they stay circular regardless of SVG aspect ratio */
+  .chart-dot {
+    position: absolute;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .chart-dot.int { background: #ec4899; }
+  .chart-dot.ext { background: #3b82f6; }
   .bar-chart-wrap {
     display: flex; align-items: stretch; gap: 4px;
   }
@@ -1632,7 +1684,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -1831,12 +1883,14 @@ async function pushSettingsToCloud() {
       // Mana Factors (multiplier + muncher) and Activity log
       mana:      state.mana,
       watch_log: state.watchLog || [],
-      // Live focus session state — Pomodoro timer + gauge segments
+      // Live focus session state — Pomodoro timer + gauge segments + day rollovers
       session_state: {
         activeTimer:             state.activeTimer || null,
         pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
         timeSegments:            state.timeSegments || [],
-        sessionStartMs:          state.sessionStartMs || null
+        sessionStartMs:          state.sessionStartMs || null,
+        lastSnapshotDate:        state.lastSnapshotDate || '',
+        last3amResetDate:        state.last3amResetDate || ''
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
@@ -1920,6 +1974,9 @@ async function syncSettingsBidi() {
         if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
         if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
         if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
+        // Day-rollover markers — synced so other devices don't run the reset twice
+        if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
+        if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
       }
       state.settingsUpdatedAt = remoteTs;
       saveState();
@@ -2672,8 +2729,14 @@ function renderFocusMatrix() {
         const totalSec = Math.max(0, Math.floor(remaining / 1000));
         const m = Math.floor(totalSec / 60), s = totalSec % 60;
         const display = document.createElement('span');
-        display.className = `pomodoro-display ${at.phase}`;
-        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}</span>`;
+        display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
+        display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
+        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}${at.paused?' (paused)':''}</span>`;
+        // Tap on the timer area = pause / resume (does NOT record to activity log)
+        display.onclick = (e) => {
+          e.stopPropagation();
+          togglePomodoroPause();
+        };
         row.appendChild(display);
       }
 
@@ -2709,10 +2772,10 @@ function tickTaskTimers() {
       const m = Math.floor(totalSec / 60), s = totalSec % 60;
       const timeEl = display.querySelector('.time');
       if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
-      // Update class if phase changed without full rerender
-      display.className = `pomodoro-display ${at.phase}`;
+      display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
+      display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
       const phaseEl = display.querySelector('.phase-name');
-      if (phaseEl) phaseEl.textContent = '· ' + pomodoroPhaseLabel(at.phase);
+      if (phaseEl) phaseEl.textContent = '· ' + pomodoroPhaseLabel(at.phase) + (at.paused?' (paused)':'');
     }
   }
 }
@@ -2728,7 +2791,12 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   const at = state.activeTimer;
   if (!at) return null;
   const now = Date.now();
-  const dur = now - at.startedAt;
+  // For pomodoros, subtract any paused time so the activity log reflects only active time.
+  let dur = now - at.startedAt;
+  if (at.type === 'pomodoro') {
+    const pausedAccum = (at.totalPausedMs || 0) + (at.paused ? (now - at.pausedAt) : 0);
+    dur = Math.max(0, dur - pausedAccum);
+  }
 
   // Record the session in timeSegments + watchLog
   let logEntry = { startedAt: at.startedAt, endedAt: now, durationMs: dur, penalty: 0 };
@@ -2803,7 +2871,10 @@ function startPomodoro(q, i) {
     startedAt: now,           // start of the WHOLE pomodoro (work + break)
     phase: 'work',
     phaseStartedAt: now,
-    phaseDurationMs: POMO_WORK_MS
+    phaseDurationMs: POMO_WORK_MS,
+    paused: false,
+    pausedAt: null,
+    totalPausedMs: 0
   };
   saveState();
   markSettingsChanged(); pushSettingsToCloud();
@@ -2812,7 +2883,37 @@ function startPomodoro(q, i) {
 function getPomodoroRemainingMs() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return 0;
-  return Math.max(0, at.phaseDurationMs - (Date.now() - at.phaseStartedAt));
+  // While paused the timer is frozen at the moment of pause
+  const ref = at.paused ? at.pausedAt : Date.now();
+  return Math.max(0, at.phaseDurationMs - (ref - at.phaseStartedAt));
+}
+function pausePomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || at.paused) return;
+  at.paused = true;
+  at.pausedAt = Date.now();
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix();
+}
+function resumePomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || !at.paused) return;
+  const pauseDur = Date.now() - at.pausedAt;
+  // Shift phase start forward so the remaining time is preserved across the pause
+  at.phaseStartedAt += pauseDur;
+  at.totalPausedMs = (at.totalPausedMs || 0) + pauseDur;
+  at.paused = false;
+  at.pausedAt = null;
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix();
+}
+function togglePomodoroPause() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return;
+  if (at.paused) resumePomodoro();
+  else pausePomodoro();
 }
 function pomodoroPhaseLabel(phase) {
   if (phase === 'work') return 'Work';
@@ -2823,6 +2924,7 @@ function pomodoroPhaseLabel(phase) {
 function tickPomodoro() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
+  if (at.paused) return;  // do not transition phases or auto-end while paused
   if (getPomodoroRemainingMs() > 0) return;
   // Phase ended — transition.
   if (at.phase === 'work') {
@@ -3712,53 +3814,46 @@ function renderDailyLineChart(container, dayStart, dayEnd) {
   }
   points.sort((a,b) => a.timestamp - b.timestamp);
 
-  // SVG layout
-  const W = 600, H = 220;
-  const padL = 28, padR = 12, padT = 10, padB = 22;
-  const innerW = W - padL - padR;
-  const innerH = H - padT - padB;
-
-  function xOf(t) {
-    return padL + ((t - dayStart) / (dayEnd - dayStart)) * innerW;
-  }
-  function yOf(score) {
+  // Coordinates expressed as percentages so the SVG can stretch freely;
+  // axis labels and dots use HTML overlay so their font / size stays fixed.
+  function xPct(t) { return ((t - dayStart) / (dayEnd - dayStart)) * 100; }
+  function yPct(score) {
     const v = Math.max(0, Math.min(100, score));
-    return padT + (1 - v / 100) * innerH;
+    return (1 - v / 100) * 100;   // y=0 is top (score 100), y=100 is bottom (score 0)
   }
 
-  const intPts = points.map(s => `${xOf(s.timestamp).toFixed(1)},${yOf(s.int).toFixed(1)}`).join(' ');
-  const extPts = points.map(s => `${xOf(s.timestamp).toFixed(1)},${yOf(s.ext).toFixed(1)}`).join(' ');
+  const intPts = points.map(s => `${xPct(s.timestamp).toFixed(2)},${yPct(s.int).toFixed(2)}`).join(' ');
+  const extPts = points.map(s => `${xPct(s.timestamp).toFixed(2)},${yPct(s.ext).toFixed(2)}`).join(' ');
 
-  const yLabels = [0, 25, 50, 75, 100].map(v => {
-    const y = yOf(v);
-    return `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>
-            <text x="${padL-4}" y="${y+3}" text-anchor="end" font-size="10" fill="#6b7280">${v}</text>`;
-  }).join('');
-
-  const xLabels = [0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => {
-    const x = padL + (h/24) * innerW;
-    return `<text x="${x}" y="${H-padB+13}" text-anchor="middle" font-size="10" fill="#6b7280">${h}</text>
-            <line x1="${x}" y1="${H-padB}" x2="${x}" y2="${H-padB+3}" stroke="#9ca3af"/>`;
-  }).join('');
-
-  const intDots = points.map(s =>
-    `<circle cx="${xOf(s.timestamp).toFixed(1)}" cy="${yOf(s.int).toFixed(1)}" r="3.5" fill="#ec4899"/>`
+  // Horizontal grid lines (25 / 50 / 75)
+  const yGridSVG = [25, 50, 75].map(v =>
+    `<line x1="0" y1="${yPct(v)}" x2="100" y2="${yPct(v)}" stroke="#e5e7eb" stroke-width="1" vector-effect="non-scaling-stroke"/>`
   ).join('');
-  const extDots = points.map(s =>
-    `<circle cx="${xOf(s.timestamp).toFixed(1)}" cy="${yOf(s.ext).toFixed(1)}" r="3.5" fill="#3b82f6"/>`
+
+  // Dots as HTML — keeps perfectly circular at any aspect ratio
+  const dotsHTML = points.map(s => `
+    <span class="chart-dot int" style="left:${xPct(s.timestamp)}%; top:${yPct(s.int)}%"></span>
+    <span class="chart-dot ext" style="left:${xPct(s.timestamp)}%; top:${yPct(s.ext)}%"></span>
+  `).join('');
+
+  const yLabelsHTML = [0,25,50,75,100].map(v =>
+    `<span style="top:${yPct(v)}%">${v}</span>`
+  ).join('');
+  const xLabelsHTML = [0,3,6,9,12,15,18,21,24].map(h =>
+    `<span style="left:${(h/24)*100}%">${h}</span>`
   ).join('');
 
   container.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="line-chart-svg">
-      ${yLabels}
-      ${xLabels}
-      <line x1="${padL}" y1="${H-padB}" x2="${W-padR}" y2="${H-padB}" stroke="#9ca3af"/>
-      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H-padB}" stroke="#9ca3af"/>
-      ${intPts ? `<polyline points="${intPts}" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
-      ${extPts ? `<polyline points="${extPts}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
-      ${intDots}
-      ${extDots}
-    </svg>`;
+    <div class="chart-y-axis">${yLabelsHTML}</div>
+    <div class="chart-x-axis">${xLabelsHTML}</div>
+    <div class="chart-inner">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="line-chart-svg">
+        ${yGridSVG}
+        ${intPts ? `<polyline points="${intPts}" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
+        ${extPts ? `<polyline points="${extPts}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
+      </svg>
+      ${dotsHTML}
+    </div>`;
 }
 
 /* ---- Weekly view ---- */
@@ -4122,23 +4217,34 @@ if (manualClose2Btn) manualClose2Btn.onclick = closeManualModal;
 const manualBackdrop = document.getElementById('manual-modal-backdrop');
 if (manualBackdrop) manualBackdrop.onclick = closeManualModal;
 
+// Helper: run the daily-rollover checks AFTER the cloud has been (or has
+// failed to be) pulled, so we never blow away time-goals that just came in.
+function runDailyChecksAfterSync() {
+  try { maybeAutoSnapshot(); } catch (e) { console.warn(e); }
+  try { maybe3amReset(); }    catch (e) { console.warn(e); }
+}
+
 // Restore session on page load
 (async function autoSyncOnLoad() {
   // If Supabase isn't configured at all, show the login modal anyway so the
   // user knows they need to set it up.
   if (!isSbConfigured()) {
     updateAuthUI(null);
+    runDailyChecksAfterSync();
     return;
   }
   try {
     const session = await getAuthSession();
     if (session && session.user) {
       updateAuthUI(session.user);
-      // Background: pull everything so the UI matches the cloud
-      pullEverythingFromCloud().catch(()=>{});
+      // Background: pull everything so the UI matches the cloud, then run
+      // the daily checks (so time-goals from cloud aren't reset prematurely).
+      pullEverythingFromCloud()
+        .catch(() => {})
+        .finally(runDailyChecksAfterSync);
     } else {
-      // No session — show the login modal
       updateAuthUI(null);
+      runDailyChecksAfterSync();
     }
     // Listen for auth changes (e.g., token refresh, sign-out from another tab)
     const sb = await getSupabaseClient();
@@ -4148,7 +4254,10 @@ if (manualBackdrop) manualBackdrop.onclick = closeManualModal;
         else updateAuthUI(null);
       });
     }
-  } catch (e) { console.warn('Auto-sync skipped:', e); }
+  } catch (e) {
+    console.warn('Auto-sync skipped:', e);
+    runDailyChecksAfterSync();
+  }
 })();
 
 if (sbTestBtn) sbTestBtn.onclick = async () => {
@@ -4283,8 +4392,9 @@ function maybeAutoSnapshot() {
 }
 setInterval(maybeAutoSnapshot, 60 * 1000);
 setInterval(maybe3amReset,    60 * 1000);
-maybeAutoSnapshot();
-maybe3amReset();
+// IMPORTANT: the *initial* daily checks run only AFTER the cloud pull (in
+// autoSyncOnLoad below). That way time-goals coming from another device
+// aren't immediately wiped by 3 AM reset on this device's first load.
 
 setInterval(updateCountdowns, 30000); // refresh setup-page countdowns every 30s
 setInterval(() => {
