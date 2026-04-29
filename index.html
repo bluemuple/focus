@@ -74,17 +74,9 @@
   nav.tabs button.active {
     background: var(--ink); color: #fff;
   }
-  /* Manual tab — opens a modal, not a page; styled as an outlined helper
-     so it reads differently from the page tabs and never gets .active. */
-  nav.tabs button.tab-manual {
-    border: 1px solid var(--line); color: #4b5563;
-  }
-  nav.tabs button.tab-manual:hover {
-    background: #f3f4f6; color: #111827;
-  }
-  nav.tabs button.tab-manual .tab-ico {
-    font-weight: 700;
-  }
+  /* Manual tab — looks identical to the page tabs (Setup / Focus / Stats);
+     opens a modal but never gets .active styling. */
+  nav.tabs button.tab-manual .tab-ico { font-weight: 700; }
   @media (max-width: 700px) {
     header.topbar { grid-template-columns: auto 1fr auto; gap: 8px; }
     .motivation { font-size: .8rem; }
@@ -2342,105 +2334,11 @@ async function syncSettingsBidi() {
   if (remote) {
     const remoteTs = new Date(remote.updated_at).getTime();
     if (remoteTs > localTs) {
-      // Cloud is newer — apply to local
-      if (typeof remote.motivational_lines === 'string') {
-        state.motivationalLines = remote.motivational_lines;
-        if (motInputEl) motInputEl.value = state.motivationalLines;
-      }
-      if (Array.isArray(remote.ext_others)) state.ext.others = remote.ext_others;
-      if (Array.isArray(remote.int_others)) state.int.others = remote.int_others;
-      if (remote.tasks && typeof remote.tasks === 'object') {
-        ['q1','q2','q3','q4'].forEach(q => {
-          if (Array.isArray(remote.tasks[q])) state.tasks[q] = remote.tasks[q];
-        });
-      }
-      // Time Start & Goals
-      if (remote.time_goals && typeof remote.time_goals === 'object') {
-        const tg = remote.time_goals;
-        if ('startDate'    in tg) state.startDate    = tg.startDate    || '';
-        if ('startTime'    in tg) state.startTime    = tg.startTime    || '';
-        if ('deadline'     in tg) state.deadline     = tg.deadline     || '';
-        if ('deadlineDate' in tg) state.deadlineDate = tg.deadlineDate || '';
-        if ('bedtime'      in tg) state.bedtime      = tg.bedtime      || '';
-        if ('bedtimeDate'  in tg) state.bedtimeDate  = tg.bedtimeDate  || '';
-        if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = state.startDate;
-        if (typeof stInput !== 'undefined' && stInput) stInput.value = state.startTime;
-        if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = state.deadline;
-        if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = state.deadlineDate;
-        if (typeof btInput !== 'undefined' && btInput) btInput.value = state.bedtime;
-        if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = state.bedtimeDate;
-      }
-      // Focus level factors
-      if (remote.ext_factors && typeof remote.ext_factors === 'object') {
-        if (remote.ext_factors.groups && typeof remote.ext_factors.groups === 'object') {
-          state.ext.groups = remote.ext_factors.groups;
-        }
-        if (typeof remote.ext_factors.slider === 'number') state.ext.slider = remote.ext_factors.slider;
-        if (typeof remote.ext_factors.adjustment === 'number') state.ext.adjustment = remote.ext_factors.adjustment;
-      }
-      if (remote.int_factors && typeof remote.int_factors === 'object') {
-        if (remote.int_factors.groups && typeof remote.int_factors.groups === 'object') {
-          state.int.groups = remote.int_factors.groups;
-        }
-        if (typeof remote.int_factors.slider === 'number') state.int.slider = remote.int_factors.slider;
-        if (typeof remote.int_factors.sleep  === 'number') state.int.sleep  = remote.int_factors.sleep;
-        if (typeof remote.int_factors.stress === 'number') state.int.stress = remote.int_factors.stress;
-        if (typeof remote.int_factors.energy === 'number') state.int.energy = remote.int_factors.energy;
-        if (typeof remote.int_factors.adjustment === 'number') state.int.adjustment = remote.int_factors.adjustment;
-        // Per-quadrant Internal-score bonus
-        if (remote.int_factors.taskQuadrantRates && typeof remote.int_factors.taskQuadrantRates === 'object') {
-          if (!state.taskQuadrantRates) state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 };
-          ['q1','q2','q3','q4'].forEach(q => {
-            const v = +remote.int_factors.taskQuadrantRates[q];
-            if (!isNaN(v)) state.taskQuadrantRates[q] = v;
-          });
-        }
-      }
-      // Mana Factors
-      if (remote.mana && typeof remote.mana === 'object') {
-        if (Array.isArray(remote.mana.multiplier)) state.mana.multiplier = remote.mana.multiplier;
-        if (Array.isArray(remote.mana.muncher))    state.mana.muncher    = remote.mana.muncher;
-      }
-      // Activity log
-      if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
-      // Live session state (Pomodoro timer + gauge segments)
-      if (remote.session_state && typeof remote.session_state === 'object') {
-        const ss = remote.session_state;
-        if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
-        if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
-        if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
-        if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
-        // Day-rollover markers — synced so other devices don't run the reset twice
-        if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
-        if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
-        // scoreLog: MERGE remote + local instead of overwriting, so a device
-        // that's been used while offline doesn't lose its points.
-        if (Array.isArray(ss.scoreLog)) {
-          state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
-        }
-        // Motivational quote currently shown.
-        if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
-      }
+      // Cloud is newer — apply remote into local + re-render every UI section.
+      applyRemoteSettings(remote);
       state.settingsUpdatedAt = remoteTs;
       saveState();
-      if (typeof renderOthers === 'function') {
-        renderOthers('ext'); renderOthers('int');
-      }
-      if (typeof renderFactorGroups === 'function') {
-        renderFactorGroups('ext'); renderFactorGroups('int');
-      }
-      if (typeof recomputeSlider === 'function') {
-        recomputeSlider('ext'); recomputeSlider('int');
-      }
-      if (typeof updateCountdowns === 'function') updateCountdowns();
-      if (typeof drawGauge === 'function') drawGauge();
-      if (typeof renderTasks === 'function') renderTasks();
-      if (typeof renderQuadrantRates === 'function') renderQuadrantRates();
-      if (typeof renderManaLists === 'function') renderManaLists();
-      if (typeof renderWatchLog === 'function') renderWatchLog();
-      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
-      if (typeof drawGauge === 'function') drawGauge();
-      refreshMotivation(false);
+      renderEverythingFromState();
       return;
     }
   }
@@ -2455,9 +2353,121 @@ function debouncedPushSettings() {
   _settingsPushTimer = setTimeout(() => pushSettingsToCloud(), 800);
 }
 
-/* ---- Realtime-ish polling: pull session-state & mana from cloud while
-        the focus page is visible, so a tracker started on another device
-        appears here within ~15 seconds without the user refreshing. */
+/* ---- Apply remote settings into local state ----
+   Shared by syncSettingsBidi (initial / tab-switch full sync) and
+   pollCloudForUpdates (12s polling). Mirrors EVERY field that gets pushed in
+   pushSettingsToCloud, so polling can fully bring a device up to date — not
+   just session_state — and we never end up with localTs == remoteTs but tasks
+   / time goals / factors still stale. */
+function applyRemoteSettings(remote) {
+  if (!remote) return false;
+  const motInput = document.getElementById('motivation-input');
+  // Skip overwriting input fields the user is currently typing in.
+  function safeSetInput(el, value) {
+    if (!el) return;
+    if (document.activeElement === el) return;
+    if (el.value !== value) el.value = value;
+  }
+  // ---- Motivational ----
+  if (typeof remote.motivational_lines === 'string') {
+    state.motivationalLines = remote.motivational_lines;
+    safeSetInput(motInput, state.motivationalLines);
+  }
+  // ---- Others lists ----
+  if (Array.isArray(remote.ext_others)) state.ext.others = remote.ext_others;
+  if (Array.isArray(remote.int_others)) state.int.others = remote.int_others;
+  // ---- Tasks (matrix, including done state) ----
+  if (remote.tasks && typeof remote.tasks === 'object') {
+    ['q1','q2','q3','q4'].forEach(q => {
+      if (Array.isArray(remote.tasks[q])) state.tasks[q] = remote.tasks[q];
+    });
+  }
+  // ---- Time Start & Goals ----
+  if (remote.time_goals && typeof remote.time_goals === 'object') {
+    const tg = remote.time_goals;
+    if ('startDate'    in tg) state.startDate    = tg.startDate    || '';
+    if ('startTime'    in tg) state.startTime    = tg.startTime    || '';
+    if ('deadline'     in tg) state.deadline     = tg.deadline     || '';
+    if ('deadlineDate' in tg) state.deadlineDate = tg.deadlineDate || '';
+    if ('bedtime'      in tg) state.bedtime      = tg.bedtime      || '';
+    if ('bedtimeDate'  in tg) state.bedtimeDate  = tg.bedtimeDate  || '';
+    safeSetInput(typeof sdInput     !== 'undefined' ? sdInput     : null, state.startDate);
+    safeSetInput(typeof stInput     !== 'undefined' ? stInput     : null, state.startTime);
+    safeSetInput(typeof dlInput     !== 'undefined' ? dlInput     : null, state.deadline);
+    safeSetInput(typeof dlDateInput !== 'undefined' ? dlDateInput : null, state.deadlineDate);
+    safeSetInput(typeof btInput     !== 'undefined' ? btInput     : null, state.bedtime);
+    safeSetInput(typeof btDateInput !== 'undefined' ? btDateInput : null, state.bedtimeDate);
+  }
+  // ---- Focus level factors (chips, sliders, sleep/stress/energy, adjustments) ----
+  if (remote.ext_factors && typeof remote.ext_factors === 'object') {
+    if (remote.ext_factors.groups && typeof remote.ext_factors.groups === 'object') {
+      state.ext.groups = remote.ext_factors.groups;
+    }
+    if (typeof remote.ext_factors.slider     === 'number') state.ext.slider     = remote.ext_factors.slider;
+    if (typeof remote.ext_factors.adjustment === 'number') state.ext.adjustment = remote.ext_factors.adjustment;
+  }
+  if (remote.int_factors && typeof remote.int_factors === 'object') {
+    if (remote.int_factors.groups && typeof remote.int_factors.groups === 'object') {
+      state.int.groups = remote.int_factors.groups;
+    }
+    if (typeof remote.int_factors.slider     === 'number') state.int.slider     = remote.int_factors.slider;
+    if (typeof remote.int_factors.sleep      === 'number') state.int.sleep      = remote.int_factors.sleep;
+    if (typeof remote.int_factors.stress     === 'number') state.int.stress     = remote.int_factors.stress;
+    if (typeof remote.int_factors.energy     === 'number') state.int.energy     = remote.int_factors.energy;
+    if (typeof remote.int_factors.adjustment === 'number') state.int.adjustment = remote.int_factors.adjustment;
+    if (remote.int_factors.taskQuadrantRates && typeof remote.int_factors.taskQuadrantRates === 'object') {
+      if (!state.taskQuadrantRates) state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 };
+      ['q1','q2','q3','q4'].forEach(q => {
+        const v = +remote.int_factors.taskQuadrantRates[q];
+        if (!isNaN(v)) state.taskQuadrantRates[q] = v;
+      });
+    }
+  }
+  // ---- Mana lists ----
+  if (remote.mana && typeof remote.mana === 'object') {
+    if (Array.isArray(remote.mana.multiplier)) state.mana.multiplier = remote.mana.multiplier;
+    if (Array.isArray(remote.mana.muncher))    state.mana.muncher    = remote.mana.muncher;
+  }
+  // ---- Activity log ----
+  if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
+  // ---- Session state (timer, segments, day-rollover, scoreLog, motivational pick) ----
+  if (remote.session_state && typeof remote.session_state === 'object') {
+    const ss = remote.session_state;
+    if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
+    if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
+    if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
+    if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
+    if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
+    if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
+    if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
+    if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
+  }
+  saveState();
+  return true;
+}
+
+/* Re-render every page section that depends on settings. Cheap: each render
+   is a no-op on hidden pages aside from DOM writes. */
+function renderEverythingFromState() {
+  if (typeof renderOthers       === 'function') { renderOthers('ext'); renderOthers('int'); }
+  if (typeof renderFactorGroups === 'function') { renderFactorGroups('ext'); renderFactorGroups('int'); }
+  if (typeof recomputeSlider    === 'function') { recomputeSlider('ext'); recomputeSlider('int'); }
+  if (typeof renderTasks        === 'function') renderTasks();
+  if (typeof renderQuadrantRates === 'function') renderQuadrantRates();
+  if (typeof renderManaLists    === 'function') renderManaLists();
+  if (typeof renderWatchLog     === 'function') renderWatchLog();
+  if (typeof renderFocusMatrix  === 'function') renderFocusMatrix();
+  if (typeof renderScores       === 'function') renderScores();
+  if (typeof updateCountdowns   === 'function') updateCountdowns();
+  if (typeof drawGauge          === 'function') drawGauge();
+  if (typeof refreshMotivation  === 'function') refreshMotivation(false);
+}
+
+/* ---- Realtime-ish polling ----
+   Pulls EVERY synced field every ~12s on any page so changes from another
+   device — tasks crossed off, time goals edited, factor chips toggled,
+   sliders moved, "What else?" entries, motivational quotes — appear here
+   without manual refresh. Throttled internally to avoid over-fetching. */
 let _lastPollMs = 0;
 async function pollCloudForUpdates() {
   if (!isSbConfigured()) return;
@@ -2469,48 +2479,11 @@ async function pollCloudForUpdates() {
     const remoteTs = new Date(remote.updated_at).getTime();
     const localTs = state.settingsUpdatedAt || 0;
     if (remoteTs <= localTs) return;  // nothing new
-    let changed = false;
-    let motivationChanged = false;
-    // Live tracker / Pomodoro state
-    if (remote.session_state && typeof remote.session_state === 'object') {
-      const ss = remote.session_state;
-      if ('activeTimer' in ss) { state.activeTimer = ss.activeTimer || null; changed = true; }
-      if (typeof ss.pomodoroSessionsInCycle === 'number') { state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle; changed = true; }
-      if (Array.isArray(ss.timeSegments)) { state.timeSegments = ss.timeSegments; changed = true; }
-      if ('sessionStartMs' in ss) { state.sessionStartMs = ss.sessionStartMs || null; changed = true; }
-      // Motivational quote currently selected (synced so devices stay in lockstep).
-      if ('motivationalCurrent' in ss) {
-        const before = state.motivationalCurrent && state.motivationalCurrent.text;
-        state.motivationalCurrent = ss.motivationalCurrent || null;
-        const after  = state.motivationalCurrent && state.motivationalCurrent.text;
-        if (before !== after) { motivationChanged = true; changed = true; }
-      }
-    }
-    // Motivational quote LIST (the source pool).
-    if (typeof remote.motivational_lines === 'string' && remote.motivational_lines !== state.motivationalLines) {
-      state.motivationalLines = remote.motivational_lines;
-      const motInput = document.getElementById('motivation-input');
-      if (motInput && document.activeElement !== motInput) motInput.value = state.motivationalLines;
-      motivationChanged = true; changed = true;
-    }
-    // Mana lists (so ratePerMin and added/removed trackers appear too)
-    if (remote.mana && typeof remote.mana === 'object') {
-      if (Array.isArray(remote.mana.multiplier)) { state.mana.multiplier = remote.mana.multiplier; changed = true; }
-      if (Array.isArray(remote.mana.muncher))    { state.mana.muncher    = remote.mana.muncher;    changed = true; }
-    }
-    // Activity log
-    if (Array.isArray(remote.watch_log)) { state.watchLog = remote.watch_log; changed = true; }
-    if (changed) {
-      state.settingsUpdatedAt = remoteTs;
-      saveState();
-      if (typeof renderManaLists === 'function')   renderManaLists();
-      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
-      if (typeof renderWatchLog === 'function')    renderWatchLog();
-      if (typeof drawGauge === 'function')         drawGauge();
-      if (typeof renderScores === 'function')      renderScores();
-      if (motivationChanged && typeof refreshMotivation === 'function') refreshMotivation(false);
-    }
-  } catch (e) { /* silent — this is best-effort polling */ }
+    applyRemoteSettings(remote);
+    state.settingsUpdatedAt = remoteTs;
+    saveState();
+    renderEverythingFromState();
+  } catch (e) { /* silent — best-effort polling */ }
 }
 // Poll roughly every 12s on any page — the topbar motivational quote is always
 // visible, and other near-realtime fields (active timer, watch log) are cheap
