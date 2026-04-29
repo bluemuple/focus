@@ -1,0 +1,4515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Concentration — Focus Companion</title>
+<style>
+  /* ============ BASE ============ */
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg: #fafaf7;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --line: #e5e7eb;
+    --accent: #2563eb;
+    --q1: #ffe69a;   /* urgent + important */
+    --q2: #b9e6c4;   /* not urgent + important */
+    --q3: #b8dcf3;   /* urgent + not important */
+    --q4: #f6c2cf;   /* not urgent + not important */
+    --red: #dc2626;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05);
+    --r: 10px;
+  }
+  html, body { margin: 0; padding: 0; overflow-x: hidden; max-width: 100vw; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    touch-action: pan-y;       /* mobile: only allow vertical pan */
+    overscroll-behavior-x: none;
+  }
+  .tab-ico { display: none; }
+  h1, h2, h3, h4 { margin: 0 0 .5em; font-weight: 700; }
+  h1 { font-size: clamp(1.4rem, 4vw, 2rem); }
+  h2 { font-size: clamp(1.1rem, 3vw, 1.4rem); }
+  h3 { font-size: 1rem; color: #111827; }
+  h4 { font-size: .9rem; color: #374151; margin: .8em 0 .3em; }
+  button { font: inherit; cursor: pointer; }
+  input, button, select { font: inherit; }
+  .hidden { display: none !important; }
+
+  /* ============ NAV ============ */
+  header.topbar {
+    position: sticky; top: 0; z-index: 50;
+    background: #ffffffee; backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 16px;
+    /* 3-col grid: brand fills gauge-width (20%), motivation fills middle, tabs on right.
+       This makes the motivation start exactly where the gauge ends on the focus page. */
+    display: grid;
+    grid-template-columns: minmax(170px, 20%) 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .brand { font-weight: 800; letter-spacing: -.01em; }
+  .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .motivation {
+    color: #4b5563;
+    font-style: italic;
+    font-size: clamp(.8rem, 1.5vw, 1rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav.tabs button {
+    background: transparent; border: 1px solid transparent;
+    padding: 6px 12px; border-radius: 999px; color: var(--muted);
+  }
+  nav.tabs button.active {
+    background: var(--ink); color: #fff;
+  }
+  @media (max-width: 700px) {
+    header.topbar { grid-template-columns: auto 1fr auto; gap: 8px; }
+    .motivation { font-size: .8rem; }
+  }
+  #motivation-input {
+    width: 100%;
+    font: inherit;
+    padding: 10px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    resize: vertical;
+    min-height: 100px;
+    box-sizing: border-box;
+  }
+
+  /* Auth section */
+  .auth-section.hidden { display: none; }
+  .auth-form {
+    display: grid; gap: 8px;
+    grid-template-columns: 1fr 1fr;
+  }
+  @media (max-width: 700px) { .auth-form { grid-template-columns: 1fr; } }
+  .auth-form input {
+    padding: 10px 12px;
+    border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; box-sizing: border-box; width: 100%;
+  }
+  .auth-form .row-flex { grid-column: 1 / -1; }
+  #auth-logged-in p strong { color: #059669; }
+
+  /* Supabase config form */
+  .sb-form { display: grid; gap: 10px; margin-top: 10px; }
+  .sb-form label { display: flex; flex-direction: column; gap: 4px; font-size: .85rem; color: #374151; font-weight: 600; }
+  .sb-form input {
+    padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; font-weight: normal; box-sizing: border-box; width: 100%;
+  }
+  .sb-help summary { cursor: pointer; color: var(--accent); font-weight: 600; padding: 6px 0; }
+  .sb-help pre {
+    background: #f3f4f6; padding: 10px; border-radius: 6px; font-size: .72rem;
+    overflow-x: auto; white-space: pre-wrap; line-height: 1.4; margin: 6px 0;
+  }
+  .sb-help ol li { margin: 4px 0; }
+  #sb-status { font-variant-numeric: tabular-nums; }
+  .btn.danger { background: #fef2f2; color: #b91c1c; border-color: #fecaca; font-weight: 700; }
+  .btn.danger:hover { background: #fee2e2; }
+
+  /* Pomodoro inline display on a task row */
+  .pomodoro-display {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 8px; border-radius: 999px;
+    background: #fff; border: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+    font-size: .85rem; font-weight: 600;
+    margin-left: auto;
+  }
+  .pomodoro-display.work       { background: #fce7f3; border-color: #fbcfe8; color: #9d174d; }  /* pink */
+  .pomodoro-display.short-break{ background: #d1fae5; border-color: #86efac; color: #065f46; }  /* light green */
+  .pomodoro-display.long-break { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }  /* light blue */
+  .pomodoro-display { cursor: pointer; }
+  .pomodoro-display.paused { opacity: .6; filter: grayscale(0.3); }
+  .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
+  .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
+
+  /* Modal */
+  .modal {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    padding: 16px;
+  }
+  .modal.hidden { display: none; }
+  .modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .modal-content {
+    position: relative; background: #fff;
+    padding: 22px;
+    border-radius: 12px;
+    min-width: 280px; max-width: 92vw; width: 360px;
+    box-shadow: 0 4px 32px rgba(0,0,0,.25);
+  }
+  .modal-content h3 { font-size: 1.1rem; }
+  .time-edit-inputs { display: grid; gap: 10px; margin-bottom: 16px; }
+  .time-edit-inputs label {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    font-weight: 600; color: #374151; font-size: .9rem;
+  }
+  .time-edit-inputs input[type="time"] {
+    padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; font-variant-numeric: tabular-nums;
+  }
+
+  /* Make gauge segments visibly clickable */
+  .gauge-segment { cursor: pointer; }
+
+  /* Login modal styling — compact, fits without scroll */
+  .login-modal-content { width: 400px; max-width: 92vw; padding: 18px 20px; }
+  .feature-list {
+    list-style: none; padding: 0; margin: 0 0 6px;
+    display: grid; gap: 6px;
+  }
+  .feature-item {
+    position: relative;
+    display: flex; gap: 10px; align-items: center;
+    background: #f8fafc; border: 1px solid var(--line);
+    padding: 8px 10px; border-radius: 8px;
+    cursor: help;
+    transition: background .15s ease;
+    outline: none;
+  }
+  .feature-item:hover, .feature-item:focus { background: #f1f5f9; border-color: #c7d8ff; }
+  .feature-item strong {
+    font-size: .85rem; color: #111827; font-weight: 700;
+  }
+  .feature-ico {
+    flex-shrink: 0; width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    font-size: .95rem; font-weight: 700;
+  }
+  .feature-ico.q1    { background: var(--q1); color: #6b4f10; }
+  .feature-ico.gauge { background: #e5e7eb; color: #374151; }
+  .feature-ico.score { background: #dbeafe; color: #1d4ed8; }
+  /* Tooltip — appears above on hover (desktop) or tap (mobile via .show-tip class) */
+  .feature-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%) scale(.96);
+    transform-origin: bottom center;
+    width: 250px; max-width: calc(92vw - 60px);
+    background: #1f2937; color: #fff;
+    padding: 8px 12px; border-radius: 6px;
+    font-size: .75rem; line-height: 1.4;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    pointer-events: none;
+    opacity: 0; visibility: hidden;
+    transition: opacity .12s, visibility .12s, transform .12s;
+    z-index: 200;
+  }
+  .feature-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%; left: 50%; margin-left: -6px;
+    border: 6px solid transparent;
+    border-top-color: #1f2937;
+  }
+  .feature-item:hover .feature-tooltip,
+  .feature-item:focus .feature-tooltip,
+  .feature-item.show-tip .feature-tooltip {
+    opacity: 1; visibility: visible;
+    transform: translateX(-50%) scale(1);
+  }
+  .btn-link {
+    background: none; border: none; color: var(--accent);
+    cursor: pointer; padding: 4px 8px; font-size: .85rem; font-weight: 600;
+  }
+  .btn-link:hover { text-decoration: underline; }
+  .modal-sep { border: none; border-top: 1px solid var(--line); margin: 4px 0 10px; }
+
+  /* Manual modal */
+  .manual-modal-content {
+    width: 640px; max-width: 92vw;
+    max-height: 90vh; overflow-y: auto;
+    line-height: 1.55;
+  }
+  .manual-modal-content h2 { font-size: 1.25rem; }
+  .manual-modal-content h3 {
+    font-size: 1rem; color: #111827;
+    margin-top: 18px; margin-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 4px;
+  }
+  .manual-modal-content p {
+    margin: 6px 0; font-size: .85rem; color: #374151;
+  }
+  .manual-modal-content code {
+    background: #f3f4f6; color: #111827;
+    padding: 1px 5px; border-radius: 3px;
+    font-size: .82rem;
+  }
+  .manual-close {
+    position: absolute; top: 12px; right: 12px;
+    background: transparent; border: none;
+    font-size: 1.4rem; line-height: 1; cursor: pointer;
+    color: #6b7280; padding: 4px 10px;
+  }
+  .manual-close:hover { color: #111827; }
+  .login-modal-content .auth-form {
+    display: grid; gap: 8px;
+  }
+  .login-modal-content input {
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px;
+    font: inherit; box-sizing: border-box; width: 100%;
+  }
+  .login-modal-content input:focus { outline: 2px solid #c7d8ff; outline-offset: -1px; }
+  #login-status { font-size: .8rem; }
+
+  /* Drag handle for task reordering */
+  .drag-handle {
+    cursor: grab; color: #9ca3af; user-select: none;
+    padding: 0 6px;
+    font-size: 1.05rem; line-height: 1; font-weight: 700;
+  }
+  .drag-handle:hover { color: #4b5563; }
+  .drag-handle:active { cursor: grabbing; }
+  .task-row.dragging { opacity: 0.4; }
+  .task-row.drag-over { box-shadow: 0 -2px 0 0 #2563eb inset, 0 2px 0 0 #2563eb inset; }
+
+  /* ---- Statistics: per-session mini gauge ---- */
+  .session-mini-gauge {
+    position: relative; background: #fff; border: 1px solid var(--line);
+    border-radius: 6px; height: 140px; margin-top: 8px;
+    overflow: hidden;
+  }
+  .session-mini-gauge .mg-hour-line {
+    position: absolute; left: 32px; right: 0; height: 1px; background: #f3f4f6;
+  }
+  .session-mini-gauge .mg-hour-label {
+    position: absolute; left: 2px;
+    font-size: .65rem; color: #9ca3af;
+    transform: translateY(-50%);
+    background: #fff; padding: 0 2px;
+  }
+  .session-mini-gauge .mg-segment {
+    position: absolute; left: 32px; right: 1px;
+    border-radius: 2px; opacity: .9; overflow: hidden;
+  }
+  .session-mini-gauge .mg-seg-label {
+    font-size: .65rem; padding: 1px 3px; color: #1f2937; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  /* ---- Statistics: view toggle ---- */
+  .stats-view-toggle { display: flex; gap: 4px; margin: 0 0 12px; }
+  .stats-view-toggle .btn { padding: 6px 14px; }
+  .stats-view-toggle .btn.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .stats-view.hidden { display: none; }
+
+  /* ---- Weekly view ---- */
+  .week-controls {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    margin-bottom: 12px; font-weight: 600;
+  }
+  .week-controls .btn { padding: 4px 12px; min-width: 36px; }
+  .week-grid {
+    display: grid;
+    grid-template-columns: 52px repeat(7, minmax(0, 1fr));
+    gap: 2px;
+  }
+  .week-cell { display: flex; flex-direction: column; }
+  .week-day-header {
+    text-align: center; padding: 4px 0; font-size: .8rem;
+    border-bottom: 1px solid var(--line); margin-bottom: 4px;
+  }
+  .week-day-header .wd-name { color: #6b7280; font-size: .7rem; text-transform: uppercase; letter-spacing: .03em; }
+  .week-day-header .wd-date { color: #111827; font-weight: 700; }
+  .week-day-header.today .wd-date { color: #2563eb; }
+  .week-axis-cell {
+    height: 28px;  /* matches week-day-header */
+    border-bottom: 1px solid transparent;
+    margin-bottom: 4px;
+  }
+  .week-axis {
+    position: relative; height: 420px;
+    font-size: .65rem; color: #6b7280;
+  }
+  .week-hour-label {
+    position: absolute; right: 4px;
+    transform: translateY(-50%);
+    background: #fff; padding: 0 2px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .week-day-gauge {
+    position: relative; height: 420px;
+    background: #fff; border: 1px solid var(--line); border-radius: 4px;
+    overflow: hidden;
+  }
+  .week-day-gauge .mg-hour-line {
+    position: absolute; left: 0; right: 0; height: 1px; background: #f3f4f6;
+  }
+  .week-day-gauge .mg-segment {
+    position: absolute; left: 1px; right: 1px;
+    border-radius: 2px; opacity: .92; overflow: hidden;
+    cursor: help;
+  }
+  .week-day-gauge .mg-seg-label {
+    font-size: .6rem; padding: 1px 3px; color: #1f2937; font-weight: 600;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  @media (max-width: 700px) {
+    .week-grid { grid-template-columns: 40px repeat(7, minmax(0, 1fr)); gap: 1px; }
+    .week-day-header { font-size: .7rem; }
+    .week-day-header .wd-name { font-size: .6rem; }
+    .week-day-gauge, .week-axis { height: 320px; }
+    .week-hour-label { font-size: .55rem; }
+  }
+
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--r);
+    padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow);
+  }
+
+  /* ============ EISENHOWER MATRIX ============ */
+  .matrix-wrap { display: grid; grid-template-columns: 80px 1fr; gap: 8px; }
+  .matrix-wrap .col-headers {
+    grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    text-align: center; font-weight: 600; color: #374151;
+  }
+  .matrix-wrap .row-labels {
+    display: grid; grid-template-rows: 1fr 1fr; gap: 8px;
+    align-items: center; justify-items: center; font-weight: 600; color: #374151;
+  }
+  .matrix-wrap .row-labels span { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 8px; min-height: 380px;
+  }
+  .cell {
+    border-radius: var(--r); padding: 12px; display: flex; flex-direction: column;
+    border: 1px solid rgba(0,0,0,.06);
+  }
+  .cell.q1 { background: var(--q1); }
+  .cell.q2 { background: var(--q2); }
+  .cell.q3 { background: var(--q3); }
+  .cell.q4 { background: var(--q4); }
+  .cell h4 { font-size: .8rem; opacity: .65; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px; }
+  .cell .tasks { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 60px; }
+  .task-row {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,.55); padding: 6px 8px; border-radius: 6px;
+  }
+  .task-row input[type="checkbox"] { transform: scale(1.1); }
+  .task-row .task-text { flex: 1; background: transparent; border: none; outline: none; min-width: 0; }
+  .task-row .task-text.done { text-decoration: line-through; opacity: .55; }
+  .task-row .task-text.running { font-weight: 700; }
+  .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; }
+  .add-task {
+    margin-top: 6px; background: rgba(255,255,255,.7); border: 1px dashed rgba(0,0,0,.15);
+    padding: 6px; border-radius: 6px; color: #374151; width: 100%;
+  }
+
+  /* ============ TIME GOALS ============ */
+  .time-goals { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  @media (max-width: 800px) { .time-goals { grid-template-columns: 1fr; } }
+  .time-goals .goal {
+    background: #f8fafc; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .time-goals .goal label { font-size: .85rem; color: #374151; font-weight: 600; }
+  .time-goals .goal .goal-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .time-goals .goal .reset-btn {
+    background: transparent; border: 1px solid var(--line);
+    padding: 0 7px; height: 22px; line-height: 1; border-radius: 999px;
+    font-size: .9rem; color: #9ca3af; cursor: pointer; font-weight: 700;
+  }
+  .time-goals .goal .reset-btn:hover { background: #fef2f2; color: #dc2626; border-color: #fca5a5; }
+  .time-goals .goal .goal-actions { display: flex; gap: 4px; align-items: center; }
+  .quick-btn {
+    background: #eef4ff; color: #1d4ed8;
+    border: 1px solid #c7d8ff;
+    padding: 2px 9px; height: 22px; line-height: 1; border-radius: 999px;
+    font-size: .75rem; font-weight: 700; cursor: pointer; white-space: nowrap;
+  }
+  .quick-btn:hover { background: #dbeafe; }
+  .quick-btn:active { background: #bfdbfe; }
+  .time-goals .goal input[type="time"],
+  .time-goals .goal input[type="date"] {
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: #fff; font: inherit;
+  }
+  .time-goals .goal .countdown { font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+  .time-goals .goal .countdown.overdue, .focus-time-goals .cd.overdue {
+    color: #dc2626; font-weight: 700;
+  }
+
+  /* ============ FACTORS ============ */
+  .factors-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .factors-grid { grid-template-columns: 1fr; } }
+  .factor-block { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fdfdfd; }
+  .score-display {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 8px;
+  }
+  .score-display .num {
+    font-size: 1.4rem; font-weight: 700; min-width: 4ch; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .score-display input[type="range"] { flex: 1; }
+  .factor-group { margin-bottom: 10px; }
+  .factor-group h4 { display: flex; align-items: center; justify-content: space-between; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+    background: #fff; font-size: .85rem; user-select: none;
+  }
+  .chip.active { background: #eef4ff; border-color: #c7d8ff; color: #1d4ed8; }
+  .chip .lbl { cursor: pointer; }
+  .chip .scr {
+    font-size: .75rem; color: #6b7280; background: #f3f4f6;
+    padding: 1px 6px; border-radius: 999px; cursor: pointer;
+  }
+  .chip.active .scr { background: #dbeafe; color: #1d4ed8; }
+  .row-input { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .row-input input[type="text"] { flex: 1; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .row-input input[type="number"] { width: 70px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  .row-input button { padding: 6px 10px; border: 1px solid var(--line); background: #fff; border-radius: 6px; }
+  .others-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+  .others-list .other {
+    display: flex; gap: 6px; align-items: center; font-size: .85rem;
+    background: #f9fafb; padding: 4px 8px; border-radius: 6px;
+  }
+  .others-list .other .scr { color: var(--accent); font-weight: 600; }
+  .others-list .other button { background: transparent; border: none; color: #9ca3af; }
+  .small-slider { display: flex; align-items: center; gap: 8px; }
+  .small-slider input[type="range"] { flex: 1; }
+  .small-slider .val { min-width: 3ch; text-align: right; font-variant-numeric: tabular-nums; color: var(--accent); font-weight: 600; }
+
+  /* ============ ACTIONS ============ */
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+  .btn {
+    padding: 10px 18px; border-radius: 8px; border: 1px solid var(--line); background: #fff;
+    font-weight: 600;
+  }
+  .btn.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .btn.danger  { background: #fff; color: #dc2626; border-color: #fecaca; }
+
+  /* ============ PAGE 2 — FOCUS ============ */
+  #focus-page { display: none; }
+  .focus-layout {
+    display: grid; grid-template-columns: 20% 1fr; gap: 12px; align-items: start;
+  }
+  @media (max-width: 700px) {
+    .focus-layout { grid-template-columns: 60px 1fr; }
+  }
+  /* Calendar-style gauge */
+  .gauge-col {
+    position: relative;
+    background: #ffffff;
+    border-radius: 8px;
+    border: 1px solid #e5e7eb;
+    overflow: hidden;
+  }
+  /* Tall column — 24 hours × 70 px per hour = 1680 px. No internal scrollbar;
+     the page itself scrolls naturally so every hour is comfortably visible. */
+  .gauge-col,
+  .gauge-inner {
+    height: calc(70px * 24);
+  }
+  .gauge-inner {
+    position: relative;
+    width: 100%;
+  }
+  @media (max-width: 700px) {
+    .gauge-col,
+    .gauge-inner { height: calc(56px * 24); }
+  }
+  .gauge-grid { position: absolute; inset: 0; pointer-events: none; }
+  .gauge-hour-line {
+    position: absolute; left: 38px; right: 0;
+    height: 1px;
+    background: #e5e7eb;
+  }
+  .gauge-hour-label {
+    position: absolute; left: 4px;
+    font-size: clamp(.7rem, 1.3vw, .85rem);
+    color: #374151;
+    font-weight: 700;
+    padding: 1px 4px;
+    transform: translateY(-50%);
+    background: rgba(255,255,255,.95);
+    border-radius: 3px;
+    z-index: 5;
+    pointer-events: none;
+  }
+  /* Bands span the FULL width of the gauge column (over the hour labels area)
+     so the task name has plenty of horizontal space. Hour labels sit on top via z-index. */
+  .gauge-segments { position: absolute; left: 0; right: 0; top: 0; bottom: 0; }
+  .gauge-segment {
+    position: absolute; left: 0; right: 0;
+    opacity: .92;
+    overflow: hidden;
+    border-radius: 0;
+    display: flex; align-items: center; justify-content: flex-start;
+    cursor: help;
+  }
+  .gauge-task-label {
+    width: 100%;
+    font-size: clamp(.85rem, 1.4vw, 1rem);
+    font-weight: 700;
+    color: #1f2937;
+    text-align: left;
+    padding: 6px 8px 6px 48px;  /* left padding leaves room for hour labels */
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gauge-line {
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: #ef4444;
+    z-index: 10;
+    pointer-events: none;
+    transition: top .9s linear;
+  }
+  .gauge-line-time {
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: clamp(.65rem, 1.3vw, .8rem);
+    font-weight: 700;
+    color: #fff;
+    background: #ef4444;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  /* Blue lines on the gauge: deadline ("Go home") and bedtime ("Sleep") */
+  .gauge-line-blue {
+    position: absolute; left: 0; right: 0;
+    height: 2px;
+    background: #2563eb;
+    z-index: 9;
+    pointer-events: none;
+    transition: top .9s linear;
+  }
+  .gauge-line-blue .gauge-line-time {
+    background: #2563eb;
+  }
+
+  /* slider color by sign */
+  .num.pos { color: #2563eb; }
+  .num.neg { color: #dc2626; }
+  .num.zero { color: #111827; }
+  .small-slider .val.pos { color: #2563eb; }
+  .small-slider .val.neg { color: #dc2626; }
+  .small-slider .val.zero { color: #111827; }
+  .focus-right { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+
+  .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .scores { grid-template-columns: 1fr; } }
+  .score-card {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px;
+    display: flex; gap: 10px; align-items: center;
+  }
+  .score-card .face { width: 64px; height: 64px; flex-shrink: 0; }
+  .score-card .meta { flex: 1; min-width: 0; }
+  .score-card .meta h4 { margin: 0 0 6px; }
+  .score-bar {
+    position: relative; height: 12px; border-radius: 999px;
+    background: linear-gradient(to right, #ef4444, #f59e0b, #10b981, #3b82f6);
+  }
+  .score-bar .marker {
+    position: absolute; top: -3px; width: 4px; height: 18px;
+    background: #111827; border-radius: 2px;
+    transform: translateX(-50%);
+  }
+  .score-card .scoreval {
+    font-size: 1.1rem; font-weight: 700; min-width: 4ch; text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .message-box {
+    background: #fffbeb; border: 1px solid #fde68a; padding: 10px 12px; border-radius: 8px;
+    font-weight: 600; color: #92400e;
+  }
+
+  /* Focus matrix display */
+  .focus-matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+  @media (max-width: 700px) { .focus-matrix { grid-template-columns: 1fr; grid-template-rows: auto; } }
+  .focus-cell {
+    border-radius: 8px; padding: 10px; min-height: 100px;
+  }
+  .focus-cell.q1 { background: var(--q1); }
+  .focus-cell.q2 { background: var(--q2); }
+  .focus-cell.q3 { background: var(--q3); }
+  .focus-cell.q4 { background: var(--q4); }
+  .focus-cell h4 { font-size: .75rem; opacity: .7; text-transform: uppercase; }
+  .focus-cell .tasks { display: flex; flex-direction: column; gap: 4px; }
+  .focus-cell .task-row .task-text { cursor: pointer; }
+
+  /* Mana */
+  .mana { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 700px) { .mana { grid-template-columns: 1fr; } }
+  .mana-col { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .mana-col h3 { display: flex; align-items: center; gap: 8px; }
+  .mana-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .mana-item {
+    display: flex; align-items: center; gap: 8px;
+    background: #f9fafb; border-radius: 6px; padding: 6px 8px;
+  }
+  .mana-item .lbl { flex: 1; }
+  .mana-item .scr { color: var(--accent); font-weight: 600; min-width: 3ch; text-align: right; }
+  .mana-item button { background: transparent; border: none; color: #9ca3af; cursor: pointer; }
+  .mana-item.muncher .scr { color: var(--red); }
+
+  /* Page 3 — Stats */
+  #stats-page { display: none; }
+  /* Daily view */
+  .daily-nav {
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    margin-bottom: 12px; font-weight: 700;
+  }
+  .daily-nav .btn { padding: 4px 12px; min-width: 36px; }
+  .bar-legend {
+    display: flex; gap: 14px; font-size: .8rem; color: #4b5563;
+    margin: 6px 0 8px;
+  }
+  .legend-swatch {
+    display: inline-block; width: 12px; height: 12px;
+    border-radius: 3px; vertical-align: middle; margin-right: 4px;
+  }
+  .legend-swatch.ext { background: #bfdbfe; }
+  .legend-swatch.int { background: #fbcfe8; }
+  .legend-swatch.ext-line { background: #3b82f6; }
+  .legend-swatch.int-line { background: #ec4899; }
+  .line-chart {
+    position: relative;
+    width: 100%; height: 240px;
+    background: #fafafa;
+    border: 1px solid var(--line); border-radius: 6px;
+    box-sizing: border-box;
+  }
+  /* Inner area where the lines and dots live (offset for axis labels) */
+  .line-chart .chart-inner {
+    position: absolute;
+    top: 8px; left: 32px;
+    right: 8px; bottom: 24px;
+  }
+  .line-chart-svg { width: 100%; height: 100%; display: block; }
+  /* Y-axis labels — fixed font size, never stretched */
+  .chart-y-axis {
+    position: absolute;
+    top: 8px; left: 0;
+    bottom: 24px;
+    width: 28px;
+    pointer-events: none;
+  }
+  .chart-y-axis span {
+    position: absolute;
+    right: 4px;
+    transform: translateY(-50%);
+    font-size: 11px;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+  }
+  /* X-axis labels — fixed font size */
+  .chart-x-axis {
+    position: absolute;
+    left: 32px; right: 8px;
+    bottom: 4px;
+    height: 18px;
+    pointer-events: none;
+  }
+  .chart-x-axis span {
+    position: absolute;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  /* Round dots — HTML so they stay circular regardless of SVG aspect ratio */
+  .chart-dot {
+    position: absolute;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
+  .chart-dot.int { background: #ec4899; }
+  .chart-dot.ext { background: #3b82f6; }
+  .bar-chart-wrap {
+    display: flex; align-items: stretch; gap: 4px;
+  }
+  .bar-y-axis {
+    display: flex; flex-direction: column-reverse;
+    justify-content: space-between;
+    font-size: .65rem; color: #6b7280;
+    padding: 4px 4px 18px 0;
+    width: 26px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .bar-toggle {
+    display: inline-flex; margin-left: auto;
+  }
+  .bar-toggle button {
+    border: 1px solid var(--line); background: #fff;
+    padding: 2px 10px; font-size: .72rem; cursor: pointer; color: #374151;
+    line-height: 1.3;
+  }
+  .bar-toggle button:first-child { border-radius: 999px 0 0 999px; }
+  .bar-toggle button:last-child  { border-radius: 0 999px 999px 0; border-left: none; }
+  .bar-toggle button.active {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+  .bar-chart {
+    display: flex; align-items: flex-end; gap: 2px; height: 220px;
+    padding: 8px 4px 0; background: #fafafa;
+    border: 1px solid var(--line); border-radius: 6px;
+    flex: 1;
+  }
+  .bar-col {
+    flex: 1; display: flex; flex-direction: column; align-items: stretch;
+    height: 100%; min-width: 0;
+  }
+  .bar-stack {
+    flex: 1; display: flex; flex-direction: column-reverse;
+    align-items: stretch; justify-content: flex-start;
+    border-bottom: 1px solid #d1d5db;
+    cursor: help;
+  }
+  .bar-int { background: #fbcfe8; min-height: 0; }
+  .bar-ext { background: #bfdbfe; min-height: 0; border-bottom: 1px solid rgba(0,0,0,.04); }
+  .bar-time {
+    text-align: center; font-size: .65rem; color: #6b7280;
+    padding-top: 3px; font-variant-numeric: tabular-nums;
+    height: 16px;          /* always reserve space, even when empty */
+    line-height: 13px;
+    box-sizing: border-box;
+  }
+
+  .stats-date-header {
+    margin: 16px 0 8px;
+    color: #6b7280;
+    font-size: 1rem;
+    font-weight: 700;
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 4px;
+  }
+  .stats-date-header:first-child { margin-top: 0; }
+  .stats-day {
+    background: #fff; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; margin-bottom: 10px;
+  }
+  .stats-day.session { background: #f8fafc; }
+  .stats-day .row { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+  .stats-day .row .lbl { color: var(--muted); }
+  .stats-day .tasklist { margin-top: 6px; padding-left: 18px; }
+  .stats-day .tasklist-with-time {
+    list-style: none; padding-left: 0;
+  }
+  .stats-day .tasklist-with-time li {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 4px 8px; border-radius: 6px;
+    background: #f8fafc; margin-bottom: 4px;
+    font-size: .9rem;
+  }
+  .stats-day .tasklist-with-time .task-time {
+    color: #2563eb; font-weight: 600; font-variant-numeric: tabular-nums;
+  }
+
+  /* Statistics matrix view (Eisenhower 2×2) */
+  .stats-matrix-wrap {
+    display: grid; grid-template-columns: 28px 1fr; gap: 6px; margin-top: 8px;
+  }
+  .stats-matrix-wrap .col-headers {
+    grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    text-align: center; font-weight: 600; color: #374151; font-size: .8rem;
+  }
+  .stats-matrix-wrap .row-labels {
+    display: grid; grid-template-rows: 1fr 1fr; gap: 6px;
+    align-items: center; justify-items: start; font-weight: 600; color: #374151; font-size: .8rem;
+  }
+  .stats-matrix-wrap .row-labels span { writing-mode: vertical-rl; transform: rotate(180deg); }
+  .stats-matrix {
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 6px;
+  }
+  .stats-matrix .cell {
+    border-radius: 8px; padding: 10px;
+    border: 1px solid rgba(0,0,0,.06);
+    min-height: 80px;
+  }
+  .stats-matrix .cell.q1 { background: var(--q1); }
+  .stats-matrix .cell.q2 { background: var(--q2); }
+  .stats-matrix .cell.q3 { background: var(--q3); }
+  .stats-matrix .cell.q4 { background: var(--q4); }
+  .stats-matrix .cell h4 {
+    font-size: .68rem; opacity: .65; text-transform: uppercase;
+    letter-spacing: .04em; margin: 0 0 6px;
+  }
+  .stats-matrix-tasks {
+    list-style: none; padding: 0; margin: 0;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .stats-matrix-tasks li {
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 4px 8px; border-radius: 5px;
+    background: rgba(255,255,255,.55);
+    font-size: .85rem; color: #1f2937;
+  }
+  .stats-matrix-tasks .task-name { flex: 1; min-width: 0; word-break: break-word; }
+  .stats-matrix-tasks .task-time {
+    color: #1d4ed8; font-weight: 700; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .stats-matrix-empty { padding: 4px 0; color: #9ca3af; font-size: .8rem; }
+  @media (max-width: 700px) {
+    .stats-matrix-wrap { grid-template-columns: 18px 1fr; gap: 4px; }
+    .stats-matrix { gap: 4px; }
+    .stats-matrix .cell { padding: 8px; }
+    .stats-matrix .cell h4 { font-size: .6rem; }
+    .stats-matrix-tasks li { font-size: .8rem; padding: 3px 6px; }
+  }
+  .stats-day .tasklist li { margin: 2px 0; }
+  .pct-bar { height: 8px; background: #e5e7eb; border-radius: 999px; overflow: hidden; margin-top: 6px; }
+  .pct-bar .fill { height: 100%; background: var(--accent); }
+  .empty-state { text-align: center; color: var(--muted); padding: 40px 0; }
+
+  /* small */
+  .help { color: var(--muted); font-size: .85rem; }
+  .row-flex { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .double-tap-hint { font-size: .75rem; color: #9ca3af; margin-top: 4px; }
+
+  /* focus page time goals */
+  .focus-time-goals {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    margin-top: 10px; padding: 10px 12px;
+    background: #f8fafc; border: 1px solid var(--line); border-radius: 6px;
+    font-size: .9rem;
+  }
+  @media (max-width: 700px) { .focus-time-goals { grid-template-columns: 1fr; } }
+  .focus-time-goals .lbl { color: #6b7280; }
+  .focus-time-goals strong { font-variant-numeric: tabular-nums; margin: 0 6px; }
+  .focus-time-goals .cd { color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* per-task timers */
+  .focus-cell .task-row { flex-wrap: wrap; }
+  .task-timers { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; flex: 1 0 100%; }
+  .timer-block {
+    display: inline-flex; align-items: center; gap: 2px;
+    background: rgba(255,255,255,.55); padding: 2px 4px;
+    border-radius: 6px; font-size: .8rem;
+  }
+  .timer-block .ico { font-size: .85rem; padding: 2px 6px; opacity: .8; }
+  .timer-block .t-display {
+    font-variant-numeric: tabular-nums; font-weight: 700;
+    min-width: 5ch; text-align: center; padding: 0 2px;
+  }
+  .timer-block.done .t-display { color: #dc2626; animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
+  .timer-block .t-input {
+    width: 2.4em; text-align: center; padding: 1px 2px;
+    border: 1px solid var(--line); border-radius: 4px;
+    font: inherit; font-variant-numeric: tabular-nums;
+  }
+  .timer-block .t-btn {
+    background: transparent; border: none; padding: 2px 5px; cursor: pointer;
+    border-radius: 4px; line-height: 1; font-size: .9rem; color: #374151;
+  }
+  .timer-block .t-btn:hover { background: rgba(0,0,0,.06); }
+  .timer-block .t-btn.go {
+    background: #2563eb; color: #fff; padding: 2px 8px; font-weight: 600;
+  }
+
+  /* activity log */
+  .watch-log-entry {
+    display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 6px;
+    align-items: center;
+    font-size: .85rem; padding: 6px 10px;
+    border-radius: 6px; margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+    background: #f8fafc; border: 1px solid var(--line);
+  }
+  .watch-log-entry .watch-action-btn {
+    background: transparent; border: none; cursor: pointer;
+    color: #6b7280; padding: 3px 7px; border-radius: 4px;
+    font-size: .85rem; line-height: 1;
+  }
+  .watch-log-entry .watch-action-btn:hover { background: #e5e7eb; color: #2563eb; }
+  .watch-log-entry .watch-action-btn.danger:hover { background: #fef2f2; color: #dc2626; }
+  .watch-log-entry .badge {
+    font-size: .68rem; padding: 1px 6px; border-radius: 999px;
+    background: #e5e7eb; color: #374151; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .watch-log-entry .badge.q1 { background: var(--q1); color: #6b4f10; }
+  .watch-log-entry .badge.q2 { background: var(--q2); color: #1f5132; }
+  .watch-log-entry .badge.q3 { background: var(--q3); color: #1e4a72; }
+  .watch-log-entry .badge.q4 { background: var(--q4); color: #7a2848; }
+  .watch-log-entry .badge.muncher { background: #fee2e2; color: #991b1b; }
+  .watch-log-entry .name { font-weight: 600; color: #111827; }
+  .watch-log-entry .time-range { color: #6b7280; font-size: .8rem; }
+  .watch-log-entry .pen { color: #dc2626; font-weight: 700; min-width: 4ch; text-align: right; }
+  .watch-log-total {
+    font-size: .85rem; color: #6b7280; text-align: right; margin-top: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .yt-running .lbl { color: #dc2626; font-weight: 700; }
+  .timer-running .lbl { color: #dc2626; font-weight: 700; }
+  .watch-log-date {
+    color: #6b7280; font-size: .85rem; font-weight: 500; margin-left: 8px;
+  }
+
+  /* down timer minute input — wider for 2 digits */
+  .timer-block.down .t-input.min-only {
+    width: 3.4em; text-align: center;
+    padding: 2px 4px;
+    font-size: .9rem;
+  }
+
+  /* Matrix toolbar (toggle for expanded mode on phone) */
+  .matrix-toolbar {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .matrix-toggle {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 1.1rem;
+    cursor: pointer;
+    color: #374151;
+    line-height: 1;
+    font-weight: 600;
+  }
+  .matrix-toggle:hover { background: #f3f4f6; }
+  .matrix-toggle:active { background: #e5e7eb; }
+  .matrix-scroll { overflow: visible; }
+
+  /* ============ MOBILE LAYOUT FIXES ============ */
+  @media (max-width: 700px) {
+    main { padding: 10px; max-width: 100vw; overflow-x: hidden; }
+    .panel { padding: 12px; max-width: 100%; box-sizing: border-box; }
+
+    /* Compact topbar: hide subtext, swap tab labels for icons, force one row */
+    header.topbar {
+      padding: 6px 10px;
+      grid-template-columns: auto 1fr auto;
+      gap: 6px;
+    }
+    .brand { font-size: .9rem; white-space: nowrap; }
+    .brand small { display: none; }
+    .motivation { font-size: .75rem; padding-left: 6px; }
+    nav.tabs { flex-wrap: nowrap; gap: 2px; }
+    nav.tabs button {
+      padding: 6px 10px;
+      font-size: 1.15rem;
+      line-height: 1;
+      min-width: 36px;
+      text-align: center;
+    }
+    .tab-text { display: none; }
+    .tab-ico { display: inline; }
+
+    /* Matrix toolbar visible on phone; horizontal scroll wrapper */
+    .matrix-toolbar { display: flex; }
+    .matrix-toolbar .help { font-size: .75rem; }
+    .matrix-scroll {
+      overflow-x: auto;
+      overflow-y: visible;
+      touch-action: pan-x pan-y;
+      -webkit-overflow-scrolling: touch;
+      margin: 0 -10px;
+      padding: 0 10px;
+    }
+    /* When user taps the toggle, the matrix gets a min-width so it overflows
+       horizontally inside the scroll container, giving each cell more room. */
+    .matrix-wrap.expanded { min-width: 620px; }
+    .matrix-wrap.expanded .cell { padding: 12px; min-height: 220px; }
+    .matrix-wrap.expanded .cell h4 { font-size: .8rem; }
+    .matrix-wrap.expanded .col-headers { font-size: 1rem; }
+
+    /* Matrix: stick row labels to the very left edge so cells get more width */
+    .matrix-wrap { grid-template-columns: 18px 1fr; gap: 4px; }
+    .matrix-wrap .col-headers { gap: 4px; }
+    .matrix-wrap .row-labels { gap: 4px; justify-items: start; }
+    .matrix-wrap .row-labels span { font-size: .8rem; }
+    .matrix { gap: 4px; min-height: 320px; }
+    .cell { padding: 8px; }
+    .cell h4 { font-size: .65rem; margin: 0 0 6px; letter-spacing: .03em; }
+
+    /* Factor panels — keep slider + number from overflowing the box */
+    .factors-grid { gap: 10px; }
+    .factor-block { padding: 10px; min-width: 0; }
+    .factor-block h3 { font-size: .95rem; }
+    .score-display { gap: 8px; }
+    .score-display .num { font-size: 1rem; min-width: 3ch; }
+    .score-display input[type="range"] { min-width: 0; flex: 1 1 0; }
+    .small-slider input[type="range"] { min-width: 0; flex: 1 1 0; }
+    .small-slider .val { font-size: .85rem; }
+    .row-input { gap: 4px; }
+    .row-input input[type="text"] { min-width: 0; flex: 1 1 0; }
+    .row-input input[type="number"] { width: 50px; padding: 6px 4px; font-size: .85rem; }
+    .row-input button { padding: 6px 8px; font-size: .85rem; }
+    .chip { font-size: .8rem; padding: 3px 8px; }
+    .chip .scr { font-size: .7rem; padding: 0 5px; }
+
+    /* Pomodoro: hide phase text on phone — color is enough */
+    .pomodoro-display .phase-name { display: none; }
+    .pomodoro-display { padding: 3px 10px; gap: 0; }
+
+    /* Mana — keep .mana-col strictly inside its parent .panel */
+    .mana { gap: 8px; max-width: 100%; min-width: 0; }
+    .mana-col {
+      padding: 8px;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      box-sizing: border-box;
+    }
+    .mana-col h3 { font-size: .95rem; }
+    .mana-item { padding: 5px 8px; font-size: .9rem; }
+
+    /* Focus layout: ensure right column is allowed to shrink */
+    .focus-layout { max-width: 100%; min-width: 0; }
+    .focus-right { min-width: 0; max-width: 100%; }
+
+    /* Blue line label on the gauge: stack on two lines (time, then "Goal") */
+    .gauge-line-blue .gauge-line-time {
+      white-space: normal;
+      text-align: center;
+      line-height: 1.05;
+      padding: 2px 6px;
+      font-size: .65rem;
+    }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Concentration<small>focus companion</small></div>
+  <div class="motivation" id="motivation-display"></div>
+  <nav class="tabs">
+    <button id="tab-setup" class="active" aria-label="Setup"><span class="tab-text">Setup</span><span class="tab-ico" aria-hidden="true">⚙</span></button>
+    <button id="tab-focus" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">▶</span></button>
+    <button id="tab-stats" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">▤</span></button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============================== PAGE 1 — SETUP ============================== -->
+  <section id="setup-page">
+
+    <div class="panel">
+      <h2>Plan your tasks</h2>
+      <p class="help">Add tasks into each quadrant of the Eisenhower Matrix. Tap a task to edit, the checkbox to mark done.</p>
+      <div class="matrix-toolbar">
+        <button class="matrix-toggle" id="matrix-toggle" aria-label="Toggle matrix size" title="Expand matrix">⤢</button>
+        <span class="help" id="matrix-toggle-hint">Tap to enlarge cells &amp; scroll horizontally</span>
+      </div>
+      <div class="matrix-scroll" id="matrix-scroll">
+        <div class="matrix-wrap">
+          <div></div>
+          <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
+          <div class="row-labels"><span>Important</span><span>Not Important</span></div>
+          <div class="matrix">
+            <div class="cell q1"><h4>Important · Urgent</h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
+            <div class="cell q2"><h4>Important · Not Urgent</h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
+            <div class="cell q3"><h4>Not Important · Urgent</h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
+            <div class="cell q4"><h4>Not Important · Not Urgent</h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Time Start &amp; Goals</h2>
+      <div class="time-goals">
+        <div class="goal">
+          <div class="goal-head">
+            <label>Starting Date &amp; Time</label>
+            <div class="goal-actions">
+              <button class="quick-btn" id="start-now" type="button" title="Set to current date and time">Now</button>
+              <button class="reset-btn" data-reset="start" type="button" title="Clear">×</button>
+            </div>
+          </div>
+          <input type="date" id="start-date">
+          <input type="time" id="start-time">
+          <div class="help">Gauge starts 30 min before this time</div>
+        </div>
+        <div class="goal">
+          <div class="goal-head">
+            <label for="deadline">I'll get things done by</label>
+            <div class="goal-actions">
+              <button class="quick-btn" id="deadline-plus-30m" type="button" title="Add 30 minutes">+30m</button>
+              <button class="quick-btn" id="deadline-plus-1h"  type="button" title="Add 1 hour">+1h</button>
+              <button class="reset-btn" data-reset="deadline" type="button" title="Clear">×</button>
+            </div>
+          </div>
+          <input type="date" id="deadline-date">
+          <input type="time" id="deadline">
+          <div class="countdown" id="deadline-cd">—</div>
+        </div>
+        <div class="goal">
+          <div class="goal-head">
+            <label for="bedtime">I'm going to sleep at</label>
+            <div class="goal-actions">
+              <button class="quick-btn" id="bedtime-plus-30m" type="button" title="Add 30 minutes">+30m</button>
+              <button class="quick-btn" id="bedtime-plus-1h"  type="button" title="Add 1 hour">+1h</button>
+              <button class="reset-btn" data-reset="bedtime" type="button" title="Clear">×</button>
+            </div>
+          </div>
+          <input type="date" id="bedtime-date">
+          <input type="time" id="bedtime">
+          <div class="countdown" id="bedtime-cd">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Focus level — based on factors</h2>
+      <p class="help">Tap a chip to toggle a factor. Double-tap a chip's label to rename it, double-tap its score to change the value.</p>
+      <div class="factors-grid">
+        <!-- EXTERNAL -->
+        <div class="factor-block">
+          <h3>External factors</h3>
+          <div class="score-display">
+            <input type="range" id="ext-slider" min="-100" max="100" value="0">
+            <div class="num" id="ext-num">0</div>
+          </div>
+          <div id="ext-groups"></div>
+          <h4>Others</h4>
+          <div class="row-input">
+            <input type="text" id="ext-other-text" placeholder="What else?">
+            <input type="number" id="ext-other-score" placeholder="±score">
+            <button id="ext-other-add">Add</button>
+          </div>
+          <div class="others-list" id="ext-others"></div>
+        </div>
+
+        <!-- INTERNAL -->
+        <div class="factor-block">
+          <h3>Internal factors</h3>
+          <div class="score-display">
+            <input type="range" id="int-slider" min="-100" max="100" value="70">
+            <div class="num" id="int-num">70</div>
+          </div>
+          <p class="help" id="int-default-msg"></p>
+          <div id="int-groups"></div>
+          <h4>Others</h4>
+          <div class="row-input">
+            <input type="text" id="int-other-text" placeholder="What else?">
+            <input type="number" id="int-other-score" placeholder="±score">
+            <button id="int-other-add">Add</button>
+          </div>
+          <div class="others-list" id="int-others"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Motivational quotes</h2>
+      <p class="help">One quote per line. A random one shows in the top bar — re-picked once an hour.</p>
+      <textarea id="motivation-input" rows="6" placeholder="Stay focused.&#10;You can do this.&#10;Keep going."></textarea>
+    </div>
+
+    <div class="panel">
+      <h2>Account</h2>
+      <!-- Signed-in state (the only visible state on the setup page now) -->
+      <div id="auth-logged-in" class="auth-section hidden">
+        <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
+        <p class="help">Tasks, gauge, statistics — everything syncs automatically.</p>
+        <div class="row-flex">
+          <button class="btn" id="auth-signout">Sign out</button>
+          <button class="btn" id="auth-resync">Force resync</button>
+          <span id="auth-status2" class="help"></span>
+        </div>
+      </div>
+      <!-- Hidden placeholders kept for backward-compatible JS — never visible -->
+      <div id="auth-logged-out" class="hidden" aria-hidden="true">
+        <input id="auth-email"><input id="auth-password"><span id="auth-status"></span>
+        <button id="auth-signin"></button><button id="auth-signup"></button>
+      </div>
+      <div class="hidden" aria-hidden="true">
+        <input id="sb-url"><input id="sb-key"><input id="sb-user">
+        <button id="sb-test"></button><span id="sb-status"></span>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn" id="reset-all">Reset all</button>
+      <button class="btn primary" id="go-focus">Start focus session →</button>
+    </div>
+  </section>
+
+  <!-- ============================== PAGE 2 — FOCUS ============================== -->
+  <section id="focus-page">
+    <div class="focus-layout">
+      <div class="gauge-col" id="gauge-col">
+        <div class="gauge-inner" id="gauge-inner">
+          <div class="gauge-grid" id="gauge-grid"></div>
+          <div class="gauge-segments" id="gauge-segments"></div>
+          <div class="gauge-line-blue" id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
+          <div class="gauge-line-blue" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
+          <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+        </div>
+      </div>
+
+      <div class="focus-right">
+        <div class="panel" style="margin: 0;">
+          <div class="scores">
+            <div class="score-card">
+              <div class="face" id="int-face"></div>
+              <div class="meta">
+                <h4>Internal</h4>
+                <div class="score-bar"><div class="marker" id="int-marker"></div></div>
+              </div>
+              <div class="scoreval" id="int-scoreval">0</div>
+            </div>
+            <div class="score-card">
+              <div class="face" id="ext-face"></div>
+              <div class="meta">
+                <h4>External</h4>
+                <div class="score-bar"><div class="marker" id="ext-marker"></div></div>
+              </div>
+              <div class="scoreval" id="ext-scoreval">0</div>
+            </div>
+          </div>
+          <div class="message-box" id="message-box" style="margin-top:10px;">—</div>
+          <div class="focus-time-goals" id="focus-time-goals">
+            <div>
+              <span class="lbl">Get things done by</span>
+              <strong id="focus-deadline-time">--:--</strong>
+              <span class="cd" id="focus-deadline-cd">—</span>
+            </div>
+            <div>
+              <span class="lbl">Sleep at</span>
+              <strong id="focus-bedtime-time">--:--</strong>
+              <span class="cd" id="focus-bedtime-cd">—</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin:0;">
+          <h3 style="margin:0;">Tasks</h3>
+          <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
+          <div class="double-tap-hint">Tap a task to start a 25-min Pomodoro (Work → Good Break → ...). Tap again to stop.</div>
+        </div>
+
+        <div class="panel" style="margin:0;">
+          <h3>Mana Factors</h3>
+          <div class="mana">
+            <div class="mana-col">
+              <h3>Mana Multiplier</h3>
+              <div class="mana-list" id="mana-mult"></div>
+              <div class="row-input">
+                <input type="text" id="mult-text" placeholder="Factor">
+                <input type="number" id="mult-score" placeholder="±score">
+                <button id="mult-add">Add</button>
+              </div>
+              <div class="row-input">
+                <input type="text" id="mult-tracker-text" placeholder="Tap to Start Tracker">
+                <input type="number" id="mult-tracker-rate" placeholder="±/5min">
+                <button id="mult-tracker-add">Add tracker</button>
+              </div>
+            </div>
+            <div class="mana-col">
+              <h3>Mana Muncher</h3>
+              <div class="mana-list" id="mana-munch"></div>
+              <div class="row-input">
+                <input type="text" id="munch-text" placeholder="Factor">
+                <input type="number" id="munch-score" placeholder="±score">
+                <button id="munch-add">Add</button>
+              </div>
+              <div class="row-input">
+                <input type="text" id="munch-tracker-text" placeholder="Tap to Start Tracker">
+                <input type="number" id="munch-tracker-rate" placeholder="±/5min">
+                <button id="munch-tracker-add">Add tracker</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel" id="watch-log-panel" style="margin:0; display:none;">
+          <h3>Activity log <span class="watch-log-date" id="watch-log-date"></span></h3>
+          <p class="help">Every timer (task pomodoros and mana muncher) is recorded here when it stops.</p>
+          <div id="watch-log-list"></div>
+          <div class="watch-log-total" id="watch-log-total"></div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================== PAGE 3 — STATISTICS ============================== -->
+  <section id="stats-page">
+    <div class="panel">
+      <h2>Statistics</h2>
+      <div class="stats-view-toggle">
+        <button class="btn" id="stats-view-list-btn">Daily view</button>
+        <button class="btn" id="stats-view-week-btn">Weekly view</button>
+      </div>
+      <div id="stats-list" class="stats-view"></div>
+      <div id="stats-week" class="stats-view hidden">
+        <div class="week-controls">
+          <button class="btn" id="week-prev">←</button>
+          <span id="week-label">—</span>
+          <button class="btn" id="week-next">→</button>
+        </div>
+        <div class="week-grid" id="week-grid"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn danger" id="clear-stats">Erase all data</button>
+    </div>
+  </section>
+</main>
+
+<!-- Login modal (shown automatically if not signed in) -->
+<div class="modal hidden" id="login-modal" aria-hidden="true">
+  <div class="modal-backdrop"></div>
+  <div class="modal-content login-modal-content">
+    <h3 style="margin: 0 0 4px;">Welcome to Concentration</h3>
+    <p class="help" style="margin: 0 0 8px; font-size: .78rem;">Three powerful tools — hover or tap each for details:</p>
+    <ul class="feature-list">
+      <li class="feature-item" tabindex="0">
+        <span class="feature-ico q1">▦</span>
+        <strong>Eisenhower Matrix + Pomodoro</strong>
+        <div class="feature-tooltip">Plan tasks by urgency &amp; importance in the 4-quadrant matrix. Tap a task to start a 25-min Work → 5-min Break cycle (15-min long break every 4 rounds).</div>
+      </li>
+      <li class="feature-item" tabindex="0">
+        <span class="feature-ico gauge">▥</span>
+        <strong>Vertical Time Gauge</strong>
+        <div class="feature-tooltip">Calendar-style timeline of your day. See exactly when you worked on what; click any colored band to edit its start/end times.</div>
+      </li>
+      <li class="feature-item" tabindex="0">
+        <span class="feature-ico score">●</span>
+        <strong>Focus Score</strong>
+        <div class="feature-tooltip">Measure your focus level by external factors (internet, devices, location) and internal factors (sleep, emotional wellness, energy). Pixel-art houses &amp; faces visualize your score.</div>
+      </li>
+    </ul>
+    <div style="text-align: right; margin: 4px 0 6px;">
+      <button class="btn-link" id="open-manual" type="button">In detail →</button>
+    </div>
+    <hr class="modal-sep">
+    <div class="auth-form">
+      <input type="email" id="login-email" placeholder="Email" autocomplete="email">
+      <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+      <div class="row-flex" style="grid-column: 1 / -1;">
+        <button class="btn primary" id="login-signin">Sign in</button>
+        <button class="btn" id="login-signup">Sign up</button>
+        <span id="login-status" class="help"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Manual / detailed feature modal -->
+<div class="modal hidden" id="manual-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="manual-modal-backdrop"></div>
+  <div class="modal-content manual-modal-content">
+    <button class="manual-close" id="manual-close" type="button" aria-label="Close">×</button>
+    <h2 style="margin-top:0;">Concentration — User Manual</h2>
+
+    <h3>Setup page</h3>
+    <p><strong>Plan your tasks</strong> — The Eisenhower Matrix divides tasks into four quadrants: Important · Urgent (yellow), Important · Not Urgent (green), Not Important · Urgent (blue), Not Important · Not Urgent (pink). Add tasks with the <em>+ add task</em> button, type a name, press <em>Enter</em> to add a new row, <em>Backspace</em> on an empty row to delete it. Drag the <code>≡</code> handle to reorder within a quadrant. On phone, tap the <code>⤢</code> toggle above the matrix to enlarge cells; swipe sideways to reach the right-side cells.</p>
+
+    <p><strong>Time Start &amp; Goals</strong> — <em>Starting Date &amp; Time</em>: when your focus session begins. The vertical time gauge starts 30 minutes before this. Tap <em>Now</em> to set to current time. <em>I'll get things done by</em> and <em>I'm going to sleep at</em>: target times shown as countdowns and as blue lines on the gauge. <em>+30m</em> and <em>+1h</em> buttons add to the existing target (cumulative). The <code>×</code> button clears each field.</p>
+
+    <p><strong>Focus level — based on factors</strong> — Two sliders (External, Internal) auto-compute from selected chips, sliders, and <em>Others</em> entries. The default-max formula is <code>100 − (sum of max possible scores)</code>, so reaching 100 means everything good is selected. Sleep slider is 0–10 (caps at 7 if &gt; 9). Sleep and Emotional Wellness contribute ×3 to the internal score. Slider numbers are blue when positive, red when negative, black at zero.</p>
+
+    <p><strong>Motivational quotes</strong> — One quote per line. The top bar shows a random one re-picked once an hour.</p>
+
+    <h3>Focus page</h3>
+    <p><strong>Vertical time gauge</strong> — White calendar-style column on the left with hour grid lines, hour labels, a thin red current-time line with a rounded badge, and blue lines for "Go home" (deadline) and "Sleep" (bedtime). Range: 30 min before Starting Time → 12 hours after. Color-coded bands appear when timers run; click any band to edit its start/end times in a popup.</p>
+
+    <p><strong>Internal &amp; External score cards</strong> — On the top right. Pixel-art faces (Internal) and houses (External) change with your score across 7 levels (0–27 → image 0, …, 73–100 → image 6). The bar marker reflects the score as a percentage from 0 (left) to 100 (right). Below: overall score + a message ("You're amazing." / "You're almost in the zone." / etc.).</p>
+
+    <p><strong>Pomodoro tasks</strong> — Tap a task to start a 25-min Work countdown. When it hits 0:00 it auto-transitions to a 5-min Good Break (or a 15-min Sweet Long Break after every 4 work sessions). Tap the same task again to stop early. Each full work + break is one entry on the Activity Log and one band on the gauge.</p>
+
+    <p><strong>Mana Multiplier / Muncher</strong> — Mana Multiplier rows (Drink water, 25 mins focus, …) apply their score to your <em>Internal</em> focus on tap. Mana Muncher rows apply to <em>External</em>. Two timer-mancher items (Youtube/Netflix, Unrelated news) tap to start counting up; tap again to stop. Total time recorded; external penalty applied at <code>−3 per 5 minutes</code>. Click and hold or use <em>Add</em> to create custom multipliers/munchers with any signed score.</p>
+
+    <p><strong>Activity log</strong> — Below Mana Factors. Every timer (task pomodoros and muncher trackers) is recorded line by line with start–end times, duration, and any score penalty applied.</p>
+
+    <h3>Statistics page</h3>
+    <p><strong>List view</strong> — Sessions grouped by date. Each session shows ext/int focus scores, tasks completed, completion %, and a mini vertical gauge of that session's time bands.</p>
+    <p><strong>Weekly view</strong> — 7 columns (Mon–Sun) with shared 6 AM – 12 AM y-axis. Each day's color-coded segments visible at a glance. Use <code>←</code> / <code>→</code> to navigate weeks.</p>
+    <p><strong>Erase all data</strong> — Wipes both local and cloud data after confirmation.</p>
+
+    <h3>Account &amp; Cloud sync</h3>
+    <p>Sign up with email + password. Your session stays signed in across page refreshes; your data — tasks, gauge segments, scores, settings, statistics — automatically syncs across devices via Supabase.</p>
+
+    <div style="text-align: right; margin-top: 16px;">
+      <button class="btn primary" id="manual-close-2" type="button">Got it</button>
+    </div>
+  </div>
+</div>
+
+<!-- Segment edit modal -->
+<div class="modal hidden" id="segment-edit-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="segment-modal-backdrop"></div>
+  <div class="modal-content">
+    <h3 style="margin-top:0;">Edit segment time</h3>
+    <p class="help" id="segment-edit-name" style="margin:0 0 12px;"></p>
+    <div class="time-edit-inputs">
+      <label><span>Starting time</span><input type="time" id="segment-start"></label>
+      <label><span>Ending time</span><input type="time" id="segment-end"></label>
+    </div>
+    <div class="actions">
+      <button class="btn danger" id="segment-delete">Delete</button>
+      <button class="btn" id="segment-cancel">Cancel</button>
+      <button class="btn primary" id="segment-save">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===========================================================
+   STORAGE
+=========================================================== */
+const STORAGE_KEY = 'concentration-app-v1';
+const STATS_KEY   = 'concentration-stats-v1';
+
+const defaultState = () => ({
+  currentPage: 'setup',  // last viewed page — restored on refresh
+  tasks: { q1: [], q2: [], q3: [], q4: [] },
+  deadline: '',
+  deadlineDate: '',        // optional date for the deadline (defaults to today)
+  bedtime: '',
+  bedtimeDate: '',         // optional date for the bedtime (defaults to today)
+  startDate: '',           // YYYY-MM-DD — Starting Date (setup page)
+  startTime: '',           // HH:MM      — Starting Time (setup page)
+  sessionStartMs: null,
+  timeSegments: [],
+  ext: {
+    slider: 0,
+    groups: {
+      'Internet': [
+        { lbl:'unrestricted', score:-10, active:true, exclusive:'Internet' },
+        { lbl:'restricted',   score: 10, active:false, exclusive:'Internet' }
+      ],
+      'Devices': [
+        { lbl:'PC',         score:-5, active:true },
+        { lbl:'Phone',      score:-5, active:false },
+        { lbl:'Tablet PC',  score:-4, active:false },
+        { lbl:'Earphones',  score:-4, active:false }
+      ],
+      'I am at': [
+        { lbl:'A library',   score: 7, active:false },
+        { lbl:'A clean desk',score: 4, active:false }
+      ],
+      'Social factors': [
+        { lbl:'studying with others',  score: 5, active:false },
+        { lbl:'being watched / supervised', score: 10, active:false },
+        { lbl:'people interrupting me', score:-5, active:false }
+      ]
+    },
+    others: []
+  },
+  int: {
+    slider: 70,
+    sliderUserSet: false,
+    groups: {
+      'Exercise last 7 days': [
+        { lbl:'Twice or more', score: 5, active:false, exclusive:'Exercise', hideScore:true },
+        { lbl:'Once',          score: 3, active:false, exclusive:'Exercise' },
+        { lbl:'Never',         score:-3, active:true,  exclusive:'Exercise' }
+      ],
+      'Healthy diet last 3 meals': [
+        { lbl:'Twice or more', score: 5, active:true,  exclusive:'Diet', hideScore:true },
+        { lbl:'Once',          score: 3, active:false, exclusive:'Diet' },
+        { lbl:'Never',         score:-3, active:false, exclusive:'Diet' }
+      ],
+      // Multi-select chips rendered under the Emotional Wellness slider.
+      // Skipped in the normal group iteration — see renderFactorGroups.
+      'Emotional Wellness practices': [
+        { lbl:'Prayer',     score: 3, active:false },
+        { lbl:'Thank Note', score: 3, active:false },
+        { lbl:'Diary',      score: 3, active:false }
+      ]
+    },
+    sleep: 6,        // 0..10 (capped: >9 → 7)
+    stress: 0,       // -7..7  (displayed as "Emotional Wellness")
+    energy: 0,       // 0/5 toggle
+    others: []
+  },
+  mana: {
+    multiplier: [
+      { lbl:'Drink water', score: 3 },
+      { lbl:'25 mins focus', score: 7 },
+      { lbl:'5 mins good break', score: 4 }
+    ],
+    muncher: [
+      { lbl:'Youtube/Netflix', kind: 'timer' },
+      { lbl:'Unrelated news',  kind: 'timer' }
+    ]
+  },
+  // Single-timer enforcement: at most one of these is "running" at a time.
+  // activeTimer represents the timer that is currently ticking.
+  activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
+  pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work session, resets after long break
+  watchLog: [],
+  scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
+  lastSnapshotDate: '',         // YYYY-MM-DD — used to auto-snapshot at midnight
+  last3amResetDate: '',         // YYYY-MM-DD — used to clear matrix + time-goals at 3 AM
+  motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
+  motivationalCurrent: null,  // { text, selectedAt }
+  matrixExpanded: false,      // mobile: enlarge matrix cells & enable horizontal scroll
+  // Cloud sync (Supabase) — all optional. Empty = local-only.
+  sbUrl: '',
+  sbKey: '',
+  sbUserId: 'me',
+  settingsUpdatedAt: 0   // last local change to settings (motivation/others) for last-write-wins sync
+});
+
+let state = loadState();
+let stats = loadStats();
+migrateState();
+function migrateState() {
+  if (state.mana && Array.isArray(state.mana.muncher)) {
+    // remove old split YT items
+    state.mana.muncher = state.mana.muncher.filter(x =>
+      x.lbl !== 'Youtube/Netflix 10m~30m' && x.lbl !== 'Youtube/Netflix 30m~1h');
+    // ensure YT exists and is a timer
+    let yt = state.mana.muncher.find(x => x.kind === 'yt' || x.kind === 'timer' && x.lbl === 'Youtube/Netflix');
+    if (!yt) state.mana.muncher.unshift({ lbl: 'Youtube/Netflix', kind: 'timer' });
+    else { yt.kind = 'timer'; delete yt.score; }
+    // ensure Unrelated news is a timer
+    let un = state.mana.muncher.find(x => x.lbl === 'Unrelated news');
+    if (un) { un.kind = 'timer'; delete un.score; }
+    else state.mana.muncher.push({ lbl: 'Unrelated news', kind: 'timer' });
+    // Default pointsPer5Min for legacy timer trackers (so the new field exists)
+    state.mana.muncher.forEach(m => {
+      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = -3;
+    });
+  }
+  if (state.mana && Array.isArray(state.mana.multiplier)) {
+    state.mana.multiplier.forEach(m => {
+      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = 3;
+    });
+  }
+  // remove old yt single-timer state, replaced by activeTimer
+  delete state.ytTimer;
+  if (state.activeTimer === undefined) state.activeTimer = null;
+  if (!Array.isArray(state.watchLog)) state.watchLog = [];
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  // Ensure each task has timer fields
+  ['q1','q2','q3','q4'].forEach(q => {
+    (state.tasks[q] || []).forEach(ensureTaskTimers);
+  });
+  // Clamp sleep into new 0..10 range
+  if (state.int) {
+    if (state.int.sleep == null || state.int.sleep < 0) state.int.sleep = 6;
+    if (state.int.sleep > 10) state.int.sleep = 10;
+    // Add Emotional Wellness practices group if missing
+    if (!state.int.groups['Emotional Wellness practices']) {
+      state.int.groups['Emotional Wellness practices'] = [
+        { lbl:'Prayer',     score: 3, active:false },
+        { lbl:'Thank Note', score: 3, active:false },
+        { lbl:'Diary',      score: 3, active:false }
+      ];
+    }
+  }
+  // Motivational text fields
+  if (state.motivationalLines == null) state.motivationalLines = 'Stay focused.\nYou can do this.\nKeep going.';
+  if (state.motivationalCurrent === undefined) state.motivationalCurrent = null;
+  // Starting Date & Time
+  if (state.startDate == null) state.startDate = '';
+  if (state.startTime == null) state.startTime = '';
+  if (state.deadlineDate == null) state.deadlineDate = '';
+  if (state.bedtimeDate == null) state.bedtimeDate = '';
+  if (state.matrixExpanded === undefined) state.matrixExpanded = false;
+  if (state.sbUrl == null) state.sbUrl = '';
+  if (state.sbKey == null) state.sbKey = '';
+  if (state.sbUserId == null) state.sbUserId = 'me';
+  if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
+  if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
+  if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
+  if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
+  if (state.last3amResetDate == null) state.last3amResetDate = '';
+  if (!['setup','focus','stats'].includes(state.currentPage)) state.currentPage = 'setup';
+  // Clear out any legacy task-up/task-down/task-text active timers
+  if (state.activeTimer && ['task-up','task-down','task-text'].includes(state.activeTimer.type)) {
+    state.activeTimer = null;
+  }
+  saveState();
+}
+function ensureTaskTimers(task) {
+  if (!task.upTimer) task.upTimer = { state: 'idle', accumulatedMs: 0, startedAt: 0 };
+  if (!task.downTimer) task.downTimer = { state: 'idle', durationMs: 0, remainingMs: 0, startedAt: 0, settingMin: 25, settingSec: 0 };
+  return task;
+}
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (s && s.tasks && s.ext && s.int) return s;
+  } catch(e){}
+  return defaultState();
+}
+function saveState() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){} }
+function loadStats() {
+  try { return JSON.parse(localStorage.getItem(STATS_KEY)) || []; } catch(e){ return []; }
+}
+function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch(e){} }
+
+/* ===========================================================
+   SUPABASE — cloud sync + auth
+   ----------------------------------------------------------
+   ↓↓↓ FILL THESE IN once with your own Supabase project values, then push to
+   GitHub. Sign up / sign in will then work on any device without further
+   configuration. Anon keys are designed to be public (RLS + Auth secure data).
+=========================================================== */
+const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
+function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
+function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
+function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
+
+let supabaseClient = null;
+let sbScriptPromise = null;
+async function loadSupabaseLib() {
+  if (window.supabase) return window.supabase;
+  if (!sbScriptPromise) {
+    sbScriptPromise = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+      s.onload = () => resolve(window.supabase);
+      s.onerror = () => reject(new Error('Failed to load Supabase library'));
+      document.head.appendChild(s);
+    });
+  }
+  return sbScriptPromise;
+}
+async function getSupabaseClient() {
+  const url = getSbUrl();
+  const key = getSbKey();
+  if (!url || !key) return null;
+  if (supabaseClient) return supabaseClient;
+  const lib = await loadSupabaseLib();
+  supabaseClient = lib.createClient(url, key);
+  return supabaseClient;
+}
+function resetSupabaseClient() { supabaseClient = null; _currentAuthUserId = null; }
+const SB_TABLE = 'focus_sessions';
+
+/* ---- Supabase Auth (email + password) ---- */
+let _currentAuthUserId = null;
+let _currentAuthEmail = null;
+function getEffectiveUserId() {
+  return _currentAuthUserId || state.sbUserId || 'me';
+}
+async function authSignUp(email, password) {
+  const sb = await getSupabaseClient();
+  if (!sb) throw new Error('Configure Project URL and anon key first.');
+  const { data, error } = await sb.auth.signUp({ email, password });
+  if (error) throw error;
+  return data.user;
+}
+async function authSignIn(email, password) {
+  const sb = await getSupabaseClient();
+  if (!sb) throw new Error('Configure Project URL and anon key first.');
+  const { data, error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data.user;
+}
+async function authSignOut() {
+  const sb = await getSupabaseClient();
+  if (!sb) return;
+  await sb.auth.signOut();
+  _currentAuthUserId = null; _currentAuthEmail = null;
+}
+async function getAuthSession() {
+  const sb = await getSupabaseClient();
+  if (!sb) return null;
+  const { data: { session } } = await sb.auth.getSession();
+  return session;
+}
+function updateAuthUI(user) {
+  const inEl = document.getElementById('auth-logged-in');
+  const emailDisplay = document.getElementById('auth-email-display');
+  const loginModal = document.getElementById('login-modal');
+  if (user) {
+    if (inEl) inEl.classList.remove('hidden');
+    if (emailDisplay) emailDisplay.textContent = user.email || user.id;
+    if (loginModal) loginModal.classList.add('hidden');
+    _currentAuthUserId = user.id;
+    _currentAuthEmail = user.email || null;
+  } else {
+    if (inEl) inEl.classList.add('hidden');
+    // Always show the login modal when not signed in
+    if (loginModal) loginModal.classList.remove('hidden');
+    _currentAuthUserId = null;
+    _currentAuthEmail = null;
+  }
+}
+function setAuthStatus(text, color) {
+  const el = document.getElementById('auth-status');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = color || '';
+}
+
+async function pushStatToCloud(entry) {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return false;
+    const { error } = await sb.from(SB_TABLE).insert({
+      user_id: getEffectiveUserId(),
+      date: entry.date,
+      timestamp: entry.timestamp,
+      ext_score: entry.ext,
+      int_score: entry.int,
+      tasks_total: entry.tasksTotal,
+      tasks_done: entry.tasksDone,
+      completed_tasks: entry.completed,
+      pct: entry.pct,
+      session_start_ms: entry.sessionStartMs,
+      segments: entry.segments || []
+    });
+    if (error) { console.warn('Supabase insert error:', error); return false; }
+    return true;
+  } catch(e) { console.warn('Supabase push failed:', e); return false; }
+}
+async function fetchStatsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return null;
+    const { data, error } = await sb.from(SB_TABLE)
+      .select('*')
+      .eq('user_id', getEffectiveUserId())
+      .order('timestamp', { ascending: false });
+    if (error) throw error;
+    return (data || []).map(r => ({
+      date: r.date,
+      timestamp: Number(r.timestamp),
+      ext: r.ext_score,
+      int: r.int_score,
+      tasksTotal: r.tasks_total,
+      tasksDone: r.tasks_done,
+      completed: r.completed_tasks || [],
+      pct: r.pct,
+      sessionStartMs: r.session_start_ms ? Number(r.session_start_ms) : null,
+      segments: Array.isArray(r.segments) ? r.segments : []
+    }));
+  } catch(e) { console.warn('Supabase fetch failed:', e); throw e; }
+}
+async function deleteAllStatsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return;
+    const userId = getEffectiveUserId();
+    const r1 = await sb.from(SB_TABLE).delete().eq('user_id', userId);
+    if (r1.error) console.warn('Supabase delete error (sessions):', r1.error);
+    const r2 = await sb.from(SB_SETTINGS_TABLE).delete().eq('user_id', userId);
+    if (r2.error) console.warn('Supabase delete error (settings):', r2.error);
+  } catch(e) { console.warn('Supabase delete failed:', e); }
+}
+// Pull from cloud, then push any local entries not yet there.
+async function syncStatsBidi() {
+  const remote = await fetchStatsFromCloud();
+  if (remote == null) return;
+  const remoteTs = new Set(remote.map(s => s.timestamp));
+  const localOnly = stats.filter(s => !remoteTs.has(s.timestamp));
+  for (const e of localOnly) await pushStatToCloud(e);
+  const final = (await fetchStatsFromCloud()) || remote;
+  stats = final.sort((a, b) => b.timestamp - a.timestamp);
+  saveStats();
+  // Also sync user settings (motivational quotes + Others factors)
+  await syncSettingsBidi();
+}
+
+/* ---- Settings sync (motivational quotes, ext.others, int.others) ---- */
+const SB_SETTINGS_TABLE = 'user_settings';
+function markSettingsChanged() {
+  state.settingsUpdatedAt = Date.now();
+  saveState();
+}
+async function pushSettingsToCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return false;
+    const ts = state.settingsUpdatedAt || Date.now();
+    const { error } = await sb.from(SB_SETTINGS_TABLE).upsert({
+      user_id: getEffectiveUserId(),
+      motivational_lines: state.motivationalLines || '',
+      ext_others: state.ext.others || [],
+      int_others: state.int.others || [],
+      tasks: state.tasks || { q1: [], q2: [], q3: [], q4: [] },
+      // Time Start & Goals
+      time_goals: {
+        startDate:    state.startDate    || '',
+        startTime:    state.startTime    || '',
+        deadline:     state.deadline     || '',
+        deadlineDate: state.deadlineDate || '',
+        bedtime:      state.bedtime      || '',
+        bedtimeDate:  state.bedtimeDate  || ''
+      },
+      // Focus level factors (with active states + sliders)
+      ext_factors: {
+        groups: state.ext.groups,
+        slider: state.ext.slider
+      },
+      int_factors: {
+        groups: state.int.groups,
+        slider: state.int.slider,
+        sleep:  state.int.sleep,
+        stress: state.int.stress,
+        energy: state.int.energy
+      },
+      // Mana Factors (multiplier + muncher) and Activity log
+      mana:      state.mana,
+      watch_log: state.watchLog || [],
+      // Live focus session state — Pomodoro timer + gauge segments + day rollovers
+      session_state: {
+        activeTimer:             state.activeTimer || null,
+        pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
+        timeSegments:            state.timeSegments || [],
+        sessionStartMs:          state.sessionStartMs || null,
+        lastSnapshotDate:        state.lastSnapshotDate || '',
+        last3amResetDate:        state.last3amResetDate || ''
+      },
+      updated_at: new Date(ts).toISOString()
+    }, { onConflict: 'user_id' });
+    if (error) { console.warn('Settings push error:', error); return false; }
+    return true;
+  } catch (e) { console.warn('Settings push failed:', e); return false; }
+}
+async function fetchSettingsFromCloud() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return null;
+    const { data, error } = await sb.from(SB_SETTINGS_TABLE)
+      .select('*')
+      .eq('user_id', getEffectiveUserId())
+      .maybeSingle();
+    if (error) { console.warn('Settings fetch error:', error); return null; }
+    return data;
+  } catch (e) { console.warn('Settings fetch failed:', e); return null; }
+}
+async function syncSettingsBidi() {
+  const remote = await fetchSettingsFromCloud();
+  const localTs = state.settingsUpdatedAt || 0;
+  if (remote) {
+    const remoteTs = new Date(remote.updated_at).getTime();
+    if (remoteTs > localTs) {
+      // Cloud is newer — apply to local
+      if (typeof remote.motivational_lines === 'string') {
+        state.motivationalLines = remote.motivational_lines;
+        if (motInputEl) motInputEl.value = state.motivationalLines;
+      }
+      if (Array.isArray(remote.ext_others)) state.ext.others = remote.ext_others;
+      if (Array.isArray(remote.int_others)) state.int.others = remote.int_others;
+      if (remote.tasks && typeof remote.tasks === 'object') {
+        ['q1','q2','q3','q4'].forEach(q => {
+          if (Array.isArray(remote.tasks[q])) state.tasks[q] = remote.tasks[q];
+        });
+      }
+      // Time Start & Goals
+      if (remote.time_goals && typeof remote.time_goals === 'object') {
+        const tg = remote.time_goals;
+        if ('startDate'    in tg) state.startDate    = tg.startDate    || '';
+        if ('startTime'    in tg) state.startTime    = tg.startTime    || '';
+        if ('deadline'     in tg) state.deadline     = tg.deadline     || '';
+        if ('deadlineDate' in tg) state.deadlineDate = tg.deadlineDate || '';
+        if ('bedtime'      in tg) state.bedtime      = tg.bedtime      || '';
+        if ('bedtimeDate'  in tg) state.bedtimeDate  = tg.bedtimeDate  || '';
+        if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = state.startDate;
+        if (typeof stInput !== 'undefined' && stInput) stInput.value = state.startTime;
+        if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = state.deadline;
+        if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = state.deadlineDate;
+        if (typeof btInput !== 'undefined' && btInput) btInput.value = state.bedtime;
+        if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = state.bedtimeDate;
+      }
+      // Focus level factors
+      if (remote.ext_factors && typeof remote.ext_factors === 'object') {
+        if (remote.ext_factors.groups && typeof remote.ext_factors.groups === 'object') {
+          state.ext.groups = remote.ext_factors.groups;
+        }
+        if (typeof remote.ext_factors.slider === 'number') state.ext.slider = remote.ext_factors.slider;
+      }
+      if (remote.int_factors && typeof remote.int_factors === 'object') {
+        if (remote.int_factors.groups && typeof remote.int_factors.groups === 'object') {
+          state.int.groups = remote.int_factors.groups;
+        }
+        if (typeof remote.int_factors.slider === 'number') state.int.slider = remote.int_factors.slider;
+        if (typeof remote.int_factors.sleep  === 'number') state.int.sleep  = remote.int_factors.sleep;
+        if (typeof remote.int_factors.stress === 'number') state.int.stress = remote.int_factors.stress;
+        if (typeof remote.int_factors.energy === 'number') state.int.energy = remote.int_factors.energy;
+      }
+      // Mana Factors
+      if (remote.mana && typeof remote.mana === 'object') {
+        if (Array.isArray(remote.mana.multiplier)) state.mana.multiplier = remote.mana.multiplier;
+        if (Array.isArray(remote.mana.muncher))    state.mana.muncher    = remote.mana.muncher;
+      }
+      // Activity log
+      if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
+      // Live session state (Pomodoro timer + gauge segments)
+      if (remote.session_state && typeof remote.session_state === 'object') {
+        const ss = remote.session_state;
+        if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
+        if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
+        if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
+        if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
+        // Day-rollover markers — synced so other devices don't run the reset twice
+        if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
+        if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
+      }
+      state.settingsUpdatedAt = remoteTs;
+      saveState();
+      if (typeof renderOthers === 'function') {
+        renderOthers('ext'); renderOthers('int');
+      }
+      if (typeof renderFactorGroups === 'function') {
+        renderFactorGroups('ext'); renderFactorGroups('int');
+      }
+      if (typeof recomputeSlider === 'function') {
+        recomputeSlider('ext'); recomputeSlider('int');
+      }
+      if (typeof updateCountdowns === 'function') updateCountdowns();
+      if (typeof drawGauge === 'function') drawGauge();
+      if (typeof renderTasks === 'function') renderTasks();
+      if (typeof renderManaLists === 'function') renderManaLists();
+      if (typeof renderWatchLog === 'function') renderWatchLog();
+      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+      if (typeof drawGauge === 'function') drawGauge();
+      refreshMotivation(false);
+      return;
+    }
+  }
+  // Cloud missing or older — push local
+  await pushSettingsToCloud();
+}
+// Debounced settings push (useful for fast-typing in motivational textarea)
+let _settingsPushTimer = null;
+function debouncedPushSettings() {
+  markSettingsChanged();
+  if (_settingsPushTimer) clearTimeout(_settingsPushTimer);
+  _settingsPushTimer = setTimeout(() => pushSettingsToCloud(), 800);
+}
+
+/* ---- Realtime-ish polling: pull session-state & mana from cloud while
+        the focus page is visible, so a tracker started on another device
+        appears here within ~15 seconds without the user refreshing. */
+let _lastPollMs = 0;
+async function pollCloudForUpdates() {
+  if (!isSbConfigured()) return;
+  if (Date.now() - _lastPollMs < 10000) return;  // throttle
+  _lastPollMs = Date.now();
+  try {
+    const remote = await fetchSettingsFromCloud();
+    if (!remote || !remote.updated_at) return;
+    const remoteTs = new Date(remote.updated_at).getTime();
+    const localTs = state.settingsUpdatedAt || 0;
+    if (remoteTs <= localTs) return;  // nothing new
+    let changed = false;
+    // Live tracker / Pomodoro state
+    if (remote.session_state && typeof remote.session_state === 'object') {
+      const ss = remote.session_state;
+      if ('activeTimer' in ss) { state.activeTimer = ss.activeTimer || null; changed = true; }
+      if (typeof ss.pomodoroSessionsInCycle === 'number') { state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle; changed = true; }
+      if (Array.isArray(ss.timeSegments)) { state.timeSegments = ss.timeSegments; changed = true; }
+      if ('sessionStartMs' in ss) { state.sessionStartMs = ss.sessionStartMs || null; changed = true; }
+    }
+    // Mana lists (so ratePerMin and added/removed trackers appear too)
+    if (remote.mana && typeof remote.mana === 'object') {
+      if (Array.isArray(remote.mana.multiplier)) { state.mana.multiplier = remote.mana.multiplier; changed = true; }
+      if (Array.isArray(remote.mana.muncher))    { state.mana.muncher    = remote.mana.muncher;    changed = true; }
+    }
+    // Activity log
+    if (Array.isArray(remote.watch_log)) { state.watchLog = remote.watch_log; changed = true; }
+    if (changed) {
+      state.settingsUpdatedAt = remoteTs;
+      saveState();
+      if (typeof renderManaLists === 'function')   renderManaLists();
+      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+      if (typeof renderWatchLog === 'function')    renderWatchLog();
+      if (typeof drawGauge === 'function')         drawGauge();
+      if (typeof renderScores === 'function')      renderScores();
+    }
+  } catch (e) { /* silent — this is best-effort polling */ }
+}
+// Poll roughly every 12s while the focus page is open
+setInterval(() => {
+  if (document.getElementById('focus-page')
+      && document.getElementById('focus-page').style.display !== 'none') {
+    pollCloudForUpdates();
+  }
+}, 12000);
+// Also pull immediately when the tab regains focus
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    _lastPollMs = 0;  // bypass throttle
+    pollCloudForUpdates();
+  }
+});
+
+/* ===========================================================
+   ROUTING
+=========================================================== */
+const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page' };
+function showPage(name) {
+  Object.entries(pages).forEach(([k,id]) => {
+    document.getElementById(id).style.display = (k===name) ? 'block' : 'none';
+  });
+  ['setup','focus','stats'].forEach(k => {
+    document.getElementById('tab-'+k).classList.toggle('active', k===name);
+  });
+  // Remember the last viewed page so refresh restores it
+  state.currentPage = name;
+  saveState();
+  if (name === 'focus') initFocusPage();
+  if (name === 'stats') {
+    renderStats();
+    // also refresh whichever view (list/week) is currently visible
+    if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
+    // Background sync from Supabase if configured (don't block initial render)
+    if (isSbConfigured()) {
+      syncStatsBidi().then(() => {
+        renderStats();
+        if (!document.getElementById('stats-week').classList.contains('hidden')) renderWeekView();
+      }).catch(()=>{});
+    }
+  }
+}
+document.getElementById('tab-setup').onclick = ()=>showPage('setup');
+document.getElementById('tab-focus').onclick = ()=>showPage('focus');
+document.getElementById('tab-stats').onclick = ()=>showPage('stats');
+// Returns true when no current 24-hour session is running; the next click on
+// "Start focus session →" should treat this as the first start of the day.
+function isFirstStartOfNewDay() {
+  const startMs = getStartMs();
+  if (!startMs) return true;
+  const now = Date.now();
+  if (now < startMs) return true;
+  if (now > startMs + 24 * 60 * 60 * 1000) return true;  // session expired
+  return false;
+}
+
+document.getElementById('go-focus').onclick = ()=>{
+  // First Start of a session → starting time = now − 30 min.
+  // Already inside an active 24-hour session → keep the existing starting time.
+  if (isFirstStartOfNewDay()) {
+    const newStart = new Date(Date.now() - 30 * 60 * 1000);
+    state.startDate = fmtDateLocal(newStart);
+    state.startTime = fmtTimeLocal(newStart);
+    const sd = document.getElementById('start-date'); if (sd) sd.value = state.startDate;
+    const st = document.getElementById('start-time'); if (st) st.value = state.startTime;
+  }
+  state.sessionStartMs = Date.now();   // also stamp click time for record-keeping
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  showPage('focus');
+};
+document.getElementById('reset-all').onclick = () => {
+  if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
+};
+document.getElementById('clear-stats').onclick = async () => {
+  if (!confirm('Erase ALL focus session data? This cannot be undone.')) return;
+  stats = [];
+  saveStats();
+  renderStats();
+  // Also wipe from Supabase if configured
+  if (isSbConfigured()) {
+    await deleteAllStatsFromCloud();
+  }
+};
+
+/* ===========================================================
+   PAGE 1 — TASKS / MATRIX
+=========================================================== */
+/* ---- Drag-and-drop reordering for task rows ----
+   The handle (≡) is draggable; the row accepts drops. Reordering is allowed
+   only within the same quadrant for now. */
+let _draggedTask = null;
+function attachDragHandlers(row, handle, q, i) {
+  if (handle) {
+    handle.ondragstart = (e) => {
+      _draggedTask = { q, idx: i };
+      try { e.dataTransfer.setData('text/plain', `${q}:${i}`); } catch (_){}
+      try { e.dataTransfer.effectAllowed = 'move'; } catch (_){}
+      try { e.dataTransfer.setDragImage(row, 10, 10); } catch (_){}
+      row.classList.add('dragging');
+    };
+    handle.ondragend = () => {
+      _draggedTask = null;
+      row.classList.remove('dragging');
+      document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
+    };
+    // Prevent click from triggering pomodoro when releasing on handle
+    handle.onclick = (e) => e.stopPropagation();
+  }
+  row.ondragover = (e) => {
+    if (!_draggedTask) return;
+    if (_draggedTask.q !== q) return;   // same-quadrant reorder only
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'move'; } catch (_){}
+    row.classList.add('drag-over');
+  };
+  row.ondragleave = () => row.classList.remove('drag-over');
+  row.ondrop = (e) => {
+    e.preventDefault();
+    row.classList.remove('drag-over');
+    if (!_draggedTask || _draggedTask.q !== q) return;
+    if (_draggedTask.idx === i) return;
+    const arr = state.tasks[q];
+    const fromIdx = _draggedTask.idx;
+    const [moved] = arr.splice(fromIdx, 1);
+    const insertAt = i > fromIdx ? i - 1 : i;
+    arr.splice(insertAt, 0, moved);
+    // If active pomodoro is on the moved task, update its idx
+    const at = state.activeTimer;
+    if (at && (at.type === 'pomodoro') && at.q === q) {
+      if (at.idx === fromIdx) at.idx = insertAt;
+      else if (fromIdx < at.idx && insertAt >= at.idx) at.idx -= 1;
+      else if (fromIdx > at.idx && insertAt <= at.idx) at.idx += 1;
+    }
+    _draggedTask = null;
+    saveState(); markSettingsChanged(); pushSettingsToCloud();
+    if (document.getElementById('setup-page').style.display !== 'none') renderTasks();
+    if (document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
+  };
+}
+
+function renderTasks() {
+  ['q1','q2','q3','q4'].forEach(q => {
+    const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+    wrap.innerHTML = '';
+    state.tasks[q].forEach((t, i) => {
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      row.dataset.q = q;
+      row.dataset.idx = i;
+      row.innerHTML = `
+        <input type="checkbox" ${t.done?'checked':''}>
+        <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
+        <button class="x" title="delete">×</button>
+        <span class="drag-handle" draggable="true" title="Drag to reorder">≡</span>`;
+      const cb = row.children[0], txt = row.children[1], del = row.children[2], handle = row.children[3];
+      cb.onchange = () => {
+        state.tasks[q][i].done = cb.checked;
+        state.tasks[q][i].completedAt = cb.checked ? Date.now() : null;
+        saveState(); txt.classList.toggle('done', cb.checked);
+        markSettingsChanged(); debouncedPushSettings();
+      };
+      txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); markSettingsChanged(); debouncedPushSettings(); };
+      txt.onkeydown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault();
+          state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
+          saveState(); renderTasks();
+          const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+          if (wrap2 && wrap2.lastElementChild) {
+            const newInput = wrap2.lastElementChild.querySelector('.task-text');
+            if (newInput) newInput.focus();
+          }
+        } else if (e.key === 'Backspace' && !txt.value && !e.isComposing) {
+          // Delete empty task and move cursor to end of previous task in the same quadrant
+          e.preventDefault();
+          state.tasks[q].splice(i, 1);
+          saveState(); markSettingsChanged(); pushSettingsToCloud();
+          renderTasks();
+          const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+          if (wrap2) {
+            const inputs = wrap2.querySelectorAll('.task-text');
+            const targetIdx = Math.max(0, i - 1);
+            const target = inputs[targetIdx];
+            if (target) {
+              target.focus();
+              const len = target.value.length;
+              try { target.setSelectionRange(len, len); } catch(_){}
+            }
+          }
+        }
+      };
+      del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
+      attachDragHandlers(row, handle, q, i);
+      wrap.appendChild(row);
+    });
+  });
+}
+/* ---- Matrix size toggle (phone) ---- */
+const matrixToggleEl = document.getElementById('matrix-toggle');
+const matrixToggleHintEl = document.getElementById('matrix-toggle-hint');
+function applyMatrixExpanded() {
+  const wrap = document.querySelector('.matrix-wrap');
+  if (!wrap) return;
+  wrap.classList.toggle('expanded', !!state.matrixExpanded);
+  if (matrixToggleEl) {
+    matrixToggleEl.textContent = state.matrixExpanded ? '⤡' : '⤢';
+    matrixToggleEl.title = state.matrixExpanded ? 'Compact view' : 'Expand view';
+    matrixToggleEl.setAttribute('aria-pressed', state.matrixExpanded ? 'true' : 'false');
+  }
+  if (matrixToggleHintEl) {
+    matrixToggleHintEl.textContent = state.matrixExpanded
+      ? 'Swipe sideways to reach the right-side cells'
+      : 'Tap to enlarge cells & scroll horizontally';
+  }
+}
+if (matrixToggleEl) {
+  matrixToggleEl.onclick = () => {
+    state.matrixExpanded = !state.matrixExpanded;
+    saveState();
+    applyMatrixExpanded();
+  };
+  applyMatrixExpanded();
+}
+
+document.querySelectorAll('.add-task').forEach(btn => {
+  btn.onclick = () => {
+    const q = btn.dataset.q;
+    state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[] });
+    saveState(); renderTasks();
+    markSettingsChanged(); pushSettingsToCloud();
+    const wrap = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
+    const last = wrap.lastElementChild;
+    if (last) last.querySelector('.task-text').focus();
+  };
+});
+
+function escapeHTML(s) { return (s||'').replace(/[&<>"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+/* ===========================================================
+   PAGE 1 — TIME GOALS
+=========================================================== */
+const dlInput = document.getElementById('deadline');
+const btInput = document.getElementById('bedtime');
+const dlDateInput = document.getElementById('deadline-date');
+const btDateInput = document.getElementById('bedtime-date');
+const sdInput = document.getElementById('start-date');
+const stInput = document.getElementById('start-time');
+dlInput.value = state.deadline || '';
+btInput.value = state.bedtime || '';
+if (dlDateInput) dlDateInput.value = state.deadlineDate || '';
+if (btDateInput) btDateInput.value = state.bedtimeDate || '';
+if (sdInput) sdInput.value = state.startDate || '';
+if (stInput) stInput.value = state.startTime || '';
+dlInput.oninput = () => { state.deadline = dlInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+btInput.oninput = () => { state.bedtime  = btInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (dlDateInput) dlDateInput.oninput = () => { state.deadlineDate = dlDateInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (btDateInput) btDateInput.oninput = () => { state.bedtimeDate = btDateInput.value; saveState(); updateCountdowns(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (sdInput) sdInput.oninput = () => { state.startDate = sdInput.value; saveState(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+if (stInput) stInput.oninput = () => { state.startTime = stInput.value; saveState(); drawGauge(); markSettingsChanged(); debouncedPushSettings(); };
+
+// Reset (clear) buttons in the time-goal headers
+document.querySelectorAll('.time-goals .reset-btn[data-reset]').forEach(btn => {
+  btn.onclick = () => {
+    const which = btn.dataset.reset;
+    if (which === 'start') {
+      state.startDate = ''; state.startTime = '';
+      if (sdInput) sdInput.value = '';
+      if (stInput) stInput.value = '';
+    } else if (which === 'deadline') {
+      state.deadline = ''; state.deadlineDate = '';
+      dlInput.value = '';
+      if (dlDateInput) dlDateInput.value = '';
+    } else if (which === 'bedtime') {
+      state.bedtime = ''; state.bedtimeDate = '';
+      btInput.value = '';
+      if (btDateInput) btDateInput.value = '';
+    }
+    saveState(); updateCountdowns(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
+  };
+});
+
+// "Now" button — set Starting Date & Time to current
+function pad2(n) { return String(n).padStart(2, '0'); }
+function fmtDateLocal(d) { return d.getFullYear() + '-' + pad2(d.getMonth()+1) + '-' + pad2(d.getDate()); }
+function fmtTimeLocal(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); }
+const startNowBtn = document.getElementById('start-now');
+if (startNowBtn) startNowBtn.onclick = () => {
+  const now = new Date();
+  state.startDate = fmtDateLocal(now);
+  state.startTime = fmtTimeLocal(now);
+  if (sdInput) sdInput.value = state.startDate;
+  if (stInput) stInput.value = state.startTime;
+  saveState(); drawGauge();
+  markSettingsChanged(); pushSettingsToCloud();
+};
+
+// "+1h" / "+30m" buttons — add increment to deadline (or starts from now if empty)
+function bumpDeadlineBy(addMs) {
+  const baseMs = (state.deadline)
+    ? (combineDateTime(state.deadlineDate, state.deadline) || Date.now())
+    : Date.now();
+  const t = new Date(baseMs + addMs);
+  state.deadlineDate = fmtDateLocal(t);
+  state.deadline     = fmtTimeLocal(t);
+  if (dlInput)     dlInput.value     = state.deadline;
+  if (dlDateInput) dlDateInput.value = state.deadlineDate;
+  saveState(); updateCountdowns(); drawGauge();
+  markSettingsChanged(); debouncedPushSettings();
+}
+const dlPlus1h  = document.getElementById('deadline-plus-1h');
+const dlPlus30m = document.getElementById('deadline-plus-30m');
+if (dlPlus1h)  dlPlus1h.onclick  = () => bumpDeadlineBy(60 * 60 * 1000);
+if (dlPlus30m) dlPlus30m.onclick = () => bumpDeadlineBy(30 * 60 * 1000);
+
+function bumpBedtimeBy(addMs) {
+  const baseMs = (state.bedtime)
+    ? (combineDateTime(state.bedtimeDate, state.bedtime) || Date.now())
+    : Date.now();
+  const t = new Date(baseMs + addMs);
+  state.bedtimeDate = fmtDateLocal(t);
+  state.bedtime     = fmtTimeLocal(t);
+  if (btInput)     btInput.value     = state.bedtime;
+  if (btDateInput) btDateInput.value = state.bedtimeDate;
+  saveState(); updateCountdowns(); drawGauge();
+  markSettingsChanged(); debouncedPushSettings();
+}
+const btPlus1h  = document.getElementById('bedtime-plus-1h');
+const btPlus30m = document.getElementById('bedtime-plus-30m');
+if (btPlus1h)  btPlus1h.onclick  = () => bumpBedtimeBy(60 * 60 * 1000);
+if (btPlus30m) btPlus30m.onclick = () => bumpBedtimeBy(30 * 60 * 1000);
+
+// Combine an optional date (YYYY-MM-DD) and time (HH:MM) into a timestamp.
+// If date is missing, treats the time as today's time.
+function combineDateTime(dateStr, timeStr, options) {
+  if (!timeStr) return null;
+  options = options || {};
+  if (dateStr) {
+    const dt = new Date(dateStr + 'T' + timeStr);
+    return isNaN(dt.getTime()) ? null : dt.getTime();
+  }
+  const anchor = options.anchor || Date.now();
+  const [h, m] = timeStr.split(':').map(Number);
+  const d = new Date(anchor);
+  d.setHours(h, m, 0, 0);
+  if (options.rolling && d.getTime() < anchor) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+// Render duration as "HH:MM" (always two digits each).
+function fmtDuration(diffMs) {
+  const totalMin = Math.floor(Math.abs(diffMs) / 60000);
+  const hh = Math.floor(totalMin / 60);
+  const mm = totalMin % 60;
+  return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}`;
+}
+
+function updateCountdowns() {
+  // Universal goal-time formatter.
+  // Future → "HH:MM is left", past → "HH:MM over" (in red).
+  function fmtGoal(timeStr, dateStr) {
+    if (!timeStr) return { text: '—', overdue: false };
+    const target = combineDateTime(dateStr, timeStr);
+    if (target == null) return { text: '—', overdue: false };
+    const now = Date.now();
+    if (target < now) {
+      return { text: `${fmtDuration(now - target)} over`, overdue: true };
+    }
+    return { text: `${fmtDuration(target - now)} is left`, overdue: false };
+  }
+  function setCd(elId, info) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.textContent = info.text;
+    el.classList.toggle('overdue', !!info.overdue);
+  }
+  function fmtClock(timeStr) { return timeStr || '--:--'; }
+
+  setCd('deadline-cd', fmtGoal(dlInput.value, dlDateInput && dlDateInput.value));
+  setCd('bedtime-cd',  fmtGoal(btInput.value, btDateInput && btDateInput.value));
+
+  // Mirror to focus-page time goals
+  setCd('focus-deadline-cd', fmtGoal(state.deadline, state.deadlineDate));
+  setCd('focus-bedtime-cd',  fmtGoal(state.bedtime,  state.bedtimeDate));
+  const fdlT = document.getElementById('focus-deadline-time');
+  const fbtT = document.getElementById('focus-bedtime-time');
+  if (fdlT) fdlT.textContent = fmtClock(state.deadline);
+  if (fbtT) fbtT.textContent = fmtClock(state.bedtime);
+}
+
+/* ===========================================================
+   PAGE 1 — FACTORS
+=========================================================== */
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function renderFactorGroup(side, gname, root) {
+  const groups = state[side].groups;
+  const block = document.createElement('div');
+  block.className = 'factor-group';
+  block.innerHTML = `<h4><span>${escapeHTML(gname)}</span></h4>`;
+  const chipRow = document.createElement('div');
+  chipRow.className = 'chip-row';
+  groups[gname].forEach((f, idx) => {
+    const chip = document.createElement('div');
+    chip.className = 'chip' + (f.active ? ' active' : '');
+    const scoreText = f.hideScore ? '' : `<span class="scr">${f.score>0?'+':''}${f.score}</span>`;
+    chip.innerHTML = `<span class="lbl">${escapeHTML(f.lbl)}</span>${scoreText}`;
+    const lblEl = chip.querySelector('.lbl');
+    const scrEl = chip.querySelector('.scr');
+    lblEl.onclick = () => toggleFactor(side, gname, idx);
+    lblEl.ondblclick = () => editFactorLabel(side, gname, idx);
+    if (scrEl) scrEl.ondblclick = () => editFactorScore(side, gname, idx);
+    chipRow.appendChild(chip);
+  });
+  block.appendChild(chipRow);
+  root.appendChild(block);
+}
+function renderFactorGroups(side) {
+  const root = document.getElementById(side === 'ext' ? 'ext-groups' : 'int-groups');
+  root.innerHTML = '';
+  const groups = state[side].groups;
+  Object.keys(groups).forEach(gname => {
+    // Wellness practices is rendered inline under the Emotional Wellness slider below
+    if (gname === 'Emotional Wellness practices') return;
+    renderFactorGroup(side, gname, root);
+  });
+
+  // Internal-only sliders
+  if (side === 'int') {
+    const extras = document.createElement('div');
+    extras.innerHTML = `
+      <div class="factor-group">
+        <h4>Sleep <span class="help">(0…10, &gt;9 caps at 7; ×3 to internal)</span></h4>
+        <div class="small-slider">
+          <input type="range" id="int-sleep" min="0" max="10" value="${state.int.sleep}">
+          <span class="val ${signClass(state.int.sleep)}" id="int-sleep-val">${state.int.sleep>0?'+':''}${state.int.sleep}</span>
+        </div>
+      </div>
+      <div class="factor-group">
+        <h4>Emotional Wellness <span class="help">(-7…+7; ×3 to internal)</span></h4>
+        <div class="small-slider">
+          <input type="range" id="int-stress" min="-7" max="7" value="${state.int.stress}">
+          <span class="val ${signClass(state.int.stress)}" id="int-stress-val">${state.int.stress>0?'+':''}${state.int.stress}</span>
+        </div>
+      </div>
+      <div id="int-wellness-practices-mount"></div>
+      <div class="factor-group">
+        <h4>Physical condition (energy)</h4>
+        <div class="chip-row">
+          <div class="chip ${state.int.energy?'active':''}" id="int-energy">
+            <span class="lbl">High energy</span><span class="scr">+5</span>
+          </div>
+        </div>
+      </div>`;
+    root.appendChild(extras);
+    // Render Wellness practices chips at the placeholder
+    const mount = extras.querySelector('#int-wellness-practices-mount');
+    if (mount && state.int.groups['Emotional Wellness practices']) {
+      renderFactorGroup('int', 'Emotional Wellness practices', mount);
+    }
+    const sleepEl = extras.querySelector('#int-sleep'),
+          stressEl = extras.querySelector('#int-stress'),
+          sleepVal = extras.querySelector('#int-sleep-val'),
+          stressVal = extras.querySelector('#int-stress-val');
+    sleepEl.oninput = () => {
+      state.int.sleep = +sleepEl.value;
+      sleepVal.textContent = (state.int.sleep>0?'+':'') + state.int.sleep;
+      sleepVal.className = 'val ' + signClass(state.int.sleep);
+      saveState(); recomputeSlider('int');
+      markSettingsChanged(); debouncedPushSettings();
+    };
+    stressEl.oninput = () => {
+      state.int.stress = +stressEl.value;
+      stressVal.textContent = (state.int.stress>0?'+':'') + state.int.stress;
+      stressVal.className = 'val ' + signClass(state.int.stress);
+      saveState(); recomputeSlider('int');
+      markSettingsChanged(); debouncedPushSettings();
+    };
+    extras.querySelector('#int-energy').onclick = () => {
+      state.int.energy = state.int.energy ? 0 : 5;
+      saveState(); renderFactorGroups('int'); recomputeSlider('int');
+      markSettingsChanged(); pushSettingsToCloud();
+    };
+  }
+}
+function signClass(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero'; }
+
+function toggleFactor(side, gname, idx) {
+  const group = state[side].groups[gname];
+  const f = group[idx];
+  if (f.exclusive) {
+    group.forEach((g,i) => { if (i!==idx) g.active = false; });
+    f.active = !f.active;
+  } else {
+    f.active = !f.active;
+  }
+  saveState(); renderFactorGroups(side); recomputeSlider(side);
+  markSettingsChanged(); debouncedPushSettings();
+}
+
+function editFactorLabel(side, gname, idx) {
+  const f = state[side].groups[gname][idx];
+  const v = prompt('Edit label:', f.lbl);
+  if (v !== null && v.trim()) {
+    f.lbl = v.trim(); saveState(); renderFactorGroups(side);
+    markSettingsChanged(); pushSettingsToCloud();
+  }
+}
+function editFactorScore(side, gname, idx) {
+  const f = state[side].groups[gname][idx];
+  const v = prompt('Edit score:', f.score);
+  if (v !== null && !isNaN(+v)) {
+    f.score = +v; saveState(); renderFactorGroups(side); recomputeSlider(side);
+    markSettingsChanged(); pushSettingsToCloud();
+  }
+}
+
+function effectiveSleep() {
+  // If sleep > 9, score caps at 7
+  return state.int.sleep > 9 ? 7 : state.int.sleep;
+}
+// Sleep and Emotional Wellness contribute 3 × slider value.
+const SLEEP_MULT = 3;
+const EMOTIONAL_MULT = 3;
+
+// Sum of scores for currently-selected factors / sliders (signed).
+function sumFactors(side) {
+  let sum = 0;
+  Object.values(state[side].groups).forEach(g => g.forEach(f => { if (f.active) sum += f.score; }));
+  state[side].others.forEach(o => sum += o.score);
+  if (side === 'int') {
+    sum += effectiveSleep() * SLEEP_MULT;
+    sum += state.int.stress * EMOTIONAL_MULT;
+    if (state.int.energy) sum += state.int.energy;
+  }
+  return sum;
+}
+
+// The maximum POSITIVE score this side could possibly contribute if the user
+// selected the best of every option / slider. Per group: exclusive groups use
+// their best option, multi-select groups sum all positive options.
+function maxPossibleScore(side) {
+  let sum = 0;
+  Object.values(state[side].groups).forEach(g => {
+    if (!g.length) return;
+    const isExclusive = !!g[0].exclusive;
+    if (isExclusive) {
+      sum += Math.max(0, ...g.map(f => f.score));
+    } else {
+      sum += g.reduce((a, f) => a + Math.max(0, f.score), 0);
+    }
+  });
+  if (side === 'int') {
+    sum += 7 * SLEEP_MULT;     // sleep effective max = 7 (capped at 7 if >9)
+    sum += 7 * EMOTIONAL_MULT; // emotional max = +7
+    sum += 5;                   // energy = +5
+  }
+  return sum;
+}
+
+function pushScoreSnapshot() {
+  if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
+  const last = state.scoreLog[state.scoreLog.length - 1];
+  const now = Date.now();
+  if (last && last.ext === state.ext.slider && last.int === state.int.slider) return;
+  // If the last snapshot is very recent (rapid burst from initialization or
+  // multiple recompute calls), update it in place rather than push a new one.
+  if (last && now - last.timestamp < 5000) {
+    last.timestamp = now;
+    last.ext = state.ext.slider;
+    last.int = state.int.slider;
+  } else {
+    state.scoreLog.push({ timestamp: now, ext: state.ext.slider, int: state.int.slider });
+  }
+  if (state.scoreLog.length > 1000) state.scoreLog = state.scoreLog.slice(-1000);
+}
+function recomputeSlider(side) {
+  // Default-max formula: baseline = 100 − (sum of max possible from all options + sliders).
+  // Actual score = baseline + sum of currently selected. Clamped to [-100, 100].
+  const maxPos = maxPossibleScore(side);
+  const baseline = 100 - maxPos;
+  const sumSel = sumFactors(side);
+  const v = clamp(baseline + sumSel, -100, 100);
+  state[side].slider = v;
+  const sliderEl = document.getElementById(side+'-slider');
+  const numEl = document.getElementById(side+'-num');
+  if (sliderEl) sliderEl.value = v;
+  if (numEl) {
+    numEl.textContent = (v > 0 ? '+' : '') + v;
+    numEl.className = 'num ' + signClass(v);
+  }
+  if (side === 'int') {
+    const msg = document.getElementById('int-default-msg');
+    if (msg) msg.textContent = `Default max base = 100 − ${maxPos} = ${baseline}. Selections add: ${sumSel>=0?'+':''}${sumSel}.`;
+  }
+  pushScoreSnapshot();
+  saveState();
+}
+
+function setSliderColor(side) {
+  const numEl = document.getElementById(side+'-num');
+  const v = state[side].slider;
+  numEl.textContent = (v > 0 ? '+' : '') + v;
+  numEl.className = 'num ' + signClass(v);
+}
+document.getElementById('ext-slider').oninput = (e)=>{
+  state.ext.slider = +e.target.value;
+  setSliderColor('ext');
+  saveState();
+  markSettingsChanged(); debouncedPushSettings();
+};
+document.getElementById('int-slider').oninput = (e)=>{
+  state.int.slider = +e.target.value;
+  state.int.sliderUserSet = true;
+  setSliderColor('int');
+  saveState();
+  markSettingsChanged(); debouncedPushSettings();
+};
+
+/* Others lists */
+function renderOthers(side) {
+  const list = document.getElementById(side === 'ext' ? 'ext-others' : 'int-others');
+  list.innerHTML = '';
+  state[side].others.forEach((o, i) => {
+    const div = document.createElement('div');
+    div.className = 'other';
+    div.innerHTML = `<span style="flex:1">${escapeHTML(o.text)}</span><span class="scr">${o.score>0?'+':''}${o.score}</span><button>×</button>`;
+    div.querySelector('button').onclick = () => {
+      state[side].others.splice(i,1); saveState(); renderOthers(side); recomputeSlider(side);
+      markSettingsChanged(); pushSettingsToCloud();
+    };
+    list.appendChild(div);
+  });
+}
+function setupOtherAdd(side) {
+  document.getElementById(side+'-other-add').onclick = () => {
+    const t = document.getElementById(side+'-other-text');
+    const s = document.getElementById(side+'-other-score');
+    if (!t.value.trim() || s.value === '') return;
+    state[side].others.push({ text: t.value.trim(), score: +s.value });
+    t.value = ''; s.value = '';
+    saveState(); renderOthers(side); recomputeSlider(side);
+    markSettingsChanged(); pushSettingsToCloud();
+  };
+}
+setupOtherAdd('ext'); setupOtherAdd('int');
+
+/* ===========================================================
+   PAGE 2 — FOCUS SESSION
+=========================================================== */
+let focusTickHandle = null;
+
+function initFocusPage() {
+  if (!state.sessionStartMs) state.sessionStartMs = Date.now();
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  saveState();
+  renderFocusMatrix();
+  renderManaLists();
+  renderWatchLog();
+  renderScores();
+  updateCountdowns();
+  startFocusTicker();
+  // Scroll the gauge to the current time line
+  setTimeout(scrollGaugeToCurrentTime, 50);
+}
+function scrollGaugeToCurrentTime() {
+  const col = document.getElementById('gauge-col');
+  const inner = document.getElementById('gauge-inner');
+  const line = document.getElementById('gauge-line');
+  if (!col || !inner || !line || line.style.display === 'none') return;
+  const lineTopPct = parseFloat(line.style.top) || 0; // "%"
+  const innerHeight = inner.offsetHeight;
+  const linePixel = (lineTopPct / 100) * innerHeight;
+  const colHeight = col.offsetHeight;
+  col.scrollTop = Math.max(0, linePixel - colHeight / 2);
+}
+function startFocusTicker() {
+  if (focusTickHandle) clearInterval(focusTickHandle);
+  drawGauge();
+  focusTickHandle = setInterval(() => { drawGauge(); }, 1000);
+}
+
+function fmtHMS(ms) {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+function renderFocusMatrix() {
+  const root = document.getElementById('focus-matrix');
+  const order = ['q1','q2','q3','q4'];
+  const titles = {
+    q1: 'Important · Urgent',
+    q2: 'Important · Not Urgent',
+    q3: 'Not Important · Urgent',
+    q4: 'Not Important · Not Urgent'
+  };
+  root.innerHTML = '';
+  order.forEach(q => {
+    const cell = document.createElement('div');
+    cell.className = 'focus-cell ' + q;
+    cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div>`;
+    const tasksDiv = cell.querySelector('.tasks');
+    state.tasks[q].forEach((t, i) => {
+      if (!t.text.trim()) return;
+      const row = document.createElement('div');
+      row.className = 'task-row';
+      row.dataset.q = q;
+      row.dataset.idx = i;
+      const at = state.activeTimer;
+      const isPomo = at && at.type==='pomodoro' && at.q===q && at.idx===i;
+      row.innerHTML = `
+        <input type="checkbox" ${t.done?'checked':''}>
+        <span class="task-text ${t.done?'done':''} ${isPomo?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>`;
+      const cb = row.children[0], textEl = row.children[1];
+      cb.onchange = () => {
+        state.tasks[q][i].done = cb.checked;
+        state.tasks[q][i].completedAt = cb.checked ? Date.now() : null;
+        saveState();
+        markSettingsChanged(); debouncedPushSettings();
+        renderFocusMatrix();
+      };
+      textEl.onclick = () => toggleTaskTimer(q, i);
+
+      // Inline pomodoro display when this task is currently running
+      if (isPomo) {
+        const remaining = getPomodoroRemainingMs();
+        const totalSec = Math.max(0, Math.floor(remaining / 1000));
+        const m = Math.floor(totalSec / 60), s = totalSec % 60;
+        const display = document.createElement('span');
+        display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
+        display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
+        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}${at.paused?' (paused)':''}</span>`;
+        // Tap on the timer area = pause / resume (does NOT record to activity log)
+        display.onclick = (e) => {
+          e.stopPropagation();
+          togglePomodoroPause();
+        };
+        row.appendChild(display);
+      }
+
+      // Drag handle for reordering (rightmost)
+      const handle = document.createElement('span');
+      handle.className = 'drag-handle';
+      handle.draggable = true;
+      handle.title = 'Drag to reorder';
+      handle.textContent = '≡';
+      row.appendChild(handle);
+      attachDragHandlers(row, handle, q, i);
+
+      tasksDiv.appendChild(row);
+    });
+    if (state.tasks[q].length === 0) {
+      tasksDiv.innerHTML = `<div class="help">No tasks</div>`;
+    }
+    root.appendChild(cell);
+  });
+}
+
+// Live tick: update visible pomodoro display without re-rendering whole matrix
+function tickTaskTimers() {
+  // Phase transitions handled separately
+  tickPomodoro();
+  // Live update the inline pomodoro time display (avoid full re-render every second)
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro') {
+    const display = document.querySelector('#focus-matrix .pomodoro-display');
+    if (display) {
+      const remaining = getPomodoroRemainingMs();
+      const totalSec = Math.max(0, Math.floor(remaining / 1000));
+      const m = Math.floor(totalSec / 60), s = totalSec % 60;
+      const timeEl = display.querySelector('.time');
+      if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
+      display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
+      display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
+      const phaseEl = display.querySelector('.phase-name');
+      if (phaseEl) phaseEl.textContent = '· ' + pomodoroPhaseLabel(at.phase) + (at.paused?' (paused)':'');
+    }
+  }
+}
+
+/* ---- Single active-timer model ----
+   Only ONE timer ticks at a time. Starting any new timer stops the current
+   one (recording its session) before activating. */
+const POMO_WORK_MS  = 25 * 60 * 1000;
+const POMO_SHORT_MS =  5 * 60 * 1000;
+const POMO_LONG_MS  = 15 * 60 * 1000;
+
+function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
+  const at = state.activeTimer;
+  if (!at) return null;
+  const now = Date.now();
+  // For pomodoros, subtract any paused time so the activity log reflects only active time.
+  let dur = now - at.startedAt;
+  if (at.type === 'pomodoro') {
+    const pausedAccum = (at.totalPausedMs || 0) + (at.paused ? (now - at.pausedAt) : 0);
+    dur = Math.max(0, dur - pausedAccum);
+  }
+
+  // Record the session in timeSegments + watchLog
+  let logEntry = { startedAt: at.startedAt, endedAt: now, durationMs: dur, penalty: 0 };
+  if (at.type === 'pomodoro') {
+    const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (task) {
+      task.elapsedMs = (task.elapsedMs || 0) + dur;
+      logEntry.type = 'pomodoro';
+      logEntry.q = at.q;
+      logEntry.name = task.text || '(task)';
+      state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
+    }
+  } else if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+    // Legacy timer types — kept just for backwards-compat cleanup
+    const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (task) {
+      task.elapsedMs = (task.elapsedMs || 0) + dur;
+      logEntry.type = at.type;
+      logEntry.q = at.q;
+      logEntry.name = task.text || '(task)';
+      state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
+    }
+  } else if (at.type === 'muncher' || at.type === 'multiplier') {
+    const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+    const m = state.mana[side] && state.mana[side][at.manaIdx];
+    if (m) {
+      const minutes = dur / 60000;
+      // Each tracker has its own points-per-5-min rate. Default for legacy
+      // muncher trackers is -3 per 5 min. Multiplier trackers default to +3.
+      const rate = (typeof m.pointsPer5Min === 'number')
+        ? m.pointsPer5Min
+        : (side === 'multiplier' ? 3 : -3);
+      const adjustment = Math.round(minutes * rate / 5);
+      logEntry.penalty = adjustment;
+      if (adjustment) {
+        // Multiplier trackers affect Internal; Muncher trackers affect External.
+        const targetSide = (side === 'multiplier') ? 'int' : 'ext';
+        state[targetSide].slider = clamp(state[targetSide].slider + adjustment, -100, 100);
+        flashScoreCard(targetSide);
+      }
+      logEntry.type = at.type;
+      logEntry.name = m.lbl;
+      // Gauge band color: blue when rate is positive, red when negative.
+      const segColor = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+      state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: segColor, name: m.lbl });
+    }
+  }
+  state.watchLog.push(logEntry);
+  state.activeTimer = null;
+  saveState();
+  markSettingsChanged();
+  // Flush any pending debounced push and send immediately so the
+  // colored band + activity log appear on other devices right away.
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
+  pushSettingsToCloud();
+  return logEntry;
+}
+
+/* ---- Pomodoro timer ----
+   Click task → 25m work → auto 5m break → stop.
+   After 4 work sessions in a row, the next break is 15m ("Sweet Long Break"),
+   then the cycle counter resets. The whole work+break is logged as one segment. */
+function startPomodoro(q, i) {
+  stopActiveTimer('switch');
+  const now = Date.now();
+  state.activeTimer = {
+    type: 'pomodoro',
+    q, idx: i,
+    startedAt: now,           // start of the WHOLE pomodoro (work + break)
+    phase: 'work',
+    phaseStartedAt: now,
+    phaseDurationMs: POMO_WORK_MS,
+    paused: false,
+    pausedAt: null,
+    totalPausedMs: 0
+  };
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+}
+function getPomodoroRemainingMs() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return 0;
+  // While paused the timer is frozen at the moment of pause
+  const ref = at.paused ? at.pausedAt : Date.now();
+  return Math.max(0, at.phaseDurationMs - (ref - at.phaseStartedAt));
+}
+function pausePomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || at.paused) return;
+  at.paused = true;
+  at.pausedAt = Date.now();
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix();
+}
+function resumePomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || !at.paused) return;
+  const pauseDur = Date.now() - at.pausedAt;
+  // Shift phase start forward so the remaining time is preserved across the pause
+  at.phaseStartedAt += pauseDur;
+  at.totalPausedMs = (at.totalPausedMs || 0) + pauseDur;
+  at.paused = false;
+  at.pausedAt = null;
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix();
+}
+function togglePomodoroPause() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return;
+  if (at.paused) resumePomodoro();
+  else pausePomodoro();
+}
+function pomodoroPhaseLabel(phase) {
+  if (phase === 'work') return 'Work';
+  if (phase === 'short-break') return 'Good Break';
+  if (phase === 'long-break') return 'Sweet Long Break';
+  return '';
+}
+function tickPomodoro() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return;
+  if (at.paused) return;  // do not transition phases or auto-end while paused
+  if (getPomodoroRemainingMs() > 0) return;
+  // Phase ended — transition.
+  if (at.phase === 'work') {
+    const isLong = (state.pomodoroSessionsInCycle || 0) >= 3;
+    at.phase = isLong ? 'long-break' : 'short-break';
+    at.phaseStartedAt = Date.now();
+    at.phaseDurationMs = isLong ? POMO_LONG_MS : POMO_SHORT_MS;
+    saveState();
+    markSettingsChanged(); debouncedPushSettings();
+    renderFocusMatrix();
+  } else {
+    // Break finished — log the whole pomodoro and reset/increment counter.
+    const wasLong = at.phase === 'long-break';
+    if (wasLong) state.pomodoroSessionsInCycle = 0;
+    else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
+    stopActiveTimer('finish');
+    renderFocusMatrix(); renderWatchLog(); drawGauge();
+  }
+}
+
+function startManaTimer(side, manaIdx) {
+  stopActiveTimer('switch');
+  state.activeTimer = {
+    type: (side === 'multiplier') ? 'multiplier' : 'muncher',
+    manaIdx,
+    startedAt: Date.now()
+  };
+  saveState();
+  // Immediate cloud push so the other device sees the running tracker on next refresh.
+  markSettingsChanged(); pushSettingsToCloud();
+  renderFocusMatrix(); renderManaLists(); renderWatchLog(); drawGauge();
+}
+function stopManaTimer(side, manaIdx) {
+  const expectedType = (side === 'multiplier') ? 'multiplier' : 'muncher';
+  if (state.activeTimer && state.activeTimer.type === expectedType && state.activeTimer.manaIdx === manaIdx) {
+    stopActiveTimer('pause');
+  }
+  renderManaLists(); renderWatchLog(); drawGauge(); renderScores();
+}
+function clickManaTimer(side, manaIdx) {
+  const expectedType = (side === 'multiplier') ? 'multiplier' : 'muncher';
+  const at = state.activeTimer;
+  if (at && at.type === expectedType && at.manaIdx === manaIdx) stopManaTimer(side, manaIdx);
+  else startManaTimer(side, manaIdx);
+}
+// Backwards-compat wrappers
+function startMuncherTimer(idx) { return startManaTimer('muncher', idx); }
+function stopMuncherTimer(idx)  { return stopManaTimer('muncher', idx); }
+function clickMuncherTimer(idx) { return clickManaTimer('muncher', idx); }
+// Click on task text → toggle pomodoro
+function toggleTaskTimer(q, i) {
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro' && at.q === q && at.idx === i) {
+    // Already running for this task — stop and log
+    stopActiveTimer('finish');
+    renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
+  } else {
+    startPomodoro(q, i);
+  }
+}
+
+/* ---- gauge drawing ---- */
+function fmtTime(ms) {
+  // 24-hour, 5-char "HH:MM" — fits cleanly in narrow columns and never gets stretched.
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function fmtHourLabel(ms) {
+  const d = new Date(ms);
+  const h = d.getHours();
+  if (h === 0) return '12 AM';
+  if (h === 12) return 'Noon';
+  if (h < 12) return `${h} AM`;
+  return `${h - 12} PM`;
+}
+function fmtTimeShort(ms) {
+  // 12-hour with no leading zero, used inside the red current-time badge
+  const d = new Date(ms);
+  const h = d.getHours();
+  const m = String(d.getMinutes()).padStart(2,'0');
+  const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+  return `${h12}:${m}`;
+}
+function getStartMs() {
+  if (state.startDate && state.startTime) {
+    const dt = new Date(state.startDate + 'T' + state.startTime);
+    if (!isNaN(dt.getTime())) return dt.getTime();
+  }
+  return state.sessionStartMs;
+}
+function drawGauge() {
+  const gridEl     = document.getElementById('gauge-grid');
+  const segmentsEl = document.getElementById('gauge-segments');
+  const lineEl     = document.getElementById('gauge-line');
+  const lineTimeEl = document.getElementById('gauge-line-time');
+  const dlLineEl   = document.getElementById('gauge-line-deadline');
+  const dlLabelEl  = document.getElementById('gauge-line-deadline-label');
+  const btLineEl   = document.getElementById('gauge-line-bedtime');
+  const btLabelEl  = document.getElementById('gauge-line-bedtime-label');
+  if (!segmentsEl || !lineEl || !gridEl) return;
+
+  const now = Date.now();
+  const start = getStartMs();
+  if (!start) {
+    gridEl.innerHTML = '';
+    segmentsEl.innerHTML = '';
+    lineEl.style.display = 'none';
+    if (dlLineEl) dlLineEl.style.display = 'none';
+    if (btLineEl) btLineEl.style.display = 'none';
+    return;
+  }
+  // Starting time IS the top of the gauge. The starting time itself was set
+  // 30 min before the first "Start focus session" click — see isFirstStartOfNewDay.
+  const topMs = start;
+  const total = 24 * 60 * 60 * 1000;        // 24 hours
+  const bottomMs = topMs + total;
+  const pct = (t) => Math.max(0, Math.min(100, ((t - topMs) / total) * 100));
+
+  // ---- Hour grid ----
+  gridEl.innerHTML = '';
+  const startHour = new Date(topMs);
+  startHour.setMinutes(0, 0, 0);
+  if (startHour.getTime() < topMs) startHour.setHours(startHour.getHours() + 1);
+  for (let cur = startHour.getTime(); cur <= bottomMs; cur += 3600000) {
+    const y = pct(cur);
+    const line = document.createElement('div');
+    line.className = 'gauge-hour-line';
+    line.style.top = y + '%';
+    gridEl.appendChild(line);
+    const lbl = document.createElement('div');
+    lbl.className = 'gauge-hour-label';
+    lbl.style.top = y + '%';
+    lbl.textContent = fmtHourLabel(cur);
+    gridEl.appendChild(lbl);
+  }
+
+  // ---- Segments (completed + active) ----
+  segmentsEl.innerHTML = '';
+  (state.timeSegments || []).forEach(seg => addGaugeSegment(segmentsEl, pct, seg, false));
+  if (state.activeTimer) {
+    const seg = activeTimerToSegment(state.activeTimer, now);
+    if (seg) addGaugeSegment(segmentsEl, pct, seg, true);
+  }
+
+  // ---- Current-time red line ----
+  lineEl.style.display = 'block';
+  lineEl.style.top = pct(now) + '%';
+  lineTimeEl.textContent = fmtTimeShort(now);
+
+  // ---- Blue lines: deadline ("Go home") and bedtime ("Sleep") ----
+  function placeBlueLine(line, label, timeStr, dateStr, name) {
+    if (!line || !label) return;
+    if (!timeStr) { line.style.display = 'none'; return; }
+    // Use combined datetime if user supplied a date; otherwise fall back to
+    // the rolling logic (anchor on the gauge's start time).
+    const tMs = combineDateTime(dateStr, timeStr, { anchor: start, rolling: true });
+    if (tMs == null || tMs < topMs || tMs > bottomMs) {
+      line.style.display = 'none';
+      return;
+    }
+    line.style.display = 'block';
+    line.style.top = pct(tMs) + '%';
+    // On phone, render two lines: time then "Goal".
+    // On desktop, single-line "time · name".
+    const isPhone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
+    if (isPhone) {
+      label.innerHTML = `${fmtTimeShort(tMs)}<br>Goal`;
+    } else {
+      label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
+    }
+  }
+  placeBlueLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
+  placeBlueLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
+}
+
+function addGaugeSegment(parent, pct, seg, isActive) {
+  const div = document.createElement('div');
+  div.className = 'gauge-segment' + (isActive ? ' active' : '');
+  const top = pct(seg.startMs);
+  const height = Math.max(0, pct(seg.endMs) - top);
+  div.style.top = top + '%';
+  div.style.height = height + '%';
+  div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
+  div.title = seg.name || '';
+  // Always show the task name on every colored band (truncated if too small).
+  if (seg.name) {
+    const lbl = document.createElement('div');
+    lbl.className = 'gauge-task-label';
+    lbl.textContent = seg.name;
+    div.appendChild(lbl);
+  }
+  // Click to edit:
+  //   - completed segments → open edit modal directly
+  //   - active segment    → stop the timer first, then open edit on the just-logged segment
+  if (!isActive) {
+    div.onclick = (e) => { e.stopPropagation(); openSegmentEditModal(seg); };
+  } else {
+    div.title = (seg.name || '') + ' (running — click to stop & edit)';
+    div.onclick = (e) => {
+      e.stopPropagation();
+      if (state.activeTimer) stopActiveTimer('finish');
+      renderFocusMatrix(); renderWatchLog(); drawGauge();
+      const last = state.timeSegments[state.timeSegments.length - 1];
+      if (last) openSegmentEditModal(last);
+    };
+  }
+  parent.appendChild(div);
+}
+
+/* ---- Segment edit modal ---- */
+let _editingSegment = null;
+let _editingWatchLogEntry = null;
+function msToHHMM(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
+function openSegmentEditModal(seg) {
+  _editingSegment = seg;
+  _editingWatchLogEntry = null;
+  const modal = document.getElementById('segment-edit-modal');
+  const nameEl = document.getElementById('segment-edit-name');
+  const startIn = document.getElementById('segment-start');
+  const endIn = document.getElementById('segment-end');
+  if (nameEl) nameEl.textContent = seg.name || '(segment)';
+  if (startIn) startIn.value = msToHHMM(seg.startMs);
+  if (endIn)   endIn.value   = msToHHMM(seg.endMs);
+  modal.classList.remove('hidden');
+}
+// Open the same modal for an Activity Log entry. Saving updates BOTH the entry
+// and the matching segment in state.timeSegments (matched by startedAt timestamp).
+function openWatchLogEditModal(entry) {
+  if (!entry) return;
+  _editingWatchLogEntry = entry;
+  // Find a matching segment to keep gauge in sync
+  _editingSegment = (state.timeSegments || []).find(s => s.startMs === entry.startedAt) || null;
+  const modal = document.getElementById('segment-edit-modal');
+  const nameEl = document.getElementById('segment-edit-name');
+  const startIn = document.getElementById('segment-start');
+  const endIn = document.getElementById('segment-end');
+  if (nameEl) nameEl.textContent = entry.name || '(activity)';
+  if (startIn) startIn.value = msToHHMM(entry.startedAt);
+  if (endIn)   endIn.value   = msToHHMM(entry.endedAt);
+  modal.classList.remove('hidden');
+}
+function closeSegmentEditModal() {
+  _editingSegment = null;
+  _editingWatchLogEntry = null;
+  document.getElementById('segment-edit-modal').classList.add('hidden');
+}
+function saveSegmentEdit() {
+  const startStr = document.getElementById('segment-start').value;
+  const endStr = document.getElementById('segment-end').value;
+  if (!startStr || !endStr) { closeSegmentEditModal(); return; }
+  function applyTime(orig, hhmm) {
+    const [h, m] = hhmm.split(':').map(Number);
+    const d = new Date(orig);
+    d.setHours(h, m, 0, 0);
+    return d.getTime();
+  }
+  // Editing a watch-log entry — also update the matching segment if any
+  if (_editingWatchLogEntry) {
+    const e = _editingWatchLogEntry;
+    let newStart = applyTime(e.startedAt, startStr);
+    let newEnd   = applyTime(e.endedAt,   endStr);
+    if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    e.startedAt   = newStart;
+    e.endedAt     = newEnd;
+    e.durationMs  = newEnd - newStart;
+    if (_editingSegment) {
+      _editingSegment.startMs = newStart;
+      _editingSegment.endMs   = newEnd;
+    }
+    saveState();
+    renderWatchLog(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+    return;
+  }
+  // Plain segment edit (clicked directly on the gauge)
+  if (_editingSegment) {
+    const seg = _editingSegment;
+    let newStart = applyTime(seg.startMs, startStr);
+    let newEnd   = applyTime(seg.endMs,   endStr);
+    if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    seg.startMs = newStart;
+    seg.endMs   = newEnd;
+    // Also update matching watch-log entry
+    const entry = (state.watchLog || []).find(x => x.startedAt === seg.startMs || x.endedAt === seg.endMs);
+    saveState();
+    drawGauge(); renderWatchLog();
+    markSettingsChanged(); pushSettingsToCloud();
+  }
+  closeSegmentEditModal();
+}
+function deleteSegmentEdit() {
+  // Delete from watch-log if editing a watch-log entry; otherwise delete segment
+  if (_editingWatchLogEntry) {
+    const entry = _editingWatchLogEntry;
+    const idx = state.watchLog.indexOf(entry);
+    if (idx >= 0) state.watchLog.splice(idx, 1);
+    if (_editingSegment) {
+      const sIdx = state.timeSegments.indexOf(_editingSegment);
+      if (sIdx >= 0) state.timeSegments.splice(sIdx, 1);
+    }
+    saveState();
+    renderWatchLog(); drawGauge();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+    return;
+  }
+  if (_editingSegment) {
+    const idx = state.timeSegments.indexOf(_editingSegment);
+    if (idx >= 0) state.timeSegments.splice(idx, 1);
+    saveState();
+    drawGauge(); renderWatchLog();
+    markSettingsChanged(); pushSettingsToCloud();
+    closeSegmentEditModal();
+  }
+}
+// Convenience: delete a watch-log entry by index without opening the modal
+function deleteWatchLogEntry(idx) {
+  if (idx < 0 || idx >= state.watchLog.length) return;
+  if (!confirm('Delete this activity log entry?')) return;
+  const entry = state.watchLog[idx];
+  // Remove matching segment too
+  const sIdx = state.timeSegments.findIndex(s => s.startMs === entry.startedAt);
+  if (sIdx >= 0) state.timeSegments.splice(sIdx, 1);
+  state.watchLog.splice(idx, 1);
+  saveState();
+  renderWatchLog(); drawGauge();
+  markSettingsChanged(); pushSettingsToCloud();
+}
+// Wire the modal once
+(function () {
+  const modal = document.getElementById('segment-edit-modal');
+  if (!modal) return;
+  document.getElementById('segment-cancel').onclick = closeSegmentEditModal;
+  document.getElementById('segment-save').onclick   = saveSegmentEdit;
+  document.getElementById('segment-delete').onclick = deleteSegmentEdit;
+  document.getElementById('segment-modal-backdrop').onclick = closeSegmentEditModal;
+})();
+
+function activeTimerToSegment(at, now) {
+  if (!at) return null;
+  if (at.type === 'pomodoro' || at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+    const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    if (!t) return null;
+    return { startMs: at.startedAt, endMs: now, q: at.q, name: t.text || '(task)' };
+  } else if (at.type === 'muncher' || at.type === 'multiplier') {
+    const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+    const m = state.mana[side] && state.mana[side][at.manaIdx];
+    if (!m) return null;
+    // Color matches the sign of the tracker's pointsPer5Min: blue (+), red (−), gray (0)
+    const rate = (typeof m.pointsPer5Min === 'number')
+      ? m.pointsPer5Min
+      : (side === 'multiplier' ? 3 : -3);
+    const color = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+    return { startMs: at.startedAt, endMs: now, color, name: m.lbl };
+  }
+  return null;
+}
+function qColor(q) {
+  return ({q1:'#ffe69a', q2:'#b9e6c4', q3:'#b8dcf3', q4:'#f6c2cf'})[q] || '#ddd';
+}
+
+/* ---- score / face rendering ---- */
+function scoreToIndex(score) {
+  // Image thresholds (0..100, negative scores clamp to 0):
+  //   0..27 → 0      55..63 → 4
+  //  28..36 → 1      64..72 → 5
+  //  37..45 → 2      73..100 → 6
+  //  46..54 → 3
+  const s = clamp(score, 0, 100);
+  if (s <= 27) return 0;
+  if (s <= 36) return 1;
+  if (s <= 45) return 2;
+  if (s <= 54) return 3;
+  if (s <= 63) return 4;
+  if (s <= 72) return 5;
+  return 6;
+}
+function renderScores() {
+  const e = state.ext.slider;
+  const i = state.int.slider;
+  document.getElementById('ext-scoreval').textContent = (e>0?'+':'') + e;
+  document.getElementById('int-scoreval').textContent = (i>0?'+':'') + i;
+  // Score bar runs 0 (left) → 100 (right). Negative scores pin to the left edge.
+  document.getElementById('ext-marker').style.left = clamp(e, 0, 100) + '%';
+  document.getElementById('int-marker').style.left = clamp(i, 0, 100) + '%';
+  const eIdx = scoreToIndex(e), iIdx = scoreToIndex(i);
+  // <img> with onerror → fallback SVG
+  document.getElementById('ext-face').innerHTML =
+    `<img src="external${eIdx}.png" alt="external focus level ${eIdx}"
+       style="width:100%;height:100%;object-fit:contain;"
+       onerror="this.outerHTML=window.__renderHouse(${eIdx});">`;
+  document.getElementById('int-face').innerHTML =
+    `<img src="internal${iIdx}.png" alt="internal focus level ${iIdx}"
+       style="width:100%;height:100%;object-fit:contain;"
+       onerror="this.outerHTML=window.__renderFace(${iIdx});">`;
+  const overall = e + i;
+  const overallStr = (overall > 0 ? '+' : '') + overall;
+  document.getElementById('message-box').textContent =
+    `${overallStr}  ·  ${focusMessage(Math.round(overall / 2))}`;
+}
+window.__renderHouse = (lvl) => renderHouse(lvl);
+window.__renderFace  = (lvl) => renderFace(lvl);
+function focusMessage(score) {
+  // Score ranges (-100 to +100):
+  // -100..-60 → Go home or sleep.
+  //  -59..-20 → Take a 5min break
+  //  -19..+19 → Do something good and try to get on track.
+  //  +20..+59 → You're almost in the zone.
+  //  +60..+100 → You're amazing.
+  if (score <= -60) return 'Go home or sleep.';
+  if (score <= -20) return 'Take a 5min break';
+  if (score <=  19) return 'Do something good and try to get on track.';
+  if (score <=  59) return "You're almost in the zone.";
+  return "You're amazing.";
+}
+
+/* SVG illustrations — house and face that change with score level (0..6) */
+function renderHouse(level) {
+  // 0 = ruined, 6 = sparkly mansion
+  const palettes = [
+    { wall:'#7a6a55', roof:'#3b2f25', door:'#231a10', accent:'#5b4630' },
+    { wall:'#a08a72', roof:'#4a3b2c', door:'#3a2e22', accent:'#6f5944' },
+    { wall:'#c5b598', roof:'#5b4a39', door:'#4a3a2a', accent:'#7e6a52' },
+    { wall:'#e2d6b9', roof:'#6b5947', door:'#5a4633', accent:'#8e7659' },
+    { wall:'#f4ead0', roof:'#7c684f', door:'#5a4633', accent:'#a48766' },
+    { wall:'#f8f1de', roof:'#52443a', door:'#3a2e22', accent:'#bfa37b' },
+    { wall:'#ffffff', roof:'#1f2937', door:'#0f172a', accent:'#d4b78b' }
+  ];
+  const p = palettes[level];
+  const cracks = level >= 3 ? '' : `<path d="M22 28 L26 38 M30 24 L34 36 M40 30 L44 40" stroke="#1c130b" stroke-width=".7"/>`;
+  const sparkles = level === 6 ? `
+    <g fill="#facc15">
+      <circle cx="8" cy="8" r="1.4"/><circle cx="56" cy="6" r="1.2"/><circle cx="60" cy="22" r="1"/>
+    </g>` : '';
+  const grass = level >= 3 ? `<rect x="0" y="58" width="64" height="6" fill="#86b97c"/>` : `<rect x="0" y="58" width="64" height="6" fill="#a6a08c"/>`;
+  return `
+  <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    ${grass}
+    <polygon points="8,28 32,10 56,28" fill="${p.roof}"/>
+    <rect x="12" y="28" width="40" height="30" fill="${p.wall}" stroke="${p.accent}" stroke-width="1"/>
+    <rect x="28" y="40" width="8" height="18" fill="${p.door}"/>
+    <rect x="16" y="34" width="8" height="8" fill="#a8c4d6"/>
+    <rect x="40" y="34" width="8" height="8" fill="#a8c4d6"/>
+    ${cracks}
+    ${sparkles}
+  </svg>`;
+}
+function renderFace(level) {
+  // 0 = exhausted, 6 = bright/sparkly
+  const skin = ['#d8b59a','#dfba9f','#e6c0a4','#ecc7a9','#f0cdaf','#f4d3b4','#f7d8b8'][level];
+  const eyeBag = level <= 2 ? `<path d="M22 38 q4 3 8 0 M34 38 q4 3 8 0" stroke="#7d6557" fill="none" stroke-width="1.2"/>` : '';
+  const mouth = (() => {
+    if (level <= 1) return `<path d="M24 47 q8 -2 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    if (level <= 3) return `<path d="M24 46 q8 0 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    if (level <= 5) return `<path d="M24 45 q8 4 16 0" stroke="#5d4634" fill="none" stroke-width="1.5"/>`;
+    return `<path d="M22 44 q10 7 20 0" stroke="#5d4634" fill="#f87171" stroke-width="1.5"/>`;
+  })();
+  const sparkles = level === 6 ? `
+    <g fill="#facc15">
+      <path d="M6 12 l1 -3 l1 3 l3 1 l-3 1 l-1 3 l-1 -3 l-3 -1z"/>
+      <path d="M52 8 l1 -3 l1 3 l3 1 l-3 1 l-1 3 l-1 -3 l-3 -1z"/>
+    </g>` : '';
+  return `
+  <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+    ${sparkles}
+    <ellipse cx="32" cy="34" rx="22" ry="24" fill="${skin}"/>
+    <path d="M10 24 q22 -22 44 0 q-2 -8 -10 -12 q-12 -6 -24 0 q-8 4 -10 12z" fill="#1f2937"/>
+    <circle cx="24" cy="34" r="2" fill="#1f2937"/>
+    <circle cx="40" cy="34" r="2" fill="#1f2937"/>
+    ${eyeBag}
+    ${mouth}
+  </svg>`;
+}
+
+/* ---- mana lists ---- */
+function flashScoreCard(side) {
+  // Cards order in DOM: [Internal, External]
+  const card = document.querySelectorAll('.score-card')[side==='int'?0:1];
+  if (!card) return;
+  card.style.transition = 'box-shadow .35s ease';
+  card.style.boxShadow = side==='int' ? '0 0 0 3px #2563eb55' : '0 0 0 3px #dc262655';
+  setTimeout(()=>{ card.style.boxShadow = ''; }, 350);
+}
+function applyManaScore(kind, score) {
+  // Multiplier → internal; Muncher → external
+  if (kind === 'multiplier') {
+    state.int.slider = clamp(state.int.slider + score, -100, 100);
+    flashScoreCard('int');
+  } else {
+    state.ext.slider = clamp(state.ext.slider + score, -100, 100);
+    flashScoreCard('ext');
+  }
+  saveState(); renderScores();
+}
+// Day boundaries — by calendar date. dayKey = YYYY-MM-DD (local).
+function getDayBoundsForKey(key) {
+  // key = "YYYY-MM-DD" → returns [startMs, endMs] for that local calendar day
+  const [y, mo, d] = key.split('-').map(Number);
+  const start = new Date(y, mo - 1, d, 0, 0, 0, 0).getTime();
+  const end   = new Date(y, mo - 1, d + 1, 0, 0, 0, 0).getTime();
+  return [start, end];
+}
+function entryDayKey(entry) {
+  return fmtDateLocal(new Date(entry.startedAt));
+}
+function getCurrentDayKey() { return fmtDateLocal(new Date()); }
+
+function renderWatchLog() {
+  const wrap = document.getElementById('watch-log-panel');
+  const list = document.getElementById('watch-log-list');
+  const total = document.getElementById('watch-log-total');
+  const dateEl = document.getElementById('watch-log-date');
+  if (!wrap) return;
+  // Filter to entries that STARTED today (entries crossing midnight stay on starting day)
+  const todayKey = getCurrentDayKey();
+  const todayEntries = (state.watchLog || []).filter(e => entryDayKey(e) === todayKey);
+  if (dateEl) dateEl.textContent = todayKey;
+  if (!todayEntries.length) { wrap.style.display = 'none'; return; }
+  wrap.style.display = '';
+  list.innerHTML = '';
+  let totalMs = 0, totalPen = 0;
+  todayEntries.slice().reverse().forEach((entry) => {
+    totalMs += entry.durationMs;
+    totalPen += (entry.penalty || 0);
+    const row = document.createElement('div');
+    row.className = 'watch-log-entry';
+    let badge = '';
+    if (entry.type === 'task-up') badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'task-text') badge = `<span class="badge ${entry.q||''}">★ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'pomodoro') badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'muncher') badge = `<span class="badge muncher">muncher</span>`;
+    // Real index in state.watchLog (since we filtered+reversed)
+    const realIdx = state.watchLog.indexOf(entry);
+    row.innerHTML = `
+      ${badge}
+      <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
+      <span class="pen">${entry.penalty ? entry.penalty : ''}</span>
+      <button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>
+      <button class="watch-action-btn danger" data-act="delete" data-idx="${realIdx}" title="Delete entry">×</button>`;
+    row.querySelector('[data-act="edit"]').onclick   = () => openWatchLogEditModal(state.watchLog[realIdx]);
+    row.querySelector('[data-act="delete"]').onclick = () => deleteWatchLogEntry(realIdx);
+    list.appendChild(row);
+  });
+  total.textContent = `Total: ${fmtHMS(totalMs)} · External penalty applied: ${totalPen}`;
+}
+
+function renderManaList(kind) {
+  const list = document.getElementById(kind === 'multiplier' ? 'mana-mult' : 'mana-munch');
+  list.innerHTML = '';
+  state.mana[kind].forEach((m, i) => {
+    const row = document.createElement('div');
+    row.className = 'mana-item' + (kind==='muncher'?' muncher':'');
+    row.style.cursor = 'pointer';
+
+    if (m.kind === 'timer') {
+      // Time-tracking item. Multiplier trackers affect Internal; Muncher trackers affect External.
+      // Each tracker has its own pointsPer5Min rate.
+      const expectedType = (kind === 'multiplier') ? 'multiplier' : 'muncher';
+      const running = state.activeTimer && state.activeTimer.type === expectedType && state.activeTimer.manaIdx === i;
+      const liveMs = running ? (Date.now() - state.activeTimer.startedAt) : 0;
+      const rate = (typeof m.pointsPer5Min === 'number')
+        ? m.pointsPer5Min
+        : (kind === 'multiplier' ? 3 : -3);
+      const targetLabel = (kind === 'multiplier') ? 'Internal' : 'External';
+      row.classList.toggle('timer-running', running);
+      row.title = running
+        ? `Tap to stop — recorded in activity log; ${targetLabel} adjustment applied`
+        : `Tap to start tracker (${rate>0?'+':''}${rate} per 5 min on ${targetLabel})`;
+      const rateBadge = `${rate>0?'+':''}${rate}/5m`;
+      // Color text/time/dot based on the rate's sign:
+      //   positive → blue,  negative → red,  zero → gray
+      const baseColor = (rate > 0) ? '#2563eb'
+                      : (rate < 0) ? '#dc2626'
+                      : '#6b7280';
+      row.innerHTML = `
+        <span class="lbl" style="color:${baseColor}; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
+        <span class="scr" style="color:${baseColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:600; color:#6b7280;">${rateBadge}</small></span>
+        <button title="Remove">×</button>`;
+      row.onclick = (e) => {
+        if (e.target.tagName === 'BUTTON') return;
+        clickManaTimer(kind, i);
+      };
+      row.querySelector('.lbl').ondblclick = (e) => {
+        e.stopPropagation();
+        const v = prompt('Edit name:', m.lbl);
+        if (v !== null && v.trim()) {
+          m.lbl = v.trim(); saveState(); renderManaList(kind);
+          markSettingsChanged(); pushSettingsToCloud();
+        }
+      };
+      row.querySelector('.scr').ondblclick = (e) => {
+        e.stopPropagation();
+        const v = prompt('Edit ± points per 5 min:', m.pointsPer5Min);
+        if (v !== null && !isNaN(+v)) {
+          m.pointsPer5Min = +v; saveState(); renderManaList(kind);
+          markSettingsChanged(); pushSettingsToCloud();
+        }
+      };
+      row.querySelector('button').onclick = (e) => {
+        e.stopPropagation();
+        if (running) stopManaTimer(kind, i);
+        state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
+      };
+      list.appendChild(row);
+      return;
+    }
+
+    row.title = kind === 'multiplier'
+      ? 'Tap to apply +score to Internal focus'
+      : 'Tap to apply score to External focus';
+    row.innerHTML = `<span class="lbl">${escapeHTML(m.lbl)}</span><span class="scr">${m.score>0?'+':''}${m.score}</span><button>×</button>`;
+    row.onclick = (e) => {
+      if (e.target.tagName === 'BUTTON') return;
+      applyManaScore(kind, m.score);
+    };
+    row.querySelector('.lbl').ondblclick = (e) => {
+      e.stopPropagation();
+      const v = prompt('Edit name:', m.lbl);
+      if (v !== null && v.trim()) {
+        m.lbl = v.trim(); saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
+      }
+    };
+    row.querySelector('.scr').ondblclick = (e) => {
+      e.stopPropagation();
+      const v = prompt('Edit score:', m.score);
+      if (v !== null && !isNaN(+v)) {
+        m.score = +v; saveState(); renderManaList(kind);
+        markSettingsChanged(); pushSettingsToCloud();
+      }
+    };
+    row.querySelector('button').onclick = (e) => {
+      e.stopPropagation();
+      state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+      markSettingsChanged(); pushSettingsToCloud();
+    };
+    list.appendChild(row);
+  });
+}
+function renderManaLists() { renderManaList('multiplier'); renderManaList('muncher'); }
+
+document.getElementById('mult-add').onclick = () => {
+  const t = document.getElementById('mult-text').value.trim();
+  const s = document.getElementById('mult-score').value;
+  if (!t || s==='') return;
+  state.mana.multiplier.push({ lbl:t, score: +s });
+  document.getElementById('mult-text').value=''; document.getElementById('mult-score').value='';
+  saveState(); renderManaList('multiplier');
+  markSettingsChanged(); pushSettingsToCloud();
+};
+document.getElementById('munch-add').onclick = () => {
+  const t = document.getElementById('munch-text').value.trim();
+  const s = document.getElementById('munch-score').value;
+  if (!t || s==='') return;
+  state.mana.muncher.push({ lbl:t, score: +s });
+  document.getElementById('munch-text').value=''; document.getElementById('munch-score').value='';
+  saveState(); renderManaList('muncher');
+  markSettingsChanged(); pushSettingsToCloud();
+};
+
+// "Add tracker" buttons — adds a kind:'timer' item with custom pointsPer5Min rate.
+function addMultTracker() {
+  const t = document.getElementById('mult-tracker-text').value.trim();
+  const r = document.getElementById('mult-tracker-rate').value;
+  if (!t || r === '') return;
+  state.mana.multiplier.push({ lbl: t, kind: 'timer', pointsPer5Min: +r });
+  document.getElementById('mult-tracker-text').value = '';
+  document.getElementById('mult-tracker-rate').value = '';
+  saveState(); renderManaList('multiplier');
+  markSettingsChanged(); pushSettingsToCloud();
+}
+function addMunchTracker() {
+  const t = document.getElementById('munch-tracker-text').value.trim();
+  const r = document.getElementById('munch-tracker-rate').value;
+  if (!t || r === '') return;
+  state.mana.muncher.push({ lbl: t, kind: 'timer', pointsPer5Min: +r });
+  document.getElementById('munch-tracker-text').value = '';
+  document.getElementById('munch-tracker-rate').value = '';
+  saveState(); renderManaList('muncher');
+  markSettingsChanged(); pushSettingsToCloud();
+}
+document.getElementById('mult-tracker-add').onclick  = addMultTracker;
+document.getElementById('munch-tracker-add').onclick = addMunchTracker;
+
+/* ===========================================================
+   PAGE 3 — STATISTICS
+=========================================================== */
+/* ---- Daily view ----
+   Replaces the old List view. Shows:
+    1) tasks completed on the selected day
+    2) bar chart of internal+external scores per 2h block
+    3) activity log filtered to that day
+   Activities that started on the day are shown there even if they crossed midnight. */
+let dailyViewDate = null;       // YYYY-MM-DD; null = today
+let dailyChartStepHours = 2;    // 1h or 2h step for the focus-scores chart
+
+function renderStats() {
+  const list = document.getElementById('stats-list');
+  if (!list) return;
+  if (!dailyViewDate) dailyViewDate = getCurrentDayKey();
+
+  list.innerHTML = '';
+  // Date navigation header
+  const nav = document.createElement('div');
+  nav.className = 'daily-nav';
+  nav.innerHTML = `
+    <button class="btn" id="daily-prev">←</button>
+    <strong id="daily-date-label">${dailyViewDate}</strong>
+    <button class="btn" id="daily-next">→</button>
+    <button class="btn" id="daily-today" style="margin-left:8px;">Today</button>`;
+  list.appendChild(nav);
+  document.getElementById('daily-prev').onclick = () => shiftDailyDate(-1);
+  document.getElementById('daily-next').onclick = () => shiftDailyDate(+1);
+  document.getElementById('daily-today').onclick = () => { dailyViewDate = getCurrentDayKey(); renderStats(); };
+
+  const dayKey = dailyViewDate;
+  const [dayStart, dayEnd] = getDayBoundsForKey(dayKey);
+
+  // Pull data sources for this day:
+  //  - completed tasks (state.tasks marked done with completedAt today, or stats[].completed for past days)
+  //  - watchLog entries that STARTED today
+  //  - scoreLog snapshots in [dayStart, ...latest activity end on day)
+  const todayWatch = (state.watchLog || []).filter(e => entryDayKey(e) === dayKey);
+  // For "last activity end" bound (chart x-axis end). If none, use 24h after start.
+  const lastEndMs = todayWatch.length
+    ? Math.max(...todayWatch.map(e => e.endedAt))
+    : dayEnd;
+
+  // Tasks completed on this day, with quadrant info: [{ name, q }]
+  let completedTasks = [];
+  const isToday = dayKey === getCurrentDayKey();
+  if (isToday) {
+    ['q1','q2','q3','q4'].forEach(q => {
+      (state.tasks[q] || []).forEach(t => {
+        if (!t.text || !t.text.trim() || !t.done) return;
+        if (t.completedAt) {
+          if (fmtDateLocal(new Date(t.completedAt)) === dayKey) {
+            completedTasks.push({ name: t.text, q });
+          }
+        } else {
+          completedTasks.push({ name: t.text, q }); // legacy task without timestamp
+        }
+      });
+    });
+  } else {
+    // Past day: use the saved stats entry's completed list
+    const entry = (stats || []).find(s => s.date === dayKey);
+    if (entry && Array.isArray(entry.completed)) {
+      completedTasks = entry.completed.map(item => {
+        if (typeof item === 'string') return { name: item, q: null };
+        return { name: item.name, q: item.q || null };
+      });
+    }
+  }
+
+  // ---- Tasks completed panel — Eisenhower-matrix layout ----
+  function timeSpentOnTask(taskName) {
+    return (state.watchLog || [])
+      .filter(e => entryDayKey(e) === dayKey
+                && e.type === 'pomodoro'
+                && (e.name || '') === taskName)
+      .reduce((sum, e) => sum + (e.durationMs || 0), 0);
+  }
+  function fmtTaskTime(ms) {
+    if (!ms) return '';
+    const totalMin = Math.round(ms / 60000);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    if (h && m) return `${h}h ${m}m`;
+    if (h)      return `${h}h`;
+    return `${m}m`;
+  }
+  // Group by quadrant
+  const byQ = { q1: [], q2: [], q3: [], q4: [], unknown: [] };
+  completedTasks.forEach(t => {
+    const q = t.q || 'unknown';
+    (byQ[q] || (byQ[q] = [])).push(t);
+  });
+  const quadrantTitles = {
+    q1: 'Important · Urgent',
+    q2: 'Important · Not Urgent',
+    q3: 'Not Important · Urgent',
+    q4: 'Not Important · Not Urgent'
+  };
+  function renderQuadrantTasks(q) {
+    const items = byQ[q] || [];
+    if (!items.length) return `<div class="stats-matrix-empty help">—</div>`;
+    return `<ul class="stats-matrix-tasks">${items.map(t => {
+      const ms = timeSpentOnTask(t.name);
+      const tt = fmtTaskTime(ms);
+      return `<li><span class="task-name">${escapeHTML(t.name)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
+    }).join('')}</ul>`;
+  }
+  const completedDiv = document.createElement('div');
+  completedDiv.className = 'stats-day session';
+  completedDiv.innerHTML = `
+    <div class="row"><strong>Tasks completed</strong></div>
+    ${completedTasks.length ? `
+      <div class="stats-matrix-wrap">
+        <div></div>
+        <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
+        <div class="row-labels"><span>Important</span><span>Not Important</span></div>
+        <div class="stats-matrix">
+          <div class="cell q1"><h4>${quadrantTitles.q1}</h4>${renderQuadrantTasks('q1')}</div>
+          <div class="cell q2"><h4>${quadrantTitles.q2}</h4>${renderQuadrantTasks('q2')}</div>
+          <div class="cell q3"><h4>${quadrantTitles.q3}</h4>${renderQuadrantTasks('q3')}</div>
+          <div class="cell q4"><h4>${quadrantTitles.q4}</h4>${renderQuadrantTasks('q4')}</div>
+        </div>
+      </div>
+      ${(byQ.unknown && byQ.unknown.length) ? `
+        <div class="row" style="margin-top: 10px;"><span class="lbl help">Other (no quadrant)</span></div>
+        <ul class="stats-matrix-tasks">${byQ.unknown.map(t => {
+          const ms = timeSpentOnTask(t.name);
+          const tt = fmtTaskTime(ms);
+          return `<li><span class="task-name">${escapeHTML(t.name)}</span>${tt?`<span class="task-time">${tt}</span>`:''}</li>`;
+        }).join('')}</ul>` : ''}
+    ` : `<div class="help">No tasks completed.</div>`}`;
+  list.appendChild(completedDiv);
+
+  // ---- Line chart ----
+  const chartDiv = document.createElement('div');
+  chartDiv.className = 'stats-day session';
+  chartDiv.innerHTML = `
+    <div class="row" style="align-items: center;"><strong>Focus scores</strong></div>
+    <div class="bar-legend">
+      <span class="legend-swatch ext-line"></span> External
+      <span class="legend-swatch int-line"></span> Internal
+    </div>
+    <div id="daily-line-chart" class="line-chart"></div>`;
+  list.appendChild(chartDiv);
+  renderDailyLineChart(document.getElementById('daily-line-chart'), dayStart, dayEnd);
+
+  // ---- Activity log for this day ----
+  const logDiv = document.createElement('div');
+  logDiv.className = 'stats-day session';
+  logDiv.innerHTML = `<div class="row"><strong>Activity log</strong></div>`;
+  if (!todayWatch.length) {
+    logDiv.innerHTML += `<div class="help">No activities recorded.</div>`;
+  } else {
+    let totalMs = 0, totalPen = 0;
+    todayWatch.slice().reverse().forEach(entry => {
+      totalMs += entry.durationMs;
+      totalPen += (entry.penalty || 0);
+      let badge = '';
+      if (entry.type === 'pomodoro') badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+      else if (entry.type === 'task-up')   badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
+      else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
+      else if (entry.type === 'muncher')   badge = `<span class="badge muncher">muncher</span>`;
+      const row = document.createElement('div');
+      row.className = 'watch-log-entry';
+      row.innerHTML = `
+        ${badge}
+        <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
+        <span class="pen">${entry.penalty ? entry.penalty : ''}</span>
+        <span></span><span></span>`;
+      logDiv.appendChild(row);
+    });
+    const tot = document.createElement('div');
+    tot.className = 'watch-log-total';
+    tot.textContent = `Total: ${fmtHMS(totalMs)} · External penalty: ${totalPen}`;
+    logDiv.appendChild(tot);
+  }
+  list.appendChild(logDiv);
+}
+
+function shiftDailyDate(deltaDays) {
+  const [y, mo, d] = (dailyViewDate || getCurrentDayKey()).split('-').map(Number);
+  const dt = new Date(y, mo - 1, d + deltaDays, 0, 0, 0, 0);
+  dailyViewDate = fmtDateLocal(dt);
+  renderStats();
+}
+
+function renderDailyLineChart(container, dayStart, dayEnd) {
+  if (!container) return;
+  container.innerHTML = '';
+  // Snapshots within this calendar day, plus a "now" point if today
+  const log = (state.scoreLog || []).filter(s => s.timestamp >= dayStart && s.timestamp < dayEnd);
+  const isToday = (dayStart === getDayBoundsForKey(getCurrentDayKey())[0]);
+  const points = log.slice();
+  if (isToday) {
+    points.push({ timestamp: Date.now(), ext: state.ext.slider, int: state.int.slider });
+  }
+  points.sort((a,b) => a.timestamp - b.timestamp);
+
+  // Coordinates expressed as percentages so the SVG can stretch freely;
+  // axis labels and dots use HTML overlay so their font / size stays fixed.
+  function xPct(t) { return ((t - dayStart) / (dayEnd - dayStart)) * 100; }
+  function yPct(score) {
+    const v = Math.max(0, Math.min(100, score));
+    return (1 - v / 100) * 100;   // y=0 is top (score 100), y=100 is bottom (score 0)
+  }
+
+  const intPts = points.map(s => `${xPct(s.timestamp).toFixed(2)},${yPct(s.int).toFixed(2)}`).join(' ');
+  const extPts = points.map(s => `${xPct(s.timestamp).toFixed(2)},${yPct(s.ext).toFixed(2)}`).join(' ');
+
+  // Horizontal grid lines (25 / 50 / 75)
+  const yGridSVG = [25, 50, 75].map(v =>
+    `<line x1="0" y1="${yPct(v)}" x2="100" y2="${yPct(v)}" stroke="#e5e7eb" stroke-width="1" vector-effect="non-scaling-stroke"/>`
+  ).join('');
+
+  // Dots as HTML — keeps perfectly circular at any aspect ratio
+  const dotsHTML = points.map(s => `
+    <span class="chart-dot int" style="left:${xPct(s.timestamp)}%; top:${yPct(s.int)}%"></span>
+    <span class="chart-dot ext" style="left:${xPct(s.timestamp)}%; top:${yPct(s.ext)}%"></span>
+  `).join('');
+
+  const yLabelsHTML = [0,25,50,75,100].map(v =>
+    `<span style="top:${yPct(v)}%">${v}</span>`
+  ).join('');
+  const xLabelsHTML = [0,3,6,9,12,15,18,21,24].map(h =>
+    `<span style="left:${(h/24)*100}%">${h}</span>`
+  ).join('');
+
+  container.innerHTML = `
+    <div class="chart-y-axis">${yLabelsHTML}</div>
+    <div class="chart-x-axis">${xLabelsHTML}</div>
+    <div class="chart-inner">
+      <svg viewBox="0 0 100 100" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="line-chart-svg">
+        ${yGridSVG}
+        ${intPts ? `<polyline points="${intPts}" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
+        ${extPts ? `<polyline points="${extPts}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
+      </svg>
+      ${dotsHTML}
+    </div>`;
+}
+
+/* ---- Weekly view ---- */
+let weekViewOffset = 0; // 0 = current week, -1 = last week, etc.
+function getMondayOfWeek(refDate, offset) {
+  const d = new Date(refDate);
+  const dow = d.getDay();
+  const mondayDelta = dow === 0 ? -6 : 1 - dow;
+  d.setDate(d.getDate() + mondayDelta + (offset || 0) * 7);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function renderWeekView() {
+  const grid = document.getElementById('week-grid');
+  const label = document.getElementById('week-label');
+  if (!grid) return;
+  const monday = getMondayOfWeek(new Date(), weekViewOffset);
+  const days = Array.from({length: 7}, (_, i) => {
+    const d = new Date(monday);
+    d.setDate(monday.getDate() + i);
+    return d;
+  });
+  // Week label
+  const sunday = days[6];
+  if (label) {
+    label.textContent = `${monday.toLocaleDateString([], { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' })}`;
+  }
+  // Time range: 6 AM to midnight (18 hours)
+  const startHour = 6, endHour = 24, totalH = endHour - startHour;
+  // Collect segments per day (key by local YYYY-MM-DD)
+  const dayKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  const segsByDay = {};
+  // 1) Past-day snapshots saved in stats[].segments
+  stats.forEach(s => {
+    if (!Array.isArray(s.segments)) return;
+    s.segments.forEach(seg => {
+      const k = dayKey(new Date(seg.startMs));
+      (segsByDay[k] || (segsByDay[k] = [])).push(seg);
+    });
+  });
+  // 2) Live activity log entries — every finished pomodoro / muncher / multiplier
+  (state.watchLog || []).forEach(entry => {
+    if (!entry || !entry.startedAt || !entry.endedAt) return;
+    let color = null;
+    if (entry.type === 'pomodoro' && entry.q) {
+      // pomodoro uses quadrant color via qColor()
+    } else if (entry.type === 'multiplier' || (entry.penalty || 0) > 0) {
+      color = '#bfdbfe'; // blue for positive
+    } else if (entry.type === 'muncher' || (entry.penalty || 0) < 0) {
+      color = '#fecaca'; // red for negative
+    }
+    const seg = {
+      startMs: entry.startedAt,
+      endMs:   entry.endedAt,
+      name:    entry.name,
+      q:       entry.q || null,
+      color:   color
+    };
+    const k = dayKey(new Date(seg.startMs));
+    (segsByDay[k] || (segsByDay[k] = [])).push(seg);
+  });
+  // 3) The currently RUNNING timer (live band) — pomodoro or mana tracker
+  if (state.activeTimer) {
+    const live = activeTimerToSegment(state.activeTimer, Date.now());
+    if (live && live.startMs && live.endMs > live.startMs) {
+      const k = dayKey(new Date(live.startMs));
+      (segsByDay[k] || (segsByDay[k] = [])).push(live);
+    }
+  }
+  const todayKey = dayKey(new Date());
+
+  // Build grid
+  grid.innerHTML = '';
+  // Top-left empty corner
+  const corner = document.createElement('div');
+  corner.className = 'week-axis-cell';
+  grid.appendChild(corner);
+  // Date headers
+  days.forEach(d => {
+    const hdr = document.createElement('div');
+    hdr.className = 'week-day-header' + (dayKey(d) === todayKey ? ' today' : '');
+    hdr.innerHTML = `
+      <div class="wd-name">${d.toLocaleDateString([], { weekday: 'short' })}</div>
+      <div class="wd-date">${d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })}</div>`;
+    grid.appendChild(hdr);
+  });
+  // Y-axis with hour labels
+  const axis = document.createElement('div');
+  axis.className = 'week-axis';
+  for (let h = startHour; h <= endHour; h++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'week-hour-label';
+    lbl.style.top = ((h - startHour) / totalH * 100) + '%';
+    let txt;
+    if (h === 0 || h === 24) txt = '12 AM';
+    else if (h === 12) txt = '12 PM';
+    else if (h < 12) txt = h + ' AM';
+    else txt = (h - 12) + ' PM';
+    lbl.textContent = txt;
+    axis.appendChild(lbl);
+  }
+  grid.appendChild(axis);
+  // Day gauges
+  days.forEach(d => {
+    const gauge = document.createElement('div');
+    gauge.className = 'week-day-gauge';
+    const dayStartMs = new Date(d.getFullYear(), d.getMonth(), d.getDate(), startHour, 0, 0).getTime();
+    const dayTotalMs = totalH * 3600 * 1000;
+    const pct = (t) => Math.max(0, Math.min(100, ((t - dayStartMs) / dayTotalMs) * 100));
+    // Hour grid lines
+    for (let h = startHour; h <= endHour; h++) {
+      const line = document.createElement('div');
+      line.className = 'mg-hour-line';
+      line.style.top = ((h - startHour) / totalH * 100) + '%';
+      gauge.appendChild(line);
+    }
+    // Segments for this day
+    const daySegs = segsByDay[dayKey(d)] || [];
+    daySegs.forEach(seg => {
+      const top = pct(seg.startMs);
+      const height = Math.max(0, pct(seg.endMs) - top);
+      if (height <= 0) return;
+      const segDiv = document.createElement('div');
+      segDiv.className = 'mg-segment';
+      segDiv.style.top = top + '%';
+      segDiv.style.height = height + '%';
+      segDiv.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
+      segDiv.title = (seg.name || '') + ' · ' +
+        new Date(seg.startMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '–' +
+        new Date(seg.endMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+      if (height >= 4 && seg.name) {
+        const lbl = document.createElement('div');
+        lbl.className = 'mg-seg-label';
+        lbl.textContent = seg.name;
+        segDiv.appendChild(lbl);
+      }
+      gauge.appendChild(segDiv);
+    });
+    grid.appendChild(gauge);
+  });
+}
+function setStatsView(name) {
+  const listEl = document.getElementById('stats-list');
+  const weekEl = document.getElementById('stats-week');
+  const listBtn = document.getElementById('stats-view-list-btn');
+  const weekBtn = document.getElementById('stats-view-week-btn');
+  if (name === 'week') {
+    listEl.classList.add('hidden');
+    weekEl.classList.remove('hidden');
+    listBtn.classList.remove('active');
+    weekBtn.classList.add('active');
+    renderWeekView();
+  } else {
+    listEl.classList.remove('hidden');
+    weekEl.classList.add('hidden');
+    listBtn.classList.add('active');
+    weekBtn.classList.remove('active');
+    renderStats();
+  }
+}
+// Wire view toggles + week navigation
+(function () {
+  const listBtn = document.getElementById('stats-view-list-btn');
+  const weekBtn = document.getElementById('stats-view-week-btn');
+  const prevBtn = document.getElementById('week-prev');
+  const nextBtn = document.getElementById('week-next');
+  if (listBtn) listBtn.onclick = () => setStatsView('list');
+  if (weekBtn) weekBtn.onclick = () => setStatsView('week');
+  if (prevBtn) prevBtn.onclick = () => { weekViewOffset--; renderWeekView(); };
+  if (nextBtn) nextBtn.onclick = () => { weekViewOffset++; renderWeekView(); };
+  // default active button
+  if (listBtn) listBtn.classList.add('active');
+})();
+
+/* ===========================================================
+   INIT
+=========================================================== */
+/* ===========================================================
+   Motivational text — randomized once an hour
+=========================================================== */
+function refreshMotivation(force) {
+  const lines = (state.motivationalLines || '').split('\n').map(s => s.trim()).filter(Boolean);
+  const el = document.getElementById('motivation-display');
+  if (!el) return;
+  if (!lines.length) { el.textContent = ''; return; }
+  const now = Date.now();
+  const cur = state.motivationalCurrent;
+  const stale = !cur
+    || force
+    || (now - (cur.selectedAt || 0)) > 3600000   // > 1 hour
+    || !lines.includes(cur.text);
+  if (stale) {
+    state.motivationalCurrent = {
+      text: lines[Math.floor(Math.random() * lines.length)],
+      selectedAt: now
+    };
+    saveState();
+  }
+  el.textContent = state.motivationalCurrent.text;
+}
+const motInputEl = document.getElementById('motivation-input');
+if (motInputEl) {
+  motInputEl.value = state.motivationalLines || '';
+  motInputEl.oninput = () => {
+    state.motivationalLines = motInputEl.value;
+    saveState();
+    refreshMotivation();    // re-pick if necessary
+    debouncedPushSettings(); // sync to cloud (debounced)
+  };
+}
+
+/* Supabase form wiring */
+const sbUrlInput = document.getElementById('sb-url');
+const sbKeyInput = document.getElementById('sb-key');
+const sbUserInput = document.getElementById('sb-user');
+const sbStatusEl = document.getElementById('sb-status');
+const sbTestBtn = document.getElementById('sb-test');
+if (sbUrlInput) sbUrlInput.value = state.sbUrl || '';
+if (sbKeyInput) sbKeyInput.value = state.sbKey || '';
+if (sbUserInput) sbUserInput.value = getEffectiveUserId();
+if (sbUrlInput) sbUrlInput.oninput = () => { state.sbUrl = sbUrlInput.value.trim(); resetSupabaseClient(); saveState(); };
+if (sbKeyInput) sbKeyInput.oninput = () => { state.sbKey = sbKeyInput.value.trim(); resetSupabaseClient(); saveState(); };
+if (sbUserInput) sbUserInput.oninput = () => { state.sbUserId = sbUserInput.value.trim() || 'me'; resetSupabaseClient(); saveState(); };
+// Auth form handlers
+const authEmailInput = document.getElementById('auth-email');
+const authPasswordInput = document.getElementById('auth-password');
+const authSigninBtn = document.getElementById('auth-signin');
+const authSignupBtn = document.getElementById('auth-signup');
+const authSignoutBtn = document.getElementById('auth-signout');
+const authResyncBtn = document.getElementById('auth-resync');
+
+async function pullEverythingFromCloud() {
+  // syncStatsBidi pulls focus_sessions and (via syncSettingsBidi) user_settings
+  // including motivational_lines, ext_others, int_others, tasks. After pulling
+  // we re-render every part of the UI.
+  await syncStatsBidi();
+  renderAll();
+  if (typeof renderTasks === 'function') renderTasks();
+  if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  if (typeof renderManaLists === 'function') renderManaLists();
+  if (typeof renderWatchLog === 'function') renderWatchLog();
+  if (typeof renderScores === 'function') renderScores();
+  if (typeof drawGauge === 'function') drawGauge();
+  if (typeof renderStats === 'function') renderStats();
+  refreshMotivation(false);
+}
+
+async function handleSignIn() {
+  const email = (authEmailInput && authEmailInput.value || '').trim();
+  const password = authPasswordInput && authPasswordInput.value || '';
+  if (!email || !password) { setAuthStatus('Enter email and password', '#dc2626'); return; }
+  setAuthStatus('Signing in...', '#6b7280');
+  try {
+    const user = await authSignIn(email, password);
+    updateAuthUI(user);
+    setAuthStatus('');
+    await pullEverythingFromCloud();
+  } catch (e) {
+    setAuthStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
+  }
+}
+async function handleSignUp() {
+  const email = (authEmailInput && authEmailInput.value || '').trim();
+  const password = authPasswordInput && authPasswordInput.value || '';
+  if (!email || !password) { setAuthStatus('Enter email and password', '#dc2626'); return; }
+  if (password.length < 6) { setAuthStatus('Password must be at least 6 chars', '#dc2626'); return; }
+  setAuthStatus('Creating account...', '#6b7280');
+  try {
+    const user = await authSignUp(email, password);
+    if (user && user.id) {
+      // Either auto-signed-in or pending email confirmation
+      updateAuthUI(user);
+      setAuthStatus('✓ Account created. ' + (user.confirmed_at ? '' : '(Check email if confirmation is enabled in Supabase.)'), '#059669');
+      await pullEverythingFromCloud();
+    } else {
+      setAuthStatus('Account requested — check your email.', '#059669');
+    }
+  } catch (e) {
+    setAuthStatus('✗ ' + (e.message || 'Sign-up failed'), '#dc2626');
+  }
+}
+async function handleSignOut() {
+  await authSignOut();
+  updateAuthUI(null);
+  setAuthStatus('Signed out');
+}
+async function handleForceResync() {
+  const el = document.getElementById('auth-status2');
+  if (el) { el.textContent = 'Syncing...'; el.style.color = '#6b7280'; }
+  try {
+    await pullEverythingFromCloud();
+    if (el) { el.textContent = '✓ Synced'; el.style.color = '#059669'; }
+  } catch (e) {
+    if (el) { el.textContent = '✗ ' + (e.message || 'Sync failed'); el.style.color = '#dc2626'; }
+  }
+}
+
+if (authSigninBtn) authSigninBtn.onclick = handleSignIn;
+if (authSignupBtn) authSignupBtn.onclick = handleSignUp;
+if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
+if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
+// Allow pressing Enter in either field to sign in
+[authEmailInput, authPasswordInput].forEach(el => {
+  if (!el) return;
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSignIn(); } };
+});
+
+/* Login modal handlers */
+const loginEmailInput = document.getElementById('login-email');
+const loginPasswordInput = document.getElementById('login-password');
+const loginStatusEl = document.getElementById('login-status');
+function setLoginStatus(text, color) {
+  if (!loginStatusEl) return;
+  loginStatusEl.textContent = text || '';
+  loginStatusEl.style.color = color || '';
+}
+async function handleLoginModalSignIn() {
+  const email = (loginEmailInput && loginEmailInput.value || '').trim();
+  const password = loginPasswordInput && loginPasswordInput.value || '';
+  if (!email || !password) { setLoginStatus('Enter email and password', '#dc2626'); return; }
+  setLoginStatus('Signing in...', '#6b7280');
+  try {
+    const user = await authSignIn(email, password);
+    updateAuthUI(user);
+    setLoginStatus('');
+    if (loginPasswordInput) loginPasswordInput.value = '';
+    await pullEverythingFromCloud();
+  } catch (e) {
+    setLoginStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
+  }
+}
+async function handleLoginModalSignUp() {
+  const email = (loginEmailInput && loginEmailInput.value || '').trim();
+  const password = loginPasswordInput && loginPasswordInput.value || '';
+  if (!email || !password) { setLoginStatus('Enter email and password', '#dc2626'); return; }
+  if (password.length < 6) { setLoginStatus('Password must be at least 6 chars', '#dc2626'); return; }
+  setLoginStatus('Creating account...', '#6b7280');
+  try {
+    const user = await authSignUp(email, password);
+    if (user && user.id) {
+      updateAuthUI(user);
+      setLoginStatus('✓ Account created.' + (user.confirmed_at ? '' : ' Check email if confirmation is on.'), '#059669');
+      if (loginPasswordInput) loginPasswordInput.value = '';
+      await pullEverythingFromCloud();
+    } else {
+      setLoginStatus('Account requested — check your email.', '#059669');
+    }
+  } catch (e) {
+    setLoginStatus('✗ ' + (e.message || 'Sign-up failed'), '#dc2626');
+  }
+}
+const loginSigninBtn = document.getElementById('login-signin');
+const loginSignupBtn = document.getElementById('login-signup');
+if (loginSigninBtn) loginSigninBtn.onclick = handleLoginModalSignIn;
+if (loginSignupBtn) loginSignupBtn.onclick = handleLoginModalSignUp;
+[loginEmailInput, loginPasswordInput].forEach(el => {
+  if (!el) return;
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleLoginModalSignIn(); } };
+});
+
+/* Feature item tooltip — tap on mobile toggles .show-tip; tapping outside closes */
+document.querySelectorAll('.feature-item').forEach(item => {
+  item.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const wasOpen = item.classList.contains('show-tip');
+    document.querySelectorAll('.feature-item.show-tip').forEach(o => o.classList.remove('show-tip'));
+    if (!wasOpen) item.classList.add('show-tip');
+  });
+});
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.feature-item')) {
+    document.querySelectorAll('.feature-item.show-tip').forEach(o => o.classList.remove('show-tip'));
+  }
+});
+
+/* Manual modal handlers */
+function openManualModal() {
+  const m = document.getElementById('manual-modal');
+  if (m) m.classList.remove('hidden');
+}
+function closeManualModal() {
+  const m = document.getElementById('manual-modal');
+  if (m) m.classList.add('hidden');
+}
+const openManualBtn = document.getElementById('open-manual');
+if (openManualBtn) openManualBtn.onclick = openManualModal;
+const manualCloseBtn = document.getElementById('manual-close');
+if (manualCloseBtn) manualCloseBtn.onclick = closeManualModal;
+const manualClose2Btn = document.getElementById('manual-close-2');
+if (manualClose2Btn) manualClose2Btn.onclick = closeManualModal;
+const manualBackdrop = document.getElementById('manual-modal-backdrop');
+if (manualBackdrop) manualBackdrop.onclick = closeManualModal;
+
+// Helper: run the daily-rollover checks AFTER the cloud has been (or has
+// failed to be) pulled, so we never blow away time-goals that just came in.
+function runDailyChecksAfterSync() {
+  try { maybeAutoSnapshot(); } catch (e) { console.warn(e); }
+  try { maybe3amReset(); }    catch (e) { console.warn(e); }
+}
+
+// Restore session on page load
+(async function autoSyncOnLoad() {
+  // If Supabase isn't configured at all, show the login modal anyway so the
+  // user knows they need to set it up.
+  if (!isSbConfigured()) {
+    updateAuthUI(null);
+    runDailyChecksAfterSync();
+    return;
+  }
+  try {
+    const session = await getAuthSession();
+    if (session && session.user) {
+      updateAuthUI(session.user);
+      // Background: pull everything so the UI matches the cloud, then run
+      // the daily checks (so time-goals from cloud aren't reset prematurely).
+      pullEverythingFromCloud()
+        .catch(() => {})
+        .finally(runDailyChecksAfterSync);
+    } else {
+      updateAuthUI(null);
+      runDailyChecksAfterSync();
+    }
+    // Listen for auth changes (e.g., token refresh, sign-out from another tab)
+    const sb = await getSupabaseClient();
+    if (sb && sb.auth && sb.auth.onAuthStateChange) {
+      sb.auth.onAuthStateChange((event, sess) => {
+        if (sess && sess.user) updateAuthUI(sess.user);
+        else updateAuthUI(null);
+      });
+    }
+  } catch (e) {
+    console.warn('Auto-sync skipped:', e);
+    runDailyChecksAfterSync();
+  }
+})();
+
+if (sbTestBtn) sbTestBtn.onclick = async () => {
+  if (!isSbConfigured()) {
+    sbStatusEl.textContent = 'Enter URL and anon key first';
+    sbStatusEl.style.color = '#dc2626'; return;
+  }
+  sbStatusEl.textContent = 'Connecting...';
+  sbStatusEl.style.color = '#6b7280';
+  try {
+    await syncStatsBidi();
+    sbStatusEl.textContent = `✓ Connected · ${stats.length} session${stats.length===1?'':'s'} synced`;
+    sbStatusEl.style.color = '#059669';
+    if (document.getElementById('stats-page').style.display !== 'none') renderStats();
+  } catch (e) {
+    sbStatusEl.textContent = '✗ ' + (e && e.message ? e.message : 'Connection failed');
+    sbStatusEl.style.color = '#dc2626';
+  }
+};
+// re-evaluate every minute (only changes when an hour boundary or list change is detected)
+setInterval(() => refreshMotivation(false), 60 * 1000);
+
+function renderAll() {
+  renderTasks();
+  document.getElementById('deadline').value = state.deadline || '';
+  document.getElementById('bedtime').value  = state.bedtime  || '';
+  renderFactorGroups('ext');
+  renderFactorGroups('int');
+  renderOthers('ext'); renderOthers('int');
+  recomputeSlider('ext');
+  recomputeSlider('int');
+  setSliderColor('ext'); setSliderColor('int');
+  document.getElementById('ext-slider').value = state.ext.slider;
+  document.getElementById('int-slider').value = state.int.slider;
+  updateCountdowns();
+}
+renderAll();
+refreshMotivation(false);
+showPage(state.currentPage || 'setup');
+
+/* Auto-snapshot the day's data to Statistics whenever calendar midnight passes.
+   Replaces the manual "Finish studying" button. */
+function snapshotDayToStats(dayKey) {
+  if (!dayKey) return;
+  const [dayStart, dayEnd] = getDayBoundsForKey(dayKey);
+  // Activities started on that day (regardless of when they ended)
+  const todayWatch = (state.watchLog || []).filter(e => entryDayKey(e) === dayKey);
+  const completed = [];
+  ['q1','q2','q3','q4'].forEach(q => {
+    (state.tasks[q] || []).forEach(t => {
+      if (!t.done || !t.text || !t.text.trim()) return;
+      const ts = t.completedAt;
+      if (ts && fmtDateLocal(new Date(ts)) === dayKey) completed.push({ name: t.text, q });
+    });
+  });
+  const totalTasks = ['q1','q2','q3','q4'].reduce(
+    (n,q) => n + state.tasks[q].filter(t => t.text && t.text.trim()).length, 0);
+  const doneTasks = completed.length;
+  // Use latest score snapshot at end of day (or current scores)
+  let lastScore = null;
+  for (let i = (state.scoreLog||[]).length - 1; i >= 0; i--) {
+    if (state.scoreLog[i].timestamp <= dayEnd) { lastScore = state.scoreLog[i]; break; }
+  }
+  const ext = lastScore ? lastScore.ext : state.ext.slider;
+  const int = lastScore ? lastScore.int : state.int.slider;
+  const entry = {
+    date: dayKey,
+    timestamp: dayEnd - 1,  // just before midnight
+    ext, int,
+    tasksTotal: totalTasks,
+    tasksDone: doneTasks,
+    completed,
+    pct: totalTasks ? Math.round(100 * doneTasks / totalTasks) : 0,
+    sessionStartMs: combineDateTime(state.startDate, state.startTime) || dayStart,
+    segments: (state.timeSegments || []).filter(s => s.startMs >= dayStart && s.startMs < dayEnd)
+  };
+  // Replace any existing entry for the same date (avoid duplicates)
+  stats = (stats || []).filter(s => s.date !== dayKey);
+  stats.unshift(entry);
+  saveStats();
+  pushStatToCloud(entry).catch(()=>{});
+}
+
+/* ---- 3 AM reset ----
+   At 3 AM each day:
+     • Clear all Time Start & Goals inputs (start, deadline, bedtime + their dates)
+     • Remove finished tasks from the matrix (they remain saved in stats entries)
+   Stats snapshots themselves still happen at calendar midnight; this is purely a
+   cleanup so the new day starts with a fresh slate. */
+function maybe3amReset() {
+  const now = new Date();
+  const today = fmtDateLocal(now);
+  if (state.last3amResetDate === today) return;
+  if (now.getHours() < 3) return;     // not yet past 3 AM today
+  state.last3amResetDate = today;
+  // Clear time goals
+  state.startDate = '';
+  state.startTime = '';
+  state.deadline = '';
+  state.deadlineDate = '';
+  state.bedtime = '';
+  state.bedtimeDate = '';
+  if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = '';
+  if (typeof stInput !== 'undefined' && stInput) stInput.value = '';
+  if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = '';
+  if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = '';
+  if (typeof btInput !== 'undefined' && btInput) btInput.value = '';
+  if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = '';
+  // Remove finished tasks
+  ['q1','q2','q3','q4'].forEach(q => {
+    state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
+  });
+  saveState();
+  markSettingsChanged(); pushSettingsToCloud();
+  if (typeof renderTasks === 'function') renderTasks();
+  if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  if (typeof updateCountdowns === 'function') updateCountdowns();
+  if (typeof drawGauge === 'function') drawGauge();
+}
+function maybeAutoSnapshot() {
+  const today = getCurrentDayKey();
+  if (!state.lastSnapshotDate) {
+    state.lastSnapshotDate = today; saveState(); return;
+  }
+  if (state.lastSnapshotDate !== today) {
+    snapshotDayToStats(state.lastSnapshotDate);
+    state.lastSnapshotDate = today;
+    saveState();
+    if (typeof renderStats === 'function' &&
+        document.getElementById('stats-page').style.display !== 'none') renderStats();
+  }
+}
+setInterval(maybeAutoSnapshot, 60 * 1000);
+setInterval(maybe3amReset,    60 * 1000);
+// IMPORTANT: the *initial* daily checks run only AFTER the cloud pull (in
+// autoSyncOnLoad below). That way time-goals coming from another device
+// aren't immediately wiped by 3 AM reset on this device's first load.
+
+setInterval(updateCountdowns, 30000); // refresh setup-page countdowns every 30s
+setInterval(() => {
+  // Stats page — keep the weekly view's live band growing in real time
+  const statsPage = document.getElementById('stats-page');
+  const weekPanel = document.getElementById('stats-week');
+  if (statsPage && statsPage.style.display !== 'none' &&
+      weekPanel && !weekPanel.classList.contains('hidden') &&
+      state.activeTimer) {
+    if (typeof renderWeekView === 'function') renderWeekView();
+  }
+  if (document.getElementById('focus-page').style.display !== 'none') {
+    drawGauge();
+    renderScores();
+    updateCountdowns();
+    tickTaskTimers();
+    // live update active mana tracker row (multiplier or muncher)
+    const at = state.activeTimer;
+    if (at && (at.type === 'muncher' || at.type === 'multiplier')) {
+      const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+      const listId = (side === 'multiplier') ? 'mana-mult' : 'mana-munch';
+      const row = document.querySelectorAll('#' + listId + ' .mana-item')[at.manaIdx];
+      const lbl = row && row.querySelector('.lbl');
+      const m = state.mana[side] && state.mana[side][at.manaIdx];
+      if (lbl && m) lbl.textContent = m.lbl + ' ' + fmtHMS(Date.now() - at.startedAt);
+    }
+  }
+}, 1000);
+</script>
+</body>
+</html>
