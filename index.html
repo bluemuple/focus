@@ -803,16 +803,58 @@
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
   }
-  /* Round dots — HTML so they stay circular regardless of SVG aspect ratio */
+  /* Round dots — HTML so they stay circular regardless of SVG aspect ratio.
+     Each dot is a square hit box (16×16) with a smaller colored circle inside
+     so taps on phone are reliable without making the dots look big. */
   .chart-dot {
     position: absolute;
+    width: 18px; height: 18px;
+    transform: translate(-50%, -50%);
+    cursor: pointer;
+    background: transparent;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .chart-dot::before {
+    content: '';
     width: 7px; height: 7px;
     border-radius: 50%;
-    transform: translate(-50%, -50%);
+    background: currentColor;
+    transition: transform .12s ease;
+  }
+  .chart-dot:hover::before, .chart-dot.active::before { transform: scale(1.6); }
+  .chart-dot.int { color: #ec4899; }
+  .chart-dot.ext { color: #3b82f6; }
+  /* Floating popup shown when a chart dot is clicked / tapped */
+  .chart-popup {
+    position: absolute;
+    z-index: 50;
+    background: #1f2937; color: #fff;
+    padding: 6px 10px; border-radius: 6px;
+    font-size: .78rem; line-height: 1.4;
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    white-space: nowrap;
+    transform: translate(-50%, calc(-100% - 10px));
     pointer-events: none;
   }
-  .chart-dot.int { background: #ec4899; }
-  .chart-dot.ext { background: #3b82f6; }
+  .chart-popup::after {
+    content: '';
+    position: absolute;
+    top: 100%; left: 50%; margin-left: -6px;
+    border: 6px solid transparent;
+    border-top-color: #1f2937;
+  }
+  .chart-popup.below::after {
+    top: auto; bottom: 100%;
+    border-top-color: transparent;
+    border-bottom-color: #1f2937;
+  }
+  .chart-popup .row { display: flex; gap: 8px; align-items: center; }
+  .chart-popup .swatch {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  }
+  .chart-popup .swatch.int { background: #ec4899; }
+  .chart-popup .swatch.ext { background: #3b82f6; }
+  .chart-popup .time { font-weight: 700; margin-bottom: 2px; }
   .bar-chart-wrap {
     display: flex; align-items: stretch; gap: 4px;
   }
@@ -2032,7 +2074,11 @@ async function pushSettingsToCloud() {
         timeSegments:            state.timeSegments || [],
         sessionStartMs:          state.sessionStartMs || null,
         lastSnapshotDate:        state.lastSnapshotDate || '',
-        last3amResetDate:        state.last3amResetDate || ''
+        last3amResetDate:        state.last3amResetDate || '',
+        // scoreLog drives the Statistics → Focus scores line chart. Synced so
+        // points recorded on one device are visible on another, and don't
+        // disappear after a refresh on a fresh client.
+        scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : []
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
@@ -2129,6 +2175,11 @@ async function syncSettingsBidi() {
         // Day-rollover markers — synced so other devices don't run the reset twice
         if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
         if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
+        // scoreLog: MERGE remote + local instead of overwriting, so a device
+        // that's been used while offline doesn't lose its points.
+        if (Array.isArray(ss.scoreLog)) {
+          state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
+        }
       }
       state.settingsUpdatedAt = remoteTs;
       saveState();
@@ -2875,6 +2926,36 @@ function pushScoreSnapshot() {
     state.scoreLog.push({ timestamp: now, ext: state.ext.slider, int: state.int.slider });
   }
   if (state.scoreLog.length > 1000) state.scoreLog = state.scoreLog.slice(-1000);
+  // Persist immediately + queue a debounced cloud push so the new point
+  // survives refreshes and reaches other devices.
+  try { saveState(); } catch(_) {}
+  try {
+    if (typeof markSettingsChanged === 'function') markSettingsChanged();
+    if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+  } catch(_) {}
+}
+
+/* Merge two scoreLog arrays. Points within ±2s of an existing timestamp are
+   treated as the same snapshot; later writes win. Result is sorted ascending
+   and capped at 1000 points to match the in-memory cap. */
+function mergeScoreLogs(a, b) {
+  const all = [];
+  (a || []).forEach(p => { if (p && typeof p.timestamp === 'number') all.push(p); });
+  (b || []).forEach(p => { if (p && typeof p.timestamp === 'number') all.push(p); });
+  all.sort((x, y) => x.timestamp - y.timestamp);
+  const out = [];
+  for (const p of all) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(p.timestamp - last.timestamp) < 2000) {
+      // Same logical snapshot — let later writer win, prefer non-null fields.
+      last.timestamp = Math.max(last.timestamp, p.timestamp);
+      if (typeof p.ext === 'number') last.ext = p.ext;
+      if (typeof p.int === 'number') last.int = p.int;
+    } else {
+      out.push({ timestamp: p.timestamp, ext: p.ext, int: p.int });
+    }
+  }
+  return out.slice(-1000);
 }
 function recomputeSlider(side) {
   // Default-max formula: baseline = 100 − (sum of max possible from all options + sliders).
@@ -4166,10 +4247,13 @@ function renderDailyLineChart(container, dayStart, dayEnd) {
     `<line x1="0" y1="${yPct(v)}" x2="100" y2="${yPct(v)}" stroke="#e5e7eb" stroke-width="1" vector-effect="non-scaling-stroke"/>`
   ).join('');
 
-  // Dots as HTML — keeps perfectly circular at any aspect ratio
-  const dotsHTML = points.map(s => `
-    <span class="chart-dot int" style="left:${xPct(s.timestamp)}%; top:${yPct(s.int)}%"></span>
-    <span class="chart-dot ext" style="left:${xPct(s.timestamp)}%; top:${yPct(s.ext)}%"></span>
+  // Dots as HTML — keeps perfectly circular at any aspect ratio.
+  // data-* attributes drive the click-to-show-popup interaction below.
+  const dotsHTML = points.map((s, idx) => `
+    <span class="chart-dot int" data-idx="${idx}" data-which="int"
+          style="left:${xPct(s.timestamp)}%; top:${yPct(s.int)}%"></span>
+    <span class="chart-dot ext" data-idx="${idx}" data-which="ext"
+          style="left:${xPct(s.timestamp)}%; top:${yPct(s.ext)}%"></span>
   `).join('');
 
   const yLabelsHTML = [0,25,50,75,100].map(v =>
@@ -4190,6 +4274,68 @@ function renderDailyLineChart(container, dayStart, dayEnd) {
       </svg>
       ${dotsHTML}
     </div>`;
+
+  // Click any dot to show a popup with the time + both scores at that snapshot.
+  // Popup is positioned by the dot's percent coords so it tracks resize.
+  const inner = container.querySelector('.chart-inner');
+  if (!inner) return;
+  function clearPopup() {
+    inner.querySelectorAll('.chart-popup').forEach(p => p.remove());
+    inner.querySelectorAll('.chart-dot.active').forEach(d => d.classList.remove('active'));
+  }
+  function showPopupForIdx(idx) {
+    clearPopup();
+    const s = points[idx];
+    if (!s) return;
+    const time = new Date(s.timestamp);
+    const hh = String(time.getHours()).padStart(2,'0');
+    const mm = String(time.getMinutes()).padStart(2,'0');
+    const popup = document.createElement('div');
+    popup.className = 'chart-popup';
+    popup.innerHTML = `
+      <div class="time">${hh}:${mm}</div>
+      <div class="row"><span class="swatch int"></span>Internal&nbsp;<strong>${s.int}</strong></div>
+      <div class="row"><span class="swatch ext"></span>External&nbsp;<strong>${s.ext}</strong></div>`;
+    const anchorY = Math.min(yPct(s.int), yPct(s.ext));
+    popup.style.left = `${xPct(s.timestamp)}%`;
+    popup.style.top  = `${anchorY}%`;
+    inner.appendChild(popup);
+    // After mount: nudge the popup so it doesn't clip the chart edges.
+    requestAnimationFrame(() => {
+      const innerRect = inner.getBoundingClientRect();
+      const pRect = popup.getBoundingClientRect();
+      // Flip below if it overflows the top of chart area
+      if (pRect.top < innerRect.top + 4) {
+        popup.style.transform = 'translate(-50%, 14px)';
+        popup.classList.add('below');
+      }
+      // Clamp left/right so the popup stays inside the chart horizontally.
+      let leftPct = xPct(s.timestamp);
+      const halfWidthPct = (pRect.width / 2 / innerRect.width) * 100;
+      if (leftPct - halfWidthPct < 0) leftPct = halfWidthPct;
+      if (leftPct + halfWidthPct > 100) leftPct = 100 - halfWidthPct;
+      popup.style.left = `${leftPct}%`;
+    });
+    inner.querySelectorAll(`.chart-dot[data-idx="${idx}"]`).forEach(d => d.classList.add('active'));
+  }
+  inner.querySelectorAll('.chart-dot').forEach(dot => {
+    dot.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const idx = +dot.dataset.idx;
+      const already = dot.classList.contains('active');
+      if (already) clearPopup();
+      else showPopupForIdx(idx);
+    });
+  });
+  // Click anywhere outside any dot → dismiss popup. Re-attached on every render.
+  if (renderDailyLineChart._docClickHandler) {
+    document.removeEventListener('click', renderDailyLineChart._docClickHandler);
+  }
+  renderDailyLineChart._docClickHandler = (e) => {
+    if (e.target.closest && e.target.closest('.chart-dot')) return;
+    clearPopup();
+  };
+  document.addEventListener('click', renderDailyLineChart._docClickHandler);
 }
 
 /* ---- Weekly view ---- */
