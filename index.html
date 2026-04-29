@@ -404,7 +404,23 @@
   .cell.q2 { background: var(--q2); }
   .cell.q3 { background: var(--q3); }
   .cell.q4 { background: var(--q4); }
-  .cell h4 { font-size: .8rem; opacity: .65; text-transform: uppercase; letter-spacing: .05em; margin: 0 0 8px; }
+  .cell h4 {
+    font-size: .8rem; opacity: .65; text-transform: uppercase; letter-spacing: .05em;
+    margin: 0 0 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .cell h4 .cell-rate {
+    display: inline-flex; align-items: center;
+    font-size: .7rem; font-weight: 700;
+    padding: 1px 7px; border-radius: 999px;
+    background: rgba(255,255,255,.7); color: #374151;
+    cursor: pointer; opacity: 1; letter-spacing: 0; text-transform: none;
+    border: 1px solid rgba(0,0,0,.05);
+    transition: background .15s ease, transform .1s ease;
+  }
+  .cell h4 .cell-rate:hover { background: rgba(255,255,255,.95); transform: scale(1.05); }
+  .cell h4 .cell-rate.pos  { color: #1d4ed8; }     /* +N → blue */
+  .cell h4 .cell-rate.neg  { color: #b91c1c; }     /* -N → red */
+  .cell h4 .cell-rate.zero { color: #6b7280; opacity: .85; font-weight: 600; } /* 0 / unset → gray */
   .cell .tasks { flex: 1; display: flex; flex-direction: column; gap: 6px; min-height: 60px; }
   .task-row {
     display: flex; align-items: center; gap: 8px;
@@ -1138,10 +1154,10 @@
           <div class="col-headers"><div>Urgent</div><div>Not Urgent</div></div>
           <div class="row-labels"><span>Important</span><span>Not Important</span></div>
           <div class="matrix">
-            <div class="cell q1"><h4>Important · Urgent</h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
-            <div class="cell q2"><h4>Important · Not Urgent</h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
-            <div class="cell q3"><h4>Not Important · Urgent</h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
-            <div class="cell q4"><h4>Not Important · Not Urgent</h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
+            <div class="cell q1"><h4><span class="cell-title">Important · Urgent</span><span class="cell-rate" data-q="q1" title="Internal score per 30 min on this quadrant — click to edit">+0/30m</span></h4><div class="tasks" data-q="q1"></div><button class="add-task" data-q="q1">+ add task</button></div>
+            <div class="cell q2"><h4><span class="cell-title">Important · Not Urgent</span><span class="cell-rate" data-q="q2" title="Internal score per 30 min on this quadrant — click to edit">+0/30m</span></h4><div class="tasks" data-q="q2"></div><button class="add-task" data-q="q2">+ add task</button></div>
+            <div class="cell q3"><h4><span class="cell-title">Not Important · Urgent</span><span class="cell-rate" data-q="q3" title="Internal score per 30 min on this quadrant — click to edit">+0/30m</span></h4><div class="tasks" data-q="q3"></div><button class="add-task" data-q="q3">+ add task</button></div>
+            <div class="cell q4"><h4><span class="cell-title">Not Important · Not Urgent</span><span class="cell-rate" data-q="q4" title="Internal score per 30 min on this quadrant — click to edit">+0/30m</span></h4><div class="tasks" data-q="q4"></div><button class="add-task" data-q="q4">+ add task</button></div>
           </div>
         </div>
       </div>
@@ -1498,6 +1514,9 @@ const STATS_KEY   = 'concentration-stats-v1';
 const defaultState = () => ({
   currentPage: 'setup',  // last viewed page — restored on refresh
   tasks: { q1: [], q2: [], q3: [], q4: [] },
+  // Internal-score bonus per 30 min of pomodoro time spent on tasks in each quadrant.
+  // Edited via the small badge next to each cell title on the setup page.
+  taskQuadrantRates: { q1: 0, q2: 0, q3: 0, q4: 0 },
   deadline: '',
   deadlineDate: '',        // optional date for the deadline (defaults to today)
   bedtime: '',
@@ -1508,6 +1527,8 @@ const defaultState = () => ({
   timeSegments: [],
   ext: {
     slider: 0,
+    adjustment: 0,   // Additive offset from manual slider drag, mana timers, and quadrant bonuses.
+                     // Persists across recomputeSlider calls (which would otherwise reset slider to baseline+sumSel).
     groups: {
       'Internet': [
         { lbl:'unrestricted', score:-10, active:true, exclusive:'Internet' },
@@ -1533,6 +1554,7 @@ const defaultState = () => ({
   },
   int: {
     slider: 70,
+    adjustment: 0,   // See ext.adjustment.
     sliderUserSet: false,
     groups: {
       'Exercise last 7 days': [
@@ -1653,6 +1675,17 @@ function migrateState() {
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
   if (!['setup','focus','stats'].includes(state.currentPage)) state.currentPage = 'setup';
+  // Adjustment fields — additive offset from manual slider drag, mana timers, quadrant bonuses.
+  if (state.ext && (state.ext.adjustment == null || isNaN(+state.ext.adjustment))) state.ext.adjustment = 0;
+  if (state.int && (state.int.adjustment == null || isNaN(+state.int.adjustment))) state.int.adjustment = 0;
+  // Per-quadrant points-per-30-min bonus for pomodoro task time.
+  if (!state.taskQuadrantRates || typeof state.taskQuadrantRates !== 'object') {
+    state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 };
+  }
+  ['q1','q2','q3','q4'].forEach(q => {
+    if (state.taskQuadrantRates[q] == null || isNaN(+state.taskQuadrantRates[q])) state.taskQuadrantRates[q] = 0;
+    else state.taskQuadrantRates[q] = +state.taskQuadrantRates[q];
+  });
   // Clear out any legacy task-up/task-down/task-text active timers
   if (state.activeTimer && ['task-up','task-down','task-text'].includes(state.activeTimer.type)) {
     state.activeTimer = null;
@@ -1872,14 +1905,20 @@ async function pushSettingsToCloud() {
       // Focus level factors (with active states + sliders)
       ext_factors: {
         groups: state.ext.groups,
-        slider: state.ext.slider
+        slider: state.ext.slider,
+        // Persistent additive offset from manual drag, mana timers, etc.
+        adjustment: +(state.ext.adjustment || 0)
       },
       int_factors: {
         groups: state.int.groups,
         slider: state.int.slider,
         sleep:  state.int.sleep,
         stress: state.int.stress,
-        energy: state.int.energy
+        energy: state.int.energy,
+        adjustment: +(state.int.adjustment || 0),
+        // Per-quadrant Internal-score bonus per 30 min of pomodoro time.
+        // Stored under int_factors so we don't need a new column.
+        taskQuadrantRates: state.taskQuadrantRates || { q1: 0, q2: 0, q3: 0, q4: 0 }
       },
       // Mana Factors (multiplier + muncher) and Activity log
       mana:      state.mana,
@@ -1951,6 +1990,7 @@ async function syncSettingsBidi() {
           state.ext.groups = remote.ext_factors.groups;
         }
         if (typeof remote.ext_factors.slider === 'number') state.ext.slider = remote.ext_factors.slider;
+        if (typeof remote.ext_factors.adjustment === 'number') state.ext.adjustment = remote.ext_factors.adjustment;
       }
       if (remote.int_factors && typeof remote.int_factors === 'object') {
         if (remote.int_factors.groups && typeof remote.int_factors.groups === 'object') {
@@ -1960,6 +2000,15 @@ async function syncSettingsBidi() {
         if (typeof remote.int_factors.sleep  === 'number') state.int.sleep  = remote.int_factors.sleep;
         if (typeof remote.int_factors.stress === 'number') state.int.stress = remote.int_factors.stress;
         if (typeof remote.int_factors.energy === 'number') state.int.energy = remote.int_factors.energy;
+        if (typeof remote.int_factors.adjustment === 'number') state.int.adjustment = remote.int_factors.adjustment;
+        // Per-quadrant Internal-score bonus
+        if (remote.int_factors.taskQuadrantRates && typeof remote.int_factors.taskQuadrantRates === 'object') {
+          if (!state.taskQuadrantRates) state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 };
+          ['q1','q2','q3','q4'].forEach(q => {
+            const v = +remote.int_factors.taskQuadrantRates[q];
+            if (!isNaN(v)) state.taskQuadrantRates[q] = v;
+          });
+        }
       }
       // Mana Factors
       if (remote.mana && typeof remote.mana === 'object') {
@@ -1993,6 +2042,7 @@ async function syncSettingsBidi() {
       if (typeof updateCountdowns === 'function') updateCountdowns();
       if (typeof drawGauge === 'function') drawGauge();
       if (typeof renderTasks === 'function') renderTasks();
+      if (typeof renderQuadrantRates === 'function') renderQuadrantRates();
       if (typeof renderManaLists === 'function') renderManaLists();
       if (typeof renderWatchLog === 'function') renderWatchLog();
       if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
@@ -2252,6 +2302,46 @@ function renderTasks() {
       wrap.appendChild(row);
     });
   });
+  renderQuadrantRates();
+}
+
+/* ---- Per-quadrant Internal-score bonus ----
+   Each setup-matrix cell title carries a small clickable badge ("+0/30m").
+   Clicking opens a prompt to edit the rate. When pomodoro time accumulates on a
+   task in that quadrant, (minutes / 30) * rate is added to state.int.adjustment
+   and recorded in the activity log entry. The rates sync to other devices via
+   the existing user_settings JSON blob (see push/pull). */
+function renderQuadrantRates() {
+  const rates = state.taskQuadrantRates || (state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 });
+  document.querySelectorAll('#setup-page .cell .cell-rate').forEach(span => {
+    const q = span.dataset.q;
+    const v = +(rates[q] || 0);
+    const sign = v > 0 ? '+' : '';
+    span.textContent = `${sign}${v}/30m`;
+    span.classList.remove('pos','neg','zero');
+    span.classList.add(v > 0 ? 'pos' : v < 0 ? 'neg' : 'zero');
+    span.onclick = (ev) => {
+      ev.stopPropagation();
+      editQuadrantRate(q);
+    };
+  });
+}
+function editQuadrantRate(q) {
+  if (!state.taskQuadrantRates) state.taskQuadrantRates = { q1: 0, q2: 0, q3: 0, q4: 0 };
+  const cur = state.taskQuadrantRates[q] || 0;
+  const v = prompt(
+    `Internal-score bonus per 30 min for ${q.toUpperCase()} tasks.\n` +
+    `Use a positive number to reward, negative to penalize, 0 to disable.`,
+    String(cur)
+  );
+  if (v === null) return;
+  const t = v.trim();
+  if (t === '' || isNaN(+t)) return;
+  state.taskQuadrantRates[q] = Math.round(+t);
+  saveState();
+  renderQuadrantRates();
+  markSettingsChanged();
+  pushSettingsToCloud();
 }
 /* ---- Matrix size toggle (phone) ---- */
 const matrixToggleEl = document.getElementById('matrix-toggle');
@@ -2633,11 +2723,15 @@ function pushScoreSnapshot() {
 }
 function recomputeSlider(side) {
   // Default-max formula: baseline = 100 − (sum of max possible from all options + sliders).
-  // Actual score = baseline + sum of currently selected. Clamped to [-100, 100].
+  // Actual score = baseline + sum of currently selected + adjustment. Clamped to [-100, 100].
+  // The "adjustment" carries persistent offsets from manual slider drag, mana timer
+  // results, and the per-quadrant points-per-30-min pomodoro bonus, so they survive
+  // future recomputes.
   const maxPos = maxPossibleScore(side);
   const baseline = 100 - maxPos;
   const sumSel = sumFactors(side);
-  const v = clamp(baseline + sumSel, -100, 100);
+  const adj = +(state[side].adjustment || 0);
+  const v = clamp(baseline + sumSel + adj, -100, 100);
   state[side].slider = v;
   const sliderEl = document.getElementById(side+'-slider');
   const numEl = document.getElementById(side+'-num');
@@ -2648,7 +2742,10 @@ function recomputeSlider(side) {
   }
   if (side === 'int') {
     const msg = document.getElementById('int-default-msg');
-    if (msg) msg.textContent = `Default max base = 100 − ${maxPos} = ${baseline}. Selections add: ${sumSel>=0?'+':''}${sumSel}.`;
+    if (msg) {
+      const adjStr = adj ? ` Adjustment: ${adj>0?'+':''}${adj}.` : '';
+      msg.textContent = `Default max base = 100 − ${maxPos} = ${baseline}. Selections add: ${sumSel>=0?'+':''}${sumSel}.${adjStr}`;
+    }
   }
   pushScoreSnapshot();
   saveState();
@@ -2661,13 +2758,22 @@ function setSliderColor(side) {
   numEl.className = 'num ' + signClass(v);
 }
 document.getElementById('ext-slider').oninput = (e)=>{
-  state.ext.slider = +e.target.value;
+  // Store the user's manual delta as adjustment so it survives future recomputes.
+  const newVal = +e.target.value;
+  const baseline = 100 - maxPossibleScore('ext');
+  const sumSel = sumFactors('ext');
+  state.ext.adjustment = clamp(newVal - (baseline + sumSel), -200, 200);
+  state.ext.slider = newVal;
   setSliderColor('ext');
   saveState();
   markSettingsChanged(); debouncedPushSettings();
 };
 document.getElementById('int-slider').oninput = (e)=>{
-  state.int.slider = +e.target.value;
+  const newVal = +e.target.value;
+  const baseline = 100 - maxPossibleScore('int');
+  const sumSel = sumFactors('int');
+  state.int.adjustment = clamp(newVal - (baseline + sumSel), -200, 200);
+  state.int.slider = newVal;
   state.int.sliderUserSet = true;
   setSliderColor('int');
   saveState();
@@ -2865,6 +2971,21 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logEntry.q = at.q;
       logEntry.name = task.text || '(task)';
       state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
+      // Per-quadrant Internal-score bonus: (minutes / 30) × rate.
+      // The rate is set on the setup-page cell title badge. dur already excludes paused time.
+      const rate = +(state.taskQuadrantRates && state.taskQuadrantRates[at.q]) || 0;
+      if (rate) {
+        const minutes = dur / 60000;
+        const bonus = Math.round(minutes / 30 * rate);
+        if (bonus) {
+          state.int.adjustment = (+state.int.adjustment || 0) + bonus;
+          recomputeSlider('int');
+          flashScoreCard('int');
+          // Record in activity log so the user can see the bonus alongside the session.
+          logEntry.penalty = bonus;
+          logEntry.quadrantBonus = bonus;
+        }
+      }
     }
   } else if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
     // Legacy timer types — kept just for backwards-compat cleanup
@@ -2890,8 +3011,11 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logEntry.penalty = adjustment;
       if (adjustment) {
         // Multiplier trackers affect Internal; Muncher trackers affect External.
+        // Modify state[side].adjustment so the +/- survives recomputeSlider calls
+        // (otherwise the slider would snap back to baseline+sumSel on next refresh).
         const targetSide = (side === 'multiplier') ? 'int' : 'ext';
-        state[targetSide].slider = clamp(state[targetSide].slider + adjustment, -100, 100);
+        state[targetSide].adjustment = (+state[targetSide].adjustment || 0) + adjustment;
+        recomputeSlider(targetSide);
         flashScoreCard(targetSide);
       }
       logEntry.type = at.type;
@@ -3470,15 +3594,15 @@ function flashScoreCard(side) {
   setTimeout(()=>{ card.style.boxShadow = ''; }, 350);
 }
 function applyManaScore(kind, score) {
-  // Multiplier → internal; Muncher → external
-  if (kind === 'multiplier') {
-    state.int.slider = clamp(state.int.slider + score, -100, 100);
-    flashScoreCard('int');
-  } else {
-    state.ext.slider = clamp(state.ext.slider + score, -100, 100);
-    flashScoreCard('ext');
-  }
+  // Multiplier → internal; Muncher → external.
+  // We modify state[side].adjustment (not slider) so the change persists across
+  // recomputeSlider calls (e.g. on next page load / after toggling factors).
+  const targetSide = (kind === 'multiplier') ? 'int' : 'ext';
+  state[targetSide].adjustment = (+state[targetSide].adjustment || 0) + (+score || 0);
+  recomputeSlider(targetSide);
+  flashScoreCard(targetSide);
   saveState(); renderScores();
+  markSettingsChanged(); debouncedPushSettings();
 }
 // Day boundaries — by calendar date. dayKey = YYYY-MM-DD (local).
 function getDayBoundsForKey(key) {
