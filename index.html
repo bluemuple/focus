@@ -697,6 +697,14 @@
   }
   .legend-swatch.ext { background: #bfdbfe; }
   .legend-swatch.int { background: #fbcfe8; }
+  .legend-swatch.ext-line { background: #3b82f6; }
+  .legend-swatch.int-line { background: #ec4899; }
+  .line-chart {
+    width: 100%; height: 240px; background: #fafafa;
+    border: 1px solid var(--line); border-radius: 6px; padding: 4px;
+    box-sizing: border-box;
+  }
+  .line-chart-svg { width: 100%; height: 100%; }
   .bar-chart-wrap {
     display: flex; align-items: stretch; gap: 4px;
   }
@@ -1513,8 +1521,9 @@ const defaultState = () => ({
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
   pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work session, resets after long break
   watchLog: [],
-  scoreLog: [],                 // [{ timestamp, ext, int }] for the daily bar chart
+  scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
   lastSnapshotDate: '',         // YYYY-MM-DD — used to auto-snapshot at midnight
+  last3amResetDate: '',         // YYYY-MM-DD — used to clear matrix + time-goals at 3 AM
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
   motivationalCurrent: null,  // { text, selectedAt }
   matrixExpanded: false,      // mobile: enlarge matrix cells & enable horizontal scroll
@@ -1589,6 +1598,7 @@ function migrateState() {
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
+  if (state.last3amResetDate == null) state.last3amResetDate = '';
   if (!['setup','focus','stats'].includes(state.currentPage)) state.currentPage = 'setup';
   // Clear out any legacy task-up/task-down/task-text active timers
   if (state.activeTimer && ['task-up','task-down','task-text'].includes(state.activeTimer.type)) {
@@ -1622,7 +1632,7 @@ function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stat
    configuration. Anon keys are designed to be public (RLS + Auth secure data).
 =========================================================== */
 const SUPABASE_DEFAULT_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SUPABASE_DEFAULT_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';   // ← paste your "anon public" key here, then save
+const SUPABASE_DEFAULT_KEY = '';   // ← paste your "anon public" key here, then save
 function getSbUrl() { return state.sbUrl || SUPABASE_DEFAULT_URL; }
 function getSbKey() { return state.sbKey || SUPABASE_DEFAULT_KEY; }
 function isSbConfigured() { return !!(getSbUrl() && getSbKey()); }
@@ -2530,13 +2540,6 @@ function recomputeSlider(side) {
   saveState();
 }
 
-function getDefaultIntLevel() {
-  const h = new Date().getHours();
-  if (h >= 5 && h < 9) return 100;
-  if (h >= 22 || h < 2) return 50;
-  return 70;
-}
-
 function setSliderColor(side) {
   const numEl = document.getElementById(side+'-num');
   const v = state[side].slider;
@@ -2620,11 +2623,6 @@ function startFocusTicker() {
   focusTickHandle = setInterval(() => { drawGauge(); }, 1000);
 }
 
-function fmtMs(ms) {
-  const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(totalSec / 60), s = totalSec % 60;
-  return `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
-}
 function fmtHMS(ms) {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(totalSec / 3600);
@@ -2886,23 +2884,7 @@ function toggleTaskTimer(q, i) {
   }
 }
 
-function formatElapsed(ms) {
-  const m = Math.floor(ms/60000);
-  if (!m) return '';
-  const h = Math.floor(m/60);
-  return h ? `${h}h ${(m%60)}m` : `${m}m`;
-}
-
 /* ---- gauge drawing ---- */
-function getBedtimeMs() {
-  // returns the timestamp of the next bedtime (today or tomorrow)
-  if (!state.bedtime) return null;
-  const [h, m] = state.bedtime.split(':').map(Number);
-  const t = new Date();
-  t.setHours(h, m, 0, 0);
-  if (t.getTime() <= Date.now()) t.setDate(t.getDate() + 1);
-  return t.getTime();
-}
 function fmtTime(ms) {
   // 24-hour, 5-char "HH:MM" — fits cleanly in narrow columns and never gets stretched.
   return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -2930,14 +2912,6 @@ function getStartMs() {
     if (!isNaN(dt.getTime())) return dt.getTime();
   }
   return state.sessionStartMs;
-}
-function getTimeOnDate(timeStr, anchorMs) {
-  if (!timeStr || !anchorMs) return null;
-  const [h, m] = timeStr.split(':').map(Number);
-  const d = new Date(anchorMs);
-  d.setHours(h, m, 0, 0);
-  if (d.getTime() < anchorMs) d.setDate(d.getDate() + 1);
-  return d.getTime();
 }
 function drawGauge() {
   const gridEl     = document.getElementById('gauge-grid');
@@ -3347,13 +3321,6 @@ function applyManaScore(kind, score) {
   }
   saveState(); renderScores();
 }
-function getMuncherRunningMs(manaIdx) {
-  const at = state.activeTimer;
-  if (at && at.type === 'muncher' && at.manaIdx === manaIdx) {
-    return Date.now() - at.startedAt;
-  }
-  return 0;
-}
 // Day boundaries — by calendar date. dayKey = YYYY-MM-DD (local).
 function getDayBoundsForKey(key) {
   // key = "YYYY-MM-DD" → returns [startMs, endMs] for that local calendar day
@@ -3546,38 +3513,6 @@ function addMunchTracker() {
 document.getElementById('mult-tracker-add').onclick  = addMultTracker;
 document.getElementById('munch-tracker-add').onclick = addMunchTracker;
 
-/* ---- finish session ---- */
-function finishStudying() {
-  if (state.activeTimer) stopActiveTimer('finish');
-  const todayKey = new Date().toISOString().slice(0,10);
-  const totalTasks = ['q1','q2','q3','q4'].reduce((n,q)=>n+state.tasks[q].filter(t=>t.text.trim()).length, 0);
-  const doneTasks  = ['q1','q2','q3','q4'].reduce((n,q)=>n+state.tasks[q].filter(t=>t.text.trim()&&t.done).length, 0);
-  const completedTexts = ['q1','q2','q3','q4'].flatMap(q => state.tasks[q].filter(t=>t.text.trim()&&t.done).map(t=>t.text));
-  const entry = {
-    date: todayKey,
-    timestamp: Date.now(),
-    ext: state.ext.slider,
-    int: state.int.slider,
-    tasksTotal: totalTasks,
-    tasksDone: doneTasks,
-    completed: completedTexts,
-    pct: totalTasks ? Math.round(100*doneTasks/totalTasks) : 0,
-    // Gauge data — used by Statistics for per-session view & weekly view
-    sessionStartMs: getStartMs() || state.sessionStartMs || Date.now(),
-    segments: (state.timeSegments || []).slice()
-  };
-  stats.unshift(entry);
-  saveStats();
-  // Fire-and-forget cloud sync (if Supabase configured)
-  pushStatToCloud(entry);
-  // reset session-level state but keep factors for convenience
-  state.sessionStartMs = null;
-  state.timeSegments = [];
-  state.activeTimer = null;
-  saveState();
-  showPage('stats');
-}
-
 /* ===========================================================
    PAGE 3 — STATISTICS
 =========================================================== */
@@ -3712,36 +3647,18 @@ function renderStats() {
     ` : `<div class="help">No tasks completed.</div>`}`;
   list.appendChild(completedDiv);
 
-  // ---- Bar chart ----
+  // ---- Line chart ----
   const chartDiv = document.createElement('div');
   chartDiv.className = 'stats-day session';
   chartDiv.innerHTML = `
-    <div class="row" style="align-items: center;">
-      <strong>Focus scores</strong>
-      <span class="bar-toggle" id="bar-toggle">
-        <button data-step="1" class="${dailyChartStepHours===1?'active':''}">1h</button>
-        <button data-step="2" class="${dailyChartStepHours===2?'active':''}">2h</button>
-      </span>
-    </div>
+    <div class="row" style="align-items: center;"><strong>Focus scores</strong></div>
     <div class="bar-legend">
-      <span class="legend-swatch ext"></span> External
-      <span class="legend-swatch int"></span> Internal
+      <span class="legend-swatch ext-line"></span> External
+      <span class="legend-swatch int-line"></span> Internal
     </div>
-    <div class="bar-chart-wrap">
-      <div class="bar-y-axis">
-        <span>0</span><span>50</span><span>100</span><span>150</span><span>200</span>
-      </div>
-      <div class="bar-chart" id="daily-bar-chart"></div>
-    </div>`;
+    <div id="daily-line-chart" class="line-chart"></div>`;
   list.appendChild(chartDiv);
-  // Wire toggle
-  chartDiv.querySelectorAll('#bar-toggle button').forEach(b => {
-    b.onclick = () => {
-      dailyChartStepHours = +b.dataset.step;
-      renderStats();
-    };
-  });
-  renderDailyBarChart(document.getElementById('daily-bar-chart'), dayStart, dayEnd);
+  renderDailyLineChart(document.getElementById('daily-line-chart'), dayStart, dayEnd);
 
   // ---- Activity log for this day ----
   const logDiv = document.createElement('div');
@@ -3783,111 +3700,65 @@ function shiftDailyDate(deltaDays) {
   renderStats();
 }
 
-function renderDailyBarChart(container, dayStart, dayEnd) {
+function renderDailyLineChart(container, dayStart, dayEnd) {
   if (!container) return;
   container.innerHTML = '';
-  const stepH  = dailyChartStepHours || 2;
-  const stepMs = stepH * 60 * 60 * 1000;
-  const numWindows = Math.round((dayEnd - dayStart) / stepMs);  // 24/step
-  const log = state.scoreLog || [];
+  // Snapshots within this calendar day, plus a "now" point if today
+  const log = (state.scoreLog || []).filter(s => s.timestamp >= dayStart && s.timestamp < dayEnd);
   const isToday = (dayStart === getDayBoundsForKey(getCurrentDayKey())[0]);
-  const now = Date.now();
+  const points = log.slice();
+  if (isToday) {
+    points.push({ timestamp: Date.now(), ext: state.ext.slider, int: state.int.slider });
+  }
+  points.sort((a,b) => a.timestamp - b.timestamp);
 
-  // Returns { ext, int } that were active at time t — i.e. the latest snapshot at or before t.
-  // For windows in the future of "now" on today, return null so we draw nothing.
-  function scoresAt(t) {
-    if (isToday && t > now) return null;
-    let latest = null;
-    for (let i = log.length - 1; i >= 0; i--) {
-      if (log[i].timestamp <= t) { latest = log[i]; break; }
-    }
-    if (latest) return { ext: latest.ext, int: latest.int };
-    // Before any snapshot — use the first snapshot (extrapolate backwards) so
-    // the user sees something rather than empty bars.
-    if (log.length) return { ext: log[0].ext, int: log[0].int };
-    return null;
+  // SVG layout
+  const W = 600, H = 220;
+  const padL = 28, padR = 12, padT = 10, padB = 22;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  function xOf(t) {
+    return padL + ((t - dayStart) / (dayEnd - dayStart)) * innerW;
+  }
+  function yOf(score) {
+    const v = Math.max(0, Math.min(100, score));
+    return padT + (1 - v / 100) * innerH;
   }
 
-  for (let i = 0; i < numWindows; i++) {
-    const winStart = dayStart + i * stepMs;
-    const winEnd   = winStart + stepMs;
-    const sc = scoresAt(winEnd);
-    const startH = new Date(winStart).getHours();
-    const showLabel = (stepH === 2) || (startH % 2 === 0);
-    const col = document.createElement('div');
-    col.className = 'bar-col';
-    if (sc == null) {
-      // future window on today — empty bar
-      col.innerHTML = `
-        <div class="bar-stack future" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}"></div>
-        <div class="bar-time">${showLabel ? startH : ''}</div>`;
-    } else {
-      const extC = Math.max(0, Math.min(100, sc.ext));
-      const intC = Math.max(0, Math.min(100, sc.int));
-      col.innerHTML = `
-        <div class="bar-stack" title="${fmtTime(winStart)} – ${fmtTime(winEnd)}: int ${sc.int}, ext ${sc.ext}">
-          <div class="bar-int" style="height:${intC/2}%"></div>
-          <div class="bar-ext" style="height:${extC/2}%"></div>
-        </div>
-        <div class="bar-time">${showLabel ? startH : ''}</div>`;
-    }
-    container.appendChild(col);
-  }
-}
+  const intPts = points.map(s => `${xOf(s.timestamp).toFixed(1)},${yOf(s.int).toFixed(1)}`).join(' ');
+  const extPts = points.map(s => `${xOf(s.timestamp).toFixed(1)},${yOf(s.ext).toFixed(1)}`).join(' ');
 
-/* ---- Per-session mini vertical gauge ---- */
-function buildSessionMiniGauge(s) {
-  const segs = s.segments || [];
-  if (!segs.length) return null;
-  // Determine range: from sessionStartMs (or earliest segment) to latest segment end + a bit
-  const earliest = Math.min(s.sessionStartMs || Infinity, ...segs.map(x => x.startMs));
-  const latest = Math.max(...segs.map(x => x.endMs));
-  if (!isFinite(earliest) || !isFinite(latest)) return null;
-  const startMs = earliest - 30 * 60 * 1000; // 30 min before
-  const endMs = latest + 30 * 60 * 1000;     // 30 min after
-  const total = endMs - startMs;
-  if (total <= 0) return null;
-  const pct = (t) => Math.max(0, Math.min(100, ((t - startMs) / total) * 100));
+  const yLabels = [0, 25, 50, 75, 100].map(v => {
+    const y = yOf(v);
+    return `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="#e5e7eb" stroke-width="1"/>
+            <text x="${padL-4}" y="${y+3}" text-anchor="end" font-size="10" fill="#6b7280">${v}</text>`;
+  }).join('');
 
-  const wrap = document.createElement('div');
-  wrap.className = 'session-mini-gauge';
+  const xLabels = [0, 3, 6, 9, 12, 15, 18, 21, 24].map(h => {
+    const x = padL + (h/24) * innerW;
+    return `<text x="${x}" y="${H-padB+13}" text-anchor="middle" font-size="10" fill="#6b7280">${h}</text>
+            <line x1="${x}" y1="${H-padB}" x2="${x}" y2="${H-padB+3}" stroke="#9ca3af"/>`;
+  }).join('');
 
-  // Hour gridlines + labels
-  const startHour = new Date(startMs);
-  startHour.setMinutes(0, 0, 0);
-  if (startHour.getTime() < startMs) startHour.setHours(startHour.getHours() + 1);
-  for (let cur = startHour.getTime(); cur <= endMs; cur += 3600000) {
-    const y = pct(cur);
-    const line = document.createElement('div');
-    line.className = 'mg-hour-line';
-    line.style.top = y + '%';
-    wrap.appendChild(line);
-    const lbl = document.createElement('div');
-    lbl.className = 'mg-hour-label';
-    lbl.style.top = y + '%';
-    lbl.textContent = fmtHourLabel(cur);
-    wrap.appendChild(lbl);
-  }
-  // Segments
-  segs.forEach(seg => {
-    const top = pct(seg.startMs);
-    const height = Math.max(0, pct(seg.endMs) - top);
-    if (height <= 0) return;
-    const div = document.createElement('div');
-    div.className = 'mg-segment';
-    div.style.top = top + '%';
-    div.style.height = height + '%';
-    div.style.background = seg.color || (seg.q ? qColor(seg.q) : '#fca5a5');
-    div.title = seg.name || '';
-    if (height >= 5 && seg.name) {
-      const lbl = document.createElement('div');
-      lbl.className = 'mg-seg-label';
-      lbl.textContent = seg.name;
-      div.appendChild(lbl);
-    }
-    wrap.appendChild(div);
-  });
-  return wrap;
+  const intDots = points.map(s =>
+    `<circle cx="${xOf(s.timestamp).toFixed(1)}" cy="${yOf(s.int).toFixed(1)}" r="3.5" fill="#ec4899"/>`
+  ).join('');
+  const extDots = points.map(s =>
+    `<circle cx="${xOf(s.timestamp).toFixed(1)}" cy="${yOf(s.ext).toFixed(1)}" r="3.5" fill="#3b82f6"/>`
+  ).join('');
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" class="line-chart-svg">
+      ${yLabels}
+      ${xLabels}
+      <line x1="${padL}" y1="${H-padB}" x2="${W-padR}" y2="${H-padB}" stroke="#9ca3af"/>
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H-padB}" stroke="#9ca3af"/>
+      ${intPts ? `<polyline points="${intPts}" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+      ${extPts ? `<polyline points="${extPts}" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>` : ''}
+      ${intDots}
+      ${extDots}
+    </svg>`;
 }
 
 /* ---- Weekly view ---- */
@@ -4359,13 +4230,43 @@ function snapshotDayToStats(dayKey) {
   stats.unshift(entry);
   saveStats();
   pushStatToCloud(entry).catch(()=>{});
-  // Clear completed tasks from the live matrix — they're preserved in the
-  // stats entry above, but on the new day the matrix should start fresh.
+}
+
+/* ---- 3 AM reset ----
+   At 3 AM each day:
+     • Clear all Time Start & Goals inputs (start, deadline, bedtime + their dates)
+     • Remove finished tasks from the matrix (they remain saved in stats entries)
+   Stats snapshots themselves still happen at calendar midnight; this is purely a
+   cleanup so the new day starts with a fresh slate. */
+function maybe3amReset() {
+  const now = new Date();
+  const today = fmtDateLocal(now);
+  if (state.last3amResetDate === today) return;
+  if (now.getHours() < 3) return;     // not yet past 3 AM today
+  state.last3amResetDate = today;
+  // Clear time goals
+  state.startDate = '';
+  state.startTime = '';
+  state.deadline = '';
+  state.deadlineDate = '';
+  state.bedtime = '';
+  state.bedtimeDate = '';
+  if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = '';
+  if (typeof stInput !== 'undefined' && stInput) stInput.value = '';
+  if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = '';
+  if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = '';
+  if (typeof btInput !== 'undefined' && btInput) btInput.value = '';
+  if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = '';
+  // Remove finished tasks
   ['q1','q2','q3','q4'].forEach(q => {
     state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
   });
   saveState();
   markSettingsChanged(); pushSettingsToCloud();
+  if (typeof renderTasks === 'function') renderTasks();
+  if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  if (typeof updateCountdowns === 'function') updateCountdowns();
+  if (typeof drawGauge === 'function') drawGauge();
 }
 function maybeAutoSnapshot() {
   const today = getCurrentDayKey();
@@ -4376,15 +4277,14 @@ function maybeAutoSnapshot() {
     snapshotDayToStats(state.lastSnapshotDate);
     state.lastSnapshotDate = today;
     saveState();
-    // After clearing completed tasks: re-render the matrix on whichever page is open
-    if (typeof renderTasks === 'function') renderTasks();
-    if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
     if (typeof renderStats === 'function' &&
         document.getElementById('stats-page').style.display !== 'none') renderStats();
   }
 }
 setInterval(maybeAutoSnapshot, 60 * 1000);
+setInterval(maybe3amReset,    60 * 1000);
 maybeAutoSnapshot();
+maybe3amReset();
 
 setInterval(updateCountdowns, 30000); // refresh setup-page countdowns every 30s
 setInterval(() => {
