@@ -74,6 +74,17 @@
   nav.tabs button.active {
     background: var(--ink); color: #fff;
   }
+  /* Manual tab — opens a modal, not a page; styled as an outlined helper
+     so it reads differently from the page tabs and never gets .active. */
+  nav.tabs button.tab-manual {
+    border: 1px solid var(--line); color: #4b5563;
+  }
+  nav.tabs button.tab-manual:hover {
+    background: #f3f4f6; color: #111827;
+  }
+  nav.tabs button.tab-manual .tab-ico {
+    font-weight: 700;
+  }
   @media (max-width: 700px) {
     header.topbar { grid-template-columns: auto 1fr auto; gap: 8px; }
     .motivation { font-size: .8rem; }
@@ -1211,15 +1222,40 @@
     main { padding: 10px; max-width: 100vw; overflow-x: hidden; }
     .panel { padding: 12px; max-width: 100%; box-sizing: border-box; }
 
-    /* Compact topbar: hide subtext, swap tab labels for icons, force one row */
+    /* Compact topbar: hide brand entirely, give the motivation quote the full
+       left+middle space, tabs on the right. */
     header.topbar {
       padding: 6px 10px;
-      grid-template-columns: auto 1fr auto;
-      gap: 6px;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
     }
-    .brand { font-size: .9rem; white-space: nowrap; }
-    .brand small { display: none; }
-    .motivation { font-size: .75rem; padding-left: 6px; }
+    .brand { display: none; }
+    .motivation {
+      font-size: .8rem;
+      padding-left: 4px;
+      /* When too long the quote scrolls right→left like a news ticker.
+         The is-marquee class is added/removed by JS on overflow. */
+      position: relative;
+    }
+    .motivation .motivation-track {
+      display: inline-block;
+      white-space: nowrap;
+      will-change: transform;
+    }
+    .motivation.is-marquee {
+      /* Hide overflow so the quote is cut just before the tab buttons. */
+      overflow: hidden;
+      text-overflow: clip;
+    }
+    .motivation.is-marquee .motivation-track {
+      /* Start fully off the right edge, scroll all the way past the left edge. */
+      padding-left: 100%;
+      animation: motivation-marquee var(--marquee-dur, 30s) linear infinite;
+    }
+    @keyframes motivation-marquee {
+      from { transform: translateX(0); }
+      to   { transform: translateX(-100%); }
+    }
     nav.tabs { flex-wrap: nowrap; gap: 2px; }
     nav.tabs button {
       padding: 6px 10px;
@@ -1311,6 +1347,7 @@
   <div class="brand">Concentration<small>focus companion</small></div>
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
+    <button id="tab-manual" class="tab-manual" aria-label="Manual" title="User Manual"><span class="tab-text">Manual</span><span class="tab-ico" aria-hidden="true">?</span></button>
     <button id="tab-setup" class="active" aria-label="Setup"><span class="tab-text">Setup</span><span class="tab-ico" aria-hidden="true">⚙</span></button>
     <button id="tab-focus" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">▶</span></button>
     <button id="tab-stats" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">▤</span></button>
@@ -2494,6 +2531,11 @@ function showPage(name) {
 document.getElementById('tab-setup').onclick = ()=>showPage('setup');
 document.getElementById('tab-focus').onclick = ()=>showPage('focus');
 document.getElementById('tab-stats').onclick = ()=>showPage('stats');
+// Manual tab — opens the User Manual modal instead of switching pages.
+const tabManualBtn = document.getElementById('tab-manual');
+if (tabManualBtn) tabManualBtn.onclick = () => {
+  if (typeof openManualModal === 'function') openManualModal();
+};
 // Returns true when no current 24-hour session is running; the next click on
 // "Start focus session →" should treat this as the first start of the day.
 function isFirstStartOfNewDay() {
@@ -4712,7 +4754,7 @@ function refreshMotivation(force) {
   const lines = (state.motivationalLines || '').split('\n').map(s => s.trim()).filter(Boolean);
   const el = document.getElementById('motivation-display');
   if (!el) return;
-  if (!lines.length) { el.textContent = ''; return; }
+  if (!lines.length) { el.innerHTML = ''; el.classList.remove('is-marquee'); return; }
   const now = Date.now();
   const cur = state.motivationalCurrent;
   const stale = !cur
@@ -4726,8 +4768,42 @@ function refreshMotivation(force) {
     };
     saveState();
   }
-  el.textContent = state.motivationalCurrent.text;
+  // Wrap in an inner span so we can animate transform without affecting layout.
+  el.innerHTML = `<span class="motivation-track">${escapeHTML(state.motivationalCurrent.text)}</span>`;
+  applyMotivationMarquee();
 }
+
+/* Toggle the news-ticker marquee on the motivation quote when it overflows
+   the available header width. Only meaningful at phone width — desktop layout
+   has plenty of room and prefers ellipsis truncation. */
+function applyMotivationMarquee() {
+  const el = document.getElementById('motivation-display');
+  if (!el) return;
+  const track = el.querySelector('.motivation-track');
+  if (!track) return;
+  // Reset before measuring so the previous animation's offset doesn't bias the read.
+  el.classList.remove('is-marquee');
+  track.style.removeProperty('--marquee-dur');
+  // Only run on narrow viewports.
+  const isPhone = window.matchMedia('(max-width: 700px)').matches;
+  if (!isPhone) return;
+  // Defer one frame so the browser has applied the resize-driven layout.
+  requestAnimationFrame(() => {
+    const overflow = track.scrollWidth > el.clientWidth + 1;
+    if (!overflow) return;
+    el.classList.add('is-marquee');
+    // Aim for ~22 px/sec — very slow, easy to read, like a TV news ticker.
+    const distance = el.clientWidth + track.scrollWidth;
+    const seconds = Math.max(22, Math.round(distance / 22));
+    track.style.setProperty('--marquee-dur', seconds + 's');
+  });
+}
+// Re-evaluate when the viewport width changes (rotate, browser resize).
+let _marqueeResizeT = null;
+window.addEventListener('resize', () => {
+  if (_marqueeResizeT) clearTimeout(_marqueeResizeT);
+  _marqueeResizeT = setTimeout(applyMotivationMarquee, 150);
+});
 const motInputEl = document.getElementById('motivation-input');
 if (motInputEl) {
   motInputEl.value = state.motivationalLines || '';
