@@ -2334,9 +2334,14 @@ function migrateState() {
   if (typeof state.lastNoSleepCheckedDate !== 'string') state.lastNoSleepCheckedDate = '';
   if (!['W','D','H'].includes(state.moneyChartScale))   state.moneyChartScale = 'D';
   // Per-task bid amount (used when finishing a task → +$bid; missing → use default)
+  // Also pre-mark existing tasks that already have text as "addLogged" so they
+  // don't trigger a duplicate "Added: ..." entry the next time the user types.
   ['q1','q2','q3','q4'].forEach(q => {
     (state.tasks[q] || []).forEach(t => {
       if (typeof t.bid !== 'number') t.bid = state.moneyChangeFactors.finishTask;
+      if (t.addLogged === undefined) {
+        t.addLogged = !!(t.text && t.text.trim());
+      }
     });
   });
   // Per-quadrant points-per-30-min bonus for pomodoro task time.
@@ -2661,6 +2666,25 @@ function debouncedPushSettings() {
   if (_settingsPushTimer) clearTimeout(_settingsPushTimer);
   _settingsPushTimer = setTimeout(() => pushSettingsToCloud(), 800);
 }
+/* Flush any pending debounced push immediately. Called when the page is about
+   to unload so the user's last edits (added task via Enter, typed name, etc.)
+   reach the cloud before the tab closes — without this, local would be saved
+   but cloud could lag behind, and another device might show the older state. */
+function flushPendingPushes() {
+  if (_settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
+  // Fire and forget — the network request begins synchronously even if the
+  // page is unloading, and most browsers let it complete in the background.
+  try { pushSettingsToCloud(); } catch (_) {}
+}
+window.addEventListener('beforeunload', flushPendingPushes);
+// Flush also on tab hide / page-hide (mobile Safari fires this instead of beforeunload)
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) flushPendingPushes();
+});
+window.addEventListener('pagehide', flushPendingPushes);
 
 /* ---- Apply remote settings into local state ----
    Shared by syncSettingsBidi (initial / tab-switch full sync) and
@@ -2867,11 +2891,14 @@ function handleSleepClick() {
   if (state.activeTimer) stopActiveTimer('finish');
   // Mark today as "Slept" so the midnight no-Sleep penalty skips this day.
   state.sleepClickedDate = getCurrentDayKey();
+  // Clear Time Start & Goals — they persist all day until Sleep, then reset.
+  if (typeof clearTimeGoals === 'function') clearTimeGoals();
   saveState();
   markSettingsChanged(); pushSettingsToCloud();
   renderImDoing();
   renderMoneyCard();
   renderWatchLog();
+  if (typeof updateCountdowns === 'function') updateCountdowns();
   drawGauge();
   // Friendly confirmation
   const card = document.getElementById('money-card');
@@ -3037,12 +3064,20 @@ function renderTasks() {
         saveState(); txt.classList.toggle('done', cb.checked);
         markSettingsChanged(); debouncedPushSettings();
       };
-      txt.oninput = () => { state.tasks[q][i].text = txt.value; saveState(); markSettingsChanged(); debouncedPushSettings(); };
+      txt.oninput = () => {
+        state.tasks[q][i].text = txt.value;
+        // First time the task has non-empty text → fire the +$ reward + log entry
+        // with the real task name (instead of a generic "Added a task").
+        firstTextLogIfNeeded(q, i);
+        saveState(); markSettingsChanged(); debouncedPushSettings();
+      };
       txt.onkeydown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
           e.preventDefault();
           createNewTask(q);
           saveState(); renderTasks();
+          // Make sure the new task survives a close: stamp settings, push to cloud
+          markSettingsChanged(); debouncedPushSettings();
           const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
           if (wrap2 && wrap2.lastElementChild) {
             const newInput = wrap2.lastElementChild.querySelector('.task-text');
@@ -3302,15 +3337,28 @@ if (matrixToggleEl) {
   applyMatrixExpanded();
 }
 
-/* Helper: create a new empty task in a quadrant with default bid + award money. */
+/* Helper: create a new empty task in a quadrant. The +$5 reward and the
+   "Added: <task name>" Activity-log entry are NOT applied here — they fire
+   the first time the task gets a non-empty name (see firstTextLogIfNeeded
+   inside the oninput handler). That way the log shows the actual task name
+   instead of a generic "Added a task". */
 function createNewTask(q) {
   const bid = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
-  state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[], bid: bid });
+  state.tasks[q].push({
+    text: '', done: false, elapsedMs: 0, segments: [], bid: bid,
+    addLogged: false   // becomes true once the +$ reward + log entry have fired
+  });
+}
+/* Fire the deferred "Added a task" reward + log when the task first gets
+   meaningful text. Idempotent: only runs once per task (addLogged flag). */
+function firstTextLogIfNeeded(q, i) {
+  const task = state.tasks[q] && state.tasks[q][i];
+  if (!task || task.addLogged) return;
+  if (!task.text || !task.text.trim()) return;
+  task.addLogged = true;
   const reward = +(state.moneyChangeFactors && state.moneyChangeFactors.addTask) || 0;
-  if (reward) {
-    applyMoney(reward, 'Added a task', 'add-task');
-    logEvent({ type: 'add-task', name: 'Added a task', money: reward, q });
-  }
+  if (reward) applyMoney(reward, `Added: ${task.text}`, 'add-task');
+  logEvent({ type: 'add-task', name: `Added: ${task.text}`, money: reward, q });
 }
 document.querySelectorAll('.add-task').forEach(btn => {
   btn.onclick = () => {
@@ -6260,25 +6308,14 @@ function snapshotDayToStats(dayKey) {
    Stats snapshots themselves still happen at calendar midnight; this is purely a
    cleanup so the new day starts with a fresh slate. */
 function maybe3amReset() {
+  // Time Start & Goals are NOT cleared here anymore — they only clear when the
+  // user clicks Sleep (or edits them). At 3 AM we just clean up the matrix:
+  // remove finished tasks so the new day starts fresh.
   const now = new Date();
   const today = fmtDateLocal(now);
   if (state.last3amResetDate === today) return;
   if (now.getHours() < 3) return;     // not yet past 3 AM today
   state.last3amResetDate = today;
-  // Clear time goals
-  state.startDate = '';
-  state.startTime = '';
-  state.deadline = '';
-  state.deadlineDate = '';
-  state.bedtime = '';
-  state.bedtimeDate = '';
-  if (typeof sdInput !== 'undefined' && sdInput) sdInput.value = '';
-  if (typeof stInput !== 'undefined' && stInput) stInput.value = '';
-  if (typeof dlInput !== 'undefined' && dlInput) dlInput.value = '';
-  if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = '';
-  if (typeof btInput !== 'undefined' && btInput) btInput.value = '';
-  if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = '';
-  // Remove finished tasks
   ['q1','q2','q3','q4'].forEach(q => {
     state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
   });
@@ -6288,6 +6325,23 @@ function maybe3amReset() {
   if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
   if (typeof updateCountdowns === 'function') updateCountdowns();
   if (typeof drawGauge === 'function') drawGauge();
+}
+
+/* Clear all "Time Start & Goals" fields — invoked by the Sleep button. */
+function clearTimeGoals() {
+  state.startDate = '';
+  state.startTime = '';
+  state.deadline = '';
+  state.deadlineDate = '';
+  state.bedtime = '';
+  state.bedtimeDate = '';
+  if (typeof sdInput     !== 'undefined' && sdInput)     sdInput.value = '';
+  if (typeof stInput     !== 'undefined' && stInput)     stInput.value = '';
+  if (typeof dlInput     !== 'undefined' && dlInput)     dlInput.value = '';
+  if (typeof dlDateInput !== 'undefined' && dlDateInput) dlDateInput.value = '';
+  if (typeof btInput     !== 'undefined' && btInput)     btInput.value = '';
+  if (typeof btDateInput !== 'undefined' && btDateInput) btDateInput.value = '';
+  saveState();
 }
 function maybeAutoSnapshot() {
   const today = getCurrentDayKey();
