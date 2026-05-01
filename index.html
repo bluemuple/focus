@@ -1309,6 +1309,14 @@
   .watch-log-entry .pen.pen-pos  { color: #dc2626; }   /* gain → red per spec */
   .watch-log-entry .pen.pen-neg  { color: #1d4ed8; }   /* loss → blue per spec */
   .watch-log-entry .pen.pen-zero { color: #9ca3af; }
+  .watch-log-entry .pen-stack {
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: 1px; min-width: 4ch; line-height: 1.1;
+  }
+  .watch-log-entry .pen-mana { font-size: .72rem; }
+  .watch-log-entry .watch-action-btn-spacer {
+    display: inline-block; width: 24px;  /* matches the edit button's width */
+  }
   .watch-log-total {
     font-size: .85rem; color: #6b7280; text-align: right; margin-top: 8px;
     font-variant-numeric: tabular-nums;
@@ -2917,12 +2925,13 @@ function renderTasks() {
         const task = state.tasks[q][i];
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
-        // Money: + bid amount when finishing, refund (subtract) when un-checking.
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
         if (cb.checked) {
           applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
+          logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
         } else {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
+          logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
         }
         saveState(); txt.classList.toggle('done', cb.checked);
         markSettingsChanged(); debouncedPushSettings();
@@ -3151,9 +3160,11 @@ if (matrixToggleEl) {
 function createNewTask(q) {
   const bid = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
   state.tasks[q].push({ text:'', done:false, elapsedMs:0, segments:[], bid: bid });
-  // Reward for adding a task (configurable in Money Change Factors)
   const reward = +(state.moneyChangeFactors && state.moneyChangeFactors.addTask) || 0;
-  if (reward) applyMoney(reward, 'Added a task', 'add-task');
+  if (reward) {
+    applyMoney(reward, 'Added a task', 'add-task');
+    logEvent({ type: 'add-task', name: 'Added a task', money: reward, q });
+  }
 }
 document.querySelectorAll('.add-task').forEach(btn => {
   btn.onclick = () => {
@@ -3717,8 +3728,13 @@ function renderFocusMatrix() {
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
-        if (cb.checked) applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
-        else            applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
+        if (cb.checked) {
+          applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
+          logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
+        } else {
+          applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
+          logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
+        }
         saveState();
         markSettingsChanged(); debouncedPushSettings();
         renderFocusMatrix();
@@ -4528,18 +4544,21 @@ function flashScoreCard(side) {
   card.style.boxShadow = side==='int' ? '0 0 0 3px #2563eb55' : '0 0 0 3px #dc262655';
   setTimeout(()=>{ card.style.boxShadow = ''; }, 350);
 }
-function applyManaScore(kind, score) {
+function applyManaScore(kind, score, label) {
   // After the rename:
   //   "Money Moments" (kind='multiplier' in code) → +$ to Money
   //   "Mana Moments"  (kind='muncher'   in code) → adjustment to Mana (External score)
+  const s = +score || 0;
+  const name = label || (kind === 'multiplier' ? 'Money Moments tap' : 'Mana Moments tap');
   if (kind === 'multiplier') {
-    // Money Moments: tap to add money, log the source.
-    applyMoney(+score || 0, `Money Moments`, 'money-moment');
+    applyMoney(s, name, 'money-moment');
+    logEvent({ type: 'money-moment', name, money: s });
     flashMoneyCard();
   } else {
-    state.ext.adjustment = (+state.ext.adjustment || 0) + (+score || 0);
+    state.ext.adjustment = (+state.ext.adjustment || 0) + s;
     recomputeSlider('ext');
     flashScoreCard('ext');
+    logEvent({ type: 'mana-moment', name, mana: s });
   }
   saveState(); renderScores();
   markSettingsChanged(); debouncedPushSettings();
@@ -4572,6 +4591,37 @@ function applyMoney(delta, label, source, refId) {
   if (typeof markSettingsChanged === 'function') markSettingsChanged();
   if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
   if (typeof renderMoneyCard === 'function') renderMoneyCard();
+  return entry;
+}
+
+/* ===========================================================
+   ACTIVITY LOG — point events
+   --------------------------------------------------------------
+   Beyond the existing timer-based entries (pomodoro / tracker stops, which
+   stopActiveTimer pushes itself), we also log every Money / Mana movement so
+   the Activity log shows a complete history. Point events have durationMs = 0
+   so renderWatchLog can render them without a time range.
+   --------------------------------------------------------------
+   logEvent({ name, type, money, mana }) */
+function logEvent(opts) {
+  if (!Array.isArray(state.watchLog)) state.watchLog = [];
+  const now = Date.now();
+  const entry = {
+    type:        opts.type || 'event',
+    name:        opts.name || '(event)',
+    startedAt:   now,
+    endedAt:     now,
+    durationMs:  0,
+    money:       Math.round((+opts.money || 0) * 100) / 100,
+    mana:        +opts.mana || 0,
+    point:       true   // marks this as an instantaneous event (no time range)
+  };
+  if (opts.q) entry.q = opts.q;
+  state.watchLog.push(entry);
+  saveState();
+  if (typeof markSettingsChanged === 'function') markSettingsChanged();
+  if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+  if (typeof renderWatchLog === 'function') renderWatchLog();
   return entry;
 }
 function fmtMoney(amount) {
@@ -4633,38 +4683,60 @@ function renderWatchLog() {
   if (!todayEntries.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
   list.innerHTML = '';
-  let totalMs = 0, totalMoney = 0;
+  let totalMs = 0, totalMoney = 0, totalMana = 0;
   todayEntries.slice().reverse().forEach((entry) => {
-    totalMs += entry.durationMs;
-    const m = +entry.money || 0;
+    totalMs    += entry.durationMs || 0;
+    const m     = +entry.money || 0;
+    const mana  = +entry.mana  || 0;
     totalMoney += m;
+    totalMana  += mana;
     const row = document.createElement('div');
     row.className = 'watch-log-entry';
     let badge = '';
-    if (entry.type === 'task-up') badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
-    else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
-    else if (entry.type === 'task-text') badge = `<span class="badge ${entry.q||''}">★ ${(entry.q||'').toUpperCase()}</span>`;
-    else if (entry.type === 'pomodoro') badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
-    else if (entry.type === 'muncher')   badge = `<span class="badge muncher">mana mom.</span>`;
-    else if (entry.type === 'multiplier')badge = `<span class="badge q3">money mom.</span>`;
+    if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+    else if (entry.type === 'muncher')       badge = `<span class="badge muncher">mana mom.</span>`;
+    else if (entry.type === 'multiplier')    badge = `<span class="badge q3">money mom.</span>`;
+    else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">mana</span>`;
+    else if (entry.type === 'money-moment')  badge = `<span class="badge q3">money</span>`;
+    else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
+    else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
+    else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
+    else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
+    else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
     // Real index in state.watchLog (since we filtered+reversed)
     const realIdx = state.watchLog.indexOf(entry);
+    // Time line — point events show only the moment, timer events show range + duration
+    const isPoint = !!entry.point || (entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt;
+    const timeLine = isPoint
+      ? `<span class="time-range">${fmtTime(entry.startedAt)}</span>`
+      : `<span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
     const moneyTxt = m === 0 ? '' : (m > 0 ? '+' : '-') + '$' + Math.abs(m).toFixed(2);
     const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
+    const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
+    const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
     row.innerHTML = `
       ${badge}
-      <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
-      <span class="pen ${moneyCls}" data-act="edit-money" data-idx="${realIdx}" title="Click to edit money">${moneyTxt}</span>
-      <button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>
+      <span class="name">${escapeHTML(entry.name||'(event)')}<br>${timeLine}</span>
+      <span class="pen-stack">
+        ${moneyTxt ? `<span class="pen ${moneyCls}" data-act="edit-money" data-idx="${realIdx}" title="Click to edit money">${moneyTxt}</span>` : ''}
+        ${manaTxt  ? `<span class="pen pen-mana ${manaCls}" title="Mana change">${manaTxt}</span>` : ''}
+      </span>
+      ${isPoint
+        ? `<span class="watch-action-btn-spacer"></span>`
+        : `<button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>`}
       <button class="watch-action-btn danger" data-act="delete" data-idx="${realIdx}" title="Delete entry">×</button>`;
-    row.querySelector('[data-act="edit"]').onclick       = () => openWatchLogEditModal(state.watchLog[realIdx]);
+    if (!isPoint) {
+      row.querySelector('[data-act="edit"]').onclick = () => openWatchLogEditModal(state.watchLog[realIdx]);
+    }
     row.querySelector('[data-act="delete"]').onclick     = () => deleteWatchLogEntry(realIdx);
-    row.querySelector('[data-act="edit-money"]').onclick = () => editWatchLogMoney(realIdx);
+    const editMoneyEl = row.querySelector('[data-act="edit-money"]');
+    if (editMoneyEl) editMoneyEl.onclick = () => editWatchLogMoney(realIdx);
     list.appendChild(row);
   });
   const moneyStr = totalMoney === 0 ? '$0.00'
                  : (totalMoney > 0 ? '+$' : '-$') + Math.abs(totalMoney).toFixed(2);
-  total.textContent = `Total: ${fmtHMS(totalMs)} · Money: ${moneyStr}`;
+  const manaStr  = totalMana === 0 ? '' : ` · Mana ${totalMana > 0 ? '+' : ''}${totalMana}`;
+  total.textContent = `Total: ${fmtHMS(totalMs)} · Money: ${moneyStr}${manaStr}`;
 }
 
 /* Edit the money amount stored on a watch-log entry. Adjusts state.money by the
@@ -4758,7 +4830,8 @@ function renderManaList(kind) {
     row.innerHTML = `<span class="lbl">${escapeHTML(m.lbl)}</span><span class="scr">${m.score>0?'+':''}${m.score}</span><button>×</button>`;
     row.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
-      applyManaScore(kind, m.score);
+      const labelPrefix = kind === 'multiplier' ? 'Money Moments' : 'Mana Moments';
+      applyManaScore(kind, m.score, `${labelPrefix}: ${m.lbl}`);
     };
     row.querySelector('.lbl').ondblclick = (e) => {
       e.stopPropagation();
@@ -6030,7 +6103,10 @@ function maybeNoSleepPenalty() {
   // Did the user click Sleep on the previous day? If not, charge the penalty.
   if (state.sleepClickedDate !== prevDay) {
     const penalty = +(state.moneyChangeFactors && state.moneyChangeFactors.noTaskPenalty) || 0;
-    if (penalty > 0) applyMoney(-penalty, `Skipped Sleep on ${prevDay}`, 'no-sleep');
+    if (penalty > 0) {
+      applyMoney(-penalty, `Skipped Sleep on ${prevDay}`, 'no-sleep');
+      logEvent({ type: 'no-sleep', name: `Skipped Sleep on ${prevDay}`, money: -penalty });
+    }
   }
   saveState();
 }
