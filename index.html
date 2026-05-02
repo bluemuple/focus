@@ -913,18 +913,18 @@
     pointer-events: none;
     white-space: nowrap;
   }
-  /* Blue lines on the gauge: deadline ("Go home") and bedtime ("Sleep") */
-  .gauge-line-blue {
+  /* Goal lines on the gauge — deadline (blue) + bedtime (green). */
+  .gauge-line-blue, .gauge-line-green {
     position: absolute; left: 0; right: 0;
     height: 2px;
-    background: #2563eb;
     z-index: 9;
     pointer-events: none;
     transition: top .9s linear;
   }
-  .gauge-line-blue .gauge-line-time {
-    background: #2563eb;
-  }
+  .gauge-line-blue                    { background: #2563eb; }
+  .gauge-line-blue  .gauge-line-time  { background: #2563eb; }
+  .gauge-line-green                   { background: #16a34a; }
+  .gauge-line-green .gauge-line-time  { background: #16a34a; }
 
   /* slider color by sign */
   .num.pos { color: #2563eb; }
@@ -1694,8 +1694,10 @@
     .focus-layout { max-width: 100%; min-width: 0; }
     .focus-right { min-width: 0; max-width: 100%; }
 
-    /* Blue line label on the gauge: stack on two lines (time, then "Goal") */
-    .gauge-line-blue .gauge-line-time {
+    /* Goal-line label on the gauge (deadline blue, bedtime green) — stack on
+       two lines (time, then "Goal") on phone. */
+    .gauge-line-blue .gauge-line-time,
+    .gauge-line-green .gauge-line-time {
       white-space: normal;
       text-align: center;
       line-height: 1.05;
@@ -1919,8 +1921,8 @@
         <div class="gauge-inner" id="gauge-inner">
           <div class="gauge-grid" id="gauge-grid"></div>
           <div class="gauge-segments" id="gauge-segments"></div>
-          <div class="gauge-line-blue" id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
-          <div class="gauge-line-blue" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
+          <div class="gauge-line-blue"  id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
+          <div class="gauge-line-green" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
           <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
         </div>
       </div>
@@ -4739,21 +4741,21 @@ function drawGauge() {
   lineEl.style.top = pct(now) + '%';
   lineTimeEl.textContent = fmtTimeShort(now);
 
-  // ---- Blue lines: deadline ("Go home") and bedtime ("Sleep") ----
-  function placeBlueLine(line, label, timeStr, dateStr, name) {
+  // ---- Goal lines: deadline ("Go home") + bedtime ("Sleep") ----
+  // deadline → blue, bedtime → green. Drawn whenever the user has supplied
+  // a time (date is optional — falls back to rolling within the 24h window).
+  function placeGoalLine(line, label, timeStr, dateStr, name) {
     if (!line || !label) return;
     if (!timeStr) { line.style.display = 'none'; return; }
-    // Use combined datetime if user supplied a date; otherwise fall back to
-    // the rolling logic (anchor on the gauge's start time).
-    const tMs = combineDateTime(dateStr, timeStr, { anchor: start, rolling: true });
+    // Anchor used by combineDateTime when the user only set a time (no date):
+    // place it at the next occurrence on/after the gauge's top edge.
+    const tMs = combineDateTime(dateStr, timeStr, { anchor: topMs, rolling: true });
     if (tMs == null || tMs < topMs || tMs > bottomMs) {
       line.style.display = 'none';
       return;
     }
     line.style.display = 'block';
     line.style.top = pct(tMs) + '%';
-    // On phone, render two lines: time then "Goal".
-    // On desktop, single-line "time · name".
     const isPhone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
     if (isPhone) {
       label.innerHTML = `${fmtTimeShort(tMs)}<br>Goal`;
@@ -4761,8 +4763,8 @@ function drawGauge() {
       label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
     }
   }
-  placeBlueLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
-  placeBlueLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
+  placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
+  placeGoalLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
 }
 
 function addGaugeSegment(parent, pct, seg, isActive) {
