@@ -650,15 +650,33 @@
     .ttbyd-slider-slot { display: none; }
   }
 
-  /* Bottom row of Focus page — Edit Earning for Tasks + Account, side by side. */
-  .focus-bottom-row {
-    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
-    margin-top: 16px;
+  /* Collapsible panels on the Focus page — every titled panel in the right
+     column gets a clickable header with a chevron indicator. Click anywhere
+     on the title row to expand / collapse. */
+  .panel.collapsible > h2,
+  .panel.collapsible > h3 {
+    cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 8px;
+    margin: 0;
   }
-  .focus-bottom-row > .panel { margin: 0; }
-  @media (max-width: 700px) {
-    .focus-bottom-row { grid-template-columns: 1fr; gap: 12px; }
+  .panel.collapsible > h2::after,
+  .panel.collapsible > h3::after {
+    content: '▾';
+    margin-left: auto;
+    font-size: .9rem; color: #6b7280;
+    transition: transform .15s ease;
   }
+  .panel.collapsible.collapsed > h2::after,
+  .panel.collapsible.collapsed > h3::after {
+    transform: rotate(-90deg);
+  }
+  /* When collapsed: hide everything in the panel except the title. */
+  .panel.collapsible.collapsed > *:not(h2):not(h3) {
+    display: none !important;
+  }
+  /* Subtle hover on the title bar so it reads as interactive. */
+  .panel.collapsible > h2:hover,
+  .panel.collapsible > h3:hover { color: #2563eb; }
 
   /* Account sync buttons — Cloud→Device / Device→Cloud.
      PC: words. "Device" green so users instantly see which side is theirs.
@@ -1346,16 +1364,23 @@
   }
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
 
-  /* Tappable Tasks header on phone — toggles compact 2x2 vs stacked layout. */
-  .focus-tasks-title { cursor: default; }
+  /* Tasks header — title click toggles collapse (handled by collapsible logic);
+     a separate button toggles the phone 2×2 layout. */
+  .focus-tasks-title { display: flex; align-items: center; gap: 8px; }
+  .matrix-view-toggle {
+    background: transparent; border: 1px solid transparent;
+    padding: 0 6px; border-radius: 6px; cursor: pointer;
+    font-size: 1.25rem; font-weight: 900;
+    color: #4b5563;
+    line-height: 1;
+  }
+  .matrix-view-toggle:hover { background: #f3f4f6; color: #111827; }
+  /* Hide the view-toggle button on PC (it's only relevant when the matrix
+     can collapse from 4-stacked into a 2×2 horizontal-scrolling view). */
+  @media (min-width: 701px) { .matrix-view-toggle { display: none; } }
   @media (max-width: 700px) {
-    .focus-tasks-title { cursor: pointer; user-select: none; }
-    .focus-tasks-title::after {
-      content: '⤢'; display: inline-block; margin-left: 8px;
-      font-size: 1.25rem; font-weight: 900; opacity: .85;
-      vertical-align: middle;
-    }
-    .focus-matrix.compact .focus-tasks-title::after { content: '⤡'; }
+    .focus-matrix.compact ~ * .matrix-view-toggle,
+    #matrix-view-toggle { font-size: 1.25rem; }
 
     /* Compact view = the full 2×2 matrix, but wider than the viewport so the
        user can swipe horizontally to see the right-hand column. */
@@ -1778,7 +1803,16 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .watch-log-entry .name-text {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    /* Up to 2 lines per entry — long task names wrap and ellipsis on overflow. */
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.25;
+    flex: 1 1 auto;
+    min-width: 0;
   }
   .watch-log-entry .name-inline {
     display: inline-flex; align-items: center; gap: 4px;
@@ -1926,23 +1960,28 @@
     .tab-text { display: none; }
     .tab-ico { display: inline; }
 
-    /* Phone-only: Focus tab shows a black-bg pill with bold white "ƒ". */
-    nav.tabs #tab-focus {
+    /* Phone-only: matched pair of page tabs.
+       Both share the SAME pill shape, size, and font treatment so they read
+       as a consistent set. Active tab fills with black bg + white text;
+       inactive tab is a soft gray outline with muted text. */
+    nav.tabs .tab-page-btn {
+      width: 36px; height: 32px;
+      padding: 0; min-width: 36px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f3f4f6;
+      color: #4b5563;
+      font-family: 'Times New Roman', serif;
+      font-style: italic; font-weight: 900;
+      transition: background .12s ease, color .12s ease, border-color .12s ease;
+    }
+    nav.tabs .tab-page-btn .tab-ico {
+      font-size: 1.3rem; line-height: 1;
+    }
+    nav.tabs .tab-page-btn.active {
       background: var(--ink); color: #fff;
       border-color: var(--ink);
-    }
-    nav.tabs #tab-focus .tab-ico {
-      font-weight: 900; font-style: italic;
-      font-family: 'Times New Roman', serif;
-      font-size: 1.3rem;
-    }
-    nav.tabs #tab-focus:not(.active) {
-      opacity: .55;
-    }
-    nav.tabs #tab-focus.active { opacity: 1; }
-    /* Statistics tab uses 📊 emoji as its phone icon. */
-    nav.tabs #tab-stats .tab-ico {
-      font-size: 1.1rem;
     }
 
     /* Matrix toolbar visible on phone; horizontal scroll wrapper */
@@ -2082,7 +2121,7 @@
     <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause">▶️</button>
     <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track">⏩</button>
     <button id="tab-focus" class="active tab-page-btn" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">ƒ</span></button>
-    <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">📊</span></button>
+    <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">Σ</span></button>
   </nav>
 </header>
 
@@ -2382,7 +2421,10 @@
         </div>
 
         <div class="panel" style="margin:0;">
-          <h3 class="focus-tasks-title" id="focus-tasks-title" style="margin:0;" title="Tap to toggle compact / stacked view (phone only)">Tasks</h3>
+          <h3 class="focus-tasks-title" id="focus-tasks-title" style="margin:0;">
+            <span>Tasks</span>
+            <button class="matrix-view-toggle" id="matrix-view-toggle" type="button" title="Toggle 2×2 view (phone)" aria-label="Toggle matrix layout">⤢</button>
+          </h3>
           <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
           <div class="double-tap-hint">Tap a task to start a 25-min Pomodoro (Work → Good Break → ...). Tap again to stop.</div>
         </div>
@@ -4115,11 +4157,11 @@ function renderTasks() {
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
         if (cb.checked) {
           applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
-          logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
+          logEvent({ type: 'finish-task', name: task.text || '(task)', money: +bid, q });
           playFx('complete');
         } else {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
-          logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
+          logEvent({ type: 'unfinish-task', name: task.text || '(task)', money: -bid, q });
         }
         saveState(); txt.classList.toggle('done', cb.checked);
         markSettingsChanged(); debouncedPushSettings();
@@ -5172,11 +5214,11 @@ function renderFocusMatrix() {
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
         if (cb.checked) {
           applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
-          logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
+          logEvent({ type: 'finish-task', name: task.text || '(task)', money: +bid, q });
           playFx('complete');
         } else {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
-          logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
+          logEvent({ type: 'unfinish-task', name: task.text || '(task)', money: -bid, q });
         }
         saveState();
         markSettingsChanged(); debouncedPushSettings();
@@ -6636,8 +6678,9 @@ function renderManaList(kind) {
                     `<button class="remove" title="Remove" type="button">×</button>`;
     row.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
-      const labelPrefix = kind === 'multiplier' ? 'Money Moments' : 'Mana Moments';
-      applyManaScore(kind, m.score, `${labelPrefix}: ${m.lbl}`);
+      // Pass the bare label — the activity-log row already has a colored
+      // "Money" / "mana" badge that shows which side this came from.
+      applyManaScore(kind, m.score, m.lbl);
     };
     row.querySelector('.lbl').ondblclick = (e) => {
       e.stopPropagation();
@@ -8038,6 +8081,7 @@ refreshMotivation(false);
   const focusPage = document.getElementById('focus-page');
   const setupPage = document.getElementById('setup-page');
   if (!focusPage || !setupPage) return;
+  const focusRight = focusPage.querySelector('.focus-right');
   // TTBYD panel is being removed — its sliders moved into Mana Moments column,
   // and the on-top score-bar replaces the slider drag. Hide the panel
   // permanently but keep the DOM so #ext-slider, #int-slider, #int-sleep,
@@ -8047,24 +8091,70 @@ refreshMotivation(false);
     ttbydPanel.style.display = 'none';
     ttbydPanel.setAttribute('aria-hidden', 'true');
   }
-  // Wrapper for the bottom Earning + Account row on Focus.
-  const bottomRow = document.createElement('div');
-  bottomRow.className = 'focus-bottom-row';
-  focusPage.appendChild(bottomRow);
+  // Stack Edit Earning + Account at the bottom of the right column — full width,
+  // matching the other panels (Tasks, Money/Mana Moments, Activity log).
+  const target = focusRight || focusPage;
   const moneyPanel = document.getElementById('money-factors-panel');
   if (moneyPanel && moneyPanel.parentNode) {
     moneyPanel.parentNode.removeChild(moneyPanel);
-    bottomRow.appendChild(moneyPanel);
+    moneyPanel.style.margin = '0';
+    target.appendChild(moneyPanel);
   }
   const authIn = document.getElementById('auth-logged-in');
   if (authIn) {
     const acctPanel = authIn.closest('.panel');
     if (acctPanel && acctPanel.parentNode) {
       acctPanel.parentNode.removeChild(acctPanel);
-      bottomRow.appendChild(acctPanel);
+      acctPanel.style.margin = '0';
+      target.appendChild(acctPanel);
     }
   }
   setupPage.style.display = 'none';
+})();
+
+/* ===== Make every titled panel in .focus-right collapsible =====
+   Click the title (h2/h3) to toggle. A chevron after the title shows the
+   current state. Activity log starts collapsed; everything else is expanded
+   by default. State persists in localStorage so the user's choice survives
+   reloads. */
+(function wireCollapsiblePanels() {
+  const focusRight = document.querySelector('#focus-page .focus-right');
+  if (!focusRight) return;
+  const COLLAPSE_KEY = 'focusPanelCollapsedV1';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') || {}; } catch (_) {}
+  // Defaults: Activity log collapsed; everything else expanded.
+  const defaults = { 'watch-log-panel': true };
+  const panels = focusRight.querySelectorAll(':scope > .panel');
+  panels.forEach((panel) => {
+    // Find the FIRST top-level h2/h3 inside the panel — that's the title row.
+    const title = panel.querySelector(':scope > h2, :scope > h3');
+    if (!title) return;          // no title → not collapsible (Money+Mana row)
+    panel.classList.add('collapsible');
+    const id = panel.id || title.textContent.trim().toLowerCase().replace(/\s+/g, '-');
+    const startCollapsed = (id in saved) ? !!saved[id] : !!defaults[id];
+    if (startCollapsed) panel.classList.add('collapsed');
+    title.setAttribute('role', 'button');
+    title.setAttribute('tabindex', '0');
+    title.setAttribute('aria-expanded', startCollapsed ? 'false' : 'true');
+    function toggle() {
+      panel.classList.toggle('collapsed');
+      const collapsed = panel.classList.contains('collapsed');
+      title.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      saved[id] = collapsed;
+      try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(saved)); } catch (_) {}
+    }
+    title.addEventListener('click', (e) => {
+      // Don't toggle when the user clicked an inner button/input (e.g. the
+      // Tasks 2×2 view-toggle button stops propagation, but we also guard
+      // here in case any other interactive child is added later).
+      if (e.target.closest('button, input, select, textarea')) return;
+      toggle();
+    });
+    title.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  });
 })();
 
 /* ===== Click GTD by / Sleep at on Mana area → set time popup =====
@@ -8181,18 +8271,19 @@ function placeManaSlider() { /* no-op — sliders no longer surfaced */ }
    We don't wire up the header collapse handler since the panel itself is
    now display:none. */
 
-/* Tap "Tasks" title on phone → toggle compact 2x2 layout vs stacked rows. */
-const _focusTasksTitle = document.getElementById('focus-tasks-title');
-if (_focusTasksTitle) {
-  _focusTasksTitle.addEventListener('click', () => {
-    // Phone-only — let CSS still highlight on PC if user adjusts viewport, but
-    // toggling does nothing visible until the matrix sees it.
-    const isPhone = window.matchMedia('(max-width: 700px)').matches;
-    if (!isPhone) return;
+/* Tasks panel — dedicated 2×2 layout toggle button (separate from the title
+   click, which now toggles collapse). Phone-only. */
+const _matrixViewBtn = document.getElementById('matrix-view-toggle');
+if (_matrixViewBtn) {
+  _matrixViewBtn.addEventListener('click', (e) => {
+    e.stopPropagation();   // don't bubble up to the title (which toggles collapse)
     state.focusMatrixCompact = !state.focusMatrixCompact;
+    _matrixViewBtn.textContent = state.focusMatrixCompact ? '⤡' : '⤢';
     saveState();
     if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
   });
+  // Initialize glyph from saved state.
+  _matrixViewBtn.textContent = state.focusMatrixCompact ? '⤡' : '⤢';
 }
 
 /* ===== Manual button inside the Account row ===== */
