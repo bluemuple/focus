@@ -660,6 +660,11 @@
   /* Account sync buttons — Cloud→Device / Device→Cloud.
      PC: words. "Device" green so users instantly see which side is theirs.
      Phone: emojis (☁️ / 📱) for compactness. */
+  /* Account panel — buttons across two stacked rows on every screen size. */
+  .account-rows { display: flex; flex-direction: column; gap: 8px; }
+  .account-row-1 .btn { flex: 0 1 auto; }
+  .account-row-2 { display: flex; gap: 8px; }
+  .account-row-2 .sync-btn { flex: 1 1 0; justify-content: center; }
   .sync-btn .word-device { color: #16a34a; font-weight: 700; }
   .sync-btn .word-cloud  { font-weight: 700; }
   .sync-btn .arrow       { color: #6b7280; }
@@ -1177,13 +1182,18 @@
   }
   .mana-vis .score-bar {
     flex: 1; min-width: 0;
-    position: relative; height: 12px; border-radius: 999px;
+    position: relative; height: 14px; border-radius: 999px;
     background: linear-gradient(to right, #3b82f6, #10b981, #f59e0b, #ef4444);
+    cursor: pointer; touch-action: none;
   }
   .mana-vis .score-bar .marker {
-    position: absolute; top: -3px; width: 4px; height: 18px;
-    background: #111827; border-radius: 2px;
+    position: absolute; top: -4px; width: 5px; height: 22px;
+    background: #111827; border-radius: 3px;
     transform: translateX(-50%);
+    pointer-events: none; box-shadow: 0 1px 3px rgba(0,0,0,.25);
+  }
+  .mana-vis .score-bar.dragging .marker {
+    background: #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,.18);
   }
   /* Mood message — single line below, colored by manaScoreColor() */
   .mana-msg {
@@ -1294,31 +1304,69 @@
   @media (max-width: 700px) {
     .focus-tasks-title { cursor: pointer; user-select: none; }
     .focus-tasks-title::after {
-      content: '⤢'; display: inline-block; margin-left: 6px;
-      font-size: .8rem; opacity: .6;
+      content: '⤢'; display: inline-block; margin-left: 8px;
+      font-size: 1.25rem; font-weight: 900; opacity: .85;
+      vertical-align: middle;
     }
     .focus-matrix.compact .focus-tasks-title::after { content: '⤡'; }
-    /* Compact 2x2 grid (matches the old setup-page tight matrix) */
-    .focus-matrix.compact { grid-template-columns: 1fr 1fr; gap: 4px; }
-    .focus-matrix.compact .focus-cell { min-height: 0; padding: 6px; }
-    .focus-matrix.compact .focus-cell h4 {
-      font-size: .65rem; margin-bottom: 4px; opacity: .65;
+
+    /* Compact view = single horizontal row of 4 cells, swipe-scrollable. */
+    .focus-matrix.compact {
+      display: flex; flex-wrap: nowrap;
+      grid-template-columns: none; grid-template-rows: none;
+      overflow-x: auto; overflow-y: hidden;
+      scroll-snap-type: x mandatory;
+      -webkit-overflow-scrolling: touch;
+      gap: 8px; padding-bottom: 6px;
     }
-    .focus-matrix.compact .focus-cell .task-row {
-      gap: 2px; padding: 3px 5px; font-size: .8rem;
+    .focus-matrix.compact .focus-cell {
+      flex: 0 0 80%;        /* show ~1 cell + a hint of the next */
+      max-width: 80%;
+      scroll-snap-align: start;
+      min-height: 140px;
     }
-    .focus-matrix.compact .focus-cell .task-row input[type="checkbox"] { transform: scale(.85); }
-    .focus-matrix.compact .focus-cell .task-row .task-bid {
-      padding: 1px 5px; font-size: .65rem;
-    }
-    .focus-matrix.compact .focus-cell .task-row .task-edit-pen {
-      font-size: .85rem; padding: 0 2px;
-    }
-    .focus-matrix.compact .focus-cell .add-task {
-      padding: 3px 4px; font-size: .7rem;
-    }
-    /* Phone (default stacked) — slightly tighter than PC. */
+
+    /* Default stacked view on phone — task names wrap up to 2 lines. */
     .focus-cell { min-height: 110px; }
+    .focus-cell .task-row .task-text {
+      white-space: normal;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      line-height: 1.25;
+    }
+
+    /* When a pomodoro is running for this task — hide the bid pill and let
+       the timer fill the right side bigger. */
+    .focus-cell .task-row.is-running .task-bid { display: none; }
+    .focus-cell .task-row.is-running .task-bid-wrap .pomodoro-display {
+      font-size: .9rem; padding: 4px 12px;
+      font-weight: 700;
+    }
+    .focus-cell .task-row.is-running .task-bid-wrap {
+      flex: 0 0 auto;
+    }
+  }
+
+  /* Sleep + Emotional Wellness sliders relocated into Mana Moments column. */
+  #mana-moments-sliders {
+    display: flex; flex-direction: column; gap: 8px;
+    margin: 8px 0;
+  }
+  .mm-slider-row {
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 6px 10px; align-items: center;
+    background: #f9fafb; border-radius: 6px; padding: 6px 8px;
+  }
+  .mm-slider-row .mm-lbl { font-size: .85rem; font-weight: 600; color: #111827; }
+  .mm-slider-row .mm-lbl small { font-weight: 400; color: #6b7280; margin-left: 4px; }
+  .mm-slider-row .mm-val {
+    font-weight: 700; font-size: .9rem;
+    min-width: 3ch; text-align: right;
+  }
+  .mm-slider-row input[type="range"] {
+    grid-column: 1 / -1; width: 100%;
   }
 
   /* Mana */
@@ -1333,7 +1381,12 @@
   }
   .mana-item .lbl { flex: 1; }
   .mana-item .scr { color: var(--accent); font-weight: 600; min-width: 3ch; text-align: right; }
-  .mana-item button { background: transparent; border: none; color: #9ca3af; cursor: pointer; }
+  .mana-item button { background: transparent; border: none; color: #9ca3af; cursor: pointer; padding: 0 4px; font-size: 1rem; }
+  .mana-item .move-side {
+    color: #2563eb; font-weight: 800; font-size: 1.05rem;
+  }
+  .mana-item .move-side:hover { color: #1d4ed8; }
+  .mana-item .remove:hover { color: #dc2626; }
   .mana-item.muncher .scr { color: var(--red); }
 
   /* Page 3 — Stats */
@@ -2144,19 +2197,23 @@
       <div id="auth-logged-in" class="auth-section hidden">
         <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
         <p class="help">Tasks, gauge, statistics — everything syncs automatically.</p>
-        <div class="row-flex">
-          <button class="btn" id="auth-signout">Sign out</button>
-          <button class="btn" id="account-manual-btn" type="button" title="Open the User Manual">Manual</button>
-          <button class="btn sync-btn" id="auth-resync" title="Pull latest data from cloud — overwrites this device's state">
-            <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
-            <span class="arrow"> → </span>
-            <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
-          </button>
-          <button class="btn sync-btn" id="auth-push-now" title="Push this device's data to cloud — keeps your data safe before clearing browser data">
-            <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
-            <span class="arrow"> → </span>
-            <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
-          </button>
+        <div class="account-rows">
+          <div class="row-flex account-row-1">
+            <button class="btn" id="auth-signout">Sign out</button>
+            <button class="btn" id="account-manual-btn" type="button" title="Open the User Manual">Manual</button>
+          </div>
+          <div class="row-flex account-row-2">
+            <button class="btn sync-btn" id="auth-push-now" title="Push this device's data to cloud — keeps your data safe before clearing browser data">
+              <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
+              <span class="arrow"> → </span>
+              <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
+            </button>
+            <button class="btn sync-btn" id="auth-resync" title="Pull latest data from cloud — overwrites this device's state">
+              <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
+              <span class="arrow"> → </span>
+              <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
+            </button>
+          </div>
           <span id="auth-status2" class="help"></span>
         </div>
       </div>
@@ -2287,6 +2344,8 @@
             </div>
             <div class="mana-col">
               <h3>Mana Moments</h3>
+              <!-- Sleep + Emotional Wellness sliders (relocated from TTBYD). -->
+              <div id="mana-moments-sliders"></div>
               <div class="mana-list" id="mana-munch"></div>
               <div class="row-input">
                 <input type="text" id="munch-text" placeholder="Factor">
@@ -2686,13 +2745,14 @@ const defaultState = () => ({
   },
   mana: {
     multiplier: [
-      { lbl:'25 mins focus', score: 7 },
-      { lbl:'5 mins good break', score: 4 }
+      // Money Moments — by default this side has timer trackers that
+      // affect Money (USD). Internet browsing & Youtube/Netflix tick at -3 / 5min.
+      { lbl:'Internet browsing', kind: 'timer', pointsPer5Min: -3 },
+      { lbl:'Youtube/Netflix',   kind: 'timer', pointsPer5Min: -3 }
     ],
     muncher: [
-      { lbl:'Drink water', score: 3 },
-      { lbl:'Youtube/Netflix', kind: 'timer' },
-      { lbl:'Unrelated news',  kind: 'timer' }
+      // Mana Moments — defaults are now empty so users define their own.
+      { lbl:'Unrelated news',    kind: 'timer', pointsPer5Min: -3 }
     ]
   },
   // Single-timer enforcement: at most one of these is "running" at a time.
@@ -2750,31 +2810,43 @@ function migrateState() {
     // remove old split YT items
     state.mana.muncher = state.mana.muncher.filter(x =>
       x.lbl !== 'Youtube/Netflix 10m~30m' && x.lbl !== 'Youtube/Netflix 30m~1h');
-    // ensure YT exists and is a timer
-    let yt = state.mana.muncher.find(x => x.kind === 'yt' || x.kind === 'timer' && x.lbl === 'Youtube/Netflix');
-    if (!yt) state.mana.muncher.unshift({ lbl: 'Youtube/Netflix', kind: 'timer' });
-    else { yt.kind = 'timer'; delete yt.score; }
-    // ensure Unrelated news is a timer
-    let un = state.mana.muncher.find(x => x.lbl === 'Unrelated news');
-    if (un) { un.kind = 'timer'; delete un.score; }
-    else state.mana.muncher.push({ lbl: 'Unrelated news', kind: 'timer' });
     // Default pointsPer5Min for legacy timer trackers (so the new field exists)
     state.mana.muncher.forEach(m => {
       if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = -3;
     });
   }
   if (state.mana && Array.isArray(state.mana.multiplier)) {
-    // Move "Drink water" from Money Moments → Mana Moments (default change).
-    const dwIdx = state.mana.multiplier.findIndex(m => m && typeof m.lbl === 'string' && m.lbl.toLowerCase() === 'drink water');
-    if (dwIdx >= 0) {
-      const dw = state.mana.multiplier.splice(dwIdx, 1)[0];
-      if (!state.mana.muncher.some(m => m.lbl && m.lbl.toLowerCase() === 'drink water')) {
-        state.mana.muncher.unshift(dw);
-      }
-    }
     state.mana.multiplier.forEach(m => {
-      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = 3;
+      if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = -3;
     });
+  }
+  // ----- One-shot consolidation v3 -----
+  // Remove "25 mins focus", "5 mins good break", "Drink water" everywhere.
+  // Move "Youtube/Netflix" from Mana Moments → Money Moments.
+  // Add "Internet browsing" tracker (−3/5m) to Money Moments if missing.
+  if (state.mana && !state._manaListsV3) {
+    const isLbl = (m, name) => m && typeof m.lbl === 'string' && m.lbl.toLowerCase() === name.toLowerCase();
+    const removeNames = ['25 mins focus', '5 mins good break', 'drink water'];
+    const stripList = (arr) => arr.filter(m => !removeNames.includes((m.lbl || '').toLowerCase()));
+    state.mana.multiplier = stripList(state.mana.multiplier || []);
+    state.mana.muncher    = stripList(state.mana.muncher    || []);
+    // Move YT from muncher → multiplier (with timer kind preserved).
+    const ytInMunch = state.mana.muncher.findIndex(m => isLbl(m, 'Youtube/Netflix'));
+    if (ytInMunch >= 0) {
+      const yt = state.mana.muncher.splice(ytInMunch, 1)[0];
+      yt.kind = 'timer';
+      if (typeof yt.pointsPer5Min !== 'number') yt.pointsPer5Min = -3;
+      if (!state.mana.multiplier.some(m => isLbl(m, 'Youtube/Netflix'))) {
+        state.mana.multiplier.push(yt);
+      }
+    } else if (!state.mana.multiplier.some(m => isLbl(m, 'Youtube/Netflix'))) {
+      state.mana.multiplier.push({ lbl: 'Youtube/Netflix', kind: 'timer', pointsPer5Min: -3 });
+    }
+    // Add Internet browsing tracker in Money Moments.
+    if (!state.mana.multiplier.some(m => isLbl(m, 'Internet browsing'))) {
+      state.mana.multiplier.unshift({ lbl: 'Internet browsing', kind: 'timer', pointsPer5Min: -3 });
+    }
+    state._manaListsV3 = true;
   }
   // remove old yt single-timer state, replaced by activeTimer
   delete state.ytTimer;
@@ -4852,6 +4924,55 @@ function onManaSliderInput(newVal) {
 document.getElementById('ext-slider').oninput = (e) => onManaSliderInput(+e.target.value);
 document.getElementById('int-slider').oninput = (e) => onManaSliderInput(+e.target.value);
 
+/* ===== Drag the on-top Mana score bar ===== */
+/* The .score-bar element on the Mana card is now the primary interaction
+   surface for adjusting the Mana slider. Pointer events translate the X
+   position into a -100..+100 value via onManaSliderInput, which also
+   refreshes the score number, leaf image, and mood message. */
+(function wireManaScoreBarDrag() {
+  const bar = document.querySelector('.mana-vis .score-bar');
+  if (!bar) return;
+  let dragging = false;
+  function valueFromEvent(ev) {
+    const rect = bar.getBoundingClientRect();
+    const clientX = (ev.touches && ev.touches[0]) ? ev.touches[0].clientX : ev.clientX;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return Math.round(pct * 200 - 100);  // 0..1 → -100..+100
+  }
+  function applyVal(v) {
+    if (typeof onManaSliderInput === 'function') onManaSliderInput(v);
+    if (typeof renderScores === 'function') renderScores();
+    // Mirror to the hidden range slider too so the rest of the app stays in sync.
+    const ext = document.getElementById('ext-slider'); if (ext) ext.value = v;
+    const intS = document.getElementById('int-slider'); if (intS) intS.value = v;
+  }
+  function onDown(ev) {
+    dragging = true; bar.classList.add('dragging');
+    if (bar.setPointerCapture && ev.pointerId != null) {
+      try { bar.setPointerCapture(ev.pointerId); } catch (_) {}
+    }
+    applyVal(valueFromEvent(ev));
+    ev.preventDefault();
+  }
+  function onMove(ev) {
+    if (!dragging) return;
+    applyVal(valueFromEvent(ev));
+    ev.preventDefault();
+  }
+  function onUp() {
+    if (!dragging) return;
+    dragging = false; bar.classList.remove('dragging');
+  }
+  bar.addEventListener('pointerdown', onDown);
+  bar.addEventListener('pointermove', onMove);
+  bar.addEventListener('pointerup', onUp);
+  bar.addEventListener('pointercancel', onUp);
+  // Fallback for older Safari (no Pointer Events) — touch handlers.
+  bar.addEventListener('touchstart',  onDown,  { passive: false });
+  bar.addEventListener('touchmove',   onMove,  { passive: false });
+  bar.addEventListener('touchend',    onUp);
+})();
+
 /* Others lists */
 function renderOthers(side) {
   const list = document.getElementById(side === 'ext' ? 'ext-others' : 'int-others');
@@ -4953,6 +5074,7 @@ function renderFocusMatrix() {
       row.dataset.idx = i;
       const at = state.activeTimer;
       const isPomo = at && at.type==='pomodoro' && at.q===q && at.idx===i;
+      if (isPomo) row.classList.add('is-running');
       const bidVal = (typeof t.bid === 'number') ? t.bid
                      : (+(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10);
       row.innerHTML = `
@@ -6353,10 +6475,15 @@ function renderManaList(kind) {
       const numColor = (rate > 0) ? '#dc2626'
                      : (rate < 0) ? '#1d4ed8'
                      : '#6b7280';
+      const moveTitle = kind === 'multiplier'
+        ? 'Move to Mana Moments — affects Mana score instead of Money'
+        : 'Move to Money Moments — affects Money instead of Mana';
+      const moveArrow = kind === 'multiplier' ? '→' : '←';
       row.innerHTML = `
         <span class="lbl" style="color:#111827; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
         <span class="scr" style="color:${numColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:700;">${rateBadge}</small></span>
-        <button title="Remove">×</button>`;
+        <button class="move-side" title="${moveTitle}" type="button">${moveArrow}</button>
+        <button class="remove" title="Remove" type="button">×</button>`;
       row.onclick = (e) => {
         if (e.target.tagName === 'BUTTON') return;
         clickManaTimer(kind, i);
@@ -6377,7 +6504,11 @@ function renderManaList(kind) {
           markSettingsChanged(); pushSettingsToCloud();
         }
       };
-      row.querySelector('button').onclick = (e) => {
+      row.querySelector('.move-side').onclick = (e) => {
+        e.stopPropagation();
+        moveManaItemSide(kind, i);
+      };
+      row.querySelector('.remove').onclick = (e) => {
         e.stopPropagation();
         if (running) stopManaTimer(kind, i);
         state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
@@ -6397,9 +6528,14 @@ function renderManaList(kind) {
     const sSign  = sNum > 0 ? '+' : sNum < 0 ? '-' : '';
     const sUnit  = (kind === 'multiplier') ? '$' : '';
     const sStr   = `${sSign}${sUnit}${Math.abs(sNum)}`;
+    const moveTitle = kind === 'multiplier'
+      ? 'Move to Mana Moments — taps will adjust Mana instead of Money'
+      : 'Move to Money Moments — taps will add/remove $ instead of Mana';
+    const moveArrow = kind === 'multiplier' ? '→' : '←';
     row.innerHTML = `<span class="lbl" style="color:#111827;">${escapeHTML(m.lbl)}</span>` +
                     `<span class="scr" style="color:${sColor};">${sStr}</span>` +
-                    `<button>×</button>`;
+                    `<button class="move-side" title="${moveTitle}" type="button">${moveArrow}</button>` +
+                    `<button class="remove" title="Remove" type="button">×</button>`;
     row.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
       const labelPrefix = kind === 'multiplier' ? 'Money Moments' : 'Mana Moments';
@@ -6421,7 +6557,11 @@ function renderManaList(kind) {
         markSettingsChanged(); pushSettingsToCloud();
       }
     };
-    row.querySelector('button').onclick = (e) => {
+    row.querySelector('.move-side').onclick = (e) => {
+      e.stopPropagation();
+      moveManaItemSide(kind, i);
+    };
+    row.querySelector('.remove').onclick = (e) => {
       e.stopPropagation();
       state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
       markSettingsChanged(); pushSettingsToCloud();
@@ -6429,7 +6569,81 @@ function renderManaList(kind) {
     list.appendChild(row);
   });
 }
-function renderManaLists() { renderManaList('multiplier'); renderManaList('muncher'); }
+function renderManaLists() {
+  renderManaList('multiplier');
+  renderManaList('muncher');
+  renderManaMomentsSliders();
+}
+
+/* Move a mana-item from one side to the other.
+   - multiplier (Money Moments) → muncher (Mana Moments): from now on this
+     factor applies to Mana score (timer rate stays the same number, but it
+     is interpreted as points-per-5min on Mana instead of dollars/5min).
+   - muncher → multiplier: same logic in reverse. */
+function moveManaItemSide(fromKind, idx) {
+  const item = state.mana[fromKind] && state.mana[fromKind][idx];
+  if (!item) return;
+  // If currently running, stop it cleanly so the timer is recorded under the
+  // *current* side before we move the item.
+  const at = state.activeTimer;
+  if (at && at.type === fromKind && at.manaIdx === idx) {
+    if (typeof stopManaTimer === 'function') stopManaTimer(fromKind, idx);
+  }
+  state.mana[fromKind].splice(idx, 1);
+  const toKind = (fromKind === 'multiplier') ? 'muncher' : 'multiplier';
+  if (!Array.isArray(state.mana[toKind])) state.mana[toKind] = [];
+  state.mana[toKind].push(item);
+  saveState();
+  renderManaList('multiplier');
+  renderManaList('muncher');
+  markSettingsChanged(); pushSettingsToCloud();
+}
+
+/* Sleep + Emotional Wellness sliders — rendered into the Mana Moments column.
+   Updates state.int.sleep / state.int.stress and recomputes the Mana score so
+   the on-top gauge reflects the change. */
+function renderManaMomentsSliders() {
+  const root = document.getElementById('mana-moments-sliders');
+  if (!root) return;
+  const sleep  = (state.int && state.int.sleep)  || 0;
+  const stress = (state.int && state.int.stress) || 0;
+  root.innerHTML = `
+    <div class="mm-slider-row">
+      <span class="mm-lbl">Sleep <small>(0–10, ×3)</small></span>
+      <span class="mm-val" id="mm-sleep-val">${sleep>0?'+':''}${sleep}</span>
+      <input type="range" id="mm-sleep-slider" min="0" max="10" step="1" value="${sleep}">
+    </div>
+    <div class="mm-slider-row">
+      <span class="mm-lbl">Emotional Wellness <small>(−7…+7, ×3)</small></span>
+      <span class="mm-val" id="mm-stress-val">${stress>0?'+':''}${stress}</span>
+      <input type="range" id="mm-stress-slider" min="-7" max="7" step="1" value="${stress}">
+    </div>`;
+  const sleepEl  = root.querySelector('#mm-sleep-slider');
+  const sleepVal = root.querySelector('#mm-sleep-val');
+  const stressEl = root.querySelector('#mm-stress-slider');
+  const stressVal= root.querySelector('#mm-stress-val');
+  if (sleepEl) sleepEl.oninput = () => {
+    state.int.sleep = +sleepEl.value;
+    sleepVal.textContent = (state.int.sleep>0?'+':'') + state.int.sleep;
+    saveState();
+    if (typeof recomputeSlider === 'function') recomputeSlider('int');
+    if (typeof renderScores === 'function') renderScores();
+    markSettingsChanged(); debouncedPushSettings();
+    // Mirror to legacy hidden #int-sleep slider (still used by some code).
+    const legacy = document.getElementById('int-sleep');
+    if (legacy) legacy.value = sleepEl.value;
+  };
+  if (stressEl) stressEl.oninput = () => {
+    state.int.stress = +stressEl.value;
+    stressVal.textContent = (state.int.stress>0?'+':'') + state.int.stress;
+    saveState();
+    if (typeof recomputeSlider === 'function') recomputeSlider('int');
+    if (typeof renderScores === 'function') renderScores();
+    markSettingsChanged(); debouncedPushSettings();
+    const legacy = document.getElementById('int-stress');
+    if (legacy) legacy.value = stressEl.value;
+  };
+}
 
 document.getElementById('mult-add').onclick = () => {
   const t = document.getElementById('mult-text').value.trim();
@@ -7715,11 +7929,14 @@ refreshMotivation(false);
   const focusPage = document.getElementById('focus-page');
   const setupPage = document.getElementById('setup-page');
   if (!focusPage || !setupPage) return;
-  // Move "Think Twice Before You Do" (Mana Factors) panel before bottom row.
+  // TTBYD panel is being removed — its sliders moved into Mana Moments column,
+  // and the on-top score-bar replaces the slider drag. Hide the panel
+  // permanently but keep the DOM so #ext-slider, #int-slider, #int-sleep,
+  // #int-stress, #ext-groups, #int-groups, #ext-others etc. all still resolve.
   const ttbydPanel = document.getElementById('ttbyd-panel');
-  if (ttbydPanel && ttbydPanel.parentNode) {
-    ttbydPanel.parentNode.removeChild(ttbydPanel);
-    focusPage.appendChild(ttbydPanel);
+  if (ttbydPanel) {
+    ttbydPanel.style.display = 'none';
+    ttbydPanel.setAttribute('aria-hidden', 'true');
   }
   // Wrapper for the bottom Earning + Account row on Focus.
   const bottomRow = document.createElement('div');
@@ -7845,45 +8062,15 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
   if (btRow) btRow.style.display = '';
 })();
 
-/* Mana slider relocation — on PC the slider lives in the TTBYD header so it
-   stays visible when the panel is collapsed. On phone it stays in the body
-   alongside the chips. The element is the same #ext-slider; we just move it. */
-function placeManaSlider() {
-  const headerSlot = document.getElementById('ttbyd-slider-slot');
-  const slider     = document.getElementById('ext-slider');
-  if (!headerSlot || !slider) return;
-  // Use the slider's parent .score-display as the unit we move (so the +N number stays with it).
-  const slot = slider.closest('.score-display') || slider;
-  const isPhone = window.matchMedia('(max-width: 700px)').matches;
-  if (!isPhone) {
-    // PC — move into header
-    if (slot.parentNode !== headerSlot) headerSlot.appendChild(slot);
-  } else {
-    // Phone — move back to body's .factor-block (its original spot)
-    const factorBlock = document.querySelector('#ttbyd-body .factor-block');
-    if (factorBlock && slot.parentNode !== factorBlock) {
-      factorBlock.insertBefore(slot, factorBlock.firstChild);
-    }
-  }
-}
-placeManaSlider();
-window.addEventListener('resize', () => setTimeout(placeManaSlider, 150));
+/* Mana slider relocation — TTBYD panel is now hidden, so this is a no-op.
+   The slider DOM (#ext-slider, #int-slider) stays inside the hidden panel for
+   legacy code that reads/writes its value, but the actual user interaction
+   happens via the on-top draggable .score-bar (see wireManaScoreBarDrag). */
+function placeManaSlider() { /* no-op — sliders no longer surfaced */ }
 
-/* Click TTBYD header → collapse/expand the body. Stop the slider's drag from
-   triggering this — the slider is inside the header on PC. */
-const _ttbydHeader = document.getElementById('ttbyd-header');
-const _ttbydPanelEl = document.getElementById('ttbyd-panel');
-if (_ttbydHeader && _ttbydPanelEl) {
-  _ttbydHeader.addEventListener('click', (e) => {
-    // Ignore clicks coming from the slider/number widgets.
-    if (e.target.closest('.score-display, input[type="range"], .num')) return;
-    _ttbydPanelEl.classList.toggle('collapsed');
-    _ttbydHeader.setAttribute('aria-expanded', !_ttbydPanelEl.classList.contains('collapsed'));
-  });
-  // Default: collapsed so the page is shorter on first paint
-  _ttbydPanelEl.classList.add('collapsed');
-  _ttbydHeader.setAttribute('aria-expanded', 'false');
-}
+/* TTBYD panel removed — its slider sits hidden in DOM only for legacy code.
+   We don't wire up the header collapse handler since the panel itself is
+   now display:none. */
 
 /* Tap "Tasks" title on phone → toggle compact 2x2 layout vs stacked rows. */
 const _focusTasksTitle = document.getElementById('focus-tasks-title');
