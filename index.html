@@ -938,9 +938,15 @@
     pointer-events: none;
     transition: top .9s linear;
   }
-  /* Gauge mode toggle (Set / 2 / 4) under the gauge column */
+  /* Wrapper around the gauge column + its controls (Set/2/4 toggle).
+     The .gauge-col itself has overflow:hidden, so the controls sit OUTSIDE
+     it (below) instead of clipped inside. */
+  .gauge-wrap { display: flex; flex-direction: column; align-items: stretch; }
+  .gauge-controls {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 6px 4px 0;
+  }
   .gauge-mode-toggle {
-    margin: 6px auto 0; display: block;
     background: #f3f4f6; border: 1px solid var(--line);
     color: #111827; padding: 3px 12px; border-radius: 999px;
     font-size: .8rem; font-weight: 700; cursor: pointer;
@@ -1958,16 +1964,22 @@
   <!-- ============================== PAGE 2 — FOCUS ============================== -->
   <section id="focus-page">
     <div class="focus-layout">
-      <div class="gauge-col" id="gauge-col">
-        <div class="gauge-inner" id="gauge-inner">
-          <div class="gauge-grid" id="gauge-grid"></div>
-          <div class="gauge-segments" id="gauge-segments"></div>
-          <div class="gauge-line-blue"  id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
-          <div class="gauge-line-green" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
-          <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+      <div class="gauge-wrap">
+        <div class="gauge-col" id="gauge-col">
+          <div class="gauge-inner" id="gauge-inner">
+            <div class="gauge-grid" id="gauge-grid"></div>
+            <div class="gauge-segments" id="gauge-segments"></div>
+            <div class="gauge-line-blue"  id="gauge-line-deadline" style="display:none;"><span class="gauge-line-time" id="gauge-line-deadline-label"></span></div>
+            <div class="gauge-line-green" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
+            <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
+          </div>
         </div>
-        <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range">Set</button>
-        <span class="gauge-mode-tip" id="gauge-mode-tip"></span>
+        <!-- Gauge mode toggle (Set / 2 / 4) — under the gauge, outside the
+             clipping .gauge-col so it's always visible. -->
+        <div class="gauge-controls">
+          <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range">Set</button>
+          <span class="gauge-mode-tip" id="gauge-mode-tip"></span>
+        </div>
       </div>
 
       <div class="focus-right">
@@ -3395,8 +3407,8 @@ if (_soundToggleBtn) _soundToggleBtn.onclick = () => {
   markSettingsChanged(); debouncedPushSettings();
   syncSoundToggleBtn();
   const m = state.soundMode;
-  const flash = m === 'loud' ? 'Sound effects for home studying'
-              : m === 'soft' ? 'Sound effects for library studying'
+  const flash = m === 'loud' ? 'Louder sound effects'
+              : m === 'soft' ? 'Library sound effects'
               : 'No sound effects';
   showMotivationFlash(flash, 3000);
   if (m !== 'none') playFx('start');
@@ -3416,17 +3428,9 @@ async function loadFocusPlaylist() {
     const res = await fetch('audio/focus/playlist.json', { cache: 'no-cache' });
     if (res.ok) {
       const j = await res.json();
-      if (Array.isArray(j)) list = j.filter(s => typeof s === 'string');
+      if (Array.isArray(j)) list = j.filter(s => typeof s === 'string' && s.toLowerCase().endsWith('.mp3'));
     }
   } catch (_) {}
-  if (!list.length) {
-    const probes = [];
-    for (let i = 1; i <= 20; i++) probes.push(`track${i}.mp3`);
-    const checks = await Promise.all(probes.map(name =>
-      fetch(`audio/focus/${name}`, { method: 'HEAD' }).then(r => r.ok).catch(() => false)
-    ));
-    list = probes.filter((_, i) => checks[i]);
-  }
   list.sort((a, b) => a.localeCompare(b));
   _musicState.list = list;
   _musicState.loaded = true;
@@ -3466,7 +3470,8 @@ async function playMusic(idx) {
     return;
   }
   if (_musicState.audio) { try { _musicState.audio.pause(); _musicState.audio.src=''; } catch(_){} }
-  const audio = new Audio(`audio/focus/${list[i]}`);
+  // encodeURIComponent so filenames with spaces (e.g. "Morning Story.mp3") work
+  const audio = new Audio(`audio/focus/${encodeURIComponent(list[i])}`);
   audio.preload = 'auto';
   _musicState.audio = audio;
   audio.onended = () => {
