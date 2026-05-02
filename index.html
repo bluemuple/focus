@@ -1524,6 +1524,31 @@
   .watch-log-entry .watch-action-btn-spacer {
     display: inline-block; width: 24px;  /* matches the edit button's width */
   }
+  .watch-log-entry .note-btn {
+    background: transparent; border: none; cursor: pointer;
+    padding: 0 4px; font-size: .9rem; line-height: 1;
+    color: #6b7280; flex-shrink: 0;
+  }
+  .watch-log-entry .note-btn:hover { color: #2563eb; }
+  .watch-log-entry .name-inline {
+    display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  }
+  .watch-log-entry .name-text { font-weight: 600; color: #111827; }
+  .watch-log-entry .note-mail { font-size: .85rem; }
+  /* Stats PC: instead of ✉️, show full note inline. */
+  .stats-day .watch-log-entry .note-text-pc {
+    display: block;
+    color: #4b5563; font-size: .8rem;
+    line-height: 1.4; margin-top: 4px;
+    cursor: pointer;
+    border-left: 2px solid #e5e7eb; padding-left: 8px;
+    word-break: break-word;
+  }
+  .stats-day .watch-log-entry .note-text-pc:hover { background: #f9fafb; }
+  @media (max-width: 700px) {
+    /* Phone Stats — hide the inline note text, ✉️ icon is enough. */
+    .stats-day .watch-log-entry .note-text-pc { display: none; }
+  }
   /* Two-column Activity log (PC). On phone, #watch-log-cols is hidden and
      #watch-log-list is shown instead (handled in JS via .hidden). */
   .watch-log-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -2376,6 +2401,27 @@
   </div>
 </div>
 
+<!-- Activity-log note editor modal — 150-char textarea -->
+<div class="modal hidden" id="note-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="note-modal-backdrop"></div>
+  <div class="modal-content" style="width: 420px;">
+    <h3 id="note-modal-title" style="margin: 0 0 8px;">Note</h3>
+    <p id="note-modal-sub" class="help" style="margin: 0 0 8px;"></p>
+    <textarea id="note-modal-text" rows="5" maxlength="150"
+      style="width: 100%; box-sizing: border-box; padding: 8px 10px;
+             border: 1px solid var(--line); border-radius: 6px; font: inherit;
+             resize: vertical; min-height: 80px;"
+      placeholder="Note, thought, or mini-diary (max 150 chars)"></textarea>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 6px 0 12px;">
+      <span class="help" id="note-modal-counter" style="font-size:.75rem;">0 / 150</span>
+    </div>
+    <div class="actions">
+      <button class="btn" id="note-modal-cancel">Cancel</button>
+      <button class="btn primary" id="note-modal-ok">OK</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ===========================================================
    STORAGE
@@ -2500,7 +2546,7 @@ const defaultState = () => ({
   last3amResetDate: '',         // YYYY-MM-DD — used to clear matrix + time-goals at 3 AM
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
   motivationalCurrent: null,  // { text, selectedAt }
-  matrixExpanded: false,      // mobile: enlarge matrix cells & enable horizontal scroll
+  matrixExpanded: true,       // mobile: matrix starts in the larger size — tap ⤡ to compact
   // Cloud sync (Supabase) — all optional. Empty = local-only.
   sbUrl: '',
   sbKey: '',
@@ -2572,7 +2618,13 @@ function migrateState() {
   if (state.startTime == null) state.startTime = '';
   if (state.deadlineDate == null) state.deadlineDate = '';
   if (state.bedtimeDate == null) state.bedtimeDate = '';
-  if (state.matrixExpanded === undefined) state.matrixExpanded = false;
+  if (state.matrixExpanded === undefined) state.matrixExpanded = true;
+  // One-shot migration: flip everyone to expanded-by-default once. After this
+  // runs the user can toggle freely; we never overwrite their choice again.
+  if (!state._matrixDefaultV2) {
+    state.matrixExpanded = true;
+    state._matrixDefaultV2 = true;
+  }
   if (state.sbUrl == null) state.sbUrl = '';
   if (state.sbKey == null) state.sbKey = '';
   if (state.sbUserId == null) state.sbUserId = 'me';
@@ -3865,6 +3917,79 @@ function customPrompt(title, message, defaultValue) {
    (cloud sync, polling) can call _openConfirmCloser('remote') to dismiss the
    dialog when the underlying state was answered on a different device. */
 let _openConfirmCloser = null;
+
+/* Open the activity-log note editor modal. Returns Promise<string|null>:
+   - string  → user typed and clicked OK (saves; empty string clears note)
+   - null    → user clicked Cancel (discards changes) */
+function openNoteEditor(initialText, opts) {
+  opts = opts || {};
+  return new Promise((resolve) => {
+    const modal     = document.getElementById('note-modal');
+    const titleEl   = document.getElementById('note-modal-title');
+    const subEl     = document.getElementById('note-modal-sub');
+    const textEl    = document.getElementById('note-modal-text');
+    const counterEl = document.getElementById('note-modal-counter');
+    const okBtn     = document.getElementById('note-modal-ok');
+    const cancelBtn = document.getElementById('note-modal-cancel');
+    const backdrop  = document.getElementById('note-modal-backdrop');
+    if (!modal || !textEl || !okBtn || !cancelBtn) {
+      resolve(window.prompt(opts.title || 'Note', initialText || ''));
+      return;
+    }
+    titleEl.textContent = opts.title || 'Note';
+    subEl.textContent   = opts.subtitle || '';
+    textEl.value        = initialText || '';
+    function updateCounter() {
+      counterEl.textContent = `${textEl.value.length} / 150`;
+    }
+    updateCounter();
+    function cleanup() {
+      modal.classList.add('hidden');
+      modal.setAttribute('aria-hidden', 'true');
+      okBtn.onclick = null;
+      cancelBtn.onclick = null;
+      backdrop.onclick = null;
+      textEl.oninput = null;
+      document.removeEventListener('keydown', onKey);
+    }
+    function done(value) { cleanup(); resolve(value); }
+    function onKey(e) {
+      // Cmd/Ctrl+Enter saves, Escape cancels.
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(textEl.value); }
+    }
+    okBtn.onclick     = () => done(textEl.value);
+    cancelBtn.onclick = () => done(null);
+    backdrop.onclick  = () => done(null);
+    textEl.oninput    = updateCounter;
+    document.addEventListener('keydown', onKey);
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => { try { textEl.focus(); textEl.setSelectionRange(textEl.value.length, textEl.value.length); } catch(_){} }, 0);
+  });
+}
+
+/* Open the editor for the watch-log entry at idx. Saves note → state.watchLog
+   + cloud sync. Cancel discards. */
+async function editEntryNote(idx) {
+  const entry = state.watchLog && state.watchLog[idx];
+  if (!entry) return;
+  const v = await openNoteEditor(entry.note || '', {
+    title: 'Note',
+    subtitle: entry.name ? entry.name : ''
+  });
+  if (v === null) return;            // Cancel — discard
+  entry.note = (v || '').slice(0, 150);
+  if (!entry.note) delete entry.note;  // empty → clear
+  saveState();
+  markSettingsChanged(); debouncedPushSettings();
+  if (typeof renderWatchLog === 'function') renderWatchLog();
+  if (typeof renderStats    === 'function' &&
+      document.getElementById('stats-page') &&
+      document.getElementById('stats-page').style.display !== 'none') {
+    renderStats();
+  }
+}
 
 function customConfirm(title, message, opts) {
   opts = opts || {};
@@ -5764,9 +5889,17 @@ function renderWatchLog() {
     const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
     const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
     const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
+    const hasNote = !!(entry.note && String(entry.note).trim());
     row.innerHTML = `
       ${badge}
-      <span class="name">${escapeHTML(entry.name||'(event)')}<br>${timeLine}</span>
+      <button class="note-btn note-pen" data-act="edit-note" data-idx="${realIdx}" title="Add / edit note">✎</button>
+      <span class="name">
+        <span class="name-inline">
+          <span class="name-text">${escapeHTML(entry.name||'(event)')}</span>
+          ${hasNote ? `<button class="note-btn note-mail" data-act="edit-note" data-idx="${realIdx}" title="Edit note">✉️</button>` : ''}
+        </span>
+        <br>${timeLine}
+      </span>
       <span class="pen-stack">
         ${moneyTxt ? `<span class="pen ${moneyCls}" data-act="edit-money" data-idx="${realIdx}" title="Click to edit money">${moneyTxt}</span>` : ''}
         ${manaTxt  ? `<span class="pen pen-mana ${manaCls}" title="Mana change">${manaTxt}</span>` : ''}
@@ -5784,6 +5917,9 @@ function renderWatchLog() {
       if (delEl) delEl.onclick = () => deleteWatchLogEntry(realIdx);
       const emEl = r.querySelector('[data-act="edit-money"]');
       if (emEl) emEl.onclick = () => editWatchLogMoney(realIdx);
+      r.querySelectorAll('[data-act="edit-note"]').forEach(el => {
+        el.onclick = (ev) => { ev.stopPropagation(); editEntryNote(realIdx); };
+      });
     }
     attachHandlers(row);
     if (isWide) {
@@ -6208,14 +6344,28 @@ function renderStats() {
       const timeLine = isPoint
         ? `<span class="time-range">${fmtTime(entry.startedAt)}</span>`
         : `<span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
+      const realIdx = state.watchLog.indexOf(entry);
+      const hasNote = !!(entry.note && String(entry.note).trim());
+      const noteTxt = hasNote ? entry.note : '';
       row.innerHTML = `
         ${badge}
-        <span class="name">${escapeHTML(entry.name||'(event)')}<br>${timeLine}</span>
+        <button class="note-btn note-pen" data-act="edit-note" data-idx="${realIdx}" title="Add / edit note">✎</button>
+        <span class="name">
+          <span class="name-inline">
+            <span class="name-text">${escapeHTML(entry.name||'(event)')}</span>
+            ${hasNote ? `<button class="note-btn note-mail" data-act="edit-note" data-idx="${realIdx}" title="Edit note">✉️</button>` : ''}
+          </span>
+          <br>${timeLine}
+          ${hasNote ? `<span class="note-text-pc" data-act="edit-note" data-idx="${realIdx}" title="Click to edit">${escapeHTML(noteTxt)}</span>` : ''}
+        </span>
         <span class="pen-stack">
           ${moneyTxt ? `<span class="pen ${moneyCls}">${moneyTxt}</span>` : ''}
           ${manaTxt  ? `<span class="pen pen-mana ${manaCls}">${manaTxt}</span>` : ''}
         </span>
         <span></span><span></span>`;
+      row.querySelectorAll('[data-act="edit-note"]').forEach(el => {
+        el.onclick = (ev) => { ev.stopPropagation(); editEntryNote(realIdx); };
+      });
       logDiv.appendChild(row);
     });
     const tot = document.createElement('div');
