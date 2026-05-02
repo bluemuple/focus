@@ -1469,6 +1469,17 @@
   .watch-log-entry .watch-action-btn-spacer {
     display: inline-block; width: 24px;  /* matches the edit button's width */
   }
+  /* Two-column Activity log (PC). On phone, #watch-log-cols is hidden and
+     #watch-log-list is shown instead (handled in JS via .hidden). */
+  .watch-log-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .watch-log-cols.hidden { display: none; }
+  .watch-log-col-head {
+    margin: 0 0 6px; font-size: .8rem;
+    text-transform: uppercase; letter-spacing: .05em;
+    color: #6b7280; font-weight: 700;
+  }
+  .watch-log-col-head.money-head-tag { color: #dc2626; }
+  .watch-log-col-head.mana-head-tag  { color: #1d4ed8; }
   .watch-log-total {
     font-size: .85rem; color: #6b7280; text-align: right; margin-top: 8px;
     font-variant-numeric: tabular-nums;
@@ -1607,18 +1618,26 @@
       grid-template-columns: 1fr 1fr;
     }
     .matrix-wrap.expanded .cell { min-width: 0; max-width: none; }
-    /* On phone, the compact rules above already apply — just tighten further. */
+    /* On phone, the compact rules above already apply — just tighten further.
+       Pull the row's edges in so the checkbox sits flush left and the drag
+       handle sits flush right; everything has minimal gap. */
     .matrix-wrap:not(.expanded) .task-row {
-      padding: 4px 6px;
+      padding: 3px 2px;
+    }
+    .matrix-wrap:not(.expanded) .task-row input[type="checkbox"] {
+      transform: scale(.95); margin: 0;
     }
     .matrix-wrap:not(.expanded) .task-row .task-text {
-      font-size: .82rem;
+      font-size: .82rem; padding: 0 2px;
     }
     .matrix-wrap:not(.expanded) .task-row .task-bid {
-      padding: 1px 6px; font-size: .68rem; line-height: 1.3;
+      padding: 0 5px; font-size: .65rem; line-height: 1.3;
     }
     .matrix-wrap:not(.expanded) .task-row .x {
-      font-size: .9rem;
+      font-size: .9rem; padding: 0 1px;
+    }
+    .matrix-wrap:not(.expanded) .task-row .drag-handle {
+      padding: 0 1px; font-size: .9rem;
     }
 
     /* Factor panels — keep slider + number from overflowing the box */
@@ -1999,6 +2018,18 @@
         <div class="panel" id="watch-log-panel" style="margin:0; display:none;">
           <h3>Activity log <span class="watch-log-date" id="watch-log-date"></span></h3>
           <p class="help">Every timer (task pomodoros and Mana Moments trackers) is recorded here when it stops.</p>
+          <!-- On PC the log splits into two columns (Money | Mana). On phone it
+               stays a single combined list — only #watch-log-list is used. -->
+          <div id="watch-log-cols" class="watch-log-cols hidden">
+            <div class="watch-log-col">
+              <h4 class="watch-log-col-head money-head-tag">Money</h4>
+              <div id="watch-log-money"></div>
+            </div>
+            <div class="watch-log-col">
+              <h4 class="watch-log-col-head mana-head-tag">Mana</h4>
+              <div id="watch-log-mana"></div>
+            </div>
+          </div>
           <div id="watch-log-list"></div>
           <div class="watch-log-total" id="watch-log-total"></div>
         </div>
@@ -2345,11 +2376,11 @@ const defaultState = () => ({
   },
   mana: {
     multiplier: [
-      { lbl:'Drink water', score: 3 },
       { lbl:'25 mins focus', score: 7 },
       { lbl:'5 mins good break', score: 4 }
     ],
     muncher: [
+      { lbl:'Drink water', score: 3 },
       { lbl:'Youtube/Netflix', kind: 'timer' },
       { lbl:'Unrelated news',  kind: 'timer' }
     ]
@@ -2412,6 +2443,14 @@ function migrateState() {
     });
   }
   if (state.mana && Array.isArray(state.mana.multiplier)) {
+    // Move "Drink water" from Money Moments → Mana Moments (default change).
+    const dwIdx = state.mana.multiplier.findIndex(m => m && typeof m.lbl === 'string' && m.lbl.toLowerCase() === 'drink water');
+    if (dwIdx >= 0) {
+      const dw = state.mana.multiplier.splice(dwIdx, 1)[0];
+      if (!state.mana.muncher.some(m => m.lbl && m.lbl.toLowerCase() === 'drink water')) {
+        state.mana.muncher.unshift(dw);
+      }
+    }
     state.mana.multiplier.forEach(m => {
       if (m.kind === 'timer' && typeof m.pointsPer5Min !== 'number') m.pointsPer5Min = 3;
     });
@@ -3314,7 +3353,7 @@ function renderTasks() {
         } else if (e.key === 'Backspace' && !txt.value && !e.isComposing) {
           // Delete empty task and move cursor to end of previous task in the same quadrant
           e.preventDefault();
-          state.tasks[q].splice(i, 1);
+          deleteTaskAt(q, i);
           saveState(); markSettingsChanged(); pushSettingsToCloud();
           renderTasks();
           const wrap2 = document.querySelector(`#setup-page .tasks[data-q="${q}"]`);
@@ -3330,7 +3369,7 @@ function renderTasks() {
           }
         }
       };
-      del.onclick = () => { state.tasks[q].splice(i,1); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
+      del.onclick = () => { deleteTaskAt(q, i); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
       attachDragHandlers(row, handle, q, i);
       wrap.appendChild(row);
     });
@@ -3587,6 +3626,24 @@ function firstTextLogIfNeeded(q, i) {
   const reward = +(state.moneyChangeFactors && state.moneyChangeFactors.addTask) || 0;
   if (reward) applyMoney(reward, `Added: ${task.text}`, 'add-task');
   logEvent({ type: 'add-task', name: `Added: ${task.text}`, money: reward, q });
+}
+/* Delete a task — also reverses the +$addTask reward (if it had been awarded
+   on first-text) and logs a 'delete-task' Activity-log entry. */
+function deleteTaskAt(q, i) {
+  const task = state.tasks[q] && state.tasks[q][i];
+  if (!task) return;
+  // Reverse the +$5 add-task reward if it was awarded.
+  if (task.addLogged) {
+    const reward = +(state.moneyChangeFactors && state.moneyChangeFactors.addTask) || 0;
+    if (reward) applyMoney(-reward, `Deleted: ${task.text || '(task)'}`, 'delete-task');
+    logEvent({
+      type: 'delete-task',
+      name: `Deleted: ${task.text || '(task)'}`,
+      money: -reward,
+      q
+    });
+  }
+  state.tasks[q].splice(i, 1);
 }
 document.querySelectorAll('.add-task').forEach(btn => {
   btn.onclick = () => {
@@ -5183,6 +5240,9 @@ function getCurrentDayKey() { return fmtDateLocal(new Date()); }
 function renderWatchLog() {
   const wrap = document.getElementById('watch-log-panel');
   const list = document.getElementById('watch-log-list');
+  const cols = document.getElementById('watch-log-cols');
+  const moneyCol = document.getElementById('watch-log-money');
+  const manaCol  = document.getElementById('watch-log-mana');
   const total = document.getElementById('watch-log-total');
   const dateEl = document.getElementById('watch-log-date');
   if (!wrap) return;
@@ -5192,7 +5252,13 @@ function renderWatchLog() {
   if (dateEl) dateEl.textContent = todayKey;
   if (!todayEntries.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
+  // Decide layout: PC (≥701px) shows two columns; phone shows the flat list.
+  const isWide = window.matchMedia('(min-width: 701px)').matches;
+  if (cols) cols.classList.toggle('hidden', !isWide);
+  if (list) list.style.display = isWide ? 'none' : '';
   list.innerHTML = '';
+  if (moneyCol) moneyCol.innerHTML = '';
+  if (manaCol)  manaCol.innerHTML = '';
   let totalMs = 0, totalMoney = 0, totalMana = 0;
   todayEntries.slice().reverse().forEach((entry) => {
     totalMs    += entry.durationMs || 0;
@@ -5211,6 +5277,7 @@ function renderWatchLog() {
     else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
     else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
     else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
+    else if (entry.type === 'delete-task')   badge = `<span class="badge ${entry.q||'q4'}">×task</span>`;
     else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
     else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
     // Real index in state.watchLog (since we filtered+reversed)
@@ -5235,14 +5302,42 @@ function renderWatchLog() {
         ? `<span class="watch-action-btn-spacer"></span>`
         : `<button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>`}
       <button class="watch-action-btn danger" data-act="delete" data-idx="${realIdx}" title="Delete entry">×</button>`;
-    if (!isPoint) {
-      row.querySelector('[data-act="edit"]').onclick = () => openWatchLogEditModal(state.watchLog[realIdx]);
+    function attachHandlers(r) {
+      if (!isPoint) {
+        const editEl = r.querySelector('[data-act="edit"]');
+        if (editEl) editEl.onclick = () => openWatchLogEditModal(state.watchLog[realIdx]);
+      }
+      const delEl = r.querySelector('[data-act="delete"]');
+      if (delEl) delEl.onclick = () => deleteWatchLogEntry(realIdx);
+      const emEl = r.querySelector('[data-act="edit-money"]');
+      if (emEl) emEl.onclick = () => editWatchLogMoney(realIdx);
     }
-    row.querySelector('[data-act="delete"]').onclick     = () => deleteWatchLogEntry(realIdx);
-    const editMoneyEl = row.querySelector('[data-act="edit-money"]');
-    if (editMoneyEl) editMoneyEl.onclick = () => editWatchLogMoney(realIdx);
-    list.appendChild(row);
+    attachHandlers(row);
+    if (isWide) {
+      // PC layout — distribute across Money / Mana columns based on what
+      // this entry actually carried. If neither, default to the Money column.
+      const hasMoney = m !== 0;
+      const hasMana  = mana !== 0;
+      if (hasMoney && hasMana) {
+        // Need a second instance for the other column. Clone + re-attach handlers.
+        const row2 = row.cloneNode(true);
+        attachHandlers(row2);
+        if (moneyCol) moneyCol.appendChild(row);
+        if (manaCol)  manaCol.appendChild(row2);
+      } else if (hasMana) {
+        if (manaCol) manaCol.appendChild(row);
+      } else {
+        if (moneyCol) moneyCol.appendChild(row);
+      }
+    } else {
+      list.appendChild(row);
+    }
   });
+  // If a column ended up empty on PC, show a help line.
+  if (isWide) {
+    if (moneyCol && !moneyCol.children.length) moneyCol.innerHTML = '<div class="help" style="padding:6px 0;">No money events.</div>';
+    if (manaCol  && !manaCol.children.length)  manaCol.innerHTML  = '<div class="help" style="padding:6px 0;">No mana events.</div>';
+  }
   const moneyStr = totalMoney === 0 ? '$0.00'
                  : (totalMoney > 0 ? '+$' : '-$') + Math.abs(totalMoney).toFixed(2);
   const manaStr  = totalMana === 0 ? '' : ` · Mana ${totalMana > 0 ? '+' : ''}${totalMana}`;
@@ -5289,20 +5384,23 @@ function renderManaList(kind) {
       const rate = (typeof m.pointsPer5Min === 'number')
         ? m.pointsPer5Min
         : (kind === 'multiplier' ? 3 : -3);
-      const targetLabel = (kind === 'multiplier') ? 'Internal' : 'External';
+      const targetLabel = (kind === 'multiplier') ? 'Money' : 'Mana';
       row.classList.toggle('timer-running', running);
       row.title = running
         ? `Tap to stop — recorded in activity log; ${targetLabel} adjustment applied`
         : `Tap to start tracker (${rate>0?'+':''}${rate} per 5 min on ${targetLabel})`;
       const rateBadge = `${rate>0?'+':''}${rate}/5m`;
-      // Color text/time/dot based on the rate's sign:
-      //   positive → blue,  negative → red,  zero → gray
-      const baseColor = (rate > 0) ? '#2563eb'
-                      : (rate < 0) ? '#dc2626'
-                      : '#6b7280';
+      // Color rule per spec:
+      //   positive rate (+N) → red    (gain — money/mana up)
+      //   negative rate (-N) → blue   (loss)
+      //   zero               → gray
+      // Factor name (.lbl) stays black for readability.
+      const numColor = (rate > 0) ? '#dc2626'
+                     : (rate < 0) ? '#1d4ed8'
+                     : '#6b7280';
       row.innerHTML = `
-        <span class="lbl" style="color:${baseColor}; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
-        <span class="scr" style="color:${baseColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:600; color:#6b7280;">${rateBadge}</small></span>
+        <span class="lbl" style="color:#111827; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
+        <span class="scr" style="color:${numColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:700;">${rateBadge}</small></span>
         <button title="Remove">×</button>`;
       row.onclick = (e) => {
         if (e.target.tagName === 'BUTTON') return;
@@ -5337,7 +5435,16 @@ function renderManaList(kind) {
     row.title = kind === 'multiplier'
       ? 'Tap to add money'
       : 'Tap to apply score to Mana';
-    row.innerHTML = `<span class="lbl">${escapeHTML(m.lbl)}</span><span class="scr">${m.score>0?'+':''}${m.score}</span><button>×</button>`;
+    // Number color: positive → red, negative → blue, zero → gray.
+    // Factor name stays black for readability.
+    const sNum   = +m.score || 0;
+    const sColor = sNum > 0 ? '#dc2626' : sNum < 0 ? '#1d4ed8' : '#6b7280';
+    const sSign  = sNum > 0 ? '+' : sNum < 0 ? '-' : '';
+    const sUnit  = (kind === 'multiplier') ? '$' : '';
+    const sStr   = `${sSign}${sUnit}${Math.abs(sNum)}`;
+    row.innerHTML = `<span class="lbl" style="color:#111827;">${escapeHTML(m.lbl)}</span>` +
+                    `<span class="scr" style="color:${sColor};">${sStr}</span>` +
+                    `<button>×</button>`;
     row.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
       const labelPrefix = kind === 'multiplier' ? 'Money Moments' : 'Mana Moments';
@@ -6116,7 +6223,12 @@ function applyMotivationMarquee() {
 let _marqueeResizeT = null;
 window.addEventListener('resize', () => {
   if (_marqueeResizeT) clearTimeout(_marqueeResizeT);
-  _marqueeResizeT = setTimeout(applyMotivationMarquee, 150);
+  _marqueeResizeT = setTimeout(() => {
+    applyMotivationMarquee();
+    // Re-render the activity log so the Money/Mana column split flips when
+    // the viewport crosses the 700px boundary (PC ↔ phone).
+    if (typeof renderWatchLog === 'function') renderWatchLog();
+  }, 150);
 });
 const motInputEl = document.getElementById('motivation-input');
 if (motInputEl) {
