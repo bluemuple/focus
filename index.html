@@ -245,6 +245,14 @@
     border: 1px solid #a7f3d0;
   }
   .btn-try-it:hover { background: #a7f3d0; }
+  /* Gender radio row on the sign-up form (login modal + setup banner) */
+  .gender-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    font-size: .85rem; color: #374151;
+  }
+  .gender-row .gender-label { font-weight: 600; }
+  .gender-row label { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .gender-row input[type="radio"] { transform: scale(1.05); }
 
   /* Setup-page sign-up nudge banner */
   .panel.auth-banner {
@@ -1581,11 +1589,13 @@
       padding: 0 10px;
     }
     /* When user taps the toggle, the matrix gets a min-width so it overflows
-       horizontally inside the scroll container, giving each cell more room. */
+       horizontally inside the scroll container, giving each cell more room.
+       Fonts STAY at the compact size — only the cell box grows, so more task
+       text fits per cell. */
     .matrix-wrap.expanded { min-width: 620px; }
     .matrix-wrap.expanded .cell { padding: 12px; min-height: 220px; }
-    .matrix-wrap.expanded .cell h4 { font-size: .8rem; }
-    .matrix-wrap.expanded .col-headers { font-size: 1rem; }
+    /* (font-size of cell h4 / col-headers / row-labels intentionally left
+       at the compact-mode defaults — see rules below.) */
 
     /* Matrix: row labels squeezed to the very left so the right column gets
        more horizontal room. Cells use minimal padding + tighter inner gap. */
@@ -1725,6 +1735,11 @@
         <form class="auth-banner-form" id="setup-auth-form" autocomplete="on" onsubmit="return false;">
           <input type="email"    id="setup-auth-email"    placeholder="Email"    autocomplete="email">
           <input type="password" id="setup-auth-password" placeholder="Password" autocomplete="current-password">
+          <div class="gender-row">
+            <span class="gender-label">I am</span>
+            <label><input type="radio" name="setup-gender" value="man" checked> Man</label>
+            <label><input type="radio" name="setup-gender" value="woman"> Woman</label>
+          </div>
           <div class="auth-banner-actions">
             <button class="btn primary" id="setup-auth-signin" type="button">Sign in</button>
             <button class="btn"         id="setup-auth-signup" type="button">Sign up</button>
@@ -2108,6 +2123,12 @@
     <div class="auth-form">
       <input type="email" id="login-email" placeholder="Email" autocomplete="email">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
+      <div class="gender-row">
+        <span class="gender-label">I am</span>
+        <label><input type="radio" name="login-gender" value="man" checked> Man</label>
+        <label><input type="radio" name="login-gender" value="woman"> Woman</label>
+        <span class="help" style="font-size:.7rem; color:#9ca3af;">(only used to pick your Mana avatar)</span>
+      </div>
       <div class="row-flex" style="grid-column: 1 / -1; flex-wrap: wrap;">
         <button class="btn primary" id="login-signin">Sign in</button>
         <button class="btn" id="login-signup">Sign up</button>
@@ -2405,6 +2426,8 @@ const defaultState = () => ({
   },
   // Marker for the daily Sleep-button rule. YYYY-MM-DD of the day Sleep was last clicked.
   sleepClickedDate: '',
+  // 'man' | 'woman' — picked at sign-up time, drives the Mana area image set.
+  gender: 'man',
   // Last day we ran the midnight no-Sleep penalty check. Prevents double charging.
   lastNoSleepCheckedDate: '',
   // What money-chart timeframe is currently shown (W = weekly, D = daily, H = hourly).
@@ -2511,6 +2534,7 @@ function migrateState() {
     if (typeof mcf.noTaskPenalty  !== 'number') mcf.noTaskPenalty = 30;
   }
   if (typeof state.sleepClickedDate       !== 'string') state.sleepClickedDate = '';
+  if (state.gender !== 'man' && state.gender !== 'woman') state.gender = 'man';
   if (typeof state.lastNoSleepCheckedDate !== 'string') state.lastNoSleepCheckedDate = '';
   if (!['W','D','H'].includes(state.moneyChartScale))   state.moneyChartScale = 'D';
   // Per-task bid amount (used when finishing a task → +$bid; missing → use default)
@@ -2827,7 +2851,8 @@ async function pushSettingsToCloud() {
         moneyChangeFactors:      state.moneyChangeFactors || {},
         sleepClickedDate:        state.sleepClickedDate || '',
         lastNoSleepCheckedDate:  state.lastNoSleepCheckedDate || '',
-        moneyChartScale:         state.moneyChartScale || 'D'
+        moneyChartScale:         state.moneyChartScale || 'D',
+        gender:                  state.gender === 'woman' ? 'woman' : 'man'
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
@@ -3041,6 +3066,7 @@ function applyRemoteSettings(remote) {
     if (typeof ss.sleepClickedDate       === 'string') state.sleepClickedDate = ss.sleepClickedDate;
     if (typeof ss.lastNoSleepCheckedDate === 'string') state.lastNoSleepCheckedDate = ss.lastNoSleepCheckedDate;
     if (['W','D','H'].includes(ss.moneyChartScale))    state.moneyChartScale = ss.moneyChartScale;
+    if (ss.gender === 'man' || ss.gender === 'woman')  state.gender = ss.gender;
   }
   saveState();
   // Sync activity log entry — what arrived from cloud
@@ -4924,30 +4950,69 @@ function scoreToIndex(score) {
   return 6;
 }
 function renderScores() {
-  // Mana (was External) — same gauge + pixel art, redesigned to match the Money
-  // card layout: big number on top, mood message inline next to it (colored to
-  // match the gauge position), face + gauge below.
+  // Mana — full -100..+100 range maps to 0..100% on the gauge.
+  // The mood message picks its color from the gauge gradient at the marker
+  // position so the text always matches the color "underneath" it.
   const e = state.ext.slider;
   const extScore  = document.getElementById('ext-scoreval');
   const extMarker = document.getElementById('ext-marker');
   if (extScore)  extScore.textContent = (e>0?'+':'') + e;
-  if (extMarker) extMarker.style.left = clamp(e, 0, 100) + '%';
-  const eIdx = scoreToIndex(e);
+  // Map -100 → 0%, +100 → 100% (linear).
+  const markerPct = clamp((e + 100) / 2, 0, 100);
+  if (extMarker) extMarker.style.left = markerPct + '%';
+  // 20-level Mana figure, gendered. man{1..20}.png / woman{1..20}.png.
+  const figIdx = manaImageIndex(e);
+  const figPrefix = (state.gender === 'woman') ? 'woman' : 'man';
   const extFace = document.getElementById('ext-face');
   if (extFace) extFace.innerHTML =
-    `<img src="external${eIdx}.png" alt="mana level ${eIdx}"
+    `<img src="images/focus/${figPrefix}${figIdx}.png" alt="${figPrefix} mana level ${figIdx}"
        style="width:100%;height:100%;object-fit:contain;"
-       onerror="this.outerHTML=window.__renderHouse(${eIdx});">`;
+       onerror="this.outerHTML=window.__renderFace(${Math.round(figIdx/3)});">`;
   // Money card next to it
   renderMoneyCard();
   // I'm doing ticker — render here so a single tick updates everything.
   renderImDoing();
-  // Mood message — colored to match the gauge position at the score's location.
+  // Mood message — colored to match the gauge color at the marker's position.
   const msg = document.getElementById('message-box');
   if (msg) {
     msg.textContent = focusMessage(e);
-    msg.style.color = manaScoreColor(e);
+    msg.style.color = gaugeColorAtPct(markerPct);
   }
+}
+/* 20-level Mana image index from the score (-100..+100):
+     -100..-91 → 1, -90..-81 → 2, ..., -10..-1 → 10,
+       0..+9  → 11, +10..+19 → 12, ..., +90..+100 → 20  */
+function manaImageIndex(score) {
+  const s = clamp(Math.round(score), -100, 100);
+  // bucket 0..19, then +1 for human-readable index
+  let idx = Math.floor((s + 100) / 10) + 1;
+  // The +100 boundary should still land in bucket 20, not 21.
+  if (idx > 20) idx = 20;
+  if (idx < 1)  idx = 1;
+  return idx;
+}
+/* Sample the gauge's red→orange→green→blue gradient at a given percent (0..100).
+   Same stops as the CSS linear-gradient. Used to colour the mood message
+   so it always matches the spot the marker is sitting on. */
+function gaugeColorAtPct(pct) {
+  const stops = [
+    { p: 0,   c: [239, 68, 68]  }, // #ef4444
+    { p: 33,  c: [245, 158, 11] }, // #f59e0b
+    { p: 67,  c: [16, 185, 129] }, // #10b981
+    { p: 100, c: [59, 130, 246] }  // #3b82f6
+  ];
+  const x = Math.max(0, Math.min(100, pct));
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i], b = stops[i + 1];
+    if (x >= a.p && x <= b.p) {
+      const t = (x - a.p) / (b.p - a.p);
+      const r = Math.round(a.c[0] + (b.c[0] - a.c[0]) * t);
+      const g = Math.round(a.c[1] + (b.c[1] - a.c[1]) * t);
+      const bl = Math.round(a.c[2] + (b.c[2] - a.c[2]) * t);
+      return `rgb(${r}, ${g}, ${bl})`;
+    }
+  }
+  return '#6b7280';
 }
 /* Pick the color the gauge shows at the given score. Mirrors the gauge's
    linear-gradient(red → orange → green → blue) over the 0–100 (clamped)
@@ -6361,6 +6426,11 @@ async function handleLoginModalSignIn() {
     setLoginStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
   }
 }
+function readSelectedGender(radioName, fallback) {
+  const els = document.querySelectorAll(`input[type="radio"][name="${radioName}"]`);
+  for (const el of els) if (el.checked) return el.value === 'woman' ? 'woman' : 'man';
+  return fallback || 'man';
+}
 async function handleLoginModalSignUp() {
   const email = (loginEmailInput && loginEmailInput.value || '').trim();
   const password = loginPasswordInput && loginPasswordInput.value || '';
@@ -6368,12 +6438,18 @@ async function handleLoginModalSignUp() {
   if (password.length < 6) { setLoginStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setLoginStatus('Creating account...', '#6b7280');
   try {
+    // Capture the gender choice BEFORE auth sign-up so we save it to local state.
+    state.gender = readSelectedGender('login-gender', state.gender);
+    saveState();
     const user = await authSignUp(email, password);
     if (user && user.id) {
       updateAuthUI(user);
       setLoginStatus('✓ Account created.' + (user.confirmed_at ? '' : ' Check email if confirmation is on.'), '#059669');
       if (loginPasswordInput) loginPasswordInput.value = '';
+      // Push local state (including gender) before pulling so the choice survives.
+      markSettingsChanged(); await pushSettingsToCloud();
       await pullEverythingFromCloud();
+      if (typeof renderScores === 'function') renderScores();
     } else {
       setLoginStatus('Account requested — check your email.', '#059669');
     }
@@ -6430,12 +6506,16 @@ async function handleSetupBannerSignUp() {
   if (password.length < 6)  { setSetupAuthStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setSetupAuthStatus('Creating account...', '#6b7280');
   try {
+    state.gender = readSelectedGender('setup-gender', state.gender);
+    saveState();
     const user = await authSignUp(email, password);
     if (user && user.id) {
       updateAuthUI(user);
       setSetupAuthStatus('✓ Account created — your data is now syncing.', '#059669');
       if (setupAuthPasswordInput) setupAuthPasswordInput.value = '';
+      markSettingsChanged(); await pushSettingsToCloud();
       await pullEverythingFromCloud();
+      if (typeof renderScores === 'function') renderScores();
     } else {
       setSetupAuthStatus('Account requested — check your email.', '#059669');
     }
