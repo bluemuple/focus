@@ -6439,18 +6439,35 @@ function renderWeekView() {
   if (label) {
     label.textContent = `${monday.toLocaleDateString([], { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' })}`;
   }
-  // Time range: 6 AM to midnight (18 hours)
-  const startHour = 6, endHour = 24, totalH = endHour - startHour;
+  // Full 24h day (12 AM → 12 AM) so segments that cross midnight are
+  // visible on BOTH days — the start day fills toward the bottom and the
+  // next day fills from the very top.
+  const startHour = 0, endHour = 24, totalH = endHour - startHour;
   // Collect segments per day (key by local YYYY-MM-DD)
   const dayKey = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   const segsByDay = {};
+  /* If a segment crosses midnight, split it into per-day pieces so each day's
+     gauge shows the colored band (with the same name + color) for its portion
+     of the original session. */
+  function pushSegmentSplit(seg) {
+    if (!seg || seg.startMs == null || seg.endMs == null) return;
+    if (seg.endMs <= seg.startMs) return;
+    let cur = seg.startMs;
+    let safety = 14;   // way more than any week's worth of midnights
+    while (cur < seg.endMs && safety-- > 0) {
+      const d = new Date(cur);
+      const midnight = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 0, 0, 0).getTime();
+      const sliceEnd = Math.min(midnight, seg.endMs);
+      const slice = Object.assign({}, seg, { startMs: cur, endMs: sliceEnd });
+      const k = dayKey(new Date(cur));
+      (segsByDay[k] || (segsByDay[k] = [])).push(slice);
+      cur = sliceEnd;
+    }
+  }
   // 1) Past-day snapshots saved in stats[].segments
   stats.forEach(s => {
     if (!Array.isArray(s.segments)) return;
-    s.segments.forEach(seg => {
-      const k = dayKey(new Date(seg.startMs));
-      (segsByDay[k] || (segsByDay[k] = [])).push(seg);
-    });
+    s.segments.forEach(seg => pushSegmentSplit(seg));
   });
   // 2) Live activity log entries — every finished pomodoro / muncher / multiplier
   (state.watchLog || []).forEach(entry => {
@@ -6463,23 +6480,18 @@ function renderWeekView() {
     } else if (entry.type === 'muncher' || (entry.penalty || 0) < 0) {
       color = '#bfdbfe'; // light blue for loss
     }
-    const seg = {
+    pushSegmentSplit({
       startMs: entry.startedAt,
       endMs:   entry.endedAt,
       name:    entry.name,
       q:       entry.q || null,
       color:   color
-    };
-    const k = dayKey(new Date(seg.startMs));
-    (segsByDay[k] || (segsByDay[k] = [])).push(seg);
+    });
   });
   // 3) The currently RUNNING timer (live band) — pomodoro or mana tracker
   if (state.activeTimer) {
     const live = activeTimerToSegment(state.activeTimer, Date.now());
-    if (live && live.startMs && live.endMs > live.startMs) {
-      const k = dayKey(new Date(live.startMs));
-      (segsByDay[k] || (segsByDay[k] = [])).push(live);
-    }
+    if (live && live.startMs && live.endMs > live.startMs) pushSegmentSplit(live);
   }
   const todayKey = dayKey(new Date());
 
