@@ -620,6 +620,70 @@
   .mcf-pos { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
   .mcf-neg { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
   .mcf-help { color: #6b7280; font-size: .78rem; }
+
+  /* ===== Sync activity panel (bottom of Stats) ===== */
+  .sync-activity { background: #fafafa; }
+  .sync-head {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; padding: 12px 14px;
+    background: transparent; border: none; cursor: pointer;
+    text-align: left; font: inherit; color: #111827;
+  }
+  .sync-head:hover { background: #f3f4f6; }
+  .sync-title { font-weight: 700; font-size: .95rem; }
+  .sync-summary {
+    flex: 1; min-width: 0;
+    color: #6b7280; font-size: .8rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .sync-chevron {
+    font-size: .85rem; color: #6b7280;
+    transition: transform .15s ease;
+  }
+  .sync-activity[aria-expanded="true"] .sync-chevron,
+  .sync-head[aria-expanded="true"] .sync-chevron { transform: rotate(180deg); }
+  .sync-body {
+    border-top: 1px solid var(--line);
+    padding: 10px 14px;
+    max-height: 320px; overflow-y: auto;
+  }
+  .sync-body.hidden { display: none; }
+  .sync-timeline {
+    display: flex; flex-direction: column; gap: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .sync-row {
+    display: grid; grid-template-columns: 28px 70px 1fr;
+    gap: 8px; padding: 6px 8px; border-radius: 6px;
+    background: #fff; border: 1px solid var(--line);
+    cursor: pointer; transition: background .12s ease;
+    font-size: .8rem; color: #374151;
+    align-items: baseline;
+  }
+  .sync-row:hover { background: #f9fafb; }
+  .sync-row .sync-dir {
+    font-weight: 800; font-size: 1rem;
+  }
+  .sync-row.push .sync-dir { color: #2563eb; }
+  .sync-row.pull .sync-dir { color: #16a34a; }
+  .sync-row.fail .sync-dir { color: #dc2626; }
+  .sync-row .sync-time   { color: #6b7280; font-size: .75rem; }
+  .sync-row .sync-fields { color: #111827; word-break: break-word; }
+  .sync-row.expanded { white-space: normal; }
+  .sync-row.expanded .sync-fields { line-height: 1.5; }
+  .sync-row .sync-detail {
+    grid-column: 1 / -1;
+    margin-top: 6px; padding-top: 6px;
+    border-top: 1px dashed var(--line);
+    color: #6b7280; font-size: .75rem;
+    display: none;
+  }
+  .sync-row.expanded .sync-detail { display: block; }
+  .sync-actions {
+    margin-top: 10px;
+    display: flex; justify-content: flex-end;
+  }
+  .sync-actions .btn { padding: 4px 10px; font-size: .8rem; }
   .add-task {
     margin-top: 6px; background: rgba(255,255,255,.7); border: 1px dashed rgba(0,0,0,.15);
     padding: 6px; border-radius: 6px; color: #374151; width: 100%;
@@ -1919,6 +1983,22 @@
         <div class="week-grid" id="week-grid"></div>
       </div>
     </div>
+
+    <!-- Sync activity — collapsible timeline of every push/pull -->
+    <div class="panel sync-activity" id="sync-activity">
+      <button class="sync-head" id="sync-head" type="button" aria-expanded="false">
+        <span class="sync-title">Sync activity</span>
+        <span class="sync-summary" id="sync-summary">No activity yet</span>
+        <span class="sync-chevron" aria-hidden="true">▾</span>
+      </button>
+      <div class="sync-body hidden" id="sync-body">
+        <div class="sync-timeline" id="sync-timeline"></div>
+        <div class="sync-actions">
+          <button class="btn" id="sync-clear" type="button">Clear log</button>
+        </div>
+      </div>
+    </div>
+
     <div class="actions">
       <button class="btn danger" id="clear-stats">Erase all data</button>
     </div>
@@ -2396,6 +2476,31 @@ function loadStats() {
 function saveStats() { try { localStorage.setItem(STATS_KEY, JSON.stringify(stats)); } catch(e){} }
 
 /* ===========================================================
+   SYNC ACTIVITY LOG
+   --------------------------------------------------------------
+   Local-only (NOT synced to cloud — that would be circular). Records every
+   push/pull so the user can see what's happening on the Statistics page.
+   Each entry: { timestamp, direction: 'push'|'pull', ok, fields[], details }
+=========================================================== */
+const SYNC_LOG_KEY = 'concentration-sync-log-v1';
+function loadSyncLog() {
+  try { return JSON.parse(localStorage.getItem(SYNC_LOG_KEY)) || []; } catch(e) { return []; }
+}
+function saveSyncLog(log) {
+  try { localStorage.setItem(SYNC_LOG_KEY, JSON.stringify(log.slice(-300))); } catch(e){}
+}
+function logSyncEvent(entry) {
+  const log = loadSyncLog();
+  log.push({ timestamp: Date.now(), ...entry });
+  saveSyncLog(log);
+  if (typeof renderSyncActivity === 'function') renderSyncActivity();
+}
+function clearSyncLog() {
+  saveSyncLog([]);
+  if (typeof renderSyncActivity === 'function') renderSyncActivity();
+}
+
+/* ===========================================================
    SUPABASE — cloud sync + auth
    ----------------------------------------------------------
    ↓↓↓ FILL THESE IN once with your own Supabase project values, then push to
@@ -2645,9 +2750,38 @@ async function pushSettingsToCloud() {
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
-    if (error) { console.warn('Settings push error:', error); return false; }
+    if (error) {
+      console.warn('Settings push error:', error);
+      logSyncEvent({ direction: 'push', ok: false, error: String(error.message || error) });
+      return false;
+    }
+    // Log a brief summary of what was pushed (mostly for the user-facing
+    // "Sync activity" timeline on the Statistics page).
+    logSyncEvent({
+      direction: 'push',
+      ok: true,
+      fields: pushedFieldsSummary()
+    });
     return true;
-  } catch (e) { console.warn('Settings push failed:', e); return false; }
+  } catch (e) {
+    console.warn('Settings push failed:', e);
+    logSyncEvent({ direction: 'push', ok: false, error: String(e.message || e) });
+    return false;
+  }
+}
+/* Summary of what's in the most recent push — used by the Sync activity log. */
+function pushedFieldsSummary() {
+  const fields = [];
+  const taskCount = ['q1','q2','q3','q4'].reduce((n, q) => n + ((state.tasks && state.tasks[q]) ? state.tasks[q].length : 0), 0);
+  if (taskCount) fields.push(`tasks (${taskCount})`);
+  if (state.startTime || state.deadline || state.bedtime) fields.push('time goals');
+  if (Array.isArray(state.watchLog) && state.watchLog.length) fields.push(`activity log (${state.watchLog.length})`);
+  if (Array.isArray(state.moneyLog) && state.moneyLog.length) fields.push(`money log (${state.moneyLog.length})`);
+  fields.push(`Mana ${state.ext.slider >= 0 ? '+' : ''}${state.ext.slider}`);
+  fields.push(`$${(+state.money || 0).toFixed(2)}`);
+  if (state.activeTimer) fields.push(`timer:${state.activeTimer.type}`);
+  if (state.motivationalCurrent && state.motivationalCurrent.text) fields.push('motivational');
+  return fields;
 }
 async function fetchSettingsFromCloud() {
   try {
@@ -2720,6 +2854,30 @@ function applyRemoteSettings(remote) {
     if (document.activeElement === el) return;
     if (el.value !== value) el.value = value;
   }
+  // Build a summary of which top-level fields the remote actually carried
+  // (used by the Sync activity log so the user can see what arrived).
+  const fields = [];
+  if (typeof remote.motivational_lines === 'string') fields.push('motivational lines');
+  if (Array.isArray(remote.ext_others)) fields.push(`others ext (${remote.ext_others.length})`);
+  if (Array.isArray(remote.int_others)) fields.push(`others int (${remote.int_others.length})`);
+  if (remote.tasks) {
+    const total = ['q1','q2','q3','q4'].reduce((n,q) => n + (Array.isArray(remote.tasks[q]) ? remote.tasks[q].length : 0), 0);
+    fields.push(`tasks (${total})`);
+  }
+  if (remote.time_goals) fields.push('time goals');
+  if (remote.ext_factors) fields.push('Mana factors');
+  if (remote.mana) fields.push('Mana lists');
+  if (Array.isArray(remote.watch_log)) fields.push(`activity log (${remote.watch_log.length})`);
+  const ss = remote.session_state || {};
+  if ('activeTimer' in ss && ss.activeTimer) fields.push(`timer:${ss.activeTimer.type}`);
+  if (Array.isArray(ss.scoreLog))  fields.push(`scoreLog (${ss.scoreLog.length})`);
+  if (Array.isArray(ss.moneyLog))  fields.push(`money log (${ss.moneyLog.length})`);
+  if (typeof ss.money === 'number') fields.push(`$${ss.money.toFixed(2)}`);
+  if (ss.motivationalCurrent && ss.motivationalCurrent.text) fields.push('quote');
+  // Defer the log entry until the apply has run + state is updated, so the
+  // event reflects "this is what we just absorbed". Done at the bottom of this
+  // function via window-level helper. (See ApplyRemoteSettings_LogPullEvent below.)
+  applyRemoteSettings._pendingLogFields = fields;
   // ---- Motivational ----
   if (typeof remote.motivational_lines === 'string') {
     state.motivationalLines = remote.motivational_lines;
@@ -2804,6 +2962,15 @@ function applyRemoteSettings(remote) {
     if (['W','D','H'].includes(ss.moneyChartScale))    state.moneyChartScale = ss.moneyChartScale;
   }
   saveState();
+  // Sync activity log entry — what arrived from cloud
+  if (Array.isArray(applyRemoteSettings._pendingLogFields)) {
+    logSyncEvent({
+      direction: 'pull',
+      ok: true,
+      fields: applyRemoteSettings._pendingLogFields
+    });
+    applyRemoteSettings._pendingLogFields = null;
+  }
   return true;
 }
 
@@ -6281,6 +6448,79 @@ function renderAll() {
 renderAll();
 refreshMotivation(false);
 showPage(state.currentPage || 'setup');
+
+/* ===== Sync activity panel — render + click handlers ===== */
+function fmtSyncTimestamp(ts) {
+  const d = new Date(ts);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  if (sameDay) return `${hh}:${mm}:${ss}`;
+  // include short date for older entries
+  const mo = String(d.getMonth()+1).padStart(2,'0');
+  const da = String(d.getDate()).padStart(2,'0');
+  return `${mo}-${da} ${hh}:${mm}`;
+}
+function renderSyncActivity() {
+  const summaryEl  = document.getElementById('sync-summary');
+  const timelineEl = document.getElementById('sync-timeline');
+  if (!summaryEl || !timelineEl) return;
+  const log = loadSyncLog();
+  if (!log.length) {
+    summaryEl.textContent = 'No activity yet';
+    timelineEl.innerHTML = '<div class="help" style="padding:8px 0;">Sync events will appear here as they happen.</div>';
+    return;
+  }
+  const last = log[log.length - 1];
+  const lastSummary = (last.fields || []).slice(0, 3).join(', ') + ((last.fields || []).length > 3 ? '…' : '');
+  summaryEl.textContent = `Last ${last.direction} ${fmtSyncTimestamp(last.timestamp)} · ${lastSummary || (last.ok ? 'ok' : last.error || 'failed')}`;
+  // Build timeline (newest first), cap at 100 rows for performance
+  const entries = log.slice().reverse().slice(0, 100);
+  timelineEl.innerHTML = '';
+  entries.forEach((e, i) => {
+    const row = document.createElement('div');
+    const isFail = e.ok === false;
+    row.className = 'sync-row ' + (isFail ? 'fail' : (e.direction === 'pull' ? 'pull' : 'push'));
+    const arrow = isFail ? '!' : (e.direction === 'pull' ? '↓' : '↑');
+    const fieldList = (e.fields || []).join(', ');
+    const detail = isFail
+      ? `Error: ${escapeHTML(e.error || 'unknown')}`
+      : (fieldList ? `Fields: ${escapeHTML(fieldList)}` : '(no field summary)');
+    row.innerHTML = `
+      <span class="sync-dir">${arrow}</span>
+      <span class="sync-time">${fmtSyncTimestamp(e.timestamp)}</span>
+      <span class="sync-fields">${escapeHTML(fieldList || (isFail ? (e.error || 'failed') : 'sync'))}</span>
+      <div class="sync-detail">${detail}</div>`;
+    row.onclick = () => row.classList.toggle('expanded');
+    timelineEl.appendChild(row);
+  });
+}
+const _syncHead   = document.getElementById('sync-head');
+const _syncBody   = document.getElementById('sync-body');
+const _syncClear  = document.getElementById('sync-clear');
+if (_syncHead && _syncBody) {
+  _syncHead.onclick = () => {
+    const expanded = !_syncBody.classList.contains('hidden');
+    if (expanded) {
+      _syncBody.classList.add('hidden');
+      _syncHead.setAttribute('aria-expanded', 'false');
+    } else {
+      _syncBody.classList.remove('hidden');
+      _syncHead.setAttribute('aria-expanded', 'true');
+      renderSyncActivity();
+    }
+  };
+}
+if (_syncClear) {
+  _syncClear.onclick = (ev) => {
+    ev.stopPropagation();
+    if (confirm('Clear the sync activity log?')) clearSyncLog();
+  };
+}
+// Initial render so the collapsed summary line is correct on first load
+renderSyncActivity();
 
 /* Auto-snapshot the day's data to Statistics whenever calendar midnight passes.
    Replaces the manual "Finish studying" button. */
