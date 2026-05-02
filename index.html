@@ -1251,7 +1251,14 @@
   }
   .focus-cell .task-row .task-text {
     flex: 1; min-width: 0; background: transparent; border: none; outline: none;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    overflow: hidden;
+    /* Up to 2 lines on every breakpoint — long names wrap instead of ellipsis. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    line-height: 1.3;
+    word-break: break-word;
   }
   .focus-cell .task-row .task-text.done { text-decoration: line-through; opacity: .55; }
   .focus-cell .task-row .task-text.running { font-weight: 700; }
@@ -1265,14 +1272,23 @@
     flex-shrink: 0;
   }
   .focus-cell .task-row .task-bid:hover { background: #d1fae5; }
-  /* Wrapper around the bid pill — when a pomodoro is running for this task,
-     the timer chip stacks ABOVE the bid pill (vertical stack). */
+  /* Wrapper around the bid pill. On PC the timer + bid stay on one row and
+     get larger when a pomodoro is running. On phone the bid is hidden and
+     the timer fills the right side (see media query below). */
   .focus-cell .task-bid-wrap {
-    display: inline-flex; align-items: flex-end; gap: 4px;
+    display: inline-flex; align-items: center; gap: 6px;
     flex-shrink: 0;
   }
   .focus-cell .task-bid-wrap.has-pomo {
-    flex-direction: column; align-items: flex-end; gap: 2px;
+    /* PC default — timer + bid side-by-side, both bigger. */
+    align-items: center; gap: 8px;
+  }
+  .focus-cell .task-bid-wrap.has-pomo .pomodoro-display {
+    font-size: .9rem; padding: 4px 12px;
+    font-weight: 700;
+  }
+  .focus-cell .task-bid-wrap.has-pomo .task-bid {
+    font-size: .85rem; padding: 4px 12px;
   }
   .focus-cell .task-bid-wrap .pomodoro-display { margin-left: 0; font-size: .72rem; padding: 2px 7px; }
   /* Compact view on phone: shrink the timer to match the smaller bid pill */
@@ -1310,35 +1326,29 @@
     }
     .focus-matrix.compact .focus-tasks-title::after { content: '⤡'; }
 
-    /* Compact view = single horizontal row of 4 cells, swipe-scrollable. */
+    /* Compact view = the full 2×2 matrix, but wider than the viewport so the
+       user can swipe horizontally to see the right-hand column. */
     .focus-matrix.compact {
-      display: flex; flex-wrap: nowrap;
-      grid-template-columns: none; grid-template-rows: none;
+      display: grid;
+      grid-template-columns: 70vw 70vw;       /* 2 cols, each wider than half */
+      grid-auto-rows: minmax(140px, auto);
+      grid-template-rows: none;
+      gap: 8px;
       overflow-x: auto; overflow-y: hidden;
-      scroll-snap-type: x mandatory;
       -webkit-overflow-scrolling: touch;
-      gap: 8px; padding-bottom: 6px;
+      scroll-snap-type: x proximity;
+      padding-bottom: 6px;
     }
     .focus-matrix.compact .focus-cell {
-      flex: 0 0 80%;        /* show ~1 cell + a hint of the next */
-      max-width: 80%;
-      scroll-snap-align: start;
       min-height: 140px;
+      scroll-snap-align: start;
     }
 
-    /* Default stacked view on phone — task names wrap up to 2 lines. */
+    /* Phone (default stacked) — slightly tighter than PC. */
     .focus-cell { min-height: 110px; }
-    .focus-cell .task-row .task-text {
-      white-space: normal;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-      line-height: 1.25;
-    }
+    .focus-cell .task-row .task-text { line-height: 1.25; }
 
-    /* When a pomodoro is running for this task — hide the bid pill and let
-       the timer fill the right side bigger. */
+    /* When a pomodoro is running on phone — hide bid, let timer fill the row. */
     .focus-cell .task-row.is-running .task-bid { display: none; }
     .focus-cell .task-row.is-running .task-bid-wrap .pomodoro-display {
       font-size: .9rem; padding: 4px 12px;
@@ -2012,8 +2022,8 @@
   <div class="brand">Concentration<small>focus companion</small></div>
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
-    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track">⏪</button>
     <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects">🔈</button>
+    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track">⏪</button>
     <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause">▶️</button>
     <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track">⏩</button>
     <button id="tab-focus" class="active" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">▶</span></button>
@@ -3522,24 +3532,28 @@ function applyRemoteSettings(remote) {
 }
 
 /* Mirror the pomodoro phase-confirm pop-up across devices.
-   - If state.activeTimer.pendingPhaseConfirm just became TRUE and we don't
-     have an open dialog locally, open it (so the user can answer here too).
-   - If it just became FALSE and we DO have an open dialog, close it. */
-let _wasPendingPhaseConfirm = false;
+   Uses the LIVE local popup state (_openConfirmCloser) instead of a stale
+   "previous remote value" flag, so this works correctly whether the popup
+   opened locally first (timer ticked here) or remotely first (synced from
+   another device). Two cases:
+   - Remote popup is showing (pendingPhaseConfirm true) but we have nothing
+     open locally → show ours so this device can answer too.
+   - Remote popup was answered (pendingPhaseConfirm false) but we still have
+     a local popup open → close ours since the answer arrived from elsewhere. */
 function syncPhaseConfirmDialogAcrossDevices() {
   const cur = !!(state.activeTimer && state.activeTimer.pendingPhaseConfirm);
-  if (cur && !_wasPendingPhaseConfirm) {
-    // Just opened on another device — open it locally too (only if none open).
+  if (cur) {
+    // Remote says a popup is pending. Open ours if it isn't already open.
     if (!_openConfirmCloser && typeof showPomoPhaseConfirm === 'function') {
       try { showPomoPhaseConfirm(); } catch (_) {}
     }
-  } else if (!cur && _wasPendingPhaseConfirm) {
-    // Answered elsewhere — dismiss our local modal.
+  } else {
+    // Remote says no popup is pending. If we still have one open locally
+    // (because the user answered on another device), force-close it.
     if (_openConfirmCloser) {
       try { _openConfirmCloser('remote'); } catch (_) {}
     }
   }
-  _wasPendingPhaseConfirm = cur;
 }
 
 /* Re-render every page section that depends on settings. Cheap: each render
@@ -3570,7 +3584,14 @@ function renderEverythingFromState() {
 let _lastPollMs = 0;
 async function pollCloudForUpdates() {
   if (!isSbConfigured()) return;
-  if (Date.now() - _lastPollMs < 10000) return;  // throttle
+  // While a confirm dialog (Yes/No popup) is showing, drop the throttle to
+  // ~1s so an answer from another device dismisses this dialog quickly.
+  // Also accelerate when we know a remote dialog is pending so the local
+  // popup opens promptly. Otherwise stick with the slower 10s cadence.
+  const dialogActive = !!_openConfirmCloser
+    || !!(state.activeTimer && state.activeTimer.pendingPhaseConfirm);
+  const throttleMs = dialogActive ? 1000 : 10000;
+  if (Date.now() - _lastPollMs < throttleMs) return;
   _lastPollMs = Date.now();
   try {
     const remote = await fetchSettingsFromCloud();
@@ -3584,10 +3605,11 @@ async function pollCloudForUpdates() {
     renderEverythingFromState();
   } catch (e) { /* silent — best-effort polling */ }
 }
-// Poll roughly every 12s on any page — the topbar motivational quote is always
-// visible, and other near-realtime fields (active timer, watch log) are cheap
-// to keep current. Throttling inside pollCloudForUpdates prevents over-fetch.
-setInterval(pollCloudForUpdates, 12000);
+// Run the polling check every ~1.5s. When no dialog is open the function's
+// own throttle (10 s) keeps actual fetches infrequent; when a Yes/No dialog
+// is showing, the throttle drops to ~1 s so a remote answer dismisses the
+// dialog within a couple of seconds.
+setInterval(pollCloudForUpdates, 1500);
 // Also pull immediately when the tab regains focus
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
@@ -5422,6 +5444,14 @@ function tickPomodoro() {
   at.paused = true;
   at.pausedAt = Date.now();
   saveState();
+  // IMMEDIATE cloud push so other devices know a popup is pending, and the
+  // dismissal-from-elsewhere flow has a real flag to flip back to false.
+  markSettingsChanged();
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
+  if (typeof pushSettingsToCloud === 'function') pushSettingsToCloud();
   renderImDoing();
   showPomoPhaseConfirm();
 }
@@ -5485,10 +5515,19 @@ async function showPomoPhaseConfirm() {
     at2.phaseStartedAt = Date.now();
     at2.phaseDurationMs = nextDurMs;
     saveState();
-    markSettingsChanged(); debouncedPushSettings();
+    markSettingsChanged();
+    // IMMEDIATE push (not debounced) — flush any pending debounced push so
+    // pendingPhaseConfirm=false reaches the cloud right away. Other devices
+    // can then see the dialog should be dismissed on their next poll.
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
+    }
+    pushSettingsToCloud();
     renderFocusMatrix(); renderImDoing(); drawGauge();
   } else {
-    // User declined → stop & log. (stopActiveTimer also writes to activity log.)
+    // User declined → stop & log. (stopActiveTimer also writes to activity log
+    // and pushes to cloud immediately, which clears pendingPhaseConfirm too.)
     stopActiveTimer('finish');
     renderFocusMatrix(); renderWatchLog(); drawGauge();
   }
@@ -5861,7 +5900,14 @@ function activeTimerToSegment(at, now) {
   return null;
 }
 function qColor(q) {
-  return ({q1:'#ffe69a', q2:'#b9e6c4', q3:'#b8dcf3', q4:'#f6c2cf'})[q] || '#ddd';
+  // Quadrant band color on the gauge — matches the matrix cell backgrounds
+  // (CSS vars --q1..--q4) so the band paints the same color as the task's
+  // task-bar in the Focus matrix.
+  //   q1: Important+Urgent      → pink   (#f6c2cf)
+  //   q2: Important+Not Urgent  → yellow (#ffe69a)
+  //   q3: Not Important+Urgent  → green  (#b9e6c4)
+  //   q4: Not Important+NotUrg. → blue   (#b8dcf3)
+  return ({q1:'#f6c2cf', q2:'#ffe69a', q3:'#b9e6c4', q4:'#b8dcf3'})[q] || '#ddd';
 }
 
 /* ---- score / face rendering ---- */
@@ -7232,10 +7278,21 @@ function renderWeekView() {
     let color = null;
     if (entry.type === 'pomodoro' && entry.q) {
       // pomodoro uses quadrant color via qColor()
-    } else if (entry.type === 'multiplier' || (entry.penalty || 0) > 0) {
-      color = '#fecdd3'; // pink for gain
-    } else if (entry.type === 'muncher' || (entry.penalty || 0) < 0) {
-      color = '#bfdbfe'; // light blue for loss
+    } else if (entry.type === 'multiplier' || entry.type === 'muncher') {
+      // For ANY tracker (Money Moments OR Mana Moments), color the band by
+      // the actual sign of its effect — NOT by the side it lives on. After
+      // default changes, Money Moments can hold negative-rate trackers like
+      // "Internet browsing" and "Youtube/Netflix" (-3/5min) which should
+      // paint light-blue (decrease), not pink.
+      //   penalty > 0 → increase  → pink
+      //   penalty < 0 → decrease  → light blue
+      //   penalty = 0 → neutral   → gray
+      const p = +entry.penalty || 0;
+      // Fall back to entry.money for older Money Moments entries that may not
+      // have stored a penalty value.
+      const m = +entry.money || 0;
+      const v = p !== 0 ? p : m;
+      color = v > 0 ? '#fecdd3' : v < 0 ? '#bfdbfe' : '#e5e7eb';
     }
     pushSegmentSplit({
       startMs: entry.startedAt,
