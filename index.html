@@ -6675,10 +6675,15 @@ function runDailyChecksAfterSync() {
     try { runDailyChecksAfterSync(); } catch (_) {}
     try { flushPendingPushes(); } catch (_) {}
   }
+  // Default UI state = "not signed in" (signup popup + setup banner visible).
+  // We call this synchronously BEFORE any await so that, even if the auth
+  // probe below fails (Safari ITP, network glitch, supabase script blocked,
+  // etc.), the user still sees the signup options instead of a blank screen.
+  // updateAuthUI(authUser) below will hide them again if the session is real.
+  try { updateAuthUI(null); } catch (_) {}
   // If Supabase isn't configured at all, the app runs purely local — open the
   // gate immediately so saveState has nothing blocking it.
   if (!isSbConfigured()) {
-    updateAuthUI(null);
     openPushGate();
     return;
   }
@@ -6693,8 +6698,8 @@ function runDailyChecksAfterSync() {
         .catch((e) => { console.warn('Initial pull failed:', e); })
         .finally(openPushGate);
     } else {
-      // Not signed in — no cloud sync to wait for.
-      updateAuthUI(null);
+      // Not signed in — no cloud sync to wait for. updateAuthUI(null) already
+      // ran above, so the signup UI is already visible.
       openPushGate();
     }
     // Listen for auth changes (e.g., token refresh, sign-out from another tab)
@@ -6707,6 +6712,9 @@ function runDailyChecksAfterSync() {
     }
   } catch (e) {
     console.warn('Auto-sync skipped:', e);
+    // Belt and suspenders — make sure the signup UI is visible even if the
+    // initial updateAuthUI(null) call somehow didn't run.
+    try { updateAuthUI(null); } catch (_) {}
     openPushGate();
   }
 })();
