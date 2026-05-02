@@ -573,6 +573,20 @@
     display: flex; align-items: center; gap: 8px;
     background: rgba(255,255,255,.55); padding: 6px 8px; border-radius: 6px;
   }
+  /* Default (compact) layout — applies on PC AND phone before the user taps
+     "Tap to enlarge". Tight gap between the task name and the $bid button. */
+  .matrix-wrap:not(.expanded) .task-row {
+    gap: 2px; padding: 5px 6px;
+  }
+  .matrix-wrap:not(.expanded) .task-row .task-bid {
+    margin: 0; flex-shrink: 0;
+  }
+  .matrix-wrap:not(.expanded) .task-row .x,
+  .matrix-wrap:not(.expanded) .task-row .drag-handle {
+    padding: 0 2px;
+  }
+  /* When expanded — give the row a bit of breathing room again. */
+  .matrix-wrap.expanded .task-row { gap: 8px; padding: 7px 10px; }
   .task-row input[type="checkbox"] { transform: scale(1.1); }
   .task-row .task-text { flex: 1; background: transparent; border: none; outline: none; min-width: 0; }
   .task-row .task-text.done { text-decoration: line-through; opacity: .55; }
@@ -597,8 +611,7 @@
     .setup-bottom-row { grid-template-columns: 1fr; gap: 12px; }
   }
 
-  /* Money Change Factors panel */
-  #money-factors-panel { background: linear-gradient(135deg,#f0fdf4 0%, #f8fafc 100%); border-color: #bbf7d0; }
+  /* Money Change Factors panel — background/border same as other panels (no override). */
   .money-factors-list {
     list-style: none; padding: 0; margin: 8px 0 0;
     display: grid; gap: 6px;
@@ -1569,24 +1582,18 @@
     .matrix { gap: 4px; min-height: 320px; }
     .cell { padding: 8px; }
     .cell h4 { font-size: .65rem; margin: 0 0 6px; letter-spacing: .03em; }
-    /* Compact mode (default phone view): tight task rows, smaller bid pill,
-       minimal gap between task name and the $bid button. Tapping the toolbar
-       toggle ⤢ adds .matrix-wrap.expanded which restores roomier layout. */
+    /* On phone, the compact rules above already apply — just tighten further. */
     .matrix-wrap:not(.expanded) .task-row {
-      padding: 4px 6px; gap: 4px;
+      padding: 4px 6px;
     }
     .matrix-wrap:not(.expanded) .task-row .task-text {
       font-size: .82rem;
     }
     .matrix-wrap:not(.expanded) .task-row .task-bid {
       padding: 1px 6px; font-size: .68rem; line-height: 1.3;
-      flex-shrink: 0;
     }
     .matrix-wrap:not(.expanded) .task-row .x {
-      padding: 0 2px; font-size: .9rem;
-    }
-    .matrix-wrap:not(.expanded) .task-row .drag-handle {
-      padding: 0 2px;
+      font-size: .9rem;
     }
 
     /* Factor panels — keep slider + number from overflowing the box */
@@ -4750,12 +4757,23 @@ function deleteWatchLogEntry(idx) {
   if (idx < 0 || idx >= state.watchLog.length) return;
   if (!confirm('Delete this activity log entry?')) return;
   const entry = state.watchLog[idx];
-  // Remove matching segment too
+  // Reverse the money + mana effects this entry caused, so the totals on
+  // the focus page (Money card / Mana gauge) update consistently.
+  const moneyDelta = -(+entry.money || 0);
+  const manaDelta  = -(+entry.mana  || 0);
+  if (moneyDelta) applyMoney(moneyDelta, `Reversed: ${entry.name || '(entry)'}`, 'log-delete', idx);
+  if (manaDelta) {
+    state.ext.adjustment = (+state.ext.adjustment || 0) + manaDelta;
+    if (typeof recomputeSlider === 'function') recomputeSlider('ext');
+  }
+  // Remove matching segment too (gauge band)
   const sIdx = state.timeSegments.findIndex(s => s.startMs === entry.startedAt);
   if (sIdx >= 0) state.timeSegments.splice(sIdx, 1);
   state.watchLog.splice(idx, 1);
   saveState();
   renderWatchLog(); drawGauge();
+  if (typeof renderScores    === 'function') renderScores();
+  if (typeof renderMoneyCard === 'function') renderMoneyCard();
   markSettingsChanged(); pushSettingsToCloud();
 }
 // Wire the modal once
@@ -5542,27 +5560,49 @@ function renderStats() {
   if (!todayWatch.length) {
     logDiv.innerHTML += `<div class="help">No activities recorded.</div>`;
   } else {
-    let totalMs = 0, totalPen = 0;
+    let totalMs = 0, totalMoney = 0, totalMana = 0;
     todayWatch.slice().reverse().forEach(entry => {
-      totalMs += entry.durationMs;
-      totalPen += (entry.penalty || 0);
+      totalMs    += entry.durationMs || 0;
+      totalMoney += +entry.money || 0;
+      totalMana  += +entry.mana  || 0;
       let badge = '';
-      if (entry.type === 'pomodoro') badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
-      else if (entry.type === 'task-up')   badge = `<span class="badge ${entry.q||''}">▲ ${(entry.q||'').toUpperCase()}</span>`;
-      else if (entry.type === 'task-down') badge = `<span class="badge ${entry.q||''}">▼ ${(entry.q||'').toUpperCase()}</span>`;
-      else if (entry.type === 'muncher')   badge = `<span class="badge muncher">muncher</span>`;
+      if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+      else if (entry.type === 'muncher')       badge = `<span class="badge muncher">mana mom.</span>`;
+      else if (entry.type === 'multiplier')    badge = `<span class="badge q3">money mom.</span>`;
+      else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">mana</span>`;
+      else if (entry.type === 'money-moment')  badge = `<span class="badge q3">money</span>`;
+      else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
+      else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
+      else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
+      else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
       const row = document.createElement('div');
       row.className = 'watch-log-entry';
+      const m = +entry.money || 0;
+      const mana = +entry.mana || 0;
+      const moneyTxt = m === 0 ? '' : (m > 0 ? '+' : '-') + '$' + Math.abs(m).toFixed(2);
+      const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
+      const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
+      const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
+      const isPoint = !!entry.point || ((entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt);
+      const timeLine = isPoint
+        ? `<span class="time-range">${fmtTime(entry.startedAt)}</span>`
+        : `<span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
       row.innerHTML = `
         ${badge}
-        <span class="name">${escapeHTML(entry.name||'(timer)')}<br><span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span></span>
-        <span class="pen">${entry.penalty ? entry.penalty : ''}</span>
+        <span class="name">${escapeHTML(entry.name||'(event)')}<br>${timeLine}</span>
+        <span class="pen-stack">
+          ${moneyTxt ? `<span class="pen ${moneyCls}">${moneyTxt}</span>` : ''}
+          ${manaTxt  ? `<span class="pen pen-mana ${manaCls}">${manaTxt}</span>` : ''}
+        </span>
         <span></span><span></span>`;
       logDiv.appendChild(row);
     });
     const tot = document.createElement('div');
     tot.className = 'watch-log-total';
-    tot.textContent = `Total: ${fmtHMS(totalMs)} · External penalty: ${totalPen}`;
+    const moneyStr = totalMoney === 0 ? '$0.00'
+                   : (totalMoney > 0 ? '+$' : '-$') + Math.abs(totalMoney).toFixed(2);
+    const manaStr  = totalMana === 0 ? '' : ` · Mana ${totalMana > 0 ? '+' : ''}${totalMana}`;
+    tot.textContent = `Total: ${fmtHMS(totalMs)} · Money: ${moneyStr}${manaStr}`;
     logDiv.appendChild(tot);
   }
   list.appendChild(logDiv);
