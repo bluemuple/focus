@@ -76,16 +76,31 @@
   }
   /* Add a clear gap between the music/sound button cluster and the page tabs. */
   nav.tabs .tab-page-btn:first-of-type { margin-left: 12px; }
-  /* Topbar icon buttons (sound mode + music) — sit left of the page tabs.
-     Tighter padding/min-width so 🔇⏪▶️⏩ pack closely. */
+  /* Topbar icon buttons (sound mode + music) — circle pill that matches the
+     mobile Focus-tab look: same size, same border, same default fill, same
+     hover/pressed treatment so the whole topbar reads as a unified set. */
   nav.tabs .topbar-icon-btn {
-    background: transparent; border: 1px solid transparent;
-    padding: 2px 4px; border-radius: 999px;
+    width: 32px; height: 32px;
+    padding: 0; min-width: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #f3f4f6;
+    color: #4b5563;
     font-size: 1rem; line-height: 1;
-    cursor: pointer; min-width: 26px;
+    cursor: pointer;
+    transition: background .12s ease, color .12s ease, border-color .12s ease;
   }
-  nav.tabs .topbar-icon-btn:hover { background: #f3f4f6; }
-  nav.tabs .topbar-icon-btn.sound-toggle.mode-soft { background: #fef9c3; }
+  nav.tabs .topbar-icon-btn:hover {
+    background: #e5e7eb; border-color: #d1d5db; color: #111827;
+  }
+  /* Music PLAY button while audio is playing — fills with the same dark
+     accent the active Focus tab uses, so a glance tells you music is on. */
+  nav.tabs .topbar-icon-btn.music-btn.is-playing {
+    background: var(--ink); color: #fff; border-color: var(--ink);
+  }
+  /* Sound-mode color cues — keep the same pill shape but tint the bg. */
+  nav.tabs .topbar-icon-btn.sound-toggle.mode-soft { background: #fef9c3; border-color: #fde047; }
   nav.tabs .topbar-icon-btn.sound-toggle.mode-none { opacity: .6; }
   @media (max-width: 700px) {
     /* Hide ⏪ ⏩ music nav on phone — too crowded; ▶️ + 🔈 stay. */
@@ -2132,9 +2147,9 @@
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
     <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects">🔈</button>
-    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track">⏪</button>
-    <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause">▶️</button>
-    <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track">⏩</button>
+    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track">⏮</button>
+    <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause">▶</button>
+    <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track">⏭</button>
     <button id="tab-focus" class="active tab-page-btn" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">ƒ</span></button>
     <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">Σ</span></button>
   </nav>
@@ -3956,8 +3971,10 @@ function syncMusicPlayBtn() {
   const btn = document.getElementById('music-play');
   if (!btn) return;
   const playing = _musicState.audio && !_musicState.audio.paused;
-  btn.textContent = playing ? '⏸️' : '▶️';
+  // Pause icon = double Roman numeral I (ⅠⅠ); play icon = ▶.
+  btn.textContent = playing ? 'ⅠⅠ' : '▶';
   btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  btn.classList.toggle('is-playing', !!playing);
 }
 function currentTrackTitle() {
   const list = _musicState.list;
@@ -8207,15 +8224,16 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
   const modal     = document.getElementById('custom-prompt-modal');
   if (!modal) return;
   titleEl.textContent = (kind === 'deadline') ? 'Get things done by' : 'Sleep at';
-  msgEl.innerHTML     = 'Pick a time today (HH:MM). Use the quick buttons to add minutes.';
+  msgEl.innerHTML     = 'Pick a time today (HH:MM). Use the quick buttons to add minutes, or tap "Current Time" to start from now.';
   inputEl.type        = 'time';
   inputEl.value       = initial;
   // Inject quick-add buttons + Clear (recreated per open so we can clean up).
+  // Two rows: top row = +1h / +30m / +10m. Bottom row = Clear / Current Time.
   let quickRow = modal.querySelector('.tg-quick-row');
   if (!quickRow) {
     quickRow = document.createElement('div');
     quickRow.className = 'tg-quick-row';
-    quickRow.style.cssText = 'display:flex; gap:6px; margin: 6px 0 12px; flex-wrap: wrap;';
+    quickRow.style.cssText = 'display:flex; flex-direction: column; gap:6px; margin: 6px 0 12px;';
     inputEl.parentNode.insertBefore(quickRow, inputEl.nextSibling);
   }
   function bumpInput(addMin) {
@@ -8223,12 +8241,22 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
     const d = new Date(); d.setHours(h, m + addMin, 0, 0);
     inputEl.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   }
+  function setToNow() {
+    const d = new Date();
+    inputEl.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
   quickRow.innerHTML = `
-    <button class="btn" type="button" data-add="10">+10m</button>
-    <button class="btn" type="button" data-add="30">+30m</button>
-    <button class="btn" type="button" data-add="60">+1h</button>
-    <button class="btn danger" type="button" data-clear="1">Clear</button>`;
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button class="btn" type="button" data-add="60">+1h</button>
+      <button class="btn" type="button" data-add="30">+30m</button>
+      <button class="btn" type="button" data-add="10">+10m</button>
+    </div>
+    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+      <button class="btn danger" type="button" data-clear="1">Clear</button>
+      <button class="btn" type="button" data-now="1">Current Time</button>
+    </div>`;
   quickRow.querySelectorAll('button[data-add]').forEach(b => b.onclick = () => bumpInput(+b.dataset.add));
+  quickRow.querySelector('[data-now]').onclick = () => setToNow();
   let clearedFlag = false;
   quickRow.querySelector('[data-clear]').onclick = () => { clearedFlag = true; finish(null); };
   function finish(value) {
