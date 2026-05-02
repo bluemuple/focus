@@ -1993,7 +1993,9 @@
         <p class="help">Tasks, gauge, statistics — everything syncs automatically.</p>
         <div class="row-flex">
           <button class="btn" id="auth-signout">Sign out</button>
-          <button class="btn" id="auth-resync">Force resync</button>
+          <button class="btn danger" id="reset-all">Reset all</button>
+          <button class="btn" id="auth-resync"      title="Pull latest data from cloud — overwrites this device's state">Cloud → Device</button>
+          <button class="btn" id="auth-push-now"    title="Push everything from this device to cloud — keeps your data safe before clearing browser data">Device → Cloud</button>
           <span id="auth-status2" class="help"></span>
         </div>
       </div>
@@ -2008,10 +2010,6 @@
       </div>
     </div>
 
-    <div class="actions">
-      <button class="btn" id="reset-all">Reset all</button>
-      <button class="btn primary" id="go-focus">Start focus session →</button>
-    </div>
   </section>
 
   <!-- ============================== PAGE 2 — FOCUS ============================== -->
@@ -2441,6 +2439,7 @@
       <span class="help" id="note-modal-counter" style="font-size:.75rem;">0 / 150</span>
     </div>
     <div class="actions">
+      <button class="btn danger" id="note-modal-delete">Delete</button>
       <button class="btn" id="note-modal-cancel">Cancel</button>
       <button class="btn primary" id="note-modal-ok">OK</button>
     </div>
@@ -3401,7 +3400,7 @@ if (imDoingTimeEl) imDoingTimeEl.onclick = () => {
 };
 
 /* ===== Sleep button ===== */
-function handleSleepClick() {
+async function handleSleepClick() {
   // Stop whatever timer is running (records its session in the activity log)
   if (state.activeTimer) stopActiveTimer('finish');
   // Mark today as "Slept" so the midnight no-Sleep penalty skips this day.
@@ -3409,13 +3408,47 @@ function handleSleepClick() {
   // Clear Time Start & Goals — they persist all day until Sleep, then reset.
   if (typeof clearTimeGoals === 'function') clearTimeGoals();
   saveState();
-  markSettingsChanged(); pushSettingsToCloud();
+  markSettingsChanged();
+  // Cancel any pending debounced push so we send ONCE, in full, and AWAIT it.
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
   renderImDoing();
   renderMoneyCard();
   renderWatchLog();
   if (typeof updateCountdowns === 'function') updateCountdowns();
   drawGauge();
-  // Friendly confirmation
+
+  // Status indicator on the Sleep button while we save.
+  const btn = document.getElementById('sleep-btn');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.textContent = 'Saving…'; btn.disabled = true; }
+  let ok = false;
+  try {
+    ok = await pushSettingsToCloud();
+  } catch (e) { ok = false; }
+  // Also push today's stats snapshot so focus_sessions has the day's record
+  // even if midnight hasn't crossed yet.
+  try {
+    if (typeof snapshotDayToStats === 'function') {
+      snapshotDayToStats(getCurrentDayKey());
+    }
+  } catch (_) {}
+
+  if (btn) {
+    btn.textContent = ok ? 'Saved ✓' : 'Save failed';
+    btn.style.background = ok ? '#16a34a' : '#dc2626';
+    btn.style.borderColor = ok ? '#16a34a' : '#dc2626';
+    setTimeout(() => {
+      btn.textContent = orig || 'Sleep';
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      btn.disabled = false;
+    }, 1500);
+  }
+
+  // Friendly confirmation flash on the money card too
   const card = document.getElementById('money-card');
   if (card) {
     card.style.transition = 'box-shadow .35s ease';
@@ -3456,24 +3489,16 @@ function isFirstStartOfNewDay() {
   return false;
 }
 
-document.getElementById('go-focus').onclick = ()=>{
-  // First Start of a session → starting time = now − 30 min.
-  // Already inside an active 24-hour session → keep the existing starting time.
-  if (isFirstStartOfNewDay()) {
-    const newStart = new Date(Date.now() - 30 * 60 * 1000);
-    state.startDate = fmtDateLocal(newStart);
-    state.startTime = fmtTimeLocal(newStart);
-    const sd = document.getElementById('start-date'); if (sd) sd.value = state.startDate;
-    const st = document.getElementById('start-time'); if (st) st.value = state.startTime;
+// "Start focus session →" button was removed from Setup. Users now click the
+// Focus tab directly to navigate. Guard for any leftover element just in case.
+const _goFocusBtn = document.getElementById('go-focus');
+if (_goFocusBtn) _goFocusBtn.onclick = () => showPage('focus');
+
+const _resetAllBtn = document.getElementById('reset-all');
+if (_resetAllBtn) _resetAllBtn.onclick = () => {
+  if (confirm('Reset all setup data on THIS device? This wipes local storage; your cloud data is untouched until the next push.')) {
+    state = defaultState(); saveState(); renderAll();
   }
-  state.sessionStartMs = Date.now();   // also stamp click time for record-keeping
-  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
-  saveState();
-  markSettingsChanged(); pushSettingsToCloud();
-  showPage('focus');
-};
-document.getElementById('reset-all').onclick = () => {
-  if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
 };
 
 /* ===== Vertical gauge mode toggle (Set / 2 / 4) ===== */
@@ -3963,6 +3988,7 @@ function openNoteEditor(initialText, opts) {
     const counterEl = document.getElementById('note-modal-counter');
     const okBtn     = document.getElementById('note-modal-ok');
     const cancelBtn = document.getElementById('note-modal-cancel');
+    const deleteBtn = document.getElementById('note-modal-delete');
     const backdrop  = document.getElementById('note-modal-backdrop');
     if (!modal || !textEl || !okBtn || !cancelBtn) {
       resolve(window.prompt(opts.title || 'Note', initialText || ''));
@@ -3980,19 +4006,24 @@ function openNoteEditor(initialText, opts) {
       modal.setAttribute('aria-hidden', 'true');
       okBtn.onclick = null;
       cancelBtn.onclick = null;
+      if (deleteBtn) deleteBtn.onclick = null;
       backdrop.onclick = null;
       textEl.oninput = null;
       document.removeEventListener('keydown', onKey);
     }
     function done(value) { cleanup(); resolve(value); }
     function onKey(e) {
-      // Cmd/Ctrl+Enter saves, Escape cancels.
       if (e.key === 'Escape') { e.preventDefault(); done(null); }
       else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(textEl.value); }
     }
     okBtn.onclick     = () => done(textEl.value);
     cancelBtn.onclick = () => done(null);
     backdrop.onclick  = () => done(null);
+    if (deleteBtn) {
+      // Hide Delete when there's nothing to delete (creating a brand-new note)
+      deleteBtn.style.display = (initialText && initialText.trim()) ? '' : 'none';
+      deleteBtn.onclick = () => done(''); // empty string = explicit clear
+    }
     textEl.oninput    = updateCounter;
     document.addEventListener('keydown', onKey);
     modal.classList.remove('hidden');
@@ -7011,12 +7042,37 @@ async function handleSignOut() {
 }
 async function handleForceResync() {
   const el = document.getElementById('auth-status2');
-  if (el) { el.textContent = 'Syncing...'; el.style.color = '#6b7280'; }
+  if (el) { el.textContent = 'Pulling from cloud…'; el.style.color = '#6b7280'; }
   try {
     await pullEverythingFromCloud();
-    if (el) { el.textContent = '✓ Synced'; el.style.color = '#059669'; }
+    if (el) { el.textContent = '✓ Cloud → Device done'; el.style.color = '#059669'; }
   } catch (e) {
-    if (el) { el.textContent = '✗ ' + (e.message || 'Sync failed'); el.style.color = '#dc2626'; }
+    if (el) { el.textContent = '✗ ' + (e.message || 'Pull failed'); el.style.color = '#dc2626'; }
+  }
+}
+/* Device → Cloud — the same hardened save the Sleep button performs:
+   awaits pushSettingsToCloud + writes today's stats snapshot. Used when the
+   user wants to make sure local data is safely in the cloud before clearing
+   browser data, switching devices, etc. */
+async function handleDeviceToCloud() {
+  const el = document.getElementById('auth-status2');
+  if (el) { el.textContent = 'Saving to cloud…'; el.style.color = '#6b7280'; }
+  // Cancel any pending debounced push so we send everything in one go.
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer);
+    _settingsPushTimer = null;
+  }
+  let ok = false;
+  try { ok = await pushSettingsToCloud(); } catch (e) { ok = false; }
+  // Today's stats snapshot — don't wait for midnight.
+  try {
+    if (typeof snapshotDayToStats === 'function') {
+      snapshotDayToStats(getCurrentDayKey());
+    }
+  } catch (_) {}
+  if (el) {
+    el.textContent = ok ? '✓ Device → Cloud done' : '✗ Save failed (network?)';
+    el.style.color = ok ? '#059669' : '#dc2626';
   }
 }
 
@@ -7024,6 +7080,8 @@ if (authSigninBtn) authSigninBtn.onclick = handleSignIn;
 if (authSignupBtn) authSignupBtn.onclick = handleSignUp;
 if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
 if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
+const _authPushNowBtn = document.getElementById('auth-push-now');
+if (_authPushNowBtn) _authPushNowBtn.onclick = handleDeviceToCloud;
 // Allow pressing Enter in either field to sign in
 [authEmailInput, authPasswordInput].forEach(el => {
   if (!el) return;
