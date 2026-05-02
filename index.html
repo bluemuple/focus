@@ -3189,7 +3189,31 @@ function applyRemoteSettings(remote) {
     });
     applyRemoteSettings._pendingLogFields = null;
   }
+  // Cross-device pop-up sync — when a phase-confirm dialog was opened on
+  // another device, mirror it here; when it was answered there, close ours.
+  syncPhaseConfirmDialogAcrossDevices();
   return true;
+}
+
+/* Mirror the pomodoro phase-confirm pop-up across devices.
+   - If state.activeTimer.pendingPhaseConfirm just became TRUE and we don't
+     have an open dialog locally, open it (so the user can answer here too).
+   - If it just became FALSE and we DO have an open dialog, close it. */
+let _wasPendingPhaseConfirm = false;
+function syncPhaseConfirmDialogAcrossDevices() {
+  const cur = !!(state.activeTimer && state.activeTimer.pendingPhaseConfirm);
+  if (cur && !_wasPendingPhaseConfirm) {
+    // Just opened on another device — open it locally too (only if none open).
+    if (!_openConfirmCloser && typeof showPomoPhaseConfirm === 'function') {
+      try { showPomoPhaseConfirm(); } catch (_) {}
+    }
+  } else if (!cur && _wasPendingPhaseConfirm) {
+    // Answered elsewhere — dismiss our local modal.
+    if (_openConfirmCloser) {
+      try { _openConfirmCloser('remote'); } catch (_) {}
+    }
+  }
+  _wasPendingPhaseConfirm = cur;
 }
 
 /* Re-render every page section that depends on settings. Cheap: each render
@@ -3834,6 +3858,11 @@ function customPrompt(title, message, defaultValue) {
 
 /* Yes/No confirmation modal — used by the pomodoro phase-end prompt and any
    future yes/no flows. Returns Promise<boolean>. */
+/* The currently-open customConfirm's "close with value" function. Other code
+   (cloud sync, polling) can call _openConfirmCloser('remote') to dismiss the
+   dialog when the underlying state was answered on a different device. */
+let _openConfirmCloser = null;
+
 function customConfirm(title, message, opts) {
   opts = opts || {};
   return new Promise((resolve) => {
@@ -3852,6 +3881,7 @@ function customConfirm(title, message, opts) {
     yesBtn.textContent  = opts.yesLabel || 'Yes';
     noBtn.textContent   = opts.noLabel  || 'No';
 
+    let _closerRef;
     function cleanup() {
       modal.classList.add('hidden');
       modal.setAttribute('aria-hidden', 'true');
@@ -3859,8 +3889,9 @@ function customConfirm(title, message, opts) {
       noBtn.onclick = null;
       backdrop.onclick = null;
       document.removeEventListener('keydown', onKey);
+      if (_openConfirmCloser === _closerRef) _openConfirmCloser = null;
     }
-    function done(value) { cleanup(); resolve(!!value); }
+    function done(value) { cleanup(); resolve(value); }
     function onKey(e) {
       if (e.key === 'Enter')  { e.preventDefault(); done(true); }
       if (e.key === 'Escape') { e.preventDefault(); done(false); }
@@ -3869,6 +3900,9 @@ function customConfirm(title, message, opts) {
     noBtn.onclick  = () => done(false);
     backdrop.onclick = () => done(false);
     document.addEventListener('keydown', onKey);
+    // Expose dismisser so cloud-sync can close it remotely.
+    _closerRef = (val) => done(val);
+    _openConfirmCloser = _closerRef;
 
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
@@ -4824,11 +4858,16 @@ async function showPomoPhaseConfirm() {
   } else {
     playFx('resume');
   }
-  const yes = await customConfirm(
+  const answer = await customConfirm(
     'Pomodoro',
     `${currentLabel} done. Start ${nextLabel}?`,
     { yesLabel: 'Yes', noLabel: 'No' }
   );
+  // 'remote' = the modal was force-closed because the answer arrived from
+  // another device via cloud sync. State has already been updated remotely;
+  // we do nothing locally and let the next polling cycle render the result.
+  if (answer === 'remote') return;
+  const yes = !!answer;
   // Re-fetch — user may have stopped the timer some other way during the prompt
   const at2 = state.activeTimer;
   if (!at2 || at2.type !== 'pomodoro') return;
