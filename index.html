@@ -14,10 +14,10 @@
     --muted: #6b7280;
     --line: #e5e7eb;
     --accent: #2563eb;
-    --q1: #ffe69a;   /* urgent + important */
-    --q2: #b9e6c4;   /* not urgent + important */
-    --q3: #b8dcf3;   /* urgent + not important */
-    --q4: #f6c2cf;   /* not urgent + not important */
+    --q1: #f6c2cf;   /* important + urgent      → pink         */
+    --q2: #ffe69a;   /* important + not urgent  → light yellow */
+    --q3: #b9e6c4;   /* not important + urgent  → light green  */
+    --q4: #b8dcf3;   /* not important + not urgent → light blue */
     --red: #dc2626;
     --shadow: 0 1px 2px rgba(0,0,0,.04), 0 6px 20px rgba(0,0,0,.05);
     --r: 10px;
@@ -613,6 +613,23 @@
     .setup-bottom-row { grid-template-columns: 1fr; gap: 12px; }
   }
 
+  /* Plan your tasks header — title left, sound toggle + music buttons right */
+  .plan-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 4px;
+  }
+  .plan-controls { display: flex; align-items: center; gap: 6px; }
+  .sound-toggle, .music-btn {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #f3f4f6; border: 1px solid var(--line);
+    cursor: pointer; font-size: 1rem; line-height: 1;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0;
+  }
+  .sound-toggle:hover, .music-btn:hover { background: #e5e7eb; }
+  .sound-toggle.mode-soft { background: #fef9c3; border-color: #fde047; }
+  .sound-toggle.mode-none { background: #f3f4f6; opacity: .8; }
+
   /* Money Change Factors panel — background/border same as other panels (no override). */
   .money-factors-list {
     list-style: none; padding: 0; margin: 8px 0 0;
@@ -921,6 +938,22 @@
     pointer-events: none;
     transition: top .9s linear;
   }
+  /* Gauge mode toggle (Set / 2 / 4) under the gauge column */
+  .gauge-mode-toggle {
+    margin: 6px auto 0; display: block;
+    background: #f3f4f6; border: 1px solid var(--line);
+    color: #111827; padding: 3px 12px; border-radius: 999px;
+    font-size: .8rem; font-weight: 700; cursor: pointer;
+    min-width: 48px; text-align: center;
+  }
+  .gauge-mode-toggle:hover { background: #e5e7eb; }
+  .gauge-mode-tip {
+    display: block; text-align: center;
+    margin-top: 4px; font-size: .72rem; color: #6b7280;
+    min-height: 1em;
+    transition: opacity .25s ease;
+  }
+  .gauge-mode-tip.hidden { opacity: 0; }
   .gauge-line-blue                    { background: #2563eb; }
   .gauge-line-blue  .gauge-line-time  { background: #2563eb; }
   .gauge-line-green                   { background: #16a34a; }
@@ -946,7 +979,7 @@
   .score-card .meta h4 { margin: 0 0 6px; }
   .score-bar {
     position: relative; height: 12px; border-radius: 999px;
-    background: linear-gradient(to right, #ef4444, #f59e0b, #10b981, #3b82f6);
+    background: linear-gradient(to right, #3b82f6, #10b981, #f59e0b, #ef4444);
   }
   .score-bar .marker {
     position: absolute; top: -3px; width: 4px; height: 18px;
@@ -1069,7 +1102,7 @@
   .mana-vis .score-bar {
     flex: 1; min-width: 0;
     position: relative; height: 12px; border-radius: 999px;
-    background: linear-gradient(to right, #ef4444, #f59e0b, #10b981, #3b82f6);
+    background: linear-gradient(to right, #3b82f6, #10b981, #f59e0b, #ef4444);
   }
   .mana-vis .score-bar .marker {
     position: absolute; top: -3px; width: 4px; height: 18px;
@@ -1755,7 +1788,15 @@
     </div>
 
     <div class="panel">
-      <h2>Plan your tasks</h2>
+      <div class="plan-header">
+        <h2 style="margin:0;">Plan your tasks</h2>
+        <div class="plan-controls">
+          <button class="sound-toggle" id="sound-toggle" type="button" title="Cycle sound effects (loud / soft / none)">🔈</button>
+          <button class="music-btn" id="music-prev" type="button" title="Previous track" aria-label="Previous">⏪</button>
+          <button class="music-btn" id="music-play" type="button" title="Play / pause" aria-label="Play">▶️</button>
+          <button class="music-btn" id="music-next" type="button" title="Next track" aria-label="Next">⏩</button>
+        </div>
+      </div>
       <p class="help">Add tasks into each quadrant of the Eisenhower Matrix. Tap a task to edit, the checkbox to mark done.</p>
       <div class="matrix-toolbar">
         <button class="matrix-toggle" id="matrix-toggle" aria-label="Toggle matrix size" title="Expand matrix">⤢</button>
@@ -1925,6 +1966,8 @@
           <div class="gauge-line-green" id="gauge-line-bedtime"  style="display:none;"><span class="gauge-line-time" id="gauge-line-bedtime-label"></span></div>
           <div class="gauge-line" id="gauge-line"><span class="gauge-line-time" id="gauge-line-time"></span></div>
         </div>
+        <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range">Set</button>
+        <span class="gauge-mode-tip" id="gauge-mode-tip"></span>
       </div>
 
       <div class="focus-right">
@@ -2431,6 +2474,13 @@ const defaultState = () => ({
   lastNoSleepCheckedDate: '',
   // What money-chart timeframe is currently shown (W = weekly, D = daily, H = hourly).
   moneyChartScale: 'D',
+  // Vertical gauge mode: 'set' (4am→4am, default), '2' (now-2h→+24h), '4' (now-4h→+24h)
+  gaugeMode: 'set',
+  // Sound effects: 'loud' | 'soft' | 'none' (default: 'soft')
+  soundMode: 'soft',
+  // Focus music index (within state.focusMusicList)
+  focusMusicIdx: 0,
+  focusMusicWrappedOnce: false,
   lastSnapshotDate: '',         // YYYY-MM-DD — used to auto-snapshot at midnight
   last3amResetDate: '',         // YYYY-MM-DD — used to clear matrix + time-goals at 3 AM
   motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
@@ -2547,6 +2597,10 @@ function migrateState() {
   }
   if (typeof state.lastNoSleepCheckedDate !== 'string') state.lastNoSleepCheckedDate = '';
   if (!['W','D','H'].includes(state.moneyChartScale))   state.moneyChartScale = 'D';
+  if (!['set','2','4'].includes(state.gaugeMode))       state.gaugeMode = 'set';
+  if (!['loud','soft','none'].includes(state.soundMode)) state.soundMode = 'soft';
+  if (typeof state.focusMusicIdx !== 'number') state.focusMusicIdx = 0;
+  if (typeof state.focusMusicWrappedOnce !== 'boolean') state.focusMusicWrappedOnce = false;
   // Per-task bid amount (used when finishing a task → +$bid; missing → use default)
   // Also pre-mark existing tasks that already have text as "addLogged" so they
   // don't trigger a duplicate "Added: ..." entry the next time the user types.
@@ -2887,7 +2941,9 @@ async function pushSettingsToCloud() {
         sleepClickedDate:        state.sleepClickedDate || '',
         lastNoSleepCheckedDate:  state.lastNoSleepCheckedDate || '',
         moneyChartScale:         state.moneyChartScale || 'D',
-        gender:                  state.gender === 'woman' ? 'woman' : 'man'
+        gender:                  state.gender === 'woman' ? 'woman' : 'man',
+        gaugeMode:               state.gaugeMode || 'set',
+        soundMode:               state.soundMode || 'soft'
       },
       updated_at: new Date(ts).toISOString()
     }, { onConflict: 'user_id' });
@@ -3108,6 +3164,8 @@ function applyRemoteSettings(remote) {
     if (typeof ss.lastNoSleepCheckedDate === 'string') state.lastNoSleepCheckedDate = ss.lastNoSleepCheckedDate;
     if (['W','D','H'].includes(ss.moneyChartScale))    state.moneyChartScale = ss.moneyChartScale;
     if (ss.gender === 'man' || ss.gender === 'woman')  state.gender = ss.gender;
+    if (['set','2','4'].includes(ss.gaugeMode))        state.gaugeMode = ss.gaugeMode;
+    if (['loud','soft','none'].includes(ss.soundMode)) state.soundMode = ss.soundMode;
   }
   saveState();
   // Sync activity log entry — what arrived from cloud
@@ -3294,6 +3352,174 @@ document.getElementById('go-focus').onclick = ()=>{
 document.getElementById('reset-all').onclick = () => {
   if (confirm('Reset all setup data?')) { state = defaultState(); saveState(); renderAll(); }
 };
+
+/* ===== Vertical gauge mode toggle (Set / 2 / 4) ===== */
+function syncGaugeModeBtn() {
+  const btn = document.getElementById('gauge-mode-toggle');
+  if (!btn) return;
+  const m = state.gaugeMode || 'set';
+  btn.textContent = m === 'set' ? 'Set' : m === '2' ? '2' : '4';
+}
+function showGaugeTip(text) {
+  const tip = document.getElementById('gauge-mode-tip');
+  if (!tip) return;
+  tip.textContent = text;
+  tip.classList.remove('hidden');
+  clearTimeout(showGaugeTip._t);
+  showGaugeTip._t = setTimeout(() => tip.classList.add('hidden'), 3000);
+}
+const gaugeBtn = document.getElementById('gauge-mode-toggle');
+if (gaugeBtn) gaugeBtn.onclick = () => {
+  const cur = state.gaugeMode || 'set';
+  state.gaugeMode = cur === 'set' ? '2' : cur === '2' ? '4' : 'set';
+  saveState();
+  markSettingsChanged(); debouncedPushSettings();
+  syncGaugeModeBtn();
+  if (state.gaugeMode === 'set') {
+    showGaugeTip('Time gauge stays put.');
+  } else if (state.gaugeMode === '2') {
+    showGaugeTip('Top: 2h ago. Bottom: 22h ahead.');
+  } else {
+    showGaugeTip('Top: 4h ago. Bottom: 20h ahead.');
+  }
+  if (typeof drawGauge === 'function') drawGauge();
+};
+syncGaugeModeBtn();
+
+/* ===== Sound mode toggle button (cycles loud → soft → none) ===== */
+const _soundToggleBtn = document.getElementById('sound-toggle');
+if (_soundToggleBtn) _soundToggleBtn.onclick = () => {
+  const cur = state.soundMode || 'soft';
+  state.soundMode = cur === 'loud' ? 'soft' : cur === 'soft' ? 'none' : 'loud';
+  saveState();
+  markSettingsChanged(); debouncedPushSettings();
+  syncSoundToggleBtn();
+  const m = state.soundMode;
+  const flash = m === 'loud' ? 'Sound effects for home studying'
+              : m === 'soft' ? 'Sound effects for library studying'
+              : 'No sound effects';
+  showMotivationFlash(flash, 3000);
+  if (m !== 'none') playFx('start');
+};
+syncSoundToggleBtn();
+
+/* ===== Focus music player ⏪ ▶️ ⏩ =====
+   Tracks live in /audio/focus/. Try /audio/focus/playlist.json first;
+   fall back to scanning track1.mp3 .. track20.mp3. */
+const _musicState = {
+  list: [], audio: null, loaded: false
+};
+async function loadFocusPlaylist() {
+  if (_musicState.loaded) return _musicState.list;
+  let list = [];
+  try {
+    const res = await fetch('audio/focus/playlist.json', { cache: 'no-cache' });
+    if (res.ok) {
+      const j = await res.json();
+      if (Array.isArray(j)) list = j.filter(s => typeof s === 'string');
+    }
+  } catch (_) {}
+  if (!list.length) {
+    const probes = [];
+    for (let i = 1; i <= 20; i++) probes.push(`track${i}.mp3`);
+    const checks = await Promise.all(probes.map(name =>
+      fetch(`audio/focus/${name}`, { method: 'HEAD' }).then(r => r.ok).catch(() => false)
+    ));
+    list = probes.filter((_, i) => checks[i]);
+  }
+  list.sort((a, b) => a.localeCompare(b));
+  _musicState.list = list;
+  _musicState.loaded = true;
+  return list;
+}
+function syncMusicPlayBtn() {
+  const btn = document.getElementById('music-play');
+  if (!btn) return;
+  const playing = _musicState.audio && !_musicState.audio.paused;
+  btn.textContent = playing ? '⏸️' : '▶️';
+  btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+}
+function currentTrackTitle() {
+  const list = _musicState.list;
+  if (!list || !list.length) return 'No music';
+  const i = Math.max(0, Math.min(list.length - 1, state.focusMusicIdx || 0));
+  return list[i].replace(/\.mp3$/i, '');
+}
+function flashTrackTitle() { showMotivationFlash(currentTrackTitle(), 3000); }
+async function playMusic(idx) {
+  await loadFocusPlaylist();
+  const list = _musicState.list;
+  if (!list.length) {
+    showMotivationFlash('No music files in /audio/focus/', 3000);
+    return;
+  }
+  if (typeof idx === 'number') state.focusMusicIdx = idx;
+  const i = ((state.focusMusicIdx % list.length) + list.length) % list.length;
+  state.focusMusicIdx = i;
+  saveState();
+  if (state.soundMode === 'none') {
+    const btn = document.getElementById('music-play');
+    if (btn) {
+      btn.textContent = 'unmute';
+      setTimeout(syncMusicPlayBtn, 2000);
+    }
+    return;
+  }
+  if (_musicState.audio) { try { _musicState.audio.pause(); _musicState.audio.src=''; } catch(_){} }
+  const audio = new Audio(`audio/focus/${list[i]}`);
+  audio.preload = 'auto';
+  _musicState.audio = audio;
+  audio.onended = () => {
+    if (i === list.length - 1) {
+      if (state.focusMusicWrappedOnce) {
+        state.focusMusicWrappedOnce = false; saveState();
+        syncMusicPlayBtn(); return;
+      }
+      state.focusMusicWrappedOnce = true; saveState();
+      playMusic(0);
+    } else {
+      playMusic(i + 1);
+    }
+  };
+  audio.onpause = syncMusicPlayBtn;
+  audio.onplay  = syncMusicPlayBtn;
+  flashTrackTitle();
+  try { const p = audio.play(); if (p && p.catch) p.catch(()=>{}); } catch(_){}
+  syncMusicPlayBtn();
+}
+function pauseMusic() {
+  if (_musicState.audio && !_musicState.audio.paused) {
+    try { _musicState.audio.pause(); } catch(_){}
+  }
+  syncMusicPlayBtn();
+}
+const _musicPrev = document.getElementById('music-prev');
+const _musicPlay = document.getElementById('music-play');
+const _musicNext = document.getElementById('music-next');
+if (_musicPrev) _musicPrev.onclick = async () => {
+  await loadFocusPlaylist();
+  if (!_musicState.list.length) return flashTrackTitle();
+  const len = _musicState.list.length;
+  state.focusMusicIdx = ((state.focusMusicIdx - 1) % len + len) % len;
+  saveState();
+  if (_musicState.audio && !_musicState.audio.paused) playMusic(state.focusMusicIdx);
+  else flashTrackTitle();
+};
+if (_musicNext) _musicNext.onclick = async () => {
+  await loadFocusPlaylist();
+  if (!_musicState.list.length) return flashTrackTitle();
+  const len = _musicState.list.length;
+  state.focusMusicIdx = ((state.focusMusicIdx + 1) % len + len) % len;
+  saveState();
+  if (_musicState.audio && !_musicState.audio.paused) playMusic(state.focusMusicIdx);
+  else flashTrackTitle();
+};
+if (_musicPlay) _musicPlay.onclick = () => {
+  if (_musicState.audio && !_musicState.audio.paused) pauseMusic();
+  else playMusic(state.focusMusicIdx || 0);
+};
+syncMusicPlayBtn();
+
 document.getElementById('clear-stats').onclick = async () => {
   if (!confirm('Erase ALL focus session data? This cannot be undone.')) return;
   stats = [];
@@ -3391,6 +3617,7 @@ function renderTasks() {
         if (cb.checked) {
           applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
           logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
+          playFx('complete');
         } else {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
           logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
@@ -4277,6 +4504,7 @@ function renderFocusMatrix() {
         if (cb.checked) {
           applyMoney(+bid, `Finished: ${task.text || '(task)'}`, 'finish-task');
           logEvent({ type: 'finish-task', name: `Finished: ${task.text || '(task)'}`, money: +bid, q });
+          playFx('complete');
         } else {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
           logEvent({ type: 'unfinish-task', name: `Un-finished: ${task.text || '(task)'}`, money: -bid, q });
@@ -4431,11 +4659,16 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logEntry.money = Math.round(logEntry.money * 100) / 100;
       logEntry.type = at.type;
       logEntry.name = m.lbl;
-      const segColor = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+      // gain → pink, loss → light blue (per spec).
+      const segColor = (rate > 0) ? '#fecdd3' : (rate < 0) ? '#bfdbfe' : '#e5e7eb';
       state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: segColor, name: m.lbl });
     }
   }
   state.watchLog.push(logEntry);
+  // Sound: stopping a draining mana/money tracker → stopped.mp3
+  if (logEntry && (logEntry.type === 'muncher' || logEntry.type === 'multiplier')) {
+    playFx('stopped');
+  }
   state.activeTimer = null;
   saveState();
   markSettingsChanged();
@@ -4456,6 +4689,7 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
    sequence is recorded as one segment in the Activity log. */
 function startPomodoro(q, i) {
   stopActiveTimer('switch');
+  playFx('start');
   const now = Date.now();
   state.activeTimer = {
     type: 'pomodoro',
@@ -4482,6 +4716,7 @@ function getPomodoroRemainingMs() {
 function pausePomodoro() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro' || at.paused) return;
+  playFx('pause');
   at.paused = true;
   at.pausedAt = Date.now();
   saveState();
@@ -4577,6 +4812,13 @@ async function showPomoPhaseConfirm() {
     nextDurMs = POMO_WORK_MS;
     nextLabel = 'next Work session (25 min)';
   }
+  // Sound cue when the prompt opens — different per phase transition.
+  // work→short-break: wave  ·  work→long-break: long-wave  ·  break→work: resume
+  if (at.phase === 'work') {
+    playFx(nextPhase === 'long-break' ? 'long-wave' : 'wave');
+  } else {
+    playFx('resume');
+  }
   const yes = await customConfirm(
     'Pomodoro',
     `${currentLabel} done. Start ${nextLabel}?`,
@@ -4614,6 +4856,11 @@ async function showPomoPhaseConfirm() {
 
 function startManaTimer(side, manaIdx) {
   stopActiveTimer('switch');
+  // Draining timer (Mana Moments with negative rate) → drain.mp3, otherwise start.mp3
+  const list = state.mana[side === 'multiplier' ? 'multiplier' : 'muncher'];
+  const m = list && list[manaIdx];
+  const r = m && (typeof m.pointsPer5Min === 'number' ? m.pointsPer5Min : (side === 'multiplier' ? 3 : -3));
+  playFx(r < 0 ? 'drain' : 'start');
   state.activeTimer = {
     type: (side === 'multiplier') ? 'multiplier' : 'muncher',
     manaIdx,
@@ -4697,16 +4944,19 @@ function drawGauge() {
   if (!segmentsEl || !lineEl || !gridEl) return;
 
   const now = Date.now();
-  // Gauge is FIXED to a 4 AM → 4 AM (next day) window, regardless of whether
-  // the user clicked "Start focus session →" or set a Starting Time. If we
-  // haven't yet reached today's 4 AM (i.e. now is 00:00–03:59), anchor to
-  // yesterday's 4 AM so the late-night portion of the day still appears at
-  // the bottom of the gauge.
-  const anchor = new Date();
-  anchor.setHours(4, 0, 0, 0);
-  if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
-  const topMs    = anchor.getTime();
-  const total    = 24 * 60 * 60 * 1000;        // 24 hours
+  const total = 24 * 60 * 60 * 1000;
+  let topMs;
+  if (state.gaugeMode === '2') {
+    topMs = now - 2 * 60 * 60 * 1000;
+  } else if (state.gaugeMode === '4') {
+    topMs = now - 4 * 60 * 60 * 1000;
+  } else {
+    // 'set' (default) — anchor to most recent 4 AM
+    const anchor = new Date();
+    anchor.setHours(4, 0, 0, 0);
+    if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
+    topMs = anchor.getTime();
+  }
   const bottomMs = topMs + total;
   const pct = (t) => Math.max(0, Math.min(100, ((t - topMs) / total) * 100));
 
@@ -4961,11 +5211,11 @@ function activeTimerToSegment(at, now) {
     const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
     const m = state.mana[side] && state.mana[side][at.manaIdx];
     if (!m) return null;
-    // Color matches the sign of the tracker's pointsPer5Min: blue (+), red (−), gray (0)
+    // gain → pink, loss → light blue, neutral → gray
     const rate = (typeof m.pointsPer5Min === 'number')
       ? m.pointsPer5Min
       : (side === 'multiplier' ? 3 : -3);
-    const color = (rate > 0) ? '#bfdbfe' : (rate < 0) ? '#fecaca' : '#e5e7eb';
+    const color = (rate > 0) ? '#fecdd3' : (rate < 0) ? '#bfdbfe' : '#e5e7eb';
     return { startMs: at.startedAt, endMs: now, color, name: m.lbl };
   }
   return null;
@@ -5035,11 +5285,12 @@ function manaImageIndex(score) {
    Same stops as the CSS linear-gradient. Used to colour the mood message
    so it always matches the spot the marker is sitting on. */
 function gaugeColorAtPct(pct) {
+  // Reversed: 0% (left, score -100) → blue,  100% (right, score +100) → red.
   const stops = [
-    { p: 0,   c: [239, 68, 68]  }, // #ef4444
-    { p: 33,  c: [245, 158, 11] }, // #f59e0b
-    { p: 67,  c: [16, 185, 129] }, // #10b981
-    { p: 100, c: [59, 130, 246] }  // #3b82f6
+    { p: 0,   c: [59, 130, 246] }, // #3b82f6 — blue   (low mana)
+    { p: 33,  c: [16, 185, 129] }, // #10b981 — green
+    { p: 67,  c: [245, 158, 11] }, // #f59e0b — orange
+    { p: 100, c: [239, 68, 68]  }  // #ef4444 — red    (high mana)
   ];
   const x = Math.max(0, Math.min(100, pct));
   for (let i = 0; i < stops.length - 1; i++) {
@@ -5304,6 +5555,74 @@ function fmtMoney(amount) {
   const abs = Math.abs(amount);
   return `${sign}$${abs.toFixed(2)}`;
 }
+/* ===========================================================
+   SOUND EFFECTS ENGINE
+   --------------------------------------------------------------
+   playFx(name) — plays /audio/effects/{loud|soft}/{name}.mp3 based on
+   state.soundMode. Falls back to the OTHER folder if the chosen one's
+   file is missing. In 'none' mode it is a no-op.
+   --------------------------------------------------------------
+   `name` is the file's basename without `.mp3`. Examples:
+     complete, start, pause, drain, stopped, wave, resume, long-wave,
+     stop1, stop2, stop3
+=========================================================== */
+const _fxCache = {};   // url → HTMLAudioElement (preloaded)
+function fxFolderForMode() {
+  const m = state.soundMode || 'soft';
+  if (m === 'loud') return 'loud';
+  if (m === 'soft') return 'soft';
+  return null; // 'none' → silent
+}
+function playFx(name) {
+  const folder = fxFolderForMode();
+  if (!folder || !name) return;
+  const primary  = `audio/effects/${folder}/${name}.mp3`;
+  const fallback = `audio/effects/${folder === 'loud' ? 'soft' : 'loud'}/${name}.mp3`;
+  function attempt(url, onError) {
+    let a = _fxCache[url];
+    if (!a) {
+      a = new Audio(url);
+      a.preload = 'auto';
+      _fxCache[url] = a;
+    }
+    try {
+      a.currentTime = 0;
+      const p = a.play();
+      if (p && typeof p.catch === 'function') p.catch(onError);
+    } catch (e) { onError && onError(e); }
+  }
+  attempt(primary, () => attempt(fallback, () => {}));
+}
+
+/* For "draining" timer trackers (Mana Moments / Money Moments with negative
+   rate), play stop1/2/3.mp3 at the 30/60/90-min marks while the timer runs.
+   Tracked per active-timer instance so we don't re-fire after a refresh. */
+const _drainMilestones = [
+  { ms: 30 * 60 * 1000, sound: 'stop1' },
+  { ms: 60 * 60 * 1000, sound: 'stop2' },
+  { ms: 90 * 60 * 1000, sound: 'stop3' }
+];
+function checkDrainMilestone() {
+  const at = state.activeTimer;
+  if (!at) return;
+  if (at.type !== 'muncher' && at.type !== 'multiplier') return;
+  const list = state.mana[at.type === 'multiplier' ? 'multiplier' : 'muncher'];
+  const m = list && list[at.manaIdx];
+  if (!m) return;
+  const rate = (typeof m.pointsPer5Min === 'number') ? m.pointsPer5Min : (at.type === 'multiplier' ? 3 : -3);
+  if (rate >= 0) return; // only "draining" timers
+  if (at.paused) return;
+  const elapsed = Date.now() - at.startedAt - (at.totalPausedMs || 0);
+  at._drainPlayedMs = at._drainPlayedMs || 0;
+  for (const ms of _drainMilestones) {
+    if (elapsed >= ms.ms && at._drainPlayedMs < ms.ms) {
+      at._drainPlayedMs = ms.ms;
+      playFx(ms.sound);
+    }
+  }
+}
+setInterval(checkDrainMilestone, 5000);
+
 function flashMoneyCard() {
   const card = document.getElementById('money-card');
   if (!card) return;
@@ -6140,9 +6459,9 @@ function renderWeekView() {
     if (entry.type === 'pomodoro' && entry.q) {
       // pomodoro uses quadrant color via qColor()
     } else if (entry.type === 'multiplier' || (entry.penalty || 0) > 0) {
-      color = '#bfdbfe'; // blue for positive
+      color = '#fecdd3'; // pink for gain
     } else if (entry.type === 'muncher' || (entry.penalty || 0) < 0) {
-      color = '#fecaca'; // red for negative
+      color = '#bfdbfe'; // light blue for loss
     }
     const seg = {
       startMs: entry.startedAt,
@@ -6273,6 +6592,30 @@ function setStatsView(name) {
 /* ===========================================================
    Motivational text — randomized once an hour
 =========================================================== */
+/* ===== Sound mode toggle (loud / soft / none) ===== */
+function syncSoundToggleBtn() {
+  const btn = document.getElementById('sound-toggle');
+  if (!btn) return;
+  const m = state.soundMode || 'soft';
+  btn.classList.remove('mode-loud', 'mode-soft', 'mode-none');
+  btn.classList.add('mode-' + m);
+  btn.textContent = m === 'loud' ? '🔊' : m === 'soft' ? '🔈' : '🔇';
+  btn.title = m === 'loud' ? 'Sound effects: loud (tap to switch)'
+            : m === 'soft' ? 'Sound effects: soft (tap to switch)'
+            : 'Sound effects off (tap to switch)';
+}
+/* Show a temporary motivational-quote-area announcement, then restore the
+   real quote after `ms` (default 3000). Used when the user toggles sound
+   modes / starts focus music. */
+let _motShadowTimer = null;
+function showMotivationFlash(text, ms) {
+  const el = document.getElementById('motivation-display');
+  if (!el) return;
+  el.innerHTML = `<span class="motivation-track">${escapeHTML(text)}</span>`;
+  applyMotivationMarquee && applyMotivationMarquee();
+  clearTimeout(_motShadowTimer);
+  _motShadowTimer = setTimeout(() => refreshMotivation && refreshMotivation(false), ms || 3000);
+}
 function refreshMotivation(force) {
   const lines = (state.motivationalLines || '').split('\n').map(s => s.trim()).filter(Boolean);
   const el = document.getElementById('motivation-display');
