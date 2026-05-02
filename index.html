@@ -2342,9 +2342,9 @@ const defaultState = () => ({
         { lbl:'A clean desk',score: 4, active:false }
       ],
       'Social factors': [
-        { lbl:'studying with others',  score: 5, active:false },
-        { lbl:'being watched / supervised', score: 10, active:false },
-        { lbl:'people interrupting me', score:-5, active:false }
+        { lbl:'Studying w/ others',  score: 5, active:false },
+        { lbl:'Being watched',       score: 10, active:false },
+        { lbl:'Noise',               score:-5, active:false }
       ]
     },
     others: []
@@ -2517,6 +2517,17 @@ function migrateState() {
   }
   if (typeof state.sleepClickedDate       !== 'string') state.sleepClickedDate = '';
   if (state.gender !== 'man' && state.gender !== 'woman') state.gender = 'man';
+  // Rename a few legacy Social-factor labels to shorter ones. Only rewrite
+  // chips that still carry the OLD default label — don't clobber user edits.
+  const social = state.ext && state.ext.groups && state.ext.groups['Social factors'];
+  if (Array.isArray(social)) {
+    const renames = {
+      'studying with others':       'Studying w/ others',
+      'being watched / supervised': 'Being watched',
+      'people interrupting me':     'Noise'
+    };
+    social.forEach(f => { if (f && renames[f.lbl]) f.lbl = renames[f.lbl]; });
+  }
   if (typeof state.lastNoSleepCheckedDate !== 'string') state.lastNoSleepCheckedDate = '';
   if (!['W','D','H'].includes(state.moneyChartScale))   state.moneyChartScale = 'D';
   // Per-task bid amount (used when finishing a task → +$bid; missing → use default)
@@ -2549,11 +2560,18 @@ function ensureTaskTimers(task) {
   if (!task.downTimer) task.downTimer = { state: 'idle', durationMs: 0, remainingMs: 0, startedAt: 0, settingMin: 25, settingSec: 0 };
   return task;
 }
+// Set to true when loadState found NOTHING in localStorage — i.e., the user
+// just cleared their browser data or this is a brand-new install. The cloud-
+// sync code uses this flag so on a fresh client we ALWAYS pull whatever the
+// cloud has, even if the initial render happens to bump settingsUpdatedAt to
+// an artificially-newer "now" before the network round-trip completes.
+let _wasFreshClient = false;
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (s && s.tasks && s.ext && s.int) return s;
   } catch(e){}
+  _wasFreshClient = true;
   return defaultState();
 }
 function saveState() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){} }
@@ -2776,7 +2794,21 @@ function markSettingsChanged() {
   state.settingsUpdatedAt = Date.now();
   saveState();
 }
+// Until the very first cloud pull has completed (or definitively failed /
+// been skipped because the user isn't signed in), we BLOCK every push. This
+// prevents a fresh client — cleared cookies/localStorage — from pushing its
+// empty default state up and overwriting real data on the cloud, which then
+// propagates the empty state to every other device via polling.
+let _initialPullDone = false;
+
 async function pushSettingsToCloud() {
+  if (!_initialPullDone) {
+    // Will be re-flushed by flushPendingPushes() once the gate opens.
+    if (typeof logSyncEvent === 'function') {
+      logSyncEvent({ direction: 'push', ok: false, error: 'blocked: initial pull not done yet' });
+    }
+    return false;
+  }
   try {
     const sb = await getSupabaseClient();
     if (!sb) return false;
@@ -2888,12 +2920,18 @@ async function syncSettingsBidi() {
   const localTs = state.settingsUpdatedAt || 0;
   if (remote) {
     const remoteTs = new Date(remote.updated_at).getTime();
-    if (remoteTs > localTs) {
-      // Cloud is newer — apply remote into local + re-render every UI section.
+    // Apply remote when:
+    //   1. Cloud is genuinely newer than local, OR
+    //   2. We're a brand-new / freshly-cleared client (no localStorage). In
+    //      that case `localTs` may have been bumped by the initial render's
+    //      recomputeSlider → markSettingsChanged, fooling the timestamp
+    //      check. Always trust the cloud over a client with no prior data.
+    if (_wasFreshClient || remoteTs > localTs) {
       applyRemoteSettings(remote);
       state.settingsUpdatedAt = remoteTs;
       saveState();
       renderEverythingFromState();
+      _wasFreshClient = false;   // hydrated once — no longer "fresh"
       return;
     }
   }
@@ -5034,7 +5072,9 @@ function renderImDoing() {
     wrap.classList.add('idle');
     if (labelEl) labelEl.style.display = 'none';
     timeEl.style.display = 'none';
-    nameEl.textContent = 'Do S.t. Really Good 4 You';
+    // Phone gets a tighter abbreviation so it doesn't overflow next to Sleep.
+    const isPhone = window.matchMedia('(max-width: 700px)').matches;
+    nameEl.textContent = isPhone ? 'GTD before' : 'Get Things Done Before';
     return;
   }
   wrap.classList.remove('idle');
@@ -6272,8 +6312,10 @@ window.addEventListener('resize', () => {
   _marqueeResizeT = setTimeout(() => {
     applyMotivationMarquee();
     // Re-render the activity log so the Money/Mana column split flips when
-    // the viewport crosses the 700px boundary (PC ↔ phone).
+    // the viewport crosses the 700px boundary (PC ↔ phone). Also re-render
+    // the "I'm doing" idle line so its phrase swaps between full/abbreviated.
     if (typeof renderWatchLog === 'function') renderWatchLog();
+    if (typeof renderImDoing  === 'function') renderImDoing();
   }, 150);
 });
 const motInputEl = document.getElementById('motivation-input');
@@ -6611,25 +6653,34 @@ function runDailyChecksAfterSync() {
 
 // Restore session on page load
 (async function autoSyncOnLoad() {
-  // If Supabase isn't configured at all, show the login modal anyway so the
-  // user knows they need to set it up.
+  // Helper: open the push gate + run daily checks + flush anything queued.
+  // Called from EVERY exit path so we never leave the app in "no push" limbo.
+  function openPushGate() {
+    _initialPullDone = true;
+    try { runDailyChecksAfterSync(); } catch (_) {}
+    try { flushPendingPushes(); } catch (_) {}
+  }
+  // If Supabase isn't configured at all, the app runs purely local — open the
+  // gate immediately so saveState has nothing blocking it.
   if (!isSbConfigured()) {
     updateAuthUI(null);
-    runDailyChecksAfterSync();
+    openPushGate();
     return;
   }
   try {
     const session = await getAuthSession();
     if (session && session.user) {
       updateAuthUI(session.user);
-      // Background: pull everything so the UI matches the cloud, then run
-      // the daily checks (so time-goals from cloud aren't reset prematurely).
+      // Background: pull everything so the UI matches the cloud, THEN open
+      // the push gate. Until pullEverythingFromCloud resolves we refuse to
+      // push so we don't race-condition the cloud with empty default state.
       pullEverythingFromCloud()
-        .catch(() => {})
-        .finally(runDailyChecksAfterSync);
+        .catch((e) => { console.warn('Initial pull failed:', e); })
+        .finally(openPushGate);
     } else {
+      // Not signed in — no cloud sync to wait for.
       updateAuthUI(null);
-      runDailyChecksAfterSync();
+      openPushGate();
     }
     // Listen for auth changes (e.g., token refresh, sign-out from another tab)
     const sb = await getSupabaseClient();
@@ -6641,7 +6692,7 @@ function runDailyChecksAfterSync() {
     }
   } catch (e) {
     console.warn('Auto-sync skipped:', e);
-    runDailyChecksAfterSync();
+    openPushGate();
   }
 })();
 
