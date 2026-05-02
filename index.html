@@ -541,13 +541,18 @@
   }
   .matrix-wrap .row-labels span { writing-mode: vertical-rl; transform: rotate(180deg); }
   .matrix {
-    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
-    gap: 8px; min-height: 380px;
+    display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: auto auto;
+    gap: 8px;
   }
   .cell {
     border-radius: var(--r); padding: 12px; display: flex; flex-direction: column;
     border: 1px solid rgba(0,0,0,.06);
   }
+  /* Expanded matrix — minimal cell height by default; rows grow as tasks are
+     added, so an empty matrix isn't a wall of empty space. */
+  .matrix-wrap.expanded .cell { min-height: 0; padding: 8px 10px; }
+  .matrix-wrap.expanded .cell .tasks { min-height: 0; }
+  .matrix-wrap.expanded .cell .add-task { margin-top: 4px; padding: 4px 8px; }
   .cell.q1 { background: var(--q1); }
   .cell.q2 { background: var(--q2); }
   .cell.q3 { background: var(--q3); }
@@ -1665,7 +1670,8 @@
        Fonts STAY at the compact size — only the cell box grows, so more task
        text fits per cell. */
     .matrix-wrap.expanded { min-width: 620px; }
-    .matrix-wrap.expanded .cell { padding: 12px; min-height: 220px; }
+    /* Cells start tight on phone too — they grow only when tasks are added. */
+    .matrix-wrap.expanded .cell { padding: 8px 10px; min-height: 0; }
     /* (font-size of cell h4 / col-headers / row-labels intentionally left
        at the compact-mode defaults — see rules below.) */
 
@@ -2535,8 +2541,9 @@ const defaultState = () => ({
   lastNoSleepCheckedDate: '',
   // What money-chart timeframe is currently shown (W = weekly, D = daily, H = hourly).
   moneyChartScale: 'D',
-  // Vertical gauge mode: 'set' (4am→4am, default), '2' (now-2h→+24h), '4' (now-4h→+24h)
-  gaugeMode: 'set',
+  // Vertical gauge mode: '4' (default — top = 4h before now), '2' (top = 2h before now),
+  // 'set' (top = most recent 4 AM, fixed window).
+  gaugeMode: '4',
   // Sound effects: 'loud' | 'soft' | 'none' (default: 'soft')
   soundMode: 'soft',
   // Focus music index (within state.focusMusicList)
@@ -2664,7 +2671,13 @@ function migrateState() {
   }
   if (typeof state.lastNoSleepCheckedDate !== 'string') state.lastNoSleepCheckedDate = '';
   if (!['W','D','H'].includes(state.moneyChartScale))   state.moneyChartScale = 'D';
-  if (!['set','2','4'].includes(state.gaugeMode))       state.gaugeMode = 'set';
+  if (!['set','2','4'].includes(state.gaugeMode))       state.gaugeMode = '4';
+  // One-shot migration to flip existing users to the new "4" default.
+  // After this runs once they can toggle freely; we never override their choice again.
+  if (!state._gaugeDefaultV2) {
+    state.gaugeMode = '4';
+    state._gaugeDefaultV2 = true;
+  }
   if (!['loud','soft','none'].includes(state.soundMode)) state.soundMode = 'soft';
   if (typeof state.focusMusicIdx !== 'number') state.focusMusicIdx = 0;
   if (typeof state.focusMusicWrappedOnce !== 'boolean') state.focusMusicWrappedOnce = false;
