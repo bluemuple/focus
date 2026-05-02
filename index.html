@@ -191,6 +191,39 @@
     box-shadow: 0 4px 32px rgba(0,0,0,.25);
   }
   .modal-content h3 { font-size: 1.1rem; }
+
+  /* ==== Task-bid popup widget ==== */
+  .bid-widget {
+    display: flex; flex-direction: column; gap: 10px;
+    margin: 12px 0 16px;
+  }
+  .bid-display {
+    display: flex; align-items: center; justify-content: center;
+    background: #ecfdf5; color: #065f46;
+    border: 2px solid #a7f3d0;
+    border-radius: 12px;
+    padding: 14px 8px;
+  }
+  .bid-display .bid-amount {
+    font-size: 2.2rem; font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.5px;
+  }
+  .bid-quick-row {
+    display: flex; gap: 6px; flex-wrap: wrap;
+    justify-content: center;
+  }
+  .bid-quick-row .btn {
+    flex: 1 1 0; min-width: 0;
+    font-weight: 700;
+    padding: 8px 6px;
+  }
+  .bid-quick-row .bid-add {
+    background: #eef4ff; color: #1d4ed8;
+    border-color: #c7d8ff;
+  }
+  .bid-quick-row .bid-add:hover { background: #dbeafe; }
+  .bid-quick-row .bid-add:active { background: #bfdbfe; }
   .time-edit-inputs { display: grid; gap: 10px; margin-bottom: 16px; }
   .time-edit-inputs label {
     display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -4349,25 +4382,93 @@ document.querySelectorAll('#money-factors-panel .mcf-val').forEach(el => {
 /* Per-task bid — the money awarded when this task is checked done.
    Default = state.moneyChangeFactors.finishTask. Same modal style as the
    quadrant rate ("Score Setting 4 Tasks"). */
+/* Edit a task's bid amount. Opens a custom popup with:
+   - A big "$N" display showing the current value
+   - Quick-add buttons (+$10, +$5, +$1) — each one bumps the value
+   - A Reset button that restores the default ($10 from moneyChangeFactors)
+   - OK saves, Cancel discards.
+   No free-form input — every change is in fixed increments. */
 async function editTaskBid(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
   const def = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
-  const cur = (typeof task.bid === 'number') ? task.bid : def;
-  const v = await customPrompt(
-    'Score Setting 4 Tasks',
-    `How much money do you earn when you finish "${task.text || '(unnamed task)'}"?\n` +
-    `Default: $${def}. You also lose this amount if you uncheck or never finish it.`,
-    String(cur)
-  );
-  if (v === null) return;
-  const t = v.trim();
-  if (t === '' || isNaN(+t)) return;
-  task.bid = +(+t).toFixed(2);
+  const start = (typeof task.bid === 'number') ? task.bid : def;
+  const newBid = await openTaskBidPopup(task.text || '(unnamed task)', start, def);
+  if (newBid == null) return;
+  task.bid = +(+newBid).toFixed(2);
   saveState();
+  if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
   if (typeof renderTasks === 'function') renderTasks();
   markSettingsChanged();
   pushSettingsToCloud();
+}
+
+/* Bid popup — no free-form input. Quick-add buttons (+$10, +$5, +$1) stack
+   the value up; Reset returns to the default; OK confirms; Cancel discards. */
+function openTaskBidPopup(taskName, startValue, defaultValue) {
+  return new Promise((resolve) => {
+    const modal     = document.getElementById('custom-prompt-modal');
+    const titleEl   = document.getElementById('custom-prompt-title');
+    const msgEl     = document.getElementById('custom-prompt-message');
+    const inputEl   = document.getElementById('custom-prompt-input');
+    const okBtn     = document.getElementById('custom-prompt-ok');
+    const cancelBtn = document.getElementById('custom-prompt-cancel');
+    const backdrop  = document.getElementById('custom-prompt-backdrop');
+    if (!modal || !titleEl || !msgEl || !inputEl || !okBtn || !cancelBtn) {
+      resolve(null); return;
+    }
+    let value = +startValue;
+    if (!isFinite(value)) value = +defaultValue;
+    titleEl.textContent = 'Set bid';
+    msgEl.innerHTML = `How much do you earn when you finish<br><strong>"${escapeHTML(taskName)}"</strong>?`;
+    // Hide the regular text input — bid is changed only via buttons.
+    inputEl.style.display = 'none';
+    inputEl.value = '';
+    // Build the bid widget: big "$N" display + quick buttons + Reset.
+    let widget = modal.querySelector('.bid-widget');
+    if (!widget) {
+      widget = document.createElement('div');
+      widget.className = 'bid-widget';
+      inputEl.parentNode.insertBefore(widget, inputEl);
+    }
+    const fmt = (n) => `$${(+n).toFixed(2).replace(/\.00$/, '')}`;
+    function rerender() {
+      widget.innerHTML = `
+        <div class="bid-display"><span class="bid-amount">${fmt(value)}</span></div>
+        <div class="bid-quick-row">
+          <button class="btn bid-add" type="button" data-add="10">+$10</button>
+          <button class="btn bid-add" type="button" data-add="5">+$5</button>
+          <button class="btn bid-add" type="button" data-add="1">+$1</button>
+        </div>
+        <div class="bid-quick-row">
+          <button class="btn bid-add" type="button" data-add="-1">−$1</button>
+          <button class="btn bid-add" type="button" data-add="-5">−$5</button>
+          <button class="btn" type="button" data-reset="1" title="Reset to default ($${defaultValue})">↺ Reset</button>
+        </div>`;
+      widget.querySelectorAll('button[data-add]').forEach(b => {
+        b.onclick = () => {
+          value = Math.max(0, +(value + (+b.dataset.add)).toFixed(2));
+          rerender();
+        };
+      });
+      widget.querySelector('[data-reset]').onclick = () => {
+        value = +defaultValue;
+        rerender();
+      };
+    }
+    rerender();
+    function finish(out) {
+      modal.classList.add('hidden');
+      okBtn.onclick = null; cancelBtn.onclick = null; backdrop.onclick = null;
+      if (widget.parentNode) widget.parentNode.removeChild(widget);
+      inputEl.style.display = '';
+      resolve(out);
+    }
+    okBtn.onclick     = () => finish(value);
+    cancelBtn.onclick = () => finish(null);
+    backdrop.onclick  = () => finish(null);
+    modal.classList.remove('hidden');
+  });
 }
 
 /* ---- Custom prompt modal ----
@@ -5626,9 +5727,15 @@ async function showPomoPhaseConfirm() {
   } else {
     playFx('resume');
   }
+  // Hint string shown under the question: clarifies what "No" does. After a
+  // work session, No now skips the break and starts the next Work session
+  // immediately. After a break, No still stops the pomodoro entirely.
+  const noHint = (at.phase === 'work')
+    ? 'No → skip the break and start the next Work session.'
+    : 'No → stop the Pomodoro and log it.';
   const answer = await customConfirm(
     'Pomodoro',
-    `${currentLabel} done. Start ${nextLabel}?`,
+    `${currentLabel} done. Start ${nextLabel}?\n${noHint}`,
     { yesLabel: 'Yes', noLabel: 'No' }
   );
   // 'remote' = the modal was force-closed because the answer arrived from
@@ -5667,9 +5774,35 @@ async function showPomoPhaseConfirm() {
     }
     pushSettingsToCloud();
     renderFocusMatrix(); renderImDoing(); drawGauge();
+  } else if (at2.phase === 'work') {
+    // Work-end + No → skip the break and start the next Work session.
+    // Bank the wait time as paused-time so the prompt-wait doesn't count.
+    if (at2.paused && at2.pausedAt) {
+      at2.totalPausedMs = (at2.totalPausedMs || 0) + (Date.now() - at2.pausedAt);
+    }
+    at2.paused = false;
+    at2.pausedAt = null;
+    // Skipping a break still counts as a completed work segment for the
+    // long-break-after-3 cadence. Increment, and reset to 0 once we've
+    // earned the long break (counter would otherwise grow unbounded).
+    state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
+    if (state.pomodoroSessionsInCycle > 2) state.pomodoroSessionsInCycle = 0;
+    at2.phase = 'work';
+    at2.phaseStartedAt = Date.now();
+    at2.phaseDurationMs = POMO_WORK_MS;
+    saveState();
+    markSettingsChanged();
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
+    }
+    pushSettingsToCloud();
+    playFx('start');
+    renderFocusMatrix(); renderImDoing(); drawGauge();
   } else {
-    // User declined → stop & log. (stopActiveTimer also writes to activity log
-    // and pushes to cloud immediately, which clears pendingPhaseConfirm too.)
+    // Break-end + No → stop & log the whole pomodoro. (stopActiveTimer also
+    // writes to activity log and pushes to cloud immediately, which clears
+    // pendingPhaseConfirm too.)
     stopActiveTimer('finish');
     renderFocusMatrix(); renderWatchLog(); drawGauge();
   }
