@@ -553,15 +553,16 @@
   .cell.q4 { background: var(--q4); }
   .cell h4 {
     font-size: .8rem; opacity: .65; text-transform: uppercase; letter-spacing: .05em;
-    margin: 0 0 8px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0 0 8px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
   }
   .cell h4 .cell-rate {
     display: inline-flex; align-items: center;
     font-size: .7rem; font-weight: 700;
-    padding: 1px 7px; border-radius: 999px;
+    padding: 1px 6px; border-radius: 999px;
     background: rgba(255,255,255,.7); color: #374151;
     cursor: pointer; opacity: 1; letter-spacing: 0; text-transform: none;
     border: 1px solid rgba(0,0,0,.05);
+    margin-left: 0;
     transition: background .15s ease, transform .1s ease;
   }
   .cell h4 .cell-rate:hover { background: rgba(255,255,255,.95); transform: scale(1.05); }
@@ -1574,14 +1575,22 @@
     .matrix-wrap.expanded .cell h4 { font-size: .8rem; }
     .matrix-wrap.expanded .col-headers { font-size: 1rem; }
 
-    /* Matrix: stick row labels to the very left edge so cells get more width */
-    .matrix-wrap { grid-template-columns: 18px 1fr; gap: 4px; }
+    /* Matrix: row labels squeezed to the very left so the right column gets
+       more horizontal room. Cells use minimal padding + tighter inner gap. */
+    .matrix-wrap { grid-template-columns: 12px 1fr; gap: 2px; }
     .matrix-wrap .col-headers { gap: 4px; }
-    .matrix-wrap .row-labels { gap: 4px; justify-items: start; }
-    .matrix-wrap .row-labels span { font-size: .8rem; }
+    .matrix-wrap .row-labels  { gap: 4px; justify-items: start; }
+    .matrix-wrap .row-labels span { font-size: .7rem; }
     .matrix { gap: 4px; min-height: 320px; }
-    .cell { padding: 8px; }
-    .cell h4 { font-size: .65rem; margin: 0 0 6px; letter-spacing: .03em; }
+    .cell   { padding: 6px; }
+    .cell h4 {
+      font-size: .65rem; margin: 0 0 4px; letter-spacing: .02em;
+      gap: 2px;
+    }
+    .cell h4 .cell-title { min-width: 0; }
+    .cell h4 .cell-rate {
+      font-size: .62rem; padding: 0 5px; line-height: 1.4;
+    }
     /* On phone, the compact rules above already apply — just tighten further. */
     .matrix-wrap:not(.expanded) .task-row {
       padding: 4px 6px;
@@ -4757,10 +4766,16 @@ function deleteWatchLogEntry(idx) {
   if (idx < 0 || idx >= state.watchLog.length) return;
   if (!confirm('Delete this activity log entry?')) return;
   const entry = state.watchLog[idx];
-  // Reverse the money + mana effects this entry caused, so the totals on
-  // the focus page (Money card / Mana gauge) update consistently.
-  const moneyDelta = -(+entry.money || 0);
-  const manaDelta  = -(+entry.mana  || 0);
+  // Reverse the money + mana effects this entry caused, so the Money card and
+  // Mana gauge on the focus page stay consistent. We accept several sources:
+  //   - entry.money (current schema)
+  //   - entry.quadrantBonus (legacy pomodoro field — money awarded by quadrant rate)
+  //   - entry.penalty for muncher entries — used to be Mana score points
+  let moneyDelta = -(+entry.money || 0);
+  if (!entry.money && +entry.quadrantBonus) moneyDelta = -(+entry.quadrantBonus);
+  let manaDelta = -(+entry.mana || 0);
+  // Legacy muncher entries used `penalty` for the Mana score change.
+  if (!entry.mana && entry.type === 'muncher' && +entry.penalty) manaDelta = -(+entry.penalty);
   if (moneyDelta) applyMoney(moneyDelta, `Reversed: ${entry.name || '(entry)'}`, 'log-delete', idx);
   if (manaDelta) {
     state.ext.adjustment = (+state.ext.adjustment || 0) + manaDelta;
