@@ -1718,7 +1718,7 @@
           </div>
           <input type="date" id="start-date">
           <input type="time" id="start-time">
-          <div class="help">Gauge starts 30 min before this time</div>
+          <div class="help">The vertical time gauge is fixed: 4 AM → 4 AM (next day).</div>
         </div>
         <div class="goal">
           <div class="goal-head">
@@ -2115,7 +2115,7 @@
 
       <li><strong>Focus page</strong> — your live working dashboard.
         <ul>
-          <li><em>Vertical time gauge</em> — calendar-style column with hour grid, hour labels, a red current-time line with a rounded badge, and blue lines for the "done by" and "sleep" goals. Range: 30 min before Starting Time → 12 hours after. Color-coded bands appear as timers run; click a band to edit its start/end times.</li>
+          <li><em>Vertical time gauge</em> — calendar-style column with hour grid, hour labels, a red current-time line with a rounded badge, and blue lines for the "done by" and "sleep" goals. Range is fixed: 4 AM → 4 AM (next day). Color-coded bands appear as timers run; click a band to edit its start/end times.</li>
           <li><em>Pomodoro</em> — tap a task to start a 25-min Work countdown.
             <ul>
               <li>When it hits 0:00 it auto-rolls into a 5-min <em>Good Break</em>; every 4th break becomes a 15-min <em>Sweet Long Break</em>.</li>
@@ -4531,19 +4531,16 @@ function drawGauge() {
   if (!segmentsEl || !lineEl || !gridEl) return;
 
   const now = Date.now();
-  const start = getStartMs();
-  if (!start) {
-    gridEl.innerHTML = '';
-    segmentsEl.innerHTML = '';
-    lineEl.style.display = 'none';
-    if (dlLineEl) dlLineEl.style.display = 'none';
-    if (btLineEl) btLineEl.style.display = 'none';
-    return;
-  }
-  // Starting time IS the top of the gauge. The starting time itself was set
-  // 30 min before the first "Start focus session" click — see isFirstStartOfNewDay.
-  const topMs = start;
-  const total = 24 * 60 * 60 * 1000;        // 24 hours
+  // Gauge is FIXED to a 4 AM → 4 AM (next day) window, regardless of whether
+  // the user clicked "Start focus session →" or set a Starting Time. If we
+  // haven't yet reached today's 4 AM (i.e. now is 00:00–03:59), anchor to
+  // yesterday's 4 AM so the late-night portion of the day still appears at
+  // the bottom of the gauge.
+  const anchor = new Date();
+  anchor.setHours(4, 0, 0, 0);
+  if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
+  const topMs    = anchor.getTime();
+  const total    = 24 * 60 * 60 * 1000;        // 24 hours
   const bottomMs = topMs + total;
   const pct = (t) => Math.max(0, Math.min(100, ((t - topMs) / total) * 100));
 
