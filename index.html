@@ -245,30 +245,6 @@
     border: 1px solid #a7f3d0;
   }
   .btn-try-it:hover { background: #a7f3d0; }
-  /* Gender radio row on the sign-up form (login modal + setup banner). */
-  .gender-row {
-    display: flex; align-items: center; gap: 14px; flex-wrap: nowrap;
-    font-size: .85rem; color: #374151;
-  }
-  .gender-row .gender-label { font-weight: 600; flex-shrink: 0; }
-  .gender-row label {
-    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-    flex-shrink: 0;
-  }
-  /* Native-sized radios (override the form-wide input padding rules). */
-  .gender-row input[type="radio"] {
-    width: 16px; height: 16px; padding: 0; margin: 0;
-    transform: none; appearance: auto; -webkit-appearance: radio;
-    flex-shrink: 0;
-  }
-  .gender-help {
-    display: block; font-size: .72rem; color: #9ca3af;
-    line-height: 1.3; margin-top: -2px; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
-  }
-  @media (max-width: 700px) {
-    .gender-help { white-space: normal; }
-  }
 
   /* Setup-page sign-up nudge banner */
   .panel.auth-banner {
@@ -1752,12 +1728,6 @@
         <form class="auth-banner-form" id="setup-auth-form" autocomplete="on" onsubmit="return false;">
           <input type="email"    id="setup-auth-email"    placeholder="Email"    autocomplete="email">
           <input type="password" id="setup-auth-password" placeholder="Password" autocomplete="current-password">
-          <div class="gender-row">
-            <span class="gender-label">I am</span>
-            <label><input type="radio" name="setup-gender" value="man" checked> Man</label>
-            <label><input type="radio" name="setup-gender" value="woman"> Woman</label>
-          </div>
-          <span class="gender-help">(only used to pick your Mana avatar)</span>
           <div class="auth-banner-actions">
             <button class="btn primary" id="setup-auth-signin" type="button">Sign in</button>
             <button class="btn"         id="setup-auth-signup" type="button">Sign up</button>
@@ -2141,12 +2111,6 @@
     <div class="auth-form">
       <input type="email" id="login-email" placeholder="Email" autocomplete="email">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
-      <div class="gender-row">
-        <span class="gender-label">I am</span>
-        <label><input type="radio" name="login-gender" value="man" checked> Man</label>
-        <label><input type="radio" name="login-gender" value="woman"> Woman</label>
-      </div>
-      <span class="gender-help">(only used to pick your Mana avatar)</span>
       <div class="row-flex" style="grid-column: 1 / -1; flex-wrap: wrap;">
         <button class="btn primary" id="login-signin">Sign in</button>
         <button class="btn" id="login-signup">Sign up</button>
@@ -4978,12 +4942,11 @@ function renderScores() {
   // Map -100 → 0%, +100 → 100% (linear).
   const markerPct = clamp((e + 100) / 2, 0, 100);
   if (extMarker) extMarker.style.left = markerPct + '%';
-  // 20-level Mana figure, gendered. man{1..20}.png / woman{1..20}.png.
+  // 20-level Mana avatar — leaf{1..20}.png. leaf1 = withered, leaf20 = lush.
   const figIdx = manaImageIndex(e);
-  const figPrefix = (state.gender === 'woman') ? 'woman' : 'man';
   const extFace = document.getElementById('ext-face');
   if (extFace) extFace.innerHTML =
-    `<img src="images/focus/${figPrefix}${figIdx}.png" alt="${figPrefix} mana level ${figIdx}"
+    `<img src="images/focus/leaf${figIdx}.png" alt="mana leaf level ${figIdx}"
        style="width:100%;height:100%;object-fit:contain;"
        onerror="this.outerHTML=window.__renderFace(${Math.round(figIdx/3)});">`;
   // Money card next to it
@@ -6444,11 +6407,6 @@ async function handleLoginModalSignIn() {
     setLoginStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
   }
 }
-function readSelectedGender(radioName, fallback) {
-  const els = document.querySelectorAll(`input[type="radio"][name="${radioName}"]`);
-  for (const el of els) if (el.checked) return el.value === 'woman' ? 'woman' : 'man';
-  return fallback || 'man';
-}
 async function handleLoginModalSignUp() {
   const email = (loginEmailInput && loginEmailInput.value || '').trim();
   const password = loginPasswordInput && loginPasswordInput.value || '';
@@ -6456,18 +6414,12 @@ async function handleLoginModalSignUp() {
   if (password.length < 6) { setLoginStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setLoginStatus('Creating account...', '#6b7280');
   try {
-    // Capture the gender choice BEFORE auth sign-up so we save it to local state.
-    state.gender = readSelectedGender('login-gender', state.gender);
-    saveState();
     const user = await authSignUp(email, password);
     if (user && user.id) {
       updateAuthUI(user);
       setLoginStatus('✓ Account created.' + (user.confirmed_at ? '' : ' Check email if confirmation is on.'), '#059669');
       if (loginPasswordInput) loginPasswordInput.value = '';
-      // Push local state (including gender) before pulling so the choice survives.
-      markSettingsChanged(); await pushSettingsToCloud();
       await pullEverythingFromCloud();
-      if (typeof renderScores === 'function') renderScores();
     } else {
       setLoginStatus('Account requested — check your email.', '#059669');
     }
@@ -6524,16 +6476,12 @@ async function handleSetupBannerSignUp() {
   if (password.length < 6)  { setSetupAuthStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setSetupAuthStatus('Creating account...', '#6b7280');
   try {
-    state.gender = readSelectedGender('setup-gender', state.gender);
-    saveState();
     const user = await authSignUp(email, password);
     if (user && user.id) {
       updateAuthUI(user);
       setSetupAuthStatus('✓ Account created — your data is now syncing.', '#059669');
       if (setupAuthPasswordInput) setupAuthPasswordInput.value = '';
-      markSettingsChanged(); await pushSettingsToCloud();
       await pullEverythingFromCloud();
-      if (typeof renderScores === 'function') renderScores();
     } else {
       setSetupAuthStatus('Account requested — check your email.', '#059669');
     }
