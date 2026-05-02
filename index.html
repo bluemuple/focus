@@ -2216,7 +2216,7 @@ const defaultState = () => ({
   // Single-timer enforcement: at most one of these is "running" at a time.
   // activeTimer represents the timer that is currently ticking.
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
-  pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work session, resets after long break
+  pomodoroSessionsInCycle: 0,  // 0..2 — increments after each work+short-break, resets after long break
   watchLog: [],
   scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
   // ----- Money system (replaces "Internal" score on the focus page) -----
@@ -4098,9 +4098,10 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
 }
 
 /* ---- Pomodoro timer ----
-   Click task → 25m work → auto 5m break → stop.
-   After 4 work sessions in a row, the next break is 15m ("Sweet Long Break"),
-   then the cycle counter resets. The whole work+break is logged as one segment. */
+   Cycle: 25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 15m
+   Longer Break — then the counter resets and the cycle repeats. Each phase end
+   prompts the user (Yes = continue, No = stop & log). The whole work + break
+   sequence is recorded as one segment in the Activity log. */
 function startPomodoro(q, i) {
   stopActiveTimer('switch');
   const now = Date.now();
@@ -4181,7 +4182,7 @@ function toggleActiveTimerPause() {
 function pomodoroPhaseLabel(phase) {
   if (phase === 'work') return 'Work';
   if (phase === 'short-break') return 'Good Break';
-  if (phase === 'long-break') return 'Sweet Long Break';
+  if (phase === 'long-break') return 'Longer Break';
   return '';
 }
 function tickPomodoro() {
@@ -4210,10 +4211,14 @@ async function showPomoPhaseConfirm() {
   let nextPhase, nextDurMs, nextLabel, currentLabel;
   if (at.phase === 'work') {
     currentLabel = 'Work';
-    const isLong = (state.pomodoroSessionsInCycle || 0) >= 3;
+    // Cycle: 25m work · 5m break · 25m work · 5m break · 25m work · 15m LONG break.
+    // i.e. every 3rd work session ends with a long break. The counter (0..2)
+    // increments after each work+short-break pair, so it reaches 2 right
+    // before the 3rd work session's break, which is when we go long.
+    const isLong = (state.pomodoroSessionsInCycle || 0) >= 2;
     nextPhase = isLong ? 'long-break' : 'short-break';
     nextDurMs = isLong ? POMO_LONG_MS  : POMO_SHORT_MS;
-    nextLabel = isLong ? 'Sweet Long Break (15 min)' : 'Good Break (5 min)';
+    nextLabel = isLong ? 'Longer Break (15 min)' : 'Good Break (5 min)';
   } else {
     currentLabel = (at.phase === 'long-break') ? 'Long break' : 'Break';
     nextPhase = 'work';
