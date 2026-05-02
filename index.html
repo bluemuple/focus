@@ -7010,6 +7010,7 @@ async function handleSignIn() {
     const user = await authSignIn(email, password);
     updateAuthUI(user);
     setAuthStatus('');
+    if (typeof forceCloudWinsAfterSignIn === 'function') forceCloudWinsAfterSignIn();
     await pullEverythingFromCloud();
   } catch (e) {
     setAuthStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
@@ -7107,10 +7108,24 @@ async function handleLoginModalSignIn() {
     updateAuthUI(user);
     setLoginStatus('');
     if (loginPasswordInput) loginPasswordInput.value = '';
+    // Treat the post-sign-in pull as authoritative — the cloud is the truth.
+    // Without this, an empty fresh client could fool the timestamp check into
+    // skipping the pull (because initial render bumps settingsUpdatedAt to NOW).
+    forceCloudWinsAfterSignIn();
     await pullEverythingFromCloud();
   } catch (e) {
     setLoginStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
   }
+}
+/* Reset the local-vs-cloud comparison so the next sync UNCONDITIONALLY pulls
+   remote and overwrites local. Used right after sign-in so a freshly-cleared
+   browser doesn't accidentally keep its empty default state. */
+function forceCloudWinsAfterSignIn() {
+  _wasFreshClient = true;
+  state.settingsUpdatedAt = 0;
+  // Reset polling baseline so the next 12-second poll picks up the auth user's
+  // row (the previous one might have been against user_id='me').
+  if (typeof _lastPollMs !== 'undefined') _lastPollMs = 0;
 }
 async function handleLoginModalSignUp() {
   const email = (loginEmailInput && loginEmailInput.value || '').trim();
@@ -7169,6 +7184,7 @@ async function handleSetupBannerSignIn() {
     updateAuthUI(user);
     setSetupAuthStatus('');
     if (setupAuthPasswordInput) setupAuthPasswordInput.value = '';
+    forceCloudWinsAfterSignIn();
     await pullEverythingFromCloud();
   } catch (e) {
     setSetupAuthStatus('✗ ' + (e.message || 'Sign-in failed'), '#dc2626');
