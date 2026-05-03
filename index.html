@@ -1893,6 +1893,8 @@
   .watch-log-entry .watch-action-btn-spacer {
     display: inline-block; width: 24px;  /* matches the edit button's width */
   }
+  /* Single small ✎ note button on the right side of every activity row.
+     Same compact size as the old in-name note pen. */
   .watch-log-entry .note-btn {
     background: transparent; border: none; cursor: pointer;
     padding: 0 4px; font-size: .9rem; line-height: 1;
@@ -1903,20 +1905,22 @@
     display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
   }
   .watch-log-entry .name-text { font-weight: 600; color: #111827; }
-  .watch-log-entry .note-mail { font-size: .85rem; }
-  /* Stats PC: instead of ✉️, show full note inline. */
-  .stats-day .watch-log-entry .note-text-pc {
+  /* Inline journal note — shown between the name and time-range whenever
+     entry.note is set. Same look on Focus Activity log AND Statistics. */
+  .watch-log-entry .note-text-inline {
     display: block;
     color: #4b5563; font-size: .8rem;
-    line-height: 1.4; margin-top: 4px;
+    line-height: 1.4; margin: 2px 0;
     cursor: pointer;
     border-left: 2px solid #e5e7eb; padding-left: 8px;
     word-break: break-word;
+    white-space: normal;
   }
-  .stats-day .watch-log-entry .note-text-pc:hover { background: #f9fafb; }
-  @media (max-width: 700px) {
-    /* Phone Stats — hide the inline note text, ✉️ icon is enough. */
-    .stats-day .watch-log-entry .note-text-pc { display: none; }
+  .watch-log-entry .note-text-inline:hover { background: #f9fafb; }
+  /* Time-range is now clickable (cursor: pointer) — drives the time-edit
+     modal. Hover hint matches the inline note. */
+  .watch-log-entry .time-range:hover {
+    color: #2563eb;
   }
   /* Two-column Activity log (PC). On phone, #watch-log-cols is hidden and
      #watch-log-list is shown instead (handled in JS via .hidden). */
@@ -6624,6 +6628,106 @@ function entryDayKey(entry) {
 }
 function getCurrentDayKey() { return fmtDateLocal(new Date()); }
 
+/* ===== Shared activity-row renderer =====
+   Used by:
+   - Focus → Activity log
+   - Statistics → Activity log (per day)
+   - Statistics → Activity Notes (only entries with note text)
+   The row layout is identical everywhere so the visual style is unified.
+
+   Layout (left → right):
+     [type badge] [name + note + time-range column] [money/mana pen-stack]
+                                            [small ✎ note button] [× delete]
+
+   - Note text is shown inline between name and time-range whenever entry.note
+     is non-empty. Click the note text to edit, OR click the small ✎ button.
+   - Time-range itself is clickable to edit start/end times.
+   - opts.allowDelete / opts.allowMoneyEdit gate the right-side action buttons. */
+function buildActivityRow(entry, opts) {
+  opts = opts || {};
+  const allowDelete    = opts.allowDelete    !== false;
+  const allowMoneyEdit = opts.allowMoneyEdit !== false;
+  const allowTimeEdit  = opts.allowTimeEdit  !== false;
+  const allowNoteEdit  = opts.allowNoteEdit  !== false;
+
+  const realIdx = state.watchLog.indexOf(entry);
+  const m    = +entry.money || 0;
+  const mana = +entry.mana  || 0;
+  const moneyTxt = m === 0 ? '' : (m > 0 ? '+' : '-') + '$' + Math.abs(m).toFixed(2);
+  const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
+  const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
+  const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
+
+  let badge = '';
+  if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+  else if (entry.type === 'muncher')       badge = `<span class="badge muncher">mana mom.</span>`;
+  else if (entry.type === 'multiplier')    badge = `<span class="badge money-mom">Money</span>`;
+  else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">mana</span>`;
+  else if (entry.type === 'money-moment')  badge = `<span class="badge money-mom">Money</span>`;
+  else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
+  else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
+  else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
+  else if (entry.type === 'delete-task')   badge = `<span class="badge ${entry.q||'q4'}">×task</span>`;
+  else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
+  else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
+
+  const isPoint = !!entry.point || ((entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt);
+  const timeLine = isPoint
+    ? `<span class="time-range" data-act="edit-time">${fmtTime(entry.startedAt)}</span>`
+    : `<span class="time-range" data-act="edit-time">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
+
+  const hasNote = !!(entry.note && String(entry.note).trim());
+  const noteHtml = hasNote
+    ? `<span class="note-text-inline" data-act="edit-note" title="Click to edit note">${escapeHTML(entry.note)}</span>`
+    : '';
+
+  const row = document.createElement('div');
+  row.className = 'watch-log-entry';
+  row.innerHTML = `
+    ${badge}
+    <span class="name">
+      <span class="name-inline">
+        <span class="name-text">${escapeHTML(entry.name||'(event)')}</span>
+      </span>
+      ${noteHtml}
+      ${timeLine}
+    </span>
+    <span class="pen-stack">
+      ${moneyTxt ? `<span class="pen ${moneyCls}" data-act="edit-money" title="Click to edit money">${moneyTxt}</span>` : ''}
+      ${manaTxt  ? `<span class="pen pen-mana ${manaCls}" title="Mana change">${manaTxt}</span>` : ''}
+    </span>
+    ${allowNoteEdit
+      ? `<button class="note-btn note-pen" data-act="edit-note" title="${hasNote?'Edit':'Add'} note">✎</button>`
+      : `<span class="watch-action-btn-spacer"></span>`}
+    ${allowDelete
+      ? `<button class="watch-action-btn danger" data-act="delete" title="Delete entry">×</button>`
+      : ''}`;
+
+  // Wire handlers
+  if (allowNoteEdit) {
+    row.querySelectorAll('[data-act="edit-note"]').forEach(el => {
+      el.onclick = (ev) => { ev.stopPropagation(); editEntryNote(realIdx); };
+    });
+  }
+  if (allowTimeEdit && !isPoint) {
+    const tEl = row.querySelector('[data-act="edit-time"]');
+    if (tEl) {
+      tEl.style.cursor = 'pointer';
+      tEl.title = 'Click to edit start / end time';
+      tEl.onclick = (ev) => { ev.stopPropagation(); openWatchLogEditModal(state.watchLog[realIdx]); };
+    }
+  }
+  if (allowMoneyEdit) {
+    const mEl = row.querySelector('[data-act="edit-money"]');
+    if (mEl) mEl.onclick = (ev) => { ev.stopPropagation(); editWatchLogMoney(realIdx); };
+  }
+  if (allowDelete) {
+    const dEl = row.querySelector('[data-act="delete"]');
+    if (dEl) dEl.onclick = (ev) => { ev.stopPropagation(); deleteWatchLogEntry(realIdx); };
+  }
+  return row;
+}
+
 function renderWatchLog() {
   const wrap = document.getElementById('watch-log-panel');
   const list = document.getElementById('watch-log-list');
@@ -6653,73 +6757,16 @@ function renderWatchLog() {
     const mana  = +entry.mana  || 0;
     totalMoney += m;
     totalMana  += mana;
-    const row = document.createElement('div');
-    row.className = 'watch-log-entry';
-    let badge = '';
-    if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
-    else if (entry.type === 'muncher')       badge = `<span class="badge muncher">mana mom.</span>`;
-    else if (entry.type === 'multiplier')    badge = `<span class="badge money-mom">Money</span>`;
-    else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">mana</span>`;
-    else if (entry.type === 'money-moment')  badge = `<span class="badge money-mom">Money</span>`;
-    else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
-    else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
-    else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
-    else if (entry.type === 'delete-task')   badge = `<span class="badge ${entry.q||'q4'}">×task</span>`;
-    else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
-    else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
-    // Real index in state.watchLog (since we filtered+reversed)
-    const realIdx = state.watchLog.indexOf(entry);
-    // Time line — point events show only the moment, timer events show range + duration
-    const isPoint = !!entry.point || (entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt;
-    const timeLine = isPoint
-      ? `<span class="time-range">${fmtTime(entry.startedAt)}</span>`
-      : `<span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
-    const moneyTxt = m === 0 ? '' : (m > 0 ? '+' : '-') + '$' + Math.abs(m).toFixed(2);
-    const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
-    const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
-    const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
-    const hasNote = !!(entry.note && String(entry.note).trim());
-    row.innerHTML = `
-      ${badge}
-      <span class="name">
-        <span class="name-inline">
-          <button class="note-btn note-pen" data-act="edit-note" data-idx="${realIdx}" title="Add / edit note">✎</button>
-          <span class="name-text">${escapeHTML(entry.name||'(event)')}</span>
-          ${hasNote ? `<button class="note-btn note-mail" data-act="edit-note" data-idx="${realIdx}" title="Edit note">✉️</button>` : ''}
-        </span>
-        ${timeLine}
-      </span>
-      <span class="pen-stack">
-        ${moneyTxt ? `<span class="pen ${moneyCls}" data-act="edit-money" data-idx="${realIdx}" title="Click to edit money">${moneyTxt}</span>` : ''}
-        ${manaTxt  ? `<span class="pen pen-mana ${manaCls}" title="Mana change">${manaTxt}</span>` : ''}
-      </span>
-      ${isPoint
-        ? `<span class="watch-action-btn-spacer"></span>`
-        : `<button class="watch-action-btn"        data-act="edit"   data-idx="${realIdx}" title="Edit time">✎</button>`}
-      <button class="watch-action-btn danger" data-act="delete" data-idx="${realIdx}" title="Delete entry">×</button>`;
-    function attachHandlers(r) {
-      if (!isPoint) {
-        const editEl = r.querySelector('[data-act="edit"]');
-        if (editEl) editEl.onclick = () => openWatchLogEditModal(state.watchLog[realIdx]);
-      }
-      const delEl = r.querySelector('[data-act="delete"]');
-      if (delEl) delEl.onclick = () => deleteWatchLogEntry(realIdx);
-      const emEl = r.querySelector('[data-act="edit-money"]');
-      if (emEl) emEl.onclick = () => editWatchLogMoney(realIdx);
-      r.querySelectorAll('[data-act="edit-note"]').forEach(el => {
-        el.onclick = (ev) => { ev.stopPropagation(); editEntryNote(realIdx); };
-      });
-    }
-    attachHandlers(row);
+    const row = buildActivityRow(entry);
     if (isWide) {
       // PC layout — distribute across Money / Mana columns based on what
       // this entry actually carried. If neither, default to the Money column.
       const hasMoney = m !== 0;
       const hasMana  = mana !== 0;
       if (hasMoney && hasMana) {
-        // Need a second instance for the other column. Clone + re-attach handlers.
-        const row2 = row.cloneNode(true);
-        attachHandlers(row2);
+        // Need a second instance for the other column. Build a fresh one so
+        // its handlers fire independently of the first.
+        const row2 = buildActivityRow(entry);
         if (moneyCol) moneyCol.appendChild(row);
         if (manaCol)  manaCol.appendChild(row2);
       } else if (hasMana) {
@@ -7204,51 +7251,8 @@ function renderStats() {
       totalMs    += entry.durationMs || 0;
       totalMoney += +entry.money || 0;
       totalMana  += +entry.mana  || 0;
-      let badge = '';
-      if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
-      else if (entry.type === 'muncher')       badge = `<span class="badge muncher">mana mom.</span>`;
-      else if (entry.type === 'multiplier')    badge = `<span class="badge money-mom">Money</span>`;
-      else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">mana</span>`;
-      else if (entry.type === 'money-moment')  badge = `<span class="badge money-mom">Money</span>`;
-      else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
-      else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
-      else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
-      else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
-      const row = document.createElement('div');
-      row.className = 'watch-log-entry';
-      const m = +entry.money || 0;
-      const mana = +entry.mana || 0;
-      const moneyTxt = m === 0 ? '' : (m > 0 ? '+' : '-') + '$' + Math.abs(m).toFixed(2);
-      const moneyCls = m > 0 ? 'pen-pos' : m < 0 ? 'pen-neg' : 'pen-zero';
-      const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
-      const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
-      const isPoint = !!entry.point || ((entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt);
-      const timeLine = isPoint
-        ? `<span class="time-range">${fmtTime(entry.startedAt)}</span>`
-        : `<span class="time-range">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
-      const realIdx = state.watchLog.indexOf(entry);
-      const hasNote = !!(entry.note && String(entry.note).trim());
-      const noteTxt = hasNote ? entry.note : '';
-      row.innerHTML = `
-        ${badge}
-        <span class="name">
-          <span class="name-inline">
-            <button class="note-btn note-pen" data-act="edit-note" data-idx="${realIdx}" title="Add / edit note">✎</button>
-            <span class="name-text">${escapeHTML(entry.name||'(event)')}</span>
-            ${hasNote ? `<button class="note-btn note-mail" data-act="edit-note" data-idx="${realIdx}" title="Edit note">✉️</button>` : ''}
-          </span>
-          ${timeLine}
-          ${hasNote ? `<span class="note-text-pc" data-act="edit-note" data-idx="${realIdx}" title="Click to edit">${escapeHTML(noteTxt)}</span>` : ''}
-        </span>
-        <span class="pen-stack">
-          ${moneyTxt ? `<span class="pen ${moneyCls}">${moneyTxt}</span>` : ''}
-          ${manaTxt  ? `<span class="pen pen-mana ${manaCls}">${manaTxt}</span>` : ''}
-        </span>
-        <span></span><span></span>`;
-      row.querySelectorAll('[data-act="edit-note"]').forEach(el => {
-        el.onclick = (ev) => { ev.stopPropagation(); editEntryNote(realIdx); };
-      });
-      logDiv.appendChild(row);
+      // Use the same shared row builder as the Focus activity log.
+      logDiv.appendChild(buildActivityRow(entry));
     });
     const tot = document.createElement('div');
     tot.className = 'watch-log-total';
@@ -7259,6 +7263,22 @@ function renderStats() {
     logDiv.appendChild(tot);
   }
   list.appendChild(logDiv);
+
+  // ---- Activity Notes (entries with a journal note) ----
+  // Pulls from ALL of state.watchLog (not just today) so the journal entries
+  // accumulate over time. Sorted newest first. Same activity-bar style as the
+  // Focus / Activity log views.
+  const notedEntries = (state.watchLog || []).filter(e => e && e.note && String(e.note).trim());
+  if (notedEntries.length) {
+    const notesDiv = document.createElement('div');
+    notesDiv.className = 'stats-day session';
+    notesDiv.innerHTML = `<div class="row"><strong>Activity Notes</strong> <span class="help" style="margin-left:8px;">${notedEntries.length} entr${notedEntries.length === 1 ? 'y' : 'ies'}</span></div>`;
+    notedEntries
+      .slice()
+      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
+      .forEach(entry => notesDiv.appendChild(buildActivityRow(entry)));
+    list.appendChild(notesDiv);
+  }
 }
 
 function shiftDailyDate(deltaDays) {
