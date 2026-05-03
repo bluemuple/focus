@@ -1210,7 +1210,8 @@
   .money-mana-row.compact .money-scale-toggle { display: none !important; }
   .money-mana-row.compact .money-row          { display: none !important; }
   .money-mana-row.compact .mana-top-row       { display: none !important; }
-  .money-mana-row.compact .mana-msg           { display: none !important; }
+  .money-mana-row.compact .mana-msg,
+  .money-mana-row.compact .mana-msg-divider   { display: none !important; }
   /* Sleep button is hidden in collapsed view on phone (the Mana area is
      already compact — the button would only crowd the row). */
   .money-mana-row.compact .sleep-btn          { display: none !important; }
@@ -1322,11 +1323,24 @@
   .mana-vis .score-bar.dragging .marker {
     background: #2563eb; box-shadow: 0 0 0 4px rgba(37,99,235,.18);
   }
-  /* Mood message — single line below, colored by manaScoreColor() */
-  .mana-msg {
-    display: block; margin-top: 12px;
-    font-size: 1rem; font-weight: 700; line-height: 1.3;
+  /* Mana title row — title + divider + mood message inline; compact-summary
+     replaces the mood when collapsed. */
+  .mana-title-wrap {
+    display: flex; align-items: baseline; gap: 6px;
+    flex-wrap: wrap; min-width: 0;
   }
+  .mana-msg-divider {
+    color: #d1d5db; font-weight: 400; user-select: none;
+  }
+  /* Mood message — colored by gaugeColorAtPct() at runtime via inline style. */
+  .mana-msg {
+    font-size: .9rem; font-weight: 600; line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    min-width: 0; flex: 1 1 auto;
+  }
+  /* Hide the divider when the mood message is empty (default placeholder "—"). */
+  .mana-msg:empty + .mana-msg-divider,
+  .mana-msg-divider:has(+ .mana-msg:empty) { display: none; }
   /* Plain time-goals block (no border/background) — sits inside the Mana card.
      The wrap puts the time-goals on the left and the Sleep button on the
      right, with the button stretched to span both rows in height. */
@@ -1386,7 +1400,7 @@
     .sleep-btn { padding: 4px 2px; font-size: 1.4rem; min-width: 0; line-height: 1; }
     .focus-time-goals-wrap { gap: 4px; }
     .focus-time-goals-wrap .sleep-btn { padding: 4px 2px; }
-    .mana-msg       { font-size: .9rem; margin-top: 8px; }
+    .mana-msg       { font-size: .8rem; }
     .mana-vis       { gap: 10px; }
     .mana-vis .face { width: 44px; height: 44px; }
     .mana-top-row   { gap: 0; }
@@ -2543,8 +2557,13 @@
             <div class="mm-col mm-col-mana">
               <div class="mana-card money-card">
                 <div class="money-head">
-                  <h4>
+                  <h4 class="mana-title-wrap">
                     <span class="mm-h4-text">Mana</span>
+                    <!-- Mood message lives next to the title with a vertical
+                         divider. Hidden in compact view (compact-summary takes
+                         over). -->
+                    <span class="mana-msg-divider" aria-hidden="true">│</span>
+                    <span class="mana-msg" id="message-box">—</span>
                     <span class="compact-summary" id="mana-compact-summary"></span>
                   </h4>
                 </div>
@@ -2556,24 +2575,22 @@
                     <div class="score-bar"><div class="marker" id="ext-marker"></div></div>
                   </div>
                 </div>
-                <!-- Mood message — colored to match the gauge position -->
-                <div class="mana-msg" id="message-box">—</div>
                 <!-- Time goals as plain text (no border/background) inside the card.
                      The Sleep button sits at the right, spanning both rows. -->
                 <div class="focus-time-goals-wrap">
                   <div class="focus-time-goals plain" id="focus-time-goals">
                     <div id="focus-deadline-row">
                       <button class="lbl tg-set-btn" type="button" title="Set deadline">
-                        <span class="tg-phone">✎GTD⏱︎</span>
-                        <span class="tg-pc">Set GTD ⏱︎</span>
+                        <span class="tg-phone">⏰ GTD</span>
+                        <span class="tg-pc">Set GTD ⏰</span>
                       </button>
                       <strong id="focus-deadline-time" hidden>--:--</strong>
                       <span class="cd" id="focus-deadline-cd">—</span>
                     </div>
                     <div id="focus-bedtime-row">
                       <button class="lbl tg-set-btn" type="button" title="Set bedtime">
-                        <span class="tg-phone">✎Sleep⏱︎</span>
-                        <span class="tg-pc">Set Sleep ⏱︎</span>
+                        <span class="tg-phone">⏰ Sleep</span>
+                        <span class="tg-pc">Set Sleep ⏰</span>
                       </button>
                       <strong id="focus-bedtime-time" hidden>--:--</strong>
                       <span class="cd" id="focus-bedtime-cd">—</span>
@@ -5178,11 +5195,9 @@ function updateCountdowns() {
   if (dlRow) dlRow.style.display = '';
   if (btRow) btRow.style.display = '';
   if (goals) goals.style.display = '';
-  // Update label text — phrase per spec.
-  const dlLbl = dlRow && dlRow.querySelector('.lbl');
-  const btLbl = btRow && btRow.querySelector('.lbl');
-  if (dlLbl) dlLbl.textContent = 'GTD by';
-  if (btLbl) btLbl.textContent = 'Sleep at';
+  // (Button labels are static markup — see HTML's .tg-set-btn — and must
+  // NOT be rewritten here, otherwise the .tg-phone / .tg-pc spans would
+  // be wiped out.)
 }
 
 /* ===========================================================
@@ -6606,10 +6621,19 @@ function renderScores() {
   // I'm doing ticker — render here so a single tick updates everything.
   renderImDoing();
   // Mood message — colored to match the gauge color at the marker's position.
+  // Hide the message + its vertical divider when the focusMessage is empty
+  // or the placeholder "—", so the Mana title row doesn't show a stray "│".
   const msg = document.getElementById('message-box');
   if (msg) {
-    msg.textContent = focusMessage(e);
+    const txt = focusMessage(e) || '';
+    const hasMsg = !!txt && txt !== '—';
+    msg.textContent = hasMsg ? txt : '';
     msg.style.color = gaugeColorAtPct(markerPct);
+    msg.style.display = hasMsg ? '' : 'none';
+    const divider = msg.previousElementSibling;
+    if (divider && divider.classList.contains('mana-msg-divider')) {
+      divider.style.display = hasMsg ? '' : 'none';
+    }
   }
 }
 /* 20-level Mana image index from the score (-100..+100):
