@@ -1893,6 +1893,12 @@
   .watch-log-entry .watch-action-btn-spacer {
     display: inline-block; width: 24px;  /* matches the edit button's width */
   }
+  /* Activity Notes panel inside the weekly view — sits between the period
+     header and the gauge grid. Hidden when there are no notes for the week. */
+  .week-notes { padding: 12px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+  .week-notes.hidden { display: none; }
+  .week-notes #week-notes-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+
   /* Single small ✎ note button on the right side of every activity row.
      Same compact size as the old in-name note pen. */
   .watch-log-entry .note-btn {
@@ -2569,6 +2575,14 @@
           <button class="btn" id="week-prev">←</button>
           <span id="week-label">—</span>
           <button class="btn" id="week-next">→</button>
+        </div>
+        <!-- Activity Notes for the visible week. Hidden via .hidden when empty. -->
+        <div id="week-notes" class="panel session week-notes hidden" style="margin: 12px 0;">
+          <div class="row">
+            <strong>Activity Notes</strong>
+            <span class="help" id="week-notes-count" style="margin-left:8px;"></span>
+          </div>
+          <div id="week-notes-list"></div>
         </div>
         <div class="week-grid" id="week-grid"></div>
       </div>
@@ -7263,22 +7277,6 @@ function renderStats() {
     logDiv.appendChild(tot);
   }
   list.appendChild(logDiv);
-
-  // ---- Activity Notes (entries with a journal note) ----
-  // Pulls from ALL of state.watchLog (not just today) so the journal entries
-  // accumulate over time. Sorted newest first. Same activity-bar style as the
-  // Focus / Activity log views.
-  const notedEntries = (state.watchLog || []).filter(e => e && e.note && String(e.note).trim());
-  if (notedEntries.length) {
-    const notesDiv = document.createElement('div');
-    notesDiv.className = 'stats-day session';
-    notesDiv.innerHTML = `<div class="row"><strong>Activity Notes</strong> <span class="help" style="margin-left:8px;">${notedEntries.length} entr${notedEntries.length === 1 ? 'y' : 'ies'}</span></div>`;
-    notedEntries
-      .slice()
-      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0))
-      .forEach(entry => notesDiv.appendChild(buildActivityRow(entry)));
-    list.appendChild(notesDiv);
-  }
 }
 
 function shiftDailyDate(deltaDays) {
@@ -7537,6 +7535,30 @@ function renderWeekView() {
   const sunday = days[6];
   if (label) {
     label.textContent = `${monday.toLocaleDateString([], { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' })}`;
+  }
+
+  // ---- Activity Notes for the visible week ----
+  // Show only entries with a journal note that started inside [Mon 00:00,
+  // next-Mon 00:00). Hide the whole panel when the week has no notes.
+  const notesPanel = document.getElementById('week-notes');
+  const notesList  = document.getElementById('week-notes-list');
+  const notesCount = document.getElementById('week-notes-count');
+  if (notesPanel && notesList) {
+    const weekStartMs = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate(), 0, 0, 0, 0).getTime();
+    const weekEndMs   = weekStartMs + 7 * 24 * 60 * 60 * 1000;
+    const weekNotes = (state.watchLog || [])
+      .filter(e => e && e.note && String(e.note).trim()
+                 && +e.startedAt >= weekStartMs && +e.startedAt < weekEndMs)
+      .sort((a, b) => (b.startedAt || 0) - (a.startedAt || 0));
+    notesList.innerHTML = '';
+    if (weekNotes.length) {
+      notesPanel.classList.remove('hidden');
+      if (notesCount) notesCount.textContent = `${weekNotes.length} entr${weekNotes.length === 1 ? 'y' : 'ies'}`;
+      weekNotes.forEach(entry => notesList.appendChild(buildActivityRow(entry)));
+    } else {
+      notesPanel.classList.add('hidden');
+      if (notesCount) notesCount.textContent = '';
+    }
   }
   // Full 24h day (12 AM → 12 AM) so segments that cross midnight are
   // visible on BOTH days — the start day fills toward the bottom and the
