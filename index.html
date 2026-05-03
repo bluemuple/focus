@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>Concentration — Focus Companion</title>
+<title>Bidoro — Bid on your time</title>
 <style>
   /* ============ BASE ============ */
   *, *::before, *::after { box-sizing: border-box; }
@@ -47,9 +47,15 @@
     position: sticky; top: 0; z-index: 50;
     background: #ffffffee; backdrop-filter: blur(8px);
     border-bottom: 1px solid var(--line);
-    padding: 10px 16px;
-    /* 3-col grid: brand fills gauge-width (20%), motivation fills middle, tabs on right.
-       This makes the motivation start exactly where the gauge ends on the focus page. */
+    /* Match the page's max-width: 1200px content region. The horizontal
+       padding scales so the inner grid is exactly the same width as <main>'s
+       padded content area, while the bg keeps spanning the full viewport. */
+    padding: 10px max(16px, calc((100vw - 1200px) / 2 + 16px));
+    /* 3-col grid: brand fills the gauge column (20%), motivation fills the
+       same area as .focus-right's left edge through the tabs' left edge,
+       and tabs hug the right edge — i.e. they line up vertically with
+       (1) the gauge's left edge, (2) the focus-right column's left edge,
+       (3) the focus-right column's right edge respectively. */
     display: grid;
     grid-template-columns: minmax(170px, 20%) 1fr auto;
     gap: 12px;
@@ -1188,8 +1194,10 @@
     #mm-toggle .mm-chevron { display: inline-block; }
   }
   @media (min-width: 701px) {
-    /* PC never compacts — keep chevron hidden too. */
-    #mm-toggle .mm-chevron, #mm-toggle .compact-summary { display: none; }
+    /* PC never compacts — chevron + both compact summaries stay hidden
+       regardless of the .compact class. */
+    .money-card .mm-chevron,
+    .money-card .compact-summary { display: none !important; }
   }
   /* Compact-mode visibility rules. Apply on every screen size — JS only adds
      `.compact` on phone, but the rules harmlessly carry over. */
@@ -2212,7 +2220,7 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">Concentration<small>focus companion</small></div>
+  <div class="brand">Bidoro<small>Bid on your time</small></div>
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
     <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects">🔈</button>
@@ -2235,7 +2243,7 @@
         <div class="auth-banner-copy">
           <h2 style="margin:0 0 4px;">Save your progress across every device</h2>
           <p class="help" style="margin:0 0 6px;">
-            You're using Concentration as a guest — your tasks, scores, and timeline live only on this device.
+            You're using Bidoro as a guest — your tasks, scores, and timeline live only on this device.
           </p>
           <p class="help" style="margin:0 0 4px; color:#374151;">
             Sign up free to unlock cloud sync — pick up where you left off on your phone, tablet, or another browser, and never lose a session.
@@ -2473,7 +2481,10 @@
             <div class="mm-col mm-col-mana">
               <div class="mana-card money-card">
                 <div class="money-head">
-                  <h4>Mana</h4>
+                  <h4>
+                    <span class="mm-h4-text">Mana</span>
+                    <span class="compact-summary" id="mana-compact-summary"></span>
+                  </h4>
                 </div>
                 <!-- Top row inside the card: score (left) + face + gauge (right) -->
                 <div class="mana-top-row">
@@ -2628,7 +2639,7 @@
 <div class="modal hidden" id="login-modal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-content login-modal-content">
-    <h3 style="margin: 0 0 4px;">Welcome to Concentration</h3>
+    <h3 style="margin: 0 0 4px;">Welcome to Bidoro</h3>
     <p class="help" style="margin: 0 0 8px; font-size: .78rem;">Three powerful tools — hover or tap each for details:</p>
     <ul class="feature-list">
       <li class="feature-item" tabindex="0">
@@ -2669,7 +2680,7 @@
   <div class="modal-backdrop" id="manual-modal-backdrop"></div>
   <div class="modal-content manual-modal-content">
     <button class="manual-close" id="manual-close" type="button" aria-label="Close">×</button>
-    <h2 style="margin-top:0;">Concentration — User Manual</h2>
+    <h2 style="margin-top:0;">Bidoro — User Guide</h2>
 
     <!-- ============ Preview carousel ============ -->
     <section class="preview-section">
@@ -6582,14 +6593,16 @@ function renderMoneyCard() {
   const dCls  = delta > 0.005 ? 'up'  : delta < -0.005 ? 'down' : 'flat';
   changeEl.className = 'money-change ' + dCls;
   changeEl.textContent = `${arrow}${Math.abs(delta).toFixed(2)} (${pct >= 0 ? '' : '-'}${Math.abs(pct).toFixed(2)}%)`;
-  // Compact mobile summary — shown next to the Money h4 when the row is
-  // collapsed. "$200.00 · +12 mana" so both scores fit on one line.
-  const sum = document.getElementById('mm-compact-summary');
-  if (sum) {
-    const moneyStr = (m < 0 ? '-' : '') + '$' + Math.abs(m).toFixed(2);
+  // Compact mobile summary — each header shows only its own number, so the
+  // mana figure sits next to "Mana" rather than next to "Money".
+  const moneySum = document.getElementById('mm-compact-summary');
+  if (moneySum) {
+    moneySum.textContent = (m < 0 ? '-' : '') + '$' + Math.abs(m).toFixed(2);
+  }
+  const manaSum = document.getElementById('mana-compact-summary');
+  if (manaSum) {
     const ext = +(state.ext && state.ext.slider) || 0;
-    const manaStr = (ext > 0 ? '+' : '') + ext + ' mana';
-    sum.textContent = `${moneyStr} · ${manaStr}`;
+    manaSum.textContent = (ext > 0 ? '+' : '') + ext + ' mana';
   }
 }
 function renderImDoing() {
@@ -8831,9 +8844,10 @@ if (_matrixViewBtn) {
   const header = document.getElementById('mm-toggle');
   if (!row || !header) return;
   const KEY = 'moneyManaCompactV1';
-  // Restore last choice (per device).
+  // Restore last choice (per device) — phone-only.
   try {
-    if (localStorage.getItem(KEY) === '1') row.classList.add('compact');
+    const isPhone = window.matchMedia('(max-width: 700px)').matches;
+    if (isPhone && localStorage.getItem(KEY) === '1') row.classList.add('compact');
   } catch (_) {}
   header.addEventListener('click', () => {
     // Phone-only — on PC the chevron + summary are hidden via CSS, but
