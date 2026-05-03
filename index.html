@@ -1168,6 +1168,35 @@
     margin-bottom: 4px;
   }
   .money-card h4 { margin: 0; font-size: .9rem; color: #111827; }
+  /* Money/Mana mobile compact toggle — chevron + inline summary live inside
+     the Money card's h4 (id="mm-toggle"). The h4 is only clickable on phone. */
+  .money-card h4 .mm-chevron {
+    display: inline-block; margin-left: auto;
+    font-size: .8rem; color: #6b7280;
+    transition: transform .15s ease;
+  }
+  .money-card h4 .compact-summary {
+    display: none; font-size: .85rem; font-weight: 600;
+    color: #4b5563; margin-left: 8px;
+  }
+  .money-mana-row.compact .mm-chevron { transform: rotate(-90deg); }
+  .money-mana-row.compact .compact-summary { display: inline; }
+  /* Compact mode (phone) — hide the heavy bits, keep "I'm doing" + Sleep btn
+     on the Money side and time-goals on the Mana side. */
+  @media (max-width: 700px) {
+    #mm-toggle { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; flex: 1; }
+    #mm-toggle .mm-chevron { display: inline-block; }
+  }
+  @media (min-width: 701px) {
+    /* PC never compacts — keep chevron hidden too. */
+    #mm-toggle .mm-chevron, #mm-toggle .compact-summary { display: none; }
+  }
+  /* Compact-mode visibility rules. Apply on every screen size — JS only adds
+     `.compact` on phone, but the rules harmlessly carry over. */
+  .money-mana-row.compact .money-scale-toggle { display: none !important; }
+  .money-mana-row.compact .money-row          { display: none !important; }
+  .money-mana-row.compact .mana-top-row       { display: none !important; }
+  .money-mana-row.compact .mana-msg           { display: none !important; }
   .money-row {
     display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   }
@@ -2412,7 +2441,11 @@
             <div class="mm-col mm-col-money">
               <div id="money-card" class="money-card">
                 <div class="money-head">
-                  <h4>Money</h4>
+                  <h4 id="mm-toggle" title="Tap to compact / expand (phone)">
+                    <span class="mm-h4-text">Money</span>
+                    <span class="compact-summary" id="mm-compact-summary"></span>
+                    <span class="mm-chevron" aria-hidden="true">▾</span>
+                  </h4>
                   <div class="money-scale-toggle" id="money-scale-toggle" role="tablist" aria-label="Compare timeframe">
                     <button data-scale="W" type="button">W</button>
                     <button data-scale="D" type="button" class="active">D</button>
@@ -2756,7 +2789,7 @@
           <li><em>Add task</em> (+$5) — earned the first time you give a task a name.</li>
           <li><em>Finish task</em> (+$10) — default bid; per-task bids override.</li>
           <li><em>Per minute</em> (+10¢) — accrued during pomodoros and trackers.</li>
-          <li><em>Sleep skipped</em> (−$30) — auto-applied if midnight passes without you clicking <em>Sleep</em>.</li>
+          <li><em>Sleep skipped</em> (−$30) — charged if you don't tap <em>Sleep</em> before your bedtime (or midnight when no bedtime is set). Skipped automatically if a timer is running, or if any pomodoro/tracker ended within the last hour. Two reasons it exists: ① no day passes with zero task work, and ② it nudges you to honor your <em>Sleep at</em> goal.</li>
         </ul>
       </li>
 
@@ -2817,7 +2850,7 @@
       <li><strong>Behavior notes</strong>
         <ul>
           <li>Mana never drifts on its own. It only moves when you toggle a factor, drag the score-bar, tap an Energy Habits row, or run a tracker / pomodoro that has a configured effect.</li>
-          <li>Money never drifts either, except for the once-per-day midnight check that applies the <em>Sleep skipped</em> penalty when the day ends without a Sleep tap.</li>
+          <li>Money never drifts either, except for the once-per-day <em>Sleep skipped</em> check that runs after your bedtime (or midnight). The check exempts you when you're still actively working past bedtime — see the <em>Habits & Triggers</em> section for the full rules.</li>
           <li>The Tasks matrix and time goals reset at 3 AM each day (so you start the new day fresh) — money, mana, and the activity log are preserved.</li>
         </ul>
       </li>
@@ -3010,7 +3043,7 @@ const defaultState = () => ({
     addTask:        5,    // + when adding a task
     finishTask:     10,   // + when checking task done (or default per-task bid)
     perMinuteCents: 10,   // + cents per minute of pomodoro / tracker time
-    noTaskPenalty:  30    // − when Sleep wasn't clicked before midnight
+    noTaskPenalty:  30    // − when Sleep wasn't clicked before bedtime (or midnight)
   },
   // Marker for the daily Sleep-button rule. YYYY-MM-DD of the day Sleep was last clicked.
   sleepClickedDate: '',
@@ -4438,7 +4471,10 @@ async function editMoneyFactor(key) {
     addTask:        ['Adding a task', 'How much money do you earn when you add a new task? (USD)'],
     finishTask:     ['Finishing a task (default bid)', 'Default money earned for finishing a task (per-task override is set with the $ button next to each task).'],
     perMinuteCents: ['Time bonus per minute',         'How many CENTS to add for every minute of pomodoro / tracker time.'],
-    noTaskPenalty:  ['No task / Sleep skipped',       'How much money you LOSE when midnight passes without clicking Sleep. (Positive number = amount lost.)']
+    noTaskPenalty:  ['Sleep skipped',
+      'Money charged if you don\'t tap Sleep before your bedtime (or midnight if no bedtime is set).\n\n' +
+      'Why this exists: to make sure no day passes with zero task work, and to nudge you to keep your bedtime promise. ' +
+      'If a timer is running or you finished a task in the last hour, you\'re working past bedtime and the penalty is skipped.']
   };
   const [t, msg] = titles[key];
   const v = await customPrompt('Score Setting 4 Tasks', `${t}\n${msg}`, String(mcf[key]));
@@ -6546,6 +6582,15 @@ function renderMoneyCard() {
   const dCls  = delta > 0.005 ? 'up'  : delta < -0.005 ? 'down' : 'flat';
   changeEl.className = 'money-change ' + dCls;
   changeEl.textContent = `${arrow}${Math.abs(delta).toFixed(2)} (${pct >= 0 ? '' : '-'}${Math.abs(pct).toFixed(2)}%)`;
+  // Compact mobile summary — shown next to the Money h4 when the row is
+  // collapsed. "$200.00 · +12 mana" so both scores fit on one line.
+  const sum = document.getElementById('mm-compact-summary');
+  if (sum) {
+    const moneyStr = (m < 0 ? '-' : '') + '$' + Math.abs(m).toFixed(2);
+    const ext = +(state.ext && state.ext.slider) || 0;
+    const manaStr = (ext > 0 ? '+' : '') + ext + ' mana';
+    sum.textContent = `${moneyStr} · ${manaStr}`;
+  }
 }
 function renderImDoing() {
   const wrap = document.getElementById('im-doing');
@@ -8776,6 +8821,31 @@ if (_matrixViewBtn) {
   _matrixViewBtn.textContent = state.focusMatrixCompact ? '⤡' : '⤢';
 }
 
+/* ===== Money/Mana mobile compact toggle =====
+   Click the "Money" header on phone to collapse the heavy bits (W/D/H,
+   balance row, mana score-bar/leaf/mood) and keep only "I'm doing", Sleep
+   button, and time-goals visible. A tiny "$X · +N mana" summary appears
+   next to the header. Click again to restore. */
+(function wireMoneyManaCompactToggle() {
+  const row    = document.querySelector('#focus-page .money-mana-row');
+  const header = document.getElementById('mm-toggle');
+  if (!row || !header) return;
+  const KEY = 'moneyManaCompactV1';
+  // Restore last choice (per device).
+  try {
+    if (localStorage.getItem(KEY) === '1') row.classList.add('compact');
+  } catch (_) {}
+  header.addEventListener('click', () => {
+    // Phone-only — on PC the chevron + summary are hidden via CSS, but
+    // we still gate the toggle to avoid surprising behavior at >700px.
+    const isPhone = window.matchMedia('(max-width: 700px)').matches;
+    if (!isPhone) return;
+    row.classList.toggle('compact');
+    try { localStorage.setItem(KEY, row.classList.contains('compact') ? '1' : '0'); } catch (_) {}
+    if (typeof renderMoneyCard === 'function') renderMoneyCard();
+  });
+})();
+
 /* ===== Manual button inside the Account row ===== */
 const _acctManualBtn = document.getElementById('account-manual-btn');
 if (_acctManualBtn) _acctManualBtn.onclick = () => {
@@ -8977,26 +9047,77 @@ function maybeAutoSnapshot() {
         document.getElementById('stats-page').style.display !== 'none') renderStats();
   }
 }
-/* If the previous day passed without a Sleep-button click, deduct the
-   "No task" / "No Sleep" penalty (default $30, editable in Money Change Factors).
-   Runs once per day at most. */
+/* "Sleep skipped" penalty — runs at most once per day.
+   Two reasons it exists:
+     1. Make sure no day passes with zero intentional task work.
+     2. Encourage hitting the user's chosen bedtime ("Sleep at" goal).
+   Two ways to avoid the penalty:
+     A. The deadline is the user's "Sleep at" goal time. If unset, it falls
+        back to midnight (00:00 of the new day). Tap Sleep before that.
+     B. Activity-based exemption — if a timer is running right now, OR a
+        pomodoro/tracker ended within the last 60 minutes, the user is
+        clearly still working past their bedtime, so the penalty is skipped. */
 function maybeNoSleepPenalty() {
   const today = getCurrentDayKey();
+  const now = Date.now();
   if (!state.lastNoSleepCheckedDate) {
-    // First ever run — bootstrap to today and don't charge.
+    // First-ever run — bootstrap to today and never retro-penalize.
     state.lastNoSleepCheckedDate = today; saveState(); return;
   }
-  if (state.lastNoSleepCheckedDate === today) return;  // already checked today
-  // A new calendar day arrived. The previous day = state.lastNoSleepCheckedDate.
+  if (state.lastNoSleepCheckedDate === today) return;
   const prevDay = state.lastNoSleepCheckedDate;
-  state.lastNoSleepCheckedDate = today;
-  // Did the user click Sleep on the previous day? If not, charge the penalty.
-  if (state.sleepClickedDate !== prevDay) {
-    const penalty = +(state.moneyChangeFactors && state.moneyChangeFactors.noTaskPenalty) || 0;
-    if (penalty > 0) {
-      applyMoney(-penalty, `Skipped Sleep on ${prevDay}`, 'no-sleep');
-      logEvent({ type: 'no-sleep', name: `Skipped Sleep on ${prevDay}`, money: -penalty });
+
+  // (A) Bedtime-aware deadline for prevDay.
+  function deadlineForDay(dayKey) {
+    const [y, mo, d] = dayKey.split('-').map(Number);
+    const bt = (state.bedtime || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (bt) {
+      const h = +bt[1], m = +bt[2];
+      // Bedtime <12 PM (e.g. 02:00) → "morning after". 12 PM-23:59 → same day.
+      if (h < 12) return new Date(y, mo - 1, d + 1, h, m, 0, 0).getTime();
+      return        new Date(y, mo - 1, d,     h, m, 0, 0).getTime();
     }
+    // No bedtime set → midnight at end of prevDay = start of today.
+    return new Date(y, mo - 1, d + 1, 0, 0, 0, 0).getTime();
+  }
+  const deadlineMs = deadlineForDay(prevDay);
+
+  // 5-minute grace AFTER the deadline before evaluating, so a user who taps
+  // Sleep within a few minutes of the deadline isn't surprised.
+  const GRACE_MS = 5 * 60 * 1000;
+  if (now < deadlineMs + GRACE_MS) return;
+
+  // We've passed the deadline + grace — don't re-evaluate again today.
+  state.lastNoSleepCheckedDate = today;
+
+  // Sleep was tapped covering prevDay → no penalty.
+  if (state.sleepClickedDate === prevDay || state.sleepClickedDate === today) {
+    saveState();
+    return;
+  }
+
+  // (B) Activity-based exemption.
+  const at = state.activeTimer;
+  if (at) {
+    // A timer is running right now — user is still working past bedtime.
+    saveState();
+    return;
+  }
+  const RECENT_MS = 60 * 60 * 1000;
+  const log = state.watchLog || [];
+  const wasActiveRecently = log.some(e =>
+    e && +e.durationMs > 0 && +e.endedAt >= now - RECENT_MS
+  );
+  if (wasActiveRecently) {
+    saveState();
+    return;
+  }
+
+  // No exemptions → apply the penalty.
+  const penalty = +(state.moneyChangeFactors && state.moneyChangeFactors.noTaskPenalty) || 0;
+  if (penalty > 0) {
+    applyMoney(-penalty, `Skipped Sleep on ${prevDay}`, 'no-sleep');
+    logEvent({ type: 'no-sleep', name: `Skipped Sleep on ${prevDay}`, money: -penalty });
   }
   saveState();
 }
