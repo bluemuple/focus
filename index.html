@@ -1827,6 +1827,11 @@
   .watch-log-entry .badge.q3 { background: var(--q3); color: #1e4a72; }
   .watch-log-entry .badge.q4 { background: var(--q4); color: #7a2848; }
   .watch-log-entry .badge.muncher { background: #fee2e2; color: #991b1b; }
+  /* Pomodoro break badge — light green to match the break gauge band. */
+  .watch-log-entry .badge.break-badge {
+    background: #d1fae5; color: #065f46;
+    text-transform: none; letter-spacing: 0;
+  }
   /* Money Moments badge — light blue bg, dark blue font, mixed case (no uppercase). */
   .watch-log-entry .badge.money-mom {
     background: #dbeafe; color: #1e3a8a;
@@ -5630,42 +5635,42 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
   const at = state.activeTimer;
   if (!at) return null;
   const now = Date.now();
-  // Subtract any paused time (pomodoro AND muncher/multiplier now support pause)
+
+  // Pomodoro stops via this function only when the user manually ends a
+  // partial phase (e.g. tapping the same task to toggle off, or starting a
+  // different timer). Each phase is logged independently — earlier phases
+  // already in state.watchLog stay; only the current incomplete phase is
+  // appended via logPomodoroPhase. If a phase-confirm popup is open, the
+  // popup-end branches own the bookkeeping; don't double-log here.
+  if (at.type === 'pomodoro') {
+    if (!at.pendingPhaseConfirm) {
+      logPomodoroPhase(at, now);
+    }
+    state.activeTimer = null;
+    saveState();
+    markSettingsChanged();
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
+    }
+    pushSettingsToCloud();
+    return null;
+  }
+
+  // Subtract any paused time (muncher/multiplier still support pause)
   // so the activity log + money awards reflect only active time.
   let dur = now - at.startedAt;
   const pausedAccum = (at.totalPausedMs || 0) + (at.paused && at.pausedAt ? (now - at.pausedAt) : 0);
   dur = Math.max(0, dur - pausedAccum);
 
-  // Money awarded for elapsed minutes — applies to BOTH pomodoro and trackers.
+  // Money awarded for elapsed minutes — applies to trackers.
   const perMinCents = +(state.moneyChangeFactors && state.moneyChangeFactors.perMinuteCents) || 0;
   const minutesElapsed = dur / 60000;
   const timeMoney = Math.round(minutesElapsed * perMinCents) / 100; // dollars, 2-decimal
 
   // Record the session in timeSegments + watchLog
   let logEntry = { startedAt: at.startedAt, endedAt: now, durationMs: dur, penalty: 0, money: 0 };
-  if (at.type === 'pomodoro') {
-    const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
-    if (task) {
-      task.elapsedMs = (task.elapsedMs || 0) + dur;
-      logEntry.type = 'pomodoro';
-      logEntry.q = at.q;
-      logEntry.name = task.text || '(task)';
-      state.timeSegments.push({ q: at.q, startMs: at.startedAt, endMs: now, name: task.text || '(task)' });
-      // Per-quadrant MONEY bonus: (minutes / 30) × rate(USD).
-      const rate = +(state.taskQuadrantRates && state.taskQuadrantRates[at.q]) || 0;
-      let quadrantMoney = 0;
-      if (rate) {
-        quadrantMoney = Math.round(minutesElapsed / 30 * rate * 100) / 100;
-        if (quadrantMoney) {
-          applyMoney(quadrantMoney, `Quadrant bonus (${at.q.toUpperCase()}): ${task.text || '(task)'}`, 'quadrant-bonus');
-          logEntry.quadrantBonus = quadrantMoney;
-        }
-      }
-      // Per-minute money for pomodoro time.
-      if (timeMoney) applyMoney(timeMoney, `Pomodoro time: ${task.text || '(task)'}`, 'pomodoro-time');
-      logEntry.money = Math.round((timeMoney + quadrantMoney) * 100) / 100;
-    }
-  } else if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
+  if (at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
     // Legacy timer types — kept just for backwards-compat cleanup
     const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (task) {
@@ -5819,6 +5824,57 @@ function pomodoroPhaseLabel(phase) {
   if (phase === 'long-break') return 'Longer Break';
   return '';
 }
+/* Log a single pomodoro phase (work / break) as its own activity-log entry
+   AND its own colored band on the gauge. Money + quadrant bonus apply to
+   work phases only. Break phases use a light-green band and don't earn or
+   cost money. Called when a phase boundary is hit (tickPomodoro), and from
+   stopActiveTimer when the user manually ends a partial phase. */
+function logPomodoroPhase(at, phaseEndMs) {
+  if (!at || at.type !== 'pomodoro') return;
+  const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+  if (!task) return;
+  const phaseStart = +at.phaseStartedAt || +at.startedAt;
+  const phaseEnd   = +phaseEndMs;
+  const duration   = Math.max(0, phaseEnd - phaseStart);
+  if (duration <= 0) return;
+  const isWork = at.phase === 'work';
+  const entry = {
+    startedAt: phaseStart,
+    endedAt: phaseEnd,
+    durationMs: duration,
+    type: isWork ? 'pomodoro' : 'pomodoro-break',
+    name: task.text || '(task)',
+    q: at.q,
+    phase: at.phase,
+    penalty: 0,
+    money: 0
+  };
+  if (isWork) {
+    task.elapsedMs = (task.elapsedMs || 0) + duration;
+    const minutesElapsed = duration / 60000;
+    const perMinCents = +(state.moneyChangeFactors && state.moneyChangeFactors.perMinuteCents) || 0;
+    const timeMoney   = Math.round(minutesElapsed * perMinCents) / 100;
+    const rate        = +(state.taskQuadrantRates && state.taskQuadrantRates[at.q]) || 0;
+    let quadrantMoney = 0;
+    if (rate) {
+      quadrantMoney = Math.round(minutesElapsed / 30 * rate * 100) / 100;
+      if (quadrantMoney) {
+        applyMoney(quadrantMoney, `Quadrant bonus (${at.q.toUpperCase()}): ${task.text || '(task)'}`, 'quadrant-bonus');
+        entry.quadrantBonus = quadrantMoney;
+      }
+    }
+    if (timeMoney) applyMoney(timeMoney, `Pomodoro time: ${task.text || '(task)'}`, 'pomodoro-time');
+    entry.money = Math.round((timeMoney + quadrantMoney) * 100) / 100;
+  }
+  if (!Array.isArray(state.watchLog))     state.watchLog     = [];
+  if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
+  state.watchLog.push(entry);
+  const seg = { startMs: phaseStart, endMs: phaseEnd, name: task.text || '(task)' };
+  if (isWork) seg.q = at.q;
+  else        seg.color = '#d1fae5';   // light green for break phases
+  state.timeSegments.push(seg);
+}
+
 function tickPomodoro() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
@@ -5829,11 +5885,15 @@ function tickPomodoro() {
   // whether to continue into the next phase. The timer "freezes" until they
   // pick. If yes → transition; if no → stop & log the whole session.
   at.pendingPhaseConfirm = true;
-  // We do NOT pause the timer while the popup is showing. That way the
-  // popup-wait time is naturally absorbed into the pomodoro session — the
-  // gauge band keeps growing, the activity-log duration includes it, and
-  // when the user clicks Yes the colour-coded gauge / weekly view / log
-  // all stay in sync with each other.
+  // The just-finished phase is logged IMMEDIATELY — its row appears in the
+  // Activity log, and a colored band is added to the gauge / weekly view.
+  // Until the user picks the next phase, no live band is drawn (the gauge
+  // shows nothing for the popup-wait period) and the "I'm doing" ticker
+  // hides its text. The current phase boundary is captured in
+  // at.phaseStartedAt / phaseDurationMs so logPomodoroPhase uses exactly the
+  // expected window (e.g. 25 minutes), not "phase end + popup wait".
+  const boundary = (+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0);
+  logPomodoroPhase(at, boundary);
   saveState();
   // IMMEDIATE cloud push so other devices know a popup is pending, and the
   // dismissal-from-elsewhere flow has a real flag to flip back to false.
@@ -5940,10 +6000,17 @@ async function showPomoPhaseConfirm() {
     playFx('start');
     renderFocusMatrix(); renderImDoing(); drawGauge();
   } else {
-    // Break-end + No → stop & log the whole pomodoro. (stopActiveTimer also
-    // writes to activity log and pushes to cloud immediately, which clears
-    // pendingPhaseConfirm too.)
-    stopActiveTimer('finish');
+    // Break-end + No → stop. The break has already been logged when the
+    // popup first appeared (see tickPomodoro), so nothing else to record —
+    // we just clear the active timer and push the cleared state to cloud.
+    state.activeTimer = null;
+    saveState();
+    markSettingsChanged();
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
+    }
+    pushSettingsToCloud();
     renderFocusMatrix(); renderWatchLog(); drawGauge();
   }
 }
@@ -6333,10 +6400,22 @@ function deleteWatchLogEntry(idx) {
 
 function activeTimerToSegment(at, now) {
   if (!at) return null;
+  // While the phase-confirm popup is showing, the just-ended phase is
+  // already logged to state.timeSegments. Don't draw an extra live band —
+  // the popup-wait period stays empty on both gauges.
+  if (at.pendingPhaseConfirm) return null;
   if (at.type === 'pomodoro' || at.type === 'task-up' || at.type === 'task-down' || at.type === 'task-text') {
     const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (!t) return null;
-    return { startMs: at.startedAt, endMs: now, q: at.q, name: t.text || '(task)' };
+    // Live band shows the CURRENT phase only. Earlier phases are already in
+    // state.timeSegments. Break phases paint light green; work phases use
+    // their quadrant color (handled by addGaugeSegment via seg.q).
+    const startMs = +at.phaseStartedAt || +at.startedAt;
+    const isBreak = (at.phase === 'short-break' || at.phase === 'long-break');
+    const seg = { startMs, endMs: now, name: t.text || '(task)' };
+    if (isBreak) seg.color = '#d1fae5';
+    else         seg.q = at.q;
+    return seg;
   } else if (at.type === 'muncher' || at.type === 'multiplier') {
     const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
     const m = state.mana[side] && state.mana[side][at.manaIdx];
@@ -6484,6 +6563,16 @@ function renderImDoing() {
     // Phone gets a tighter abbreviation so it doesn't overflow next to Sleep.
     const isPhone = window.matchMedia('(max-width: 700px)').matches;
     nameEl.textContent = isPhone ? 'GTD before' : 'Get Things Done Before';
+    return;
+  }
+  // Phase-confirm popup is showing → the just-ended phase has been logged
+  // and there is no live activity. Hide the label, name and time entirely.
+  if (at.pendingPhaseConfirm) {
+    wrap.classList.remove('paused');
+    wrap.classList.add('idle');
+    if (labelEl) labelEl.style.display = 'none';
+    timeEl.style.display = 'none';
+    nameEl.textContent = '';
     return;
   }
   wrap.classList.remove('idle');
@@ -6832,6 +6921,7 @@ function buildActivityRow(entry, opts) {
 
   let badge = '';
   if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
+  else if (entry.type === 'pomodoro-break') badge = `<span class="badge break-badge">☕ Break</span>`;
   else if (entry.type === 'muncher')       badge = `<span class="badge muncher">Energy</span>`;
   else if (entry.type === 'multiplier')    badge = `<span class="badge money-mom">Money</span>`;
   else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">Energy</span>`;
@@ -7760,6 +7850,8 @@ function renderWeekView() {
     let color = null;
     if (entry.type === 'pomodoro' && entry.q) {
       // pomodoro uses quadrant color via qColor()
+    } else if (entry.type === 'pomodoro-break') {
+      color = '#d1fae5'; // light green for pomodoro break phases
     } else if (entry.type === 'multiplier' || entry.type === 'muncher') {
       // For ANY tracker (Money Moments OR Mana Moments), color the band by
       // the actual sign of its effect — NOT by the side it lives on. After
