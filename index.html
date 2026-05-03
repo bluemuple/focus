@@ -229,7 +229,8 @@
     display: flex; justify-content: space-between; align-items: center; gap: 12px;
     font-weight: 600; color: #374151; font-size: .9rem;
   }
-  .time-edit-inputs input[type="time"] {
+  .time-edit-inputs input[type="time"],
+  .time-edit-inputs input[type="datetime-local"] {
     padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px;
     font: inherit; font-variant-numeric: tabular-nums;
   }
@@ -1898,6 +1899,16 @@
   .week-notes { padding: 12px 14px; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
   .week-notes.hidden { display: none; }
   .week-notes #week-notes-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  /* Date prefix on each row — small + muted so it reads as metadata, not a
+     section header. Must be smaller than the "Activity Notes" title above. */
+  .watch-log-entry .entry-date {
+    font-size: .72rem;
+    color: #6b7280;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-right: 2px;
+  }
 
   /* Single small ✎ note button on the right side of every activity row.
      Same compact size as the old in-name note pen. */
@@ -2841,8 +2852,16 @@
              border: 1px solid var(--line); border-radius: 6px; font: inherit;
              resize: vertical; min-height: 80px;"
       placeholder="Note, thought, or mini-diary (max 150 chars)"></textarea>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin: 6px 0 12px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin: 6px 0 8px;">
       <span class="help" id="note-modal-counter" style="font-size:.75rem;">0 / 150</span>
+    </div>
+    <!-- Optional time-edit fields — shown only when the editor is opened with
+         opts.entry pointing at a watch-log entry that has timing data. -->
+    <div id="note-modal-times" style="display:none; margin: 0 0 12px;">
+      <div class="time-edit-inputs">
+        <label>Started <input type="datetime-local" id="note-modal-start"></label>
+        <label>Ended   <input type="datetime-local" id="note-modal-end"></label>
+      </div>
     </div>
     <div class="actions">
       <button class="btn danger" id="note-modal-delete">Delete</button>
@@ -4542,12 +4561,29 @@ function customPrompt(title, message, defaultValue) {
    dialog when the underlying state was answered on a different device. */
 let _openConfirmCloser = null;
 
-/* Open the activity-log note editor modal. Returns Promise<string|null>:
-   - string  → user typed and clicked OK (saves; empty string clears note)
-   - null    → user clicked Cancel (discards changes) */
+/* Open the activity-log note editor modal. Returns Promise<string|null|object>:
+   - string         → user typed and clicked OK (saves; empty string clears note)
+   - null           → user clicked Cancel (discards changes)
+   When opts.entry is provided, the modal also shows datetime-local fields for
+   editing the entry's startedAt / endedAt times. The function then resolves
+   with an object: { text, startedAt, endedAt } on OK so the caller can apply
+   both note + time changes atomically. */
 function openNoteEditor(initialText, opts) {
   opts = opts || {};
   const maxLen = (typeof opts.maxLength === 'number') ? opts.maxLength : 150;
+  const entry = opts.entry || null;
+  // Helpers: ms ↔ "YYYY-MM-DDTHH:MM" (local time) for <input type="datetime-local">
+  function msToLocalInput(ms) {
+    const d = new Date(+ms || Date.now());
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function localInputToMs(s) {
+    if (!s) return null;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    if (!m) return null;
+    return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], 0, 0).getTime();
+  }
   return new Promise((resolve) => {
     const modal     = document.getElementById('note-modal');
     const titleEl   = document.getElementById('note-modal-title');
@@ -4558,6 +4594,9 @@ function openNoteEditor(initialText, opts) {
     const cancelBtn = document.getElementById('note-modal-cancel');
     const deleteBtn = document.getElementById('note-modal-delete');
     const backdrop  = document.getElementById('note-modal-backdrop');
+    const timesWrap = document.getElementById('note-modal-times');
+    const startEl   = document.getElementById('note-modal-start');
+    const endEl     = document.getElementById('note-modal-end');
     if (!modal || !textEl || !okBtn || !cancelBtn) {
       resolve(window.prompt(opts.title || 'Note', initialText || ''));
       return;
@@ -4567,6 +4606,13 @@ function openNoteEditor(initialText, opts) {
     textEl.value        = initialText || '';
     if (maxLen > 0) textEl.setAttribute('maxlength', String(maxLen));
     else            textEl.removeAttribute('maxlength');
+    // Time editor — only when caller passes an entry with timing data.
+    const showTimes = !!(entry && entry.startedAt);
+    if (timesWrap) timesWrap.style.display = showTimes ? '' : 'none';
+    if (showTimes) {
+      if (startEl) startEl.value = msToLocalInput(entry.startedAt);
+      if (endEl)   endEl.value   = msToLocalInput(entry.endedAt || entry.startedAt);
+    }
     function updateCounter() {
       counterEl.textContent = maxLen > 0
         ? `${textEl.value.length} / ${maxLen}`
@@ -4583,18 +4629,28 @@ function openNoteEditor(initialText, opts) {
       textEl.oninput = null;
       document.removeEventListener('keydown', onKey);
     }
+    function buildOkResult() {
+      if (!showTimes) return textEl.value;
+      const s = startEl ? localInputToMs(startEl.value) : null;
+      const e = endEl   ? localInputToMs(endEl.value)   : null;
+      return {
+        text: textEl.value,
+        startedAt: s != null ? s : entry.startedAt,
+        endedAt:   e != null ? e : entry.endedAt
+      };
+    }
     function done(value) { cleanup(); resolve(value); }
     function onKey(e) {
       if (e.key === 'Escape') { e.preventDefault(); done(null); }
-      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(textEl.value); }
+      else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); done(buildOkResult()); }
     }
-    okBtn.onclick     = () => done(textEl.value);
+    okBtn.onclick     = () => done(buildOkResult());
     cancelBtn.onclick = () => done(null);
     backdrop.onclick  = () => done(null);
     if (deleteBtn) {
       // Hide Delete when there's nothing to delete (creating a brand-new note)
       deleteBtn.style.display = (initialText && initialText.trim()) ? '' : 'none';
-      deleteBtn.onclick = () => done(''); // empty string = explicit clear
+      deleteBtn.onclick = () => done(showTimes ? { text: '', startedAt: entry.startedAt, endedAt: entry.endedAt } : '');
     }
     textEl.oninput    = updateCounter;
     document.addEventListener('keydown', onKey);
@@ -4604,25 +4660,50 @@ function openNoteEditor(initialText, opts) {
   });
 }
 
-/* Open the editor for the watch-log entry at idx. Saves note → state.watchLog
-   + cloud sync. Cancel discards. */
+/* Open the editor for the watch-log entry at idx. The popup now also shows
+   datetime-local fields for Started / Ended so the user can adjust the times
+   without leaving the note dialog. Saves both note + times → state.watchLog
+   atomically. Cancel discards everything. */
 async function editEntryNote(idx) {
   const entry = state.watchLog && state.watchLog[idx];
   if (!entry) return;
-  const v = await openNoteEditor(entry.note || '', {
+  const result = await openNoteEditor(entry.note || '', {
     title: 'Note',
-    subtitle: entry.name ? entry.name : ''
+    subtitle: entry.name ? entry.name : '',
+    entry: entry
   });
-  if (v === null) return;            // Cancel — discard
-  entry.note = (v || '').slice(0, 150);
+  if (result === null) return;            // Cancel — discard
+  // result is now an object { text, startedAt, endedAt } when entry was passed
+  let text, newStart, newEnd;
+  if (typeof result === 'string') {
+    text = result;
+  } else {
+    text     = result.text;
+    newStart = result.startedAt;
+    newEnd   = result.endedAt;
+  }
+  entry.note = (text || '').slice(0, 150);
   if (!entry.note) delete entry.note;  // empty → clear
+  // Apply edited times if they came back. Sanity-check end >= start; if the
+  // user inverted them, swap silently rather than fail.
+  if (newStart != null && newEnd != null) {
+    let s = +newStart, e = +newEnd;
+    if (e < s) { const t = s; s = e; e = t; }
+    entry.startedAt  = s;
+    entry.endedAt    = e;
+    entry.durationMs = Math.max(0, e - s);
+  }
   saveState();
   markSettingsChanged(); debouncedPushSettings();
   if (typeof renderWatchLog === 'function') renderWatchLog();
+  if (typeof drawGauge      === 'function') drawGauge();
   if (typeof renderStats    === 'function' &&
       document.getElementById('stats-page') &&
       document.getElementById('stats-page').style.display !== 'none') {
     renderStats();
+    if (!document.getElementById('stats-week').classList.contains('hidden')) {
+      if (typeof renderWeekView === 'function') renderWeekView();
+    }
   }
 }
 
@@ -6686,9 +6767,15 @@ function buildActivityRow(entry, opts) {
   else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
 
   const isPoint = !!entry.point || ((entry.durationMs || 0) === 0 && entry.startedAt === entry.endedAt);
+  // Optional date prefix (e.g. "Mar 24 · ") — used by the weekly Activity
+  // Notes view where rows span multiple days. Smaller font than the section
+  // header so it reads as metadata, not a heading.
+  const datePrefix = (opts.showDate && entry.startedAt)
+    ? `<span class="entry-date">${new Date(entry.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span> · `
+    : '';
   const timeLine = isPoint
-    ? `<span class="time-range" data-act="edit-time">${fmtTime(entry.startedAt)}</span>`
-    : `<span class="time-range" data-act="edit-time">${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
+    ? `<span class="time-range" data-act="edit-time">${datePrefix}${fmtTime(entry.startedAt)}</span>`
+    : `<span class="time-range" data-act="edit-time">${datePrefix}${fmtTime(entry.startedAt)} → ${fmtTime(entry.endedAt)} · ${fmtHMS(entry.durationMs)}</span>`;
 
   const hasNote = !!(entry.note && String(entry.note).trim());
   const noteHtml = hasNote
@@ -7554,7 +7641,7 @@ function renderWeekView() {
     if (weekNotes.length) {
       notesPanel.classList.remove('hidden');
       if (notesCount) notesCount.textContent = `${weekNotes.length} entr${weekNotes.length === 1 ? 'y' : 'ies'}`;
-      weekNotes.forEach(entry => notesList.appendChild(buildActivityRow(entry)));
+      weekNotes.forEach(entry => notesList.appendChild(buildActivityRow(entry, { showDate: true })));
     } else {
       notesPanel.classList.add('hidden');
       if (notesCount) notesCount.textContent = '';
