@@ -1324,15 +1324,33 @@
     display: block; margin-top: 12px;
     font-size: 1rem; font-weight: 700; line-height: 1.3;
   }
-  /* Plain time-goals block (no border/background) — sits inside the Mana card */
+  /* Plain time-goals block (no border/background) — sits inside the Mana card.
+     The wrap puts the time-goals on the left and the Sleep button on the
+     right, with the button stretched to span both rows in height. */
+  .focus-time-goals-wrap {
+    display: flex; align-items: stretch; gap: 10px;
+    margin-top: 10px;
+  }
+  .focus-time-goals-wrap .focus-time-goals { flex: 1; min-width: 0; }
+  .focus-time-goals-wrap .sleep-btn {
+    flex-shrink: 0; align-self: stretch;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 6px 16px; min-width: 80px;
+  }
   .focus-time-goals.plain {
-    margin: 10px 0 0; padding: 0; background: none; border: none;
+    margin: 0; padding: 0; background: none; border: none;
     box-shadow: none; display: block;
   }
   .focus-time-goals.plain > div {
     padding: 0; background: none; border: none; box-shadow: none;
     font-size: .85rem; line-height: 1.5;
   }
+  /* "Must Sleep" state — kicks in 1 AM – 5 AM. Higher-contrast color so it
+     reads as urgent without being aggressive. */
+  .sleep-btn.must-sleep {
+    background: #b91c1c; border-color: #b91c1c;
+  }
+  .sleep-btn.must-sleep:hover { background: #991b1b; }
   /* On phone (≤700px) — Money on top, Mana below (single column stack) */
   @media (max-width: 700px) {
     .money-mana-row { grid-template-columns: 1fr; gap: 10px; }
@@ -1341,7 +1359,8 @@
     .money-card     { padding: 12px; }
     .im-doing.inside-card { padding: 8px; flex-wrap: wrap; }
     .im-doing-name  { max-width: 100%; }
-    .sleep-btn      { padding: 4px 12px; font-size: .9rem; }
+    /* Phone — show emoji instead of text. Bigger glyph for tap target. */
+    .sleep-btn { padding: 6px 12px; font-size: 1.4rem; min-width: 56px; line-height: 1; }
     .mana-msg       { font-size: .9rem; margin-top: 8px; }
     .mana-vis       { gap: 10px; }
     .mana-vis .face { width: 44px; height: 44px; }
@@ -2478,7 +2497,6 @@
                     <span class="im-doing-name" id="im-doing-name">—</span>
                     <span class="im-doing-time" id="im-doing-time" title="Click to pause / resume">00:00:00</span>
                   </div>
-                  <button class="btn sleep-btn" id="sleep-btn" type="button" title="End the day">Sleep</button>
                 </div>
               </div>
             </div>
@@ -2502,18 +2520,22 @@
                 </div>
                 <!-- Mood message — colored to match the gauge position -->
                 <div class="mana-msg" id="message-box">—</div>
-                <!-- Time goals as plain text (no border/background) inside the card -->
-                <div class="focus-time-goals plain" id="focus-time-goals">
-                  <div id="focus-deadline-row">
-                    <span class="lbl">Get things done by</span>
-                    <strong id="focus-deadline-time">--:--</strong>
-                    <span class="cd" id="focus-deadline-cd">—</span>
+                <!-- Time goals as plain text (no border/background) inside the card.
+                     The Sleep button sits at the right, spanning both rows. -->
+                <div class="focus-time-goals-wrap">
+                  <div class="focus-time-goals plain" id="focus-time-goals">
+                    <div id="focus-deadline-row">
+                      <span class="lbl">Get things done by</span>
+                      <strong id="focus-deadline-time">--:--</strong>
+                      <span class="cd" id="focus-deadline-cd">—</span>
+                    </div>
+                    <div id="focus-bedtime-row">
+                      <span class="lbl">Sleep at</span>
+                      <strong id="focus-bedtime-time">--:--</strong>
+                      <span class="cd" id="focus-bedtime-cd">—</span>
+                    </div>
                   </div>
-                  <div id="focus-bedtime-row">
-                    <span class="lbl">Sleep at</span>
-                    <strong id="focus-bedtime-time">--:--</strong>
-                    <span class="cd" id="focus-bedtime-cd">—</span>
-                  </div>
+                  <button class="btn sleep-btn" id="sleep-btn" type="button" title="End the day">Sleep</button>
                 </div>
               </div>
             </div>
@@ -5492,6 +5514,7 @@ function initFocusPage() {
   renderWatchLog();
   renderScores();
   updateCountdowns();
+  if (typeof updateSleepButtonLabel === 'function') updateSleepButtonLabel();
   startFocusTicker();
   // Scroll the gauge to the current time line
   setTimeout(scrollGaugeToCurrentTime, 50);
@@ -6618,6 +6641,24 @@ function renderMoneyCard() {
     manaSum.textContent = (ext > 0 ? '+' : '') + ext + ' mana';
   }
 }
+/* Refresh the Sleep button label based on time of day + viewport.
+   - 1 AM ≤ now < 5 AM → "Must Sleep" / 😵‍💫 (urgent state, red)
+   - otherwise          → "Sleep" / 😴 */
+function updateSleepButtonLabel() {
+  const btn = document.getElementById('sleep-btn');
+  if (!btn) return;
+  const h = new Date().getHours();
+  const mustSleep = (h >= 1 && h < 5);
+  const isPhone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
+  if (isPhone) {
+    btn.textContent = mustSleep ? '😵‍💫' : '😴';
+  } else {
+    btn.textContent = mustSleep ? 'Must Sleep' : 'Sleep';
+  }
+  btn.classList.toggle('must-sleep', mustSleep);
+  btn.title = mustSleep ? 'You should be asleep — end the day' : 'End the day';
+}
+
 function renderImDoing() {
   const wrap = document.getElementById('im-doing');
   const nameEl = document.getElementById('im-doing-name');
@@ -9170,6 +9211,7 @@ setInterval(() => {
     renderScores();
     updateCountdowns();
     tickTaskTimers();
+    updateSleepButtonLabel();
     // live update active mana tracker row (multiplier or muncher)
     const at = state.activeTimer;
     if (at && (at.type === 'muncher' || at.type === 'multiplier')) {
