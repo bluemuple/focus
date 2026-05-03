@@ -4709,14 +4709,28 @@ async function editEntryNote(idx) {
   if (newStart != null && newEnd != null) {
     let s = +newStart, e = +newEnd;
     if (e < s) { const t = s; s = e; e = t; }
+    const oldStart    = +entry.startedAt;
+    const oldEnd      = +entry.endedAt;
+    const oldDuration = +entry.durationMs || (oldEnd - oldStart) || 0;
+    // Find the matching gauge segment BEFORE we mutate the entry's times.
+    const matchingSeg = (state.timeSegments || []).find(x => x && x.startMs === oldStart);
     entry.startedAt  = s;
     entry.endedAt    = e;
     entry.durationMs = Math.max(0, e - s);
+    // Sync the gauge segment so the colored band moves with the edit.
+    if (matchingSeg) {
+      matchingSeg.startMs = entry.startedAt;
+      matchingSeg.endMs   = entry.endedAt;
+    }
+    // Scale money + mana to match the new duration (positive or negative diff).
+    reconcileEntryMoneyAfterTimeEdit(entry, oldDuration, entry.durationMs);
   }
   saveState();
   markSettingsChanged(); debouncedPushSettings();
   if (typeof renderWatchLog === 'function') renderWatchLog();
   if (typeof drawGauge      === 'function') drawGauge();
+  if (typeof renderMoneyCard === 'function') renderMoneyCard();
+  if (typeof renderScores    === 'function') renderScores();
   if (typeof renderStats    === 'function' &&
       document.getElementById('stats-page') &&
       document.getElementById('stats-page').style.display !== 'none') {
@@ -5801,10 +5815,11 @@ function tickPomodoro() {
   // whether to continue into the next phase. The timer "freezes" until they
   // pick. If yes → transition; if no → stop & log the whole session.
   at.pendingPhaseConfirm = true;
-  // Pause the elapsed counter while we wait for the user's decision so the
-  // wait time doesn't earn money or pad the activity-log duration.
-  at.paused = true;
-  at.pausedAt = Date.now();
+  // We do NOT pause the timer while the popup is showing. That way the
+  // popup-wait time is naturally absorbed into the pomodoro session — the
+  // gauge band keeps growing, the activity-log duration includes it, and
+  // when the user clicks Yes the colour-coded gauge / weekly view / log
+  // all stay in sync with each other.
   saveState();
   // IMMEDIATE cloud push so other devices know a popup is pending, and the
   // dismissal-from-elsewhere flow has a real flag to flip back to false.
@@ -5867,12 +5882,9 @@ async function showPomoPhaseConfirm() {
   if (!at2 || at2.type !== 'pomodoro') return;
   at2.pendingPhaseConfirm = false;
   if (yes) {
-    // Bank the wait time as paused-time so it doesn't count toward the duration.
-    if (at2.paused && at2.pausedAt) {
-      at2.totalPausedMs = (at2.totalPausedMs || 0) + (Date.now() - at2.pausedAt);
-    }
-    at2.paused = false;
-    at2.pausedAt = null;
+    // The popup wait time is intentionally kept as part of the pomodoro
+    // session — the gauge band, the activity log duration, and the per-minute
+    // money all stay consistent (we never paused the timer in tickPomodoro).
     // Going from break → work increments (or resets if long-break) the counter.
     if (at2.phase !== 'work' && nextPhase === 'work') {
       const wasLong = at2.phase === 'long-break';
@@ -5895,12 +5907,7 @@ async function showPomoPhaseConfirm() {
     renderFocusMatrix(); renderImDoing(); drawGauge();
   } else if (at2.phase === 'work') {
     // Work-end + No → skip the break and start the next Work session.
-    // Bank the wait time as paused-time so the prompt-wait doesn't count.
-    if (at2.paused && at2.pausedAt) {
-      at2.totalPausedMs = (at2.totalPausedMs || 0) + (Date.now() - at2.pausedAt);
-    }
-    at2.paused = false;
-    at2.pausedAt = null;
+    // (Popup wait time is naturally part of the session — see Yes branch.)
     // Skipping a break still counts as a completed work segment for the
     // long-break-after-3 cadence. Increment, and reset to 0 once we've
     // earned the long break (counter would otherwise grow unbounded).
@@ -6145,6 +6152,36 @@ function openSegmentEditModal(seg) {
 }
 // Open the same modal for an Activity Log entry. Saving updates BOTH the entry
 // and the matching segment in state.timeSegments (matched by startedAt timestamp).
+/* When the time on a logged activity is edited, the money + mana that were
+   awarded proportionally to its duration should follow. Both the per-minute
+   money (Pomodoro time / Tracker time) and the per-30-min quadrant bonus, and
+   the rate-based mana penalty for muncher trackers, scale linearly with
+   duration — so we just scale entry.money and entry.penalty by newDur/oldDur
+   and apply the diff via applyMoney + ext.adjustment. */
+function reconcileEntryMoneyAfterTimeEdit(entry, oldDurationMs, newDurationMs) {
+  if (!entry) return;
+  const old = +oldDurationMs || 0;
+  const fresh = +newDurationMs || 0;
+  if (old <= 0) return;                 // can't scale from zero (point events)
+  const ratio = fresh / old;
+  const oldMoney   = +entry.money   || 0;
+  const oldPenalty = +entry.penalty || 0;
+  const newMoney   = Math.round(oldMoney   * ratio * 100) / 100;
+  const newPenalty = Math.round(oldPenalty * ratio);
+  const moneyDiff   = Math.round((newMoney   - oldMoney)   * 100) / 100;
+  const penaltyDiff = newPenalty - oldPenalty;
+  if (moneyDiff !== 0) {
+    applyMoney(moneyDiff, `Edit time: ${entry.name || '(activity)'}`, 'edit-time');
+  }
+  // Mana Moments tracker — rate-based mana penalty was applied to ext.adjustment.
+  if (penaltyDiff !== 0 && entry.type === 'muncher') {
+    state.ext.adjustment = (+state.ext.adjustment || 0) + penaltyDiff;
+    if (typeof recomputeSlider === 'function') recomputeSlider('ext');
+  }
+  entry.money = newMoney;
+  entry.penalty = newPenalty;
+}
+
 function openWatchLogEditModal(entry) {
   if (!entry) return;
   _editingWatchLogEntry = entry;
@@ -6180,15 +6217,21 @@ function saveSegmentEdit() {
     let newStart = applyTime(e.startedAt, startStr);
     let newEnd   = applyTime(e.endedAt,   endStr);
     if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    const oldDuration = +e.durationMs || (e.endedAt - e.startedAt) || 0;
+    const newDuration = newEnd - newStart;
     e.startedAt   = newStart;
     e.endedAt     = newEnd;
-    e.durationMs  = newEnd - newStart;
+    e.durationMs  = newDuration;
     if (_editingSegment) {
       _editingSegment.startMs = newStart;
       _editingSegment.endMs   = newEnd;
     }
+    // Re-apply the money / mana that scales with this entry's duration.
+    reconcileEntryMoneyAfterTimeEdit(e, oldDuration, newDuration);
     saveState();
     renderWatchLog(); drawGauge();
+    if (typeof renderMoneyCard === 'function') renderMoneyCard();
+    if (typeof renderScores    === 'function') renderScores();
     markSettingsChanged(); pushSettingsToCloud();
     closeSegmentEditModal();
     return;
