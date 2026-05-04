@@ -796,17 +796,17 @@
     const headLink = document.getElementById('wp-naver-open');
     const fbLink   = document.getElementById('wp-naver-link');
 
+    const fallback = document.querySelector('.wp-fallback');
+
     if (isCorpus) {
       // C: build a KWIC concordance from the user's OWN lessons. External
-      // corpora (Reverso, Tatoeba, COCA) all block iframe embedding, and the
-      // BYU/COCA site requires an account, so we render our own.
+      // corpora (Reverso, Tatoeba, COCA) all block iframe embedding so we
+      // render our own — no "open in COCA" link needed.
       iframe.src = 'about:blank';
       iframe.style.display = 'none';
       corpus.hidden = false;
-      headLink.href = 'https://www.english-corpora.org/coca/';
-      headLink.textContent = 'COCA에서 열기 ↗';
-      fbLink.href = 'https://www.english-corpora.org/coca/';
-      fbLink.textContent = '외부 코퍼스 (COCA) 열기 →';
+      headLink.style.display = 'none';
+      if (fallback) fallback.style.display = 'none';
       renderCorpus(word, corpus);
     } else {
       // N: Naver English Dictionary (definitions)
@@ -814,6 +814,8 @@
       const naverAlt = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
       iframe.style.display = '';
       corpus.hidden = true;
+      headLink.style.display = '';
+      if (fallback) fallback.style.display = '';
       iframe.src = naverUrl;
       headLink.href = naverUrl;
       headLink.textContent = 'Naver에서 열기 ↗';
@@ -875,19 +877,36 @@
       return;
     }
 
+    // Each row is its own horizontally-scrollable single line. The keyword
+    // is centered initially; the user can drag/scroll left or right to see
+    // more context without clipping or overlap.
     let html = '<div class="corpus-info">"<b>' + escapeHtml2(word) + '</b>" — 내 레슨에서 ' +
                hits.length + '개 문장 발견</div>';
-    html += '<table><tbody>';
+    html += '<div class="corpus-rows">';
     hits.forEach((h, i) => {
-      html += '<tr>' +
-        '<td class="num">' + (i + 1) + '</td>' +
-        '<td class="left"><span>' + escapeHtml2(h.left) + '</span></td>' +
-        '<td class="kw"><mark>' + escapeHtml2(h.mid) + '</mark></td>' +
-        '<td class="right">' + escapeHtml2(h.right) + '</td>' +
-      '</tr>';
+      html += '<div class="row">' +
+        '<div class="num">' + (i + 1) + '</div>' +
+        '<div class="line">' +
+          '<span class="left">'  + escapeHtml2(h.left)  + '</span>' +
+          '<mark>'               + escapeHtml2(h.mid)   + '</mark>' +
+          '<span class="right">' + escapeHtml2(h.right) + '</span>' +
+        '</div>' +
+      '</div>';
     });
-    html += '</tbody></table>';
+    html += '</div>';
     container.innerHTML = html;
+
+    // After the layout settles, scroll each row so the highlighted keyword
+    // sits roughly in the middle of its line.
+    requestAnimationFrame(() => {
+      container.querySelectorAll('.corpus-rows .row').forEach(row => {
+        const line = row.querySelector('.line');
+        const kw   = row.querySelector('mark');
+        if (!line || !kw) return;
+        const target = kw.offsetLeft - (line.clientWidth - kw.offsetWidth) / 2;
+        line.scrollLeft = Math.max(0, target);
+      });
+    });
   }
 
   function setupPopupDrag() {
