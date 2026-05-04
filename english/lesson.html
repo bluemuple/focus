@@ -43,9 +43,17 @@
           </div>
           <div class="head-spacer"></div>
           <div class="head-tools">
+            <div class="toggle-group" id="tts-toggle" role="group" aria-label="음성 엔진 선택">
+              <button class="toggle-btn dict active" data-tts="cloud" title="Google Cloud TTS (Neural2)">GC</button>
+              <button class="toggle-btn dict"        data-tts="web"   title="브라우저 Web Speech">WS</button>
+            </div>
+            <div class="toggle-group" id="tx-toggle" role="group" aria-label="번역기 선택">
+              <button class="toggle-btn dict active" data-tx="deepl"  title="DeepL (Supabase 프록시)">DL</button>
+              <button class="toggle-btn dict"        data-tx="google" title="Google Translate">G</button>
+            </div>
             <div class="toggle-group" id="dict-toggle" role="group" aria-label="사전 선택">
               <button class="toggle-btn dict active" data-dict="naver"  title="네이버 영어사전">N</button>
-              <button class="toggle-btn dict"        data-dict="corpus" title="Corpus — 단어가 쓰이는 예문">C</button>
+              <button class="toggle-btn dict"        data-dict="corpus" title="Tatoeba — 단어가 쓰이는 예문">C</button>
             </div>
             <button class="toggle-btn" id="mode-toggle-btn" title="모드 전환">하나씩</button>
           </div>
@@ -229,6 +237,30 @@
       DICT = b.dataset.dict;
       dictBtns.forEach(x => x.classList.toggle('active', x.dataset.dict === DICT));
       savePrefs();
+    }));
+
+    // Translator toggle (DL / G). The selected engine is the *primary*; the
+    // others remain available as automatic fallbacks inside Translate.translate.
+    const txBtns = document.querySelectorAll('#tx-toggle .toggle-btn');
+    const curEngine = (window.Translate && Translate.getEngine && Translate.getEngine()) || 'deepl';
+    txBtns.forEach(b => b.classList.toggle('active', b.dataset.tx === curEngine));
+    txBtns.forEach(b => b.addEventListener('click', () => {
+      const next = b.dataset.tx;
+      if (Translate.getEngine() === next) return;
+      Translate.setEngine(next);
+      txBtns.forEach(x => x.classList.toggle('active', x.dataset.tx === next));
+    }));
+
+    // TTS engine toggle (GC / WS). GC = Google Cloud TTS via Supabase proxy
+    // (highest quality); WS = browser Web Speech API (no setup, decent on Edge).
+    const ttsBtns = document.querySelectorAll('#tts-toggle .toggle-btn');
+    const curTts = (window.TTS && TTS.getEngine && TTS.getEngine()) || 'cloud';
+    ttsBtns.forEach(b => b.classList.toggle('active', b.dataset.tts === curTts));
+    ttsBtns.forEach(b => b.addEventListener('click', () => {
+      const next = b.dataset.tts;
+      if (TTS.getEngine() === next) return;
+      TTS.setEngine(next);
+      ttsBtns.forEach(x => x.classList.toggle('active', x.dataset.tts === next));
     }));
   }
   function onModeChanged() {
@@ -732,15 +764,18 @@
     POP.classList.add('expanded');
     const word = CURRENT_WORD;
     // N: Naver English Dictionary (definitions)
-    // C: Reverso Context — example sentences in real usage with KO translations
-    const naverUrl  = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
-    const naverAlt  = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
-    const corpusUrl = 'https://context.reverso.net/translation/english-korean/' + encodeURIComponent(word);
+    // C: Tatoeba — community-maintained sentence corpus, English ⇄ Korean.
+    //    Reverso Context blocks iframe embedding (X-Frame-Options); Tatoeba
+    //    is iframe-friendly. The fallback link still opens in a new tab in
+    //    case any future CSP change blocks Tatoeba too.
+    const naverUrl   = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
+    const naverAlt   = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+    const corpusUrl  = 'https://tatoeba.org/en/sentences/search?from=eng&to=kor&query=' + encodeURIComponent(word);
 
     const isCorpus = (DICT === 'corpus');
     const url      = isCorpus ? corpusUrl : naverUrl;
     const altUrl   = isCorpus ? corpusUrl : naverAlt;
-    const dictName = isCorpus ? 'Reverso Context' : 'Naver';
+    const dictName = isCorpus ? 'Tatoeba 예문' : 'Naver';
 
     document.getElementById('wp-word-large').textContent = word;
     const headLink = document.getElementById('wp-naver-open');

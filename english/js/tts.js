@@ -1,26 +1,46 @@
-// Text-to-speech — always female. Prefers British (en-GB), then any English.
-// Uses the browser's built-in Web Speech API. On Microsoft Edge this resolves to
-// Microsoft's neural female voices (Sonia / Libby / Aria / Jenny) when online.
-// On other browsers it falls back to the best available English female voice.
+// Text-to-speech.
+//
+// Two engines:
+//   • cloud — Google Cloud TTS (Neural2 voices) via Supabase Edge Function
+//             `tts`. Highest quality. Default when configured.
+//   • web   — Browser's built-in Web Speech API. Uses Edge / OS voices. Free,
+//             zero-setup, but lower quality than Neural2 on most browsers.
+//
+// Selection is persisted in localStorage. If cloud fails (no key, network,
+// rate limit, etc.) we automatically fall back to web for the rest of the
+// session and remember the failure so we don't keep paying the round-trip.
+//
+// Audio cache: cloud responses are cached as object URLs in memory keyed by
+// (voice + text). Same word clicked again replays from memory instantly.
 
 (() => {
-  let cachedVoices = null;
+  const ENGINE_KEY = 'eng.v1.tts_engine';
+  let ENGINE = (function () {
+    try {
+      const v = localStorage.getItem(ENGINE_KEY);
+      return v === 'web' ? 'web' : 'cloud';   // default: cloud
+    } catch (e) { return 'cloud'; }
+  })();
+  let cloudFailedThisSession = false;
 
-  // Known female voice names across major platforms / browsers.
+  function setEngine(name) {
+    if (!['web', 'cloud'].includes(name)) return;
+    ENGINE = name;
+    cloudFailedThisSession = false;
+    try { localStorage.setItem(ENGINE_KEY, name); } catch (e) {}
+  }
+  function getEngine() { return ENGINE; }
+
+  // ================== Web Speech (built-in) ==================
+  let cachedVoices = null;
   const FEMALE_NAMES = [
-    // Microsoft Edge / Azure neural
     'Sonia', 'Libby', 'Hollie', 'Olivia', 'Maisie', 'Aria', 'Jenny',
     'Ana', 'Michelle', 'Nancy', 'Sara', 'Ashley', 'Cora', 'Elizabeth',
-    // Windows local
     'Hazel', 'Zira', 'Susan', 'Eva',
-    // macOS / iOS
-    'Samantha', 'Allison', 'Ava', 'Susan', 'Karen', 'Moira', 'Tessa',
+    'Samantha', 'Allison', 'Ava', 'Karen', 'Moira', 'Tessa',
     'Fiona', 'Veena', 'Catherine', 'Kate', 'Serena', 'Nicole', 'Kathy',
-    // Google / Android
     'female',
   ];
-
-  // Known male voice names — never picked.
   const MALE_NAMES = [
     'David', 'Mark', 'James', 'George', 'Liam', 'Ryan', 'Brian',
     'Guy', 'Thomas', 'Connor', 'William', 'Mitchell', 'Daniel',
@@ -28,12 +48,10 @@
     'Joey', 'Justin', 'Kevin', 'Russell', 'Reed', 'Eddy',
     'Oliver', 'Arthur', 'Diego', 'Jorge', 'male', 'man',
   ];
-
   function namedAs(name, list) {
     if (!name) return false;
     return list.some(n => new RegExp('\\b' + n + '\\b', 'i').test(name));
   }
-
   function loadVoices() {
     return new Promise((resolve) => {
       const v = speechSynthesis.getVoices();
@@ -45,86 +63,125 @@
       setTimeout(() => resolve(speechSynthesis.getVoices() || []), 1500);
     });
   }
-
-  // Score each voice. Quality dominates over accent — we want the most
-  // natural-sounding voice the browser/OS offers, regardless of locale.
-  // Edge's Microsoft Online (Natural) voices win on Windows/Edge; macOS
-  // Enhanced/Premium voices win on Apple; Google's voices win on Chrome.
   function score(v) {
     const name = v.name || '';
     const lang = v.lang || '';
+    if (!/^en/i.test(lang)) return -1;
     const isFemale = namedAs(name, FEMALE_NAMES);
     const isMale   = namedAs(name, MALE_NAMES);
-
-    // Must be English.
-    if (!/^en/i.test(lang)) return -1;
-    // Hard exclusion: known male names.
     if (isMale && !isFemale) return -1;
-
     let s = 0;
-    // ===== Quality is the dominant signal =====
-    // Edge online neural (Sonia / Libby / Aria / Jenny / Emma) — top tier.
     if (/online.*natural|natural.*online/i.test(name)) s += 130;
-    // Other neural / enhanced / premium voices (macOS enhanced, Google neural).
     else if (/enhanced|premium|neural/i.test(name))   s += 90;
-    // Plain Edge online (without "Natural") still beats stock OS.
     else if (/online|cloud/i.test(name))               s += 50;
-
-    // Female bonus — accent doesn't matter to us.
     if (isFemale) s += 40;
-
-    // Mild locale tiebreak so two equally-good voices fall back to en-GB/US.
     if (/en[-_]GB/i.test(lang))      s += 8;
     else if (/en[-_]US/i.test(lang)) s += 8;
     else if (/en[-_]AU/i.test(lang)) s += 5;
     else if (/en[-_]IE/i.test(lang)) s += 5;
     else                              s += 3;
-
     return s;
   }
-
   function pickVoice(voices) {
     if (!voices || !voices.length) return null;
-    const ranked = voices
-      .map(v => ({ v, s: score(v) }))
-      .filter(x => x.s > 0)
-      .sort((a, b) => b.s - a.s);
+    const ranked = voices.map(v => ({ v, s: score(v) }))
+                         .filter(x => x.s > 0)
+                         .sort((a, b) => b.s - a.s);
     if (ranked.length) return ranked[0].v;
-    // No clearly-female English voice was found — fall back to any English voice
-    // that isn't on the male denylist.
     const anyEng = voices.find(x => /^en/i.test(x.lang) && !namedAs(x.name, MALE_NAMES));
     return anyEng || voices.find(x => /^en/i.test(x.lang)) || voices[0];
   }
 
   let lastUtter = null;
+  let currentAudio = null;
+
   function stop() {
-    try { speechSynthesis.cancel(); } catch(e){}
+    try { speechSynthesis.cancel(); } catch (e) {}
+    if (currentAudio) {
+      try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (e) {}
+      currentAudio = null;
+    }
     lastUtter = null;
   }
-  async function speak(text, opts = {}) {
+
+  async function speakViaWeb(text, opts = {}) {
     if (!('speechSynthesis' in window)) return;
-    text = (text || '').toString().trim();
-    if (!text) return;
-    stop();
     const voices = await loadVoices();
     const voice = pickVoice(voices);
     const u = new SpeechSynthesisUtterance(text);
     if (voice) { u.voice = voice; u.lang = voice.lang; } else { u.lang = 'en-GB'; }
     u.rate   = opts.rate   ?? 0.95;
-    // Slightly higher pitch leans the synth toward a feminine timbre even when
-    // the picked voice is a generic / unnamed engine voice.
     u.pitch  = opts.pitch  ?? 1.1;
     u.volume = opts.volume ?? 1;
     if (typeof opts.onend === 'function') u.onend = opts.onend;
     lastUtter = u;
     speechSynthesis.speak(u);
   }
+
+  // ================== Google Cloud TTS (via Supabase) ==================
+  // In-memory cache: same text + voice → same Blob URL (instant replay).
+  const audioCache = new Map();   // key: voice + '|' + text  →  objectURL
+
+  async function fetchCloudAudio(text, voice, rate) {
+    const cfg = window.SUPABASE_CONFIG;
+    if (!cfg || !cfg.url || !cfg.anon) throw new Error('Supabase not configured');
+    const url = cfg.url.replace(/\/+$/, '') + '/functions/v1/tts';
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'Authorization': 'Bearer ' + cfg.anon,
+        'apikey':        cfg.anon,
+      },
+      body: JSON.stringify({ text, voice, rate }),
+    });
+    if (!r.ok) {
+      let detail = '';
+      try { detail = await r.text(); } catch (e) {}
+      throw new Error('cloud TTS ' + r.status + (detail ? ' ' + detail.slice(0, 200) : ''));
+    }
+    const blob = await r.blob();
+    if (!blob.size) throw new Error('cloud TTS empty');
+    return URL.createObjectURL(blob);
+  }
+
+  async function speakViaCloud(text, opts = {}) {
+    const voice = opts.voice || 'en-US-Neural2-F';
+    const rate  = opts.rate  ?? 1.0;
+    const ck = voice + '|' + text;
+    let url = audioCache.get(ck);
+    if (!url) {
+      url = await fetchCloudAudio(text, voice, rate);
+      audioCache.set(ck, url);
+    }
+    const audio = new Audio(url);
+    audio.preload = 'auto';
+    if (typeof opts.onend === 'function') audio.onended = opts.onend;
+    currentAudio = audio;
+    await audio.play();
+  }
+
+  // ================== unified entry point ==================
+  async function speak(text, opts = {}) {
+    text = (text || '').toString().trim();
+    if (!text) return;
+    stop();
+
+    if (ENGINE === 'cloud' && !cloudFailedThisSession) {
+      try { await speakViaCloud(text, opts); return; }
+      catch (e) {
+        cloudFailedThisSession = true;
+        console.warn('[TTS] cloud failed, falling back to web speech:', e && e.message || e);
+      }
+    }
+    return speakViaWeb(text, opts);
+  }
+
   function isSpeaking() {
+    if (currentAudio && !currentAudio.paused && !currentAudio.ended) return true;
     return !!('speechSynthesis' in window) && speechSynthesis.speaking;
   }
 
-  // Optional debug helper: window.TTS.listVoices() in the console shows what's
-  // available and which voice would be picked.
   function listVoices() {
     const voices = speechSynthesis.getVoices();
     const ranked = voices.map(v => ({ name: v.name, lang: v.lang, score: score(v) }))
@@ -133,5 +190,8 @@
     return ranked;
   }
 
-  window.TTS = { speak, stop, isSpeaking, loadVoices, listVoices };
+  window.TTS = {
+    speak, stop, isSpeaking, loadVoices, listVoices,
+    setEngine, getEngine,
+  };
 })();
