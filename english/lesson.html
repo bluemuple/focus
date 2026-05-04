@@ -13,8 +13,8 @@
     <a class="btn ghost" href="index.html" aria-label="뒤로">‹ 뒤로</a>
     <a class="brand" href="index.html">또박또박</a>
     <div class="spacer"></div>
-    <a class="bidoro-btn" href="../index.html" title="비도로 사이트로 돌아가기">
-      <span class="arrow">←</span><span class="label">비도로</span>
+    <a class="bidoro-tab" href="../index.html" title="비도로 사이트로 돌아가기">
+      <span class="text">Bidoro</span><span class="ico" aria-hidden="true">ƒ</span>
     </a>
     <div class="acct" id="acct-chip">
       <span class="avatar" id="acct-avatar">·</span>
@@ -43,43 +43,46 @@
           </div>
         </div>
 
-        <!-- The wrapper clips horizontal slides; .lesson-text is absolutely
-             positioned inside it so two pages can coexist during a transition. -->
         <div class="lesson-text-wrap" id="lesson-text-wrap">
           <div class="lesson-text" id="lesson-text"></div>
         </div>
       </section>
-
-      <aside class="lesson-side" id="side">
-        <div class="tx-empty" id="tx-empty">
-          단어를 클릭하면 한국어 번역이<br>여기에 표시됩니다.
-        </div>
-        <div class="tx-card" id="tx-card" style="display:none">
-          <div class="tx-word">
-            <button class="speak" id="tx-speak" title="발음 듣기">🔊</button>
-            <span class="word-text" id="tx-word-text">—</span>
-            <button class="tx-state-badge" id="tx-state" style="display:none" title="단어 상태 변경">·</button>
-          </div>
-          <div class="tx-trans" id="tx-trans"><span class="tx-loading">번역 중...</span></div>
-        </div>
-      </aside>
     </div>
   </main>
 
-  <!-- Mobile bottom-sheet translation -->
-  <div class="tx-sheet" id="tx-sheet">
-    <div class="grab"></div>
-    <div class="tx-card">
-      <div class="tx-word">
-        <button class="speak" id="tx-speak-m" title="발음 듣기">🔊</button>
-        <span class="word-text" id="tx-word-text-m">—</span>
-        <button class="tx-state-badge" id="tx-state-m" style="display:none" title="단어 상태 변경">·</button>
+  <!-- Anchored word popup. Small by default — drag UP to expand into Naver
+       Endic, drag DOWN (only when small) to dismiss. The big view has a × in
+       the top-right that closes the popup completely. -->
+  <div class="word-pop" id="word-pop" hidden>
+    <div class="wp-small" id="wp-small">
+      <div class="wp-head">
+        <button class="speak" id="wp-speak" title="발음 듣기">🔊</button>
+        <span class="word-text" id="wp-word">—</span>
+        <button class="tx-state-badge" id="wp-state" style="display:none" title="단어 상태 변경">·</button>
       </div>
-      <div class="tx-trans" id="tx-trans-m"><span class="tx-loading">번역 중...</span></div>
+      <div class="wp-trans" id="wp-trans"><span class="tx-loading">번역 중...</span></div>
+      <div class="wp-hint">↑ 위로 끌면 사전 검색 · ↓ 아래로 끌면 닫기</div>
+    </div>
+
+    <div class="wp-large" id="wp-large">
+      <div class="wp-large-head">
+        <span class="word-text" id="wp-word-large">—</span>
+        <a class="open-naver" id="wp-naver-open" target="_blank" rel="noopener">Naver에서 열기 ↗</a>
+        <button class="wp-close" id="wp-close" aria-label="닫기">×</button>
+      </div>
+      <div class="wp-iframe-wrap">
+        <div class="wp-fallback">
+          네이버 사전을 불러오는 중...<br>
+          페이지가 비어 있다면 임베드가 차단된 것입니다.
+          <a id="wp-naver-link" target="_blank" rel="noopener">Naver 사전에서 결과 열기 →</a>
+        </div>
+        <iframe id="wp-iframe" src="" title="Naver English Dictionary"
+                referrerpolicy="origin"
+                sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+      </div>
     </div>
   </div>
 
-  <!-- Bottom playbar -->
   <div class="playbar">
     <button class="play" id="play-btn" aria-label="재생">▶</button>
     <span class="time" id="time-cur">0:00</span>
@@ -138,6 +141,7 @@
   let PAGES = [];
   let pageIdx = 0;
   let CURRENT_WORD = null;
+  let CURRENT_WORD_EL = null;
   let animating = false;
 
   async function renderLesson() {
@@ -156,7 +160,6 @@
     document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
 
     sizeLessonMain();
-    // Wait for layout to settle before measuring page heights.
     await new Promise(r => requestAnimationFrame(r));
     PAGES = paginateByHeight(LESSON.body || '');
     pageIdx = 0;
@@ -164,9 +167,9 @@
     bindWordInteractions(document.getElementById('lesson-text'));
     updateProgress();
     setupAudio();
+    setupPopupDrag();
   }
 
-  // Make the lesson card fill the viewport between topbar and playbar.
   function sizeLessonMain() {
     const main = document.getElementById('lesson-main');
     if (!main) return;
@@ -177,19 +180,13 @@
     main.style.height = h + 'px';
   }
 
-  // ---------- pagination by rendered height ----------
-  // Render every paragraph into a hidden mirror element that has the same
-  // styles as the live one, then walk through and group paragraphs into pages
-  // that fit within the wrap's measured height.
   function paginateByHeight(body) {
     const paragraphs = body.split(/\n{2,}|\r\n{2,}/).map(p => p.trim()).filter(Boolean);
     if (!paragraphs.length) return [['']];
-
     const wrap = document.getElementById('lesson-text-wrap');
-    const maxH = wrap.clientHeight - 4;   // small safety margin
+    const maxH = wrap.clientHeight - 4;
     if (maxH <= 0) return [paragraphs];
 
-    // Build a mirror with identical width/typography but no overflow clipping.
     const mirror = document.createElement('div');
     mirror.className = 'lesson-text';
     mirror.style.position = 'absolute';
@@ -208,7 +205,6 @@
       mirror.appendChild(pEl);
       paraEls.push({ text, el: pEl });
     }
-    // Force a layout pass.
     void mirror.offsetHeight;
 
     const pages = [];
@@ -224,13 +220,10 @@
       curr.push(info.text);
     }
     if (curr.length) pages.push(curr);
-
     mirror.remove();
     return pages.length ? pages : [paragraphs];
   }
 
-  // Render a single paragraph (with word spans) into a <p> element. Used both
-  // for measurement (mirror) and for the live page render.
   function renderParagraph(par) {
     const p = document.createElement('p');
     p.className = 'para';
@@ -267,11 +260,7 @@
     let widx = 0;
     for (const text of paragraphs || []) {
       const pEl = renderParagraph(text);
-      // Re-stamp data-idx for word ordering inside the page (used by drag-select)
-      pEl.querySelectorAll('.w').forEach(el => {
-        if (!el.classList.contains('punct')) el.dataset.idx = String(widx++);
-        else el.dataset.idx = String(widx++);
-      });
+      pEl.querySelectorAll('.w').forEach(el => { el.dataset.idx = String(widx++); });
       container.appendChild(pEl);
     }
   }
@@ -287,20 +276,18 @@
     document.getElementById('page-next').disabled = pageIdx >= total - 1;
   }
 
-  // ---------- horizontal slide between pages ----------
   function goPage(delta) {
     if (animating) return;
     const next = pageIdx + delta;
     if (next < 0 || next >= PAGES.length) return;
     animating = true;
     closeStateMenu();
-    closeTxPanel();
+    hidePopup();
 
     const wrap = document.getElementById('lesson-text-wrap');
     const oldRoot = document.getElementById('lesson-text');
     const goingForward = delta > 0;
 
-    // Build the new page off-screen.
     const newRoot = document.createElement('div');
     newRoot.className = 'lesson-text';
     newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
@@ -309,12 +296,10 @@
     wrap.appendChild(newRoot);
     bindWordInteractions(newRoot);
 
-    // Force layout, then animate.
     void newRoot.offsetWidth;
     requestAnimationFrame(() => {
       oldRoot.classList.add('slide-anim');
       newRoot.classList.add('slide-anim');
-      // old slides off in the swipe direction; new slides into place.
       oldRoot.classList.add(goingForward ? 'slide-out-left' : 'slide-out-right');
       newRoot.classList.remove('slide-from-right', 'slide-from-left');
     });
@@ -335,14 +320,15 @@
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
     if (e.key === 'ArrowLeft')  goPage(-1);
     if (e.key === 'ArrowRight') goPage(+1);
+    if (e.key === 'Escape')    hidePopup();
   });
 
-  // Re-paginate on resize (debounced). Best-effort: clamp pageIdx.
   let resizeT = null;
   window.addEventListener('resize', () => {
     clearTimeout(resizeT);
     resizeT = setTimeout(() => {
       sizeLessonMain();
+      hidePopup();
       requestAnimationFrame(() => {
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');
@@ -389,7 +375,6 @@
       return chunks.join('').replace(/\s+/g, ' ').trim();
     }
 
-    // ---------- mouse: drag-select ----------
     root.addEventListener('mousedown', (e) => {
       const w = getWordEl(e.target);
       if (!w) return;
@@ -413,11 +398,10 @@
       dragging = false;
       if (didDrag) {
         const phrase = getSelectedText();
-        if (phrase) showPhrase(phrase);
+        if (phrase) showPhrase(phrase, null);
       }
     });
 
-    // ---------- touch: drag-select OR page-swipe ----------
     root.addEventListener('touchstart', (e) => {
       const t = e.touches[0]; if (!t) return;
       touchStart = { x: t.clientX, y: t.clientY, t: Date.now() };
@@ -473,11 +457,10 @@
       }
       if (wasDragging && didDrag) {
         const phrase = getSelectedText();
-        if (phrase) showPhrase(phrase);
+        if (phrase) showPhrase(phrase, null);
       }
     });
 
-    // ---------- click: single word ----------
     root.addEventListener('click', async (e) => {
       if (didDrag) { didDrag = false; return; }
       const w = getWordEl(e.target);
@@ -492,16 +475,128 @@
       ['s1','s2','s3','s4','s5','sx'].forEach(c => w.classList.remove(c));
       const cls = classFor(upd.state);
       if (cls) w.classList.add(cls);
-      showWord(word, upd);
+      showWord(word, upd, w);
     });
   }
 
-  // ============== translation panel ==============
-  function setBoth(idDesktop, idMobile, html) {
-    const a = document.getElementById(idDesktop); if (a) a.innerHTML = html;
-    const b = document.getElementById(idMobile);  if (b) b.innerHTML = html;
+  // ============== anchored word popup ==============
+  const POP = document.getElementById('word-pop');
+
+  function placePopBelowAnchor(anchorEl) {
+    POP.classList.remove('expanded');
+    POP.style.transition = 'none';
+    POP.style.transform = '';
+    POP.style.opacity = '';
+    POP.style.width = '';
+    POP.style.height = '';
+    POP.hidden = false;
+
+    const margin = 8;
+    const popW = 280;
+
+    void POP.offsetHeight;
+    const popH = POP.offsetHeight;
+
+    const r = anchorEl.getBoundingClientRect();
+    let top = r.bottom + 6;
+    let left = r.left;
+
+    // If popup goes below the viewport, pin above the word.
+    if (top + popH > window.innerHeight - margin) {
+      top = r.top - popH - 6;
+    }
+    if (top < margin) top = margin;
+
+    if (left + popW > window.innerWidth - margin) {
+      left = window.innerWidth - popW - margin;
+    }
+    if (left < margin) left = margin;
+
+    POP.style.top = top + 'px';
+    POP.style.left = left + 'px';
+    requestAnimationFrame(() => { POP.style.transition = ''; });
   }
 
+  function hidePopup() {
+    closeStateMenu();
+    POP.hidden = true;
+    POP.classList.remove('expanded');
+    POP.style.transform = '';
+    POP.style.opacity = '';
+    document.getElementById('wp-iframe').src = 'about:blank';
+    CURRENT_WORD = null;
+    CURRENT_WORD_EL = null;
+    document.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+  }
+
+  function expandPopup() {
+    if (!CURRENT_WORD) return;
+    POP.classList.add('expanded');
+    const word = CURRENT_WORD;
+    const url = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
+    const fallback = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+    document.getElementById('wp-word-large').textContent = word;
+    document.getElementById('wp-naver-open').href = url;
+    document.getElementById('wp-naver-link').href = fallback;
+    document.getElementById('wp-naver-link').textContent = `"${word}" — Naver 사전에서 결과 열기 →`;
+    document.getElementById('wp-iframe').src = url;
+  }
+
+  function setupPopupDrag() {
+    const small = document.getElementById('wp-small');
+    let down = null;
+
+    function onDown(e) {
+      if (POP.classList.contains('expanded')) return;
+      // Don't start a drag from interactive children.
+      if (e.target.closest('.speak') || e.target.closest('.tx-state-badge')
+          || e.target.closest('.state-menu') || e.target.closest('a, button')) return;
+
+      const isTouch = e.touches && e.touches.length;
+      const x = isTouch ? e.touches[0].clientX : e.clientX;
+      const y = isTouch ? e.touches[0].clientY : e.clientY;
+      down = { x, y };
+      POP.style.transition = 'none';
+      if (e.cancelable) e.preventDefault();
+    }
+    function onMove(e) {
+      if (!down) return;
+      const isTouch = e.touches && e.touches.length;
+      const y = isTouch ? e.touches[0].clientY : e.clientY;
+      const dy = y - down.y;
+      POP.style.transform = `translateY(${dy}px)`;
+      POP.style.opacity = String(Math.max(0.5, 1 - Math.abs(dy) / 220));
+    }
+    function onUp(e) {
+      if (!down) return;
+      const isTouch = e.changedTouches && e.changedTouches.length;
+      const y = isTouch ? e.changedTouches[0].clientY : e.clientY;
+      const dy = y - down.y;
+      down = null;
+      POP.style.transition = 'transform .2s ease, opacity .2s ease';
+      POP.style.transform = '';
+      POP.style.opacity = '';
+      if (dy < -40) {
+        expandPopup();
+      } else if (dy > 50) {
+        // Slide down out, then hide.
+        POP.style.transform = 'translateY(60px)';
+        POP.style.opacity = '0';
+        setTimeout(hidePopup, 180);
+      }
+    }
+
+    small.addEventListener('mousedown',  onDown);
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+    small.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend',  onUp);
+
+    document.getElementById('wp-close').addEventListener('click', hidePopup);
+  }
+
+  // ============== translation card population ==============
   function renderStateBadge(badgeEl, state) {
     if (!badgeEl) return;
     if (state === undefined || state === null || state === 0) {
@@ -519,13 +614,6 @@
 
   function closeStateMenu() {
     document.querySelectorAll('.state-menu').forEach(m => m.remove());
-  }
-  function closeTxPanel() {
-    document.getElementById('tx-empty').style.display = '';
-    document.getElementById('tx-card').style.display = 'none';
-    document.getElementById('tx-sheet').classList.remove('open');
-    closeStateMenu();
-    CURRENT_WORD = null;
   }
 
   function buildStateMenu(currentState, onPick) {
@@ -552,47 +640,40 @@
     return menu;
   }
 
-  // Position a menu next to the badge, in <body>, so it never gets clipped by
-  // the bottom-sheet's overflow:auto.
   function placeMenu(menu, anchor) {
     document.body.appendChild(menu);
-    void menu.offsetHeight;             // force layout to know its size
+    void menu.offsetHeight;
     const r = anchor.getBoundingClientRect();
     const margin = 8;
     const menuW = menu.offsetWidth;
     const menuH = menu.offsetHeight;
-
-    let top;
     const spaceBelow = window.innerHeight - r.bottom - margin - 10;
     const spaceAbove = r.top - margin - 10;
-    if (spaceBelow >= menuH) {
-      top = r.bottom + margin;
-    } else if (spaceAbove >= menuH) {
-      top = r.top - margin - menuH;
-    } else {
-      // Squeeze: pin to the side with more room and let it scroll.
+    let top;
+    if (spaceBelow >= menuH) top = r.bottom + margin;
+    else if (spaceAbove >= menuH) top = r.top - margin - menuH;
+    else {
       top = (spaceBelow > spaceAbove)
         ? r.bottom + margin
         : Math.max(10, r.top - margin - Math.min(menuH, spaceAbove + 30));
       menu.style.maxHeight = (Math.max(spaceBelow, spaceAbove) + 30) + 'px';
     }
-
     let left = r.right - menuW;
     if (left < 10) left = 10;
     if (left + menuW > window.innerWidth - 10) left = window.innerWidth - menuW - 10;
-
     menu.style.top = top + 'px';
     menu.style.left = left + 'px';
   }
 
-  function bindBadgeClick(idBadge, getState) {
-    const b = document.getElementById(idBadge);
+  function bindBadgeClick() {
+    const b = document.getElementById('wp-state');
     if (!b) return;
     b.onclick = (ev) => {
       ev.stopPropagation();
       const open = document.querySelector('.state-menu');
       if (open) { closeStateMenu(); return; }
-      const menu = buildStateMenu(getState(), async (newState) => {
+      const cur = (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0;
+      const menu = buildStateMenu(cur, async (newState) => {
         if (!CURRENT_WORD) { closeStateMenu(); return; }
         const upd = await DB.setWordState(CURRENT_WORD, newState);
         WORD_STATES[CURRENT_WORD] = { state: upd.state, last: upd.last };
@@ -604,89 +685,84 @@
             if (cls) el.classList.add(cls);
           }
         });
-        renderStateBadge(document.getElementById('tx-state'),   upd.state);
-        renderStateBadge(document.getElementById('tx-state-m'), upd.state);
+        renderStateBadge(document.getElementById('wp-state'), upd.state);
         closeStateMenu();
       });
       placeMenu(menu, b);
     };
   }
 
-  async function showWord(word, info) {
+  async function showWord(word, info, anchorEl) {
     closeStateMenu();
     CURRENT_WORD = word.toLowerCase();
+    CURRENT_WORD_EL = anchorEl;
     const stateNow = (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0;
 
-    document.getElementById('tx-empty').style.display = 'none';
-    document.getElementById('tx-card').style.display = '';
-    document.getElementById('tx-sheet').classList.add('open');
+    document.getElementById('wp-word').textContent = word;
+    document.getElementById('wp-trans').innerHTML = '<span class="tx-loading">번역 중...</span>';
 
-    setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(word));
-    setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
+    if (info && info.isFirstClick) renderStateBadge(document.getElementById('wp-state'), 0);
+    else                            renderStateBadge(document.getElementById('wp-state'), stateNow);
 
-    // First click ever (state 0) → meaning only, no badge.
-    // Otherwise show the level circle so the user can re-classify.
-    if (info && info.isFirstClick) {
-      renderStateBadge(document.getElementById('tx-state'),   0);
-      renderStateBadge(document.getElementById('tx-state-m'), 0);
-    } else {
-      renderStateBadge(document.getElementById('tx-state'),   stateNow);
-      renderStateBadge(document.getElementById('tx-state-m'), stateNow);
-    }
+    bindBadgeClick();
 
-    bindBadgeClick('tx-state',   () => (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0);
-    bindBadgeClick('tx-state-m', () => (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0);
-
-    const sp1 = document.getElementById('tx-speak');
-    const sp2 = document.getElementById('tx-speak-m');
-    [sp1, sp2].forEach(b => b && (b.onclick = () => TTS.speak(word)));
+    const sp = document.getElementById('wp-speak');
+    sp.onclick = (ev) => { ev.stopPropagation(); TTS.speak(word); };
     TTS.speak(word);
+
+    placePopBelowAnchor(anchorEl);
 
     try {
       const ko = await Translate.translate(word);
-      setBoth('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+      document.getElementById('wp-trans').innerHTML = `<span class="ko">${escapeHtml(ko)}</span>`;
     } catch (err) {
-      setBoth('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+      document.getElementById('wp-trans').innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     }
   }
 
-  async function showPhrase(phrase) {
+  async function showPhrase(phrase, anchorEl) {
     closeStateMenu();
-    CURRENT_WORD = null;
-    document.getElementById('tx-empty').style.display = 'none';
-    document.getElementById('tx-card').style.display = '';
-    document.getElementById('tx-sheet').classList.add('open');
+    CURRENT_WORD = phrase.toLowerCase();
+    CURRENT_WORD_EL = anchorEl;
 
-    setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(phrase));
-    setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
-    renderStateBadge(document.getElementById('tx-state'),   0);
-    renderStateBadge(document.getElementById('tx-state-m'), 0);
+    document.getElementById('wp-word').textContent = phrase;
+    document.getElementById('wp-trans').innerHTML = '<span class="tx-loading">번역 중...</span>';
+    renderStateBadge(document.getElementById('wp-state'), 0);
 
-    const sp1 = document.getElementById('tx-speak');
-    const sp2 = document.getElementById('tx-speak-m');
-    [sp1, sp2].forEach(b => b && (b.onclick = () => TTS.speak(phrase)));
+    const sp = document.getElementById('wp-speak');
+    sp.onclick = (ev) => { ev.stopPropagation(); TTS.speak(phrase); };
+
+    // For phrases, anchor under the first selected word if available.
+    let anchor = anchorEl;
+    if (!anchor) anchor = document.querySelector('.w.sel') || document.querySelector('.w.active');
+    if (anchor) placePopBelowAnchor(anchor);
+    else {
+      POP.hidden = false;
+      POP.style.top = '20%'; POP.style.left = '50%';
+      POP.style.transform = 'translateX(-50%)';
+    }
 
     try {
       const ko = await Translate.translate(phrase);
-      setBoth('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+      document.getElementById('wp-trans').innerHTML = `<span class="ko">${escapeHtml(ko)}</span>`;
     } catch (err) {
-      setBoth('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+      document.getElementById('wp-trans').innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     }
   }
 
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
 
+  // Tap outside the popup or menu to close.
   document.addEventListener('click', (e) => {
     if (e.target.closest('.state-menu')) return;
     if (e.target.closest('.tx-state-badge')) return;
     closeStateMenu();
-    const sheet = document.getElementById('tx-sheet');
-    if (!sheet.classList.contains('open')) return;
-    if (sheet.contains(e.target)) return;
+    if (POP.hidden) return;
+    if (POP.contains(e.target)) return;
     if (e.target.closest('.lesson-text')) return;
     if (e.target.closest('.playbar')) return;
     if (e.target.closest('.lesson-progress')) return;
-    sheet.classList.remove('open');
+    hidePopup();
   });
 
   // ============== audio playback ==============

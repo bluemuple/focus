@@ -66,17 +66,30 @@ a { color: inherit; }
 }
 .topbar .brand:hover { background: #d8ebe1; }
 .topbar .spacer { flex: 1; }
-/* Bidoro return button — small "← 비도로" link */
-.topbar .bidoro-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 13px; font-weight: 700;
-  color: var(--muted); text-decoration: none;
-  padding: 6px 12px; border-radius: 999px;
-  border: 1px solid var(--line); background: #fff;
+/* Bidoro return button — matches focus/index.html .tab-page-btn:
+   - PC:     pill with the word "Bidoro"
+   - Mobile: 36×32 pill with the italic glyph "ƒ"
+   Same shape, font, and active treatment as the Focus tab on the Bidoro app. */
+.topbar .bidoro-tab {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #f3f4f6;
+  color: #4b5563;
+  font-family: 'Times New Roman', serif;
+  font-style: italic;
+  font-weight: 900;
+  font-size: 14px;
+  text-decoration: none;
   white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
 }
-.topbar .bidoro-btn:hover { background: #f1f3f5; color: var(--ink); }
-.topbar .bidoro-btn .arrow { font-size: 14px; }
+.topbar .bidoro-tab:hover {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.topbar .bidoro-tab .ico  { display: none; font-size: 1.3rem; line-height: 1; }
+.topbar .bidoro-tab .text { display: inline; }
 .topbar .acct {
   display: flex; align-items: center; gap: 8px;
   background: var(--accent-soft); border-radius: 999px;
@@ -273,14 +286,7 @@ a { color: inherit; }
 }
 
 /* ============== lesson page ============== */
-.lesson-layout {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 18px;
-}
-@media (min-width: 1024px) {
-  .lesson-layout { grid-template-columns: 1fr 360px; }
-}
+.lesson-layout { display: block; }   /* single column — popup floats anchored */
 .lesson-main {
   background: #fff; border-radius: var(--radius);
   padding: 18px 20px;
@@ -320,51 +326,123 @@ a { color: inherit; }
 }
 .lesson-text .para { margin: 0 0 14px; }
 
-/* word chip — minimal padding (~4 px around the glyph) */
+/* Word chip — inline (default) so the background hugs the character only,
+   with no surrounding padding. The line-height of the parent gives breathing
+   room between lines without making each highlight thicker than the text. */
 .w {
-  display: inline-block; padding: 1px 2px; margin: 0;
-  border-radius: 4px; cursor: pointer;
-  background: var(--word-new);            /* state 0: pale sky blue */
-  transition: background .25s, box-shadow .12s, transform .05s;
+  background: var(--word-new);             /* state 0: pale sky blue */
+  border-radius: 2px;
+  cursor: pointer;
+  transition: background .2s;
 }
-.w:hover { box-shadow: 0 0 0 2px rgba(0,0,0,0.06) inset; }
-.w.s1 { background: var(--word-1); }      /* 새로운 단어 (clicked ≥ 2) */
-.w.s2 { background: var(--word-2); }      /* 어디선가 본 단어 */
-.w.s3 { background: var(--word-3); }      /* 익숙한 단어 */
-.w.s4 { background: var(--word-4); }      /* 배운 단어 */
-.w.s5 { background: transparent; }        /* 완전히 아는 단어 */
-.w.sx { background: transparent; }        /* 무시 */
-.w.active { box-shadow: 0 0 0 2px var(--ink) inset; }
-/* drag selection - grey outlined rectangle */
-.w.sel { outline: 1.5px solid #888; outline-offset: 1px; background: rgba(0,0,0,0.04) !important; }
-.w.punct { background: transparent !important; cursor: default; padding: 0; }
+.w.s1 { background: var(--word-1); }       /* 새로운 단어 (clicked ≥ 2) */
+.w.s2 { background: var(--word-2); }       /* 어디선가 본 단어 */
+.w.s3 { background: var(--word-3); }       /* 익숙한 단어 */
+.w.s4 { background: var(--word-4); }       /* 배운 단어 */
+.w.s5 { background: transparent; }         /* 완전히 아는 단어 */
+.w.sx { background: transparent; }         /* 무시 */
+.w.active { box-shadow: 0 0 0 1.5px var(--ink); }
+.w.sel { box-shadow: 0 0 0 1.5px #888; background: rgba(0,0,0,0.04) !important; }
+.w.punct { background: transparent !important; cursor: default; }
 
-/* translation side panel (PC/tablet) */
-.lesson-side {
-  background: #fff; border-radius: var(--radius);
-  padding: 18px; border: 1px solid var(--line);
-  position: sticky; top: 80px; align-self: start;
-  min-height: 220px;
-}
-@media (max-width: 1023px) { .lesson-side { display: none; } }
+.tx-loading { color: var(--muted); font-style: italic; }
 
-.tx-card { position: relative; }
-.tx-word {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 22px; font-weight: 700; margin-bottom: 6px;
+/* ===== anchored word-pop: small popup directly below the clicked word.
+   Drag up to expand into a Naver Endic dictionary view, drag down to close. ===== */
+.word-pop {
+  position: fixed;
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 14px 40px rgba(0,0,0,0.22);
+  z-index: 150;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  user-select: none; -webkit-user-select: none;
+  touch-action: none;             /* drag handler owns gestures */
+  overflow: hidden;
 }
-.tx-word .speak {
-  border: none; background: #f1f3f5; width: 32px; height: 32px;
-  border-radius: 999px; display: grid; place-items: center; font-size: 16px;
+.word-pop[hidden] { display: none; }
+.word-pop .wp-small  { padding: 12px 14px 10px; cursor: grab; }
+.word-pop .wp-small:active { cursor: grabbing; }
+.word-pop .wp-large  { display: none; flex-direction: column; height: 100%; }
+.word-pop.expanded { transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease, border-radius .25s ease; }
+.word-pop.expanded .wp-small  { display: none; }
+.word-pop.expanded .wp-large  { display: flex; }
+.word-pop.expanded {
+  top: 16px !important; left: 16px !important;
+  width: calc(100vw - 32px); height: calc(100vh - 32px);
+  border-radius: 16px;
+  cursor: default;
+  touch-action: auto;
+}
+
+.wp-head {
+  display: flex; align-items: center; gap: 10px;
+}
+.wp-head .speak {
+  border: none; background: #f1f3f5;
+  width: 32px; height: 32px; border-radius: 999px;
+  display: grid; place-items: center; font-size: 15px;
+  flex-shrink: 0; cursor: pointer;
+}
+.wp-head .speak:hover { background: #e7eaee; }
+.wp-head .word-text {
+  flex: 1; min-width: 0;
+  font-size: 18px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wp-trans {
+  font-size: 16px; color: var(--ink);
+  padding: 8px 0 4px; margin-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.wp-trans .ko { font-weight: 600; }
+.wp-hint {
+  font-size: 11px; color: var(--muted);
+  text-align: center; margin-top: 4px;
+}
+
+/* expanded large view */
+.wp-large-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-bottom: 1px solid var(--line);
   flex-shrink: 0;
 }
-.tx-word .speak:hover { background: #e7eaee; }
-.tx-word .word-text { flex: 1; min-width: 0; overflow-wrap: break-word; }
-.tx-trans { font-size: 17px; color: var(--ink); margin-top: 8px; }
-.tx-trans .ko { font-size: 18px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.tx-meta { color: var(--muted); font-size: 13px; margin-top: 10px; }
-.tx-empty { color: var(--muted); text-align: center; padding-top: 20px; }
-.tx-loading { color: var(--muted); font-style: italic; }
+.wp-large-head .word-text { flex: 1; font-size: 18px; font-weight: 700; }
+.wp-large-head .open-naver {
+  font-size: 12px; color: var(--accent-ink); text-decoration: none;
+  border: 1px solid var(--accent); padding: 5px 10px; border-radius: 999px;
+  white-space: nowrap;
+}
+.wp-large-head .open-naver:hover { background: var(--accent-soft); }
+.wp-close {
+  width: 34px; height: 34px; border: none; background: #f1f3f5;
+  border-radius: 999px; font-size: 22px; line-height: 1;
+  cursor: pointer; flex-shrink: 0;
+}
+.wp-close:hover { background: #e5e7eb; }
+.wp-iframe-wrap {
+  flex: 1; position: relative; background: #f8f9fa;
+}
+.wp-iframe-wrap iframe {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; border: 0;
+}
+.wp-iframe-wrap .wp-fallback {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  text-align: center; padding: 24px;
+  color: var(--muted); font-size: 14px;
+  pointer-events: none;
+}
+.wp-iframe-wrap .wp-fallback a {
+  pointer-events: auto;
+  margin-top: 10px;
+  color: var(--accent-ink); font-weight: 700;
+  border: 1px solid var(--accent); padding: 8px 16px;
+  border-radius: 999px; text-decoration: none;
+}
 
 /* ===== state badge: small round button on the right of the word row ===== */
 .tx-state-badge {
@@ -451,22 +529,6 @@ a { color: inherit; }
 .lesson-text.slide-from-right { transform: translateX( 100%); }
 .lesson-text.slide-from-left  { transform: translateX(-100%); }
 
-/* mobile: bottom sheet for translation */
-.tx-sheet {
-  position: fixed; left: 0; right: 0; bottom: 64px;
-  background: #fff; border-radius: 18px 18px 0 0;
-  box-shadow: 0 -8px 30px rgba(0,0,0,0.15);
-  padding: 16px 18px 18px; z-index: 40;
-  transform: translateY(120%); transition: transform .25s ease;
-  max-height: 60vh; overflow-y: auto;
-}
-.tx-sheet.open { transform: none; }
-.tx-sheet .grab {
-  width: 40px; height: 4px; background: #d0d4d9; border-radius: 999px;
-  margin: 0 auto 10px;
-}
-@media (min-width: 1024px) { .tx-sheet { display: none; } }
-
 /* lesson playbar (bottom) */
 .playbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 35;
@@ -516,10 +578,11 @@ a { color: inherit; }
     max-width: 110px;
   }
   .topbar .acct .avatar { width: 24px; height: 24px; font-size: 11px; }
-  .topbar .bidoro-btn {
-    padding: 5px 8px; font-size: 12px;
+  .topbar .bidoro-tab {
+    width: 36px; height: 32px; padding: 0; min-width: 36px;
   }
-  .topbar .bidoro-btn .label { display: none; }   /* mobile: arrow only */
+  .topbar .bidoro-tab .ico  { display: inline; }
+  .topbar .bidoro-tab .text { display: none; }
   .topbar .btn { padding: 6px 10px; font-size: 12px; }
   .container { padding: 14px; }
   .lesson-text { font-size: 17px; line-height: 2.3; }
