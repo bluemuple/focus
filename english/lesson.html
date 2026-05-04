@@ -35,18 +35,16 @@
           <button class="lp-btn" id="page-next" aria-label="다음 페이지">›</button>
         </div>
 
+        <h1 class="lesson-title-row" id="lesson-title">불러오는 중...</h1>
+
         <div class="lesson-head">
-          <div class="thumb" id="lesson-thumb">··</div>
-          <div>
-            <h1 id="lesson-title">불러오는 중...</h1>
-            <div class="crumb" id="lesson-crumb">또박또박 · 가져온 레슨</div>
-          </div>
           <div class="head-spacer"></div>
           <div class="head-tools">
             <button class="toggle-btn dict" id="tts-toggle-btn"  title="음성 엔진 전환 (Google Cloud ↔ Web Speech)">GC</button>
             <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
             <button class="toggle-btn dict" id="dict-toggle-btn" title="사전 전환 (Naver ↔ Corpus)">N</button>
             <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
+            <button class="toggle-btn"      id="bookmark-btn"    title="이 레슨을 찜한 레슨으로 추가/제거">찜</button>
           </div>
         </div>
 
@@ -185,7 +183,7 @@
     WORD_STATES = await DB.loadWordStates();
 
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
-    document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
+    refreshBookmarkBtn();
 
     applyModeClass();             // sets .mode-cont on lesson-text wrap if needed
     sizeLessonMain();
@@ -256,6 +254,31 @@
       refreshTts();
     });
     refreshTts();
+
+    // Bookmark toggle (찜). Pink when on. Stays "찜" text either way; only
+    // the colour communicates state.
+    const bmBtn = document.getElementById('bookmark-btn');
+    bmBtn.addEventListener('click', async () => {
+      if (!LESSON) return;
+      const next = !LESSON.bookmarked;
+      LESSON.bookmarked = next;
+      refreshBookmarkBtn();
+      try { await DB.setBookmark(LESSON.id, next); }
+      catch (e) {
+        console.error('bookmark toggle failed', e);
+        // Roll back the visual state on failure.
+        LESSON.bookmarked = !next;
+        refreshBookmarkBtn();
+      }
+    });
+  }
+
+  function refreshBookmarkBtn() {
+    const b = document.getElementById('bookmark-btn');
+    if (!b) return;
+    const on = !!(LESSON && LESSON.bookmarked);
+    b.classList.toggle('bookmarked', on);
+    b.textContent = on ? '찜♥' : '찜';
   }
   function onModeChanged() {
     // Clean up state from the previous mode.

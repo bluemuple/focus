@@ -37,6 +37,19 @@
       </div>
 
       <div class="field">
+        <label>썸네일 이미지 (선택)</label>
+        <div class="audio-zone thumb-zone" id="f-thumb-zone">
+          <div class="thumb-placeholder" id="f-thumb-placeholder">
+            <div class="icon">🖼️</div>
+            <div id="thumb-zone-text">클릭하거나 이미지를 끌어다 놓아 썸네일 추가</div>
+            <div class="muted" style="font-size:12px;margin-top:4px">레슨 카드에 표시됩니다.</div>
+          </div>
+          <img id="f-thumb-preview" alt="썸네일 미리보기" style="display:none">
+          <input id="f-thumb" type="file" accept="image/*" style="display:none">
+        </div>
+      </div>
+
+      <div class="field">
         <label>오디오 파일 (선택)</label>
         <div class="audio-zone" id="f-zone">
           <div class="icon">🎧</div>
@@ -87,8 +100,16 @@
     const errBox = document.getElementById('form-err');
     const saveBtn = document.getElementById('save-btn');
 
-    let chosenFile = null;
+    // Thumbnail zone
+    const thumbZone   = document.getElementById('f-thumb-zone');
+    const thumbInput  = document.getElementById('f-thumb');
+    const thumbPh     = document.getElementById('f-thumb-placeholder');
+    const thumbPrev   = document.getElementById('f-thumb-preview');
 
+    let chosenFile  = null;     // audio
+    let chosenThumb = null;     // image
+
+    // ---- audio zone ----
     zone.addEventListener('click', () => fileInput.click());
     zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; });
     zone.addEventListener('dragleave', () => { zone.style.borderColor = ''; });
@@ -108,6 +129,32 @@
       errBox.textContent = '';
     }
 
+    // ---- thumbnail zone ----
+    thumbZone.addEventListener('click', () => thumbInput.click());
+    thumbZone.addEventListener('dragover', (e) => { e.preventDefault(); thumbZone.style.borderColor = 'var(--accent)'; });
+    thumbZone.addEventListener('dragleave', () => { thumbZone.style.borderColor = ''; });
+    thumbZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      thumbZone.style.borderColor = '';
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) setThumb(e.dataTransfer.files[0]);
+    });
+    thumbInput.addEventListener('change', () => {
+      if (thumbInput.files && thumbInput.files[0]) setThumb(thumbInput.files[0]);
+    });
+    function setThumb(f) {
+      if (!/^image\//.test(f.type)) { errBox.textContent = '이미지 파일만 업로드 가능합니다.'; return; }
+      chosenThumb = f;
+      const reader = new FileReader();
+      reader.onload = () => {
+        thumbPrev.src = reader.result;
+        thumbPrev.style.display = '';
+        thumbPh.style.display = 'none';
+        thumbZone.classList.add('has-file');
+      };
+      reader.readAsDataURL(f);
+      errBox.textContent = '';
+    }
+
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       errBox.textContent = '';
@@ -117,7 +164,7 @@
       saveBtn.disabled = true;
       saveBtn.textContent = '저장 중...';
       try {
-        const row = await DB.addLesson({ title, body, audioFile: chosenFile });
+        const row = await DB.addLesson({ title, body, audioFile: chosenFile, thumbFile: chosenThumb });
         location.href = 'lesson.html?id=' + encodeURIComponent(row.id);
       } catch (err) {
         console.error(err);

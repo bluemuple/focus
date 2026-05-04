@@ -95,37 +95,66 @@
     }
     return (ls.get('lessons', []) || []).find(x => x.id === id) || null;
   }
-  async function addLesson({ title, body, audioFile }) {
+  async function addLesson({ title, body, audioFile, thumbFile }) {
     let audio_url = null;
+    let thumbnail_url = null;
+
+    async function uploadToAudioBucket(file, prefix) {
+      const u = await currentUser();
+      const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+      const path = `${u.id}/${prefix}/${Date.now()}.${ext}`;
+      const { error: upErr } = await sb.storage.from('audio')
+        .upload(path, file, { upsert: false, contentType: file.type || 'application/octet-stream' });
+      if (upErr) { console.error('upload ' + prefix, upErr); return null; }
+      const { data: pub } = sb.storage.from('audio').getPublicUrl(path);
+      return (pub && pub.publicUrl) || null;
+    }
 
     if (await useCloud()) {
+      if (audioFile) audio_url     = await uploadToAudioBucket(audioFile, 'audio');
+      if (thumbFile) thumbnail_url = await uploadToAudioBucket(thumbFile, 'thumb');
       const u = await currentUser();
-      if (audioFile) {
-        const ext = (audioFile.name.split('.').pop() || 'mp3').toLowerCase();
-        const path = `${u.id}/${Date.now()}.${ext}`;
-        const { error: upErr } = await sb.storage.from('audio')
-          .upload(path, audioFile, { upsert: false, contentType: audioFile.type || 'audio/mpeg' });
-        if (upErr) { console.error('audio upload', upErr); }
-        else {
-          const { data: pub } = sb.storage.from('audio').getPublicUrl(path);
-          audio_url = pub && pub.publicUrl ? pub.publicUrl : null;
+      const row = { user_id: u.id, title, body, audio_url, thumbnail_url };
+      const { data, error } = await sb.from('lessons').insert(row).select().single();
+      if (error) {
+        // If the schema is missing thumbnail_url (user hasn't run the ALTER TABLE
+        // yet), retry without that column instead of breaking the whole flow.
+        if (/thumbnail_url|bookmarked/.test(String(error.message || ''))) {
+          const fallback = { user_id: u.id, title, body, audio_url };
+          const r2 = await sb.from('lessons').insert(fallback).select().single();
+          if (r2.error) { console.error(r2.error); throw r2.error; }
+          return r2.data;
         }
+        console.error(error); throw error;
       }
-      const { data, error } = await sb.from('lessons').insert({
-        user_id: u.id, title, body, audio_url
-      }).select().single();
-      if (error) { console.error(error); throw error; }
       return data;
     }
 
     // localStorage path
-    if (audioFile) {
-      audio_url = await fileToDataURL(audioFile);
-    }
+    if (audioFile) audio_url     = await fileToDataURL(audioFile);
+    if (thumbFile) thumbnail_url = await fileToDataURL(thumbFile);
     const list = ls.get('lessons', []);
-    const row = { id: uid(), title, body, audio_url, created_at: new Date().toISOString() };
+    const row = {
+      id: uid(), title, body, audio_url, thumbnail_url,
+      bookmarked: false,
+      created_at: new Date().toISOString(),
+    };
     list.unshift(row); ls.set('lessons', list);
     return row;
+  }
+
+  async function setBookmark(lessonId, on) {
+    on = !!on;
+    if (await useCloud()) {
+      const { error } = await sb.from('lessons')
+        .update({ bookmarked: on }).eq('id', lessonId);
+      if (error) console.error('setBookmark', error);
+      return on;
+    }
+    const list = ls.get('lessons', []);
+    const i = list.findIndex(x => x.id === lessonId);
+    if (i >= 0) { list[i].bookmarked = on; ls.set('lessons', list); }
+    return on;
   }
   async function deleteLesson(id) {
     if (await useCloud()) {
@@ -232,7 +261,7 @@
     haveSupabase,
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
-    listLessons, getLesson, addLesson, deleteLesson,
+    listLessons, getLesson, addLesson, deleteLesson, setBookmark,
     loadWordStates, clickWord, setWordState,
     useCloud,
   };
