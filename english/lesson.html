@@ -41,6 +41,17 @@
             <h1 id="lesson-title">불러오는 중...</h1>
             <div class="crumb" id="lesson-crumb">또박또박 · 가져온 레슨</div>
           </div>
+          <div class="head-spacer"></div>
+          <div class="head-tools">
+            <div class="toggle-group" id="dict-toggle" role="group" aria-label="사전 선택">
+              <button class="toggle-btn dict active" data-dict="naver" title="네이버 영어사전">N</button>
+              <button class="toggle-btn dict"        data-dict="daum"  title="다음 영어사전">D</button>
+            </div>
+            <div class="toggle-group" id="mode-toggle" role="group" aria-label="모드">
+              <button class="toggle-btn active" data-mode="single">하나씩</button>
+              <button class="toggle-btn"        data-mode="cont">이어서</button>
+            </div>
+          </div>
         </div>
 
         <div class="lesson-text-wrap" id="lesson-text-wrap">
@@ -115,6 +126,24 @@
     avatar.textContent = (label[0] || 'U').toUpperCase();
   }
 
+  // ============== mode + dictionary toggles ==============
+  // MODE: 'single' (popup-per-word) | 'cont' (inline gray translations).
+  // DICT: 'naver' | 'daum' — controls which dictionary the expanded popup loads.
+  // Both are persisted in localStorage so the user's preference survives reload.
+  const PREF_KEY = 'eng.v1.lessonPrefs';
+  const prefs = (() => {
+    try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; }
+    catch (e) { return {}; }
+  })();
+  let MODE = prefs.mode === 'cont'   ? 'cont'   : 'single';
+  let DICT = prefs.dict === 'daum'   ? 'daum'   : 'naver';
+  function savePrefs() {
+    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE, dict: DICT })); }
+    catch (e) {}
+  }
+  // Selected words in 이어서 mode (Set of .w elements on the live page).
+  const CONT_SELECTED = new Set();
+
   // ============== state metadata ==============
   const STATE_LABEL = {
     [-1]: '무시',
@@ -159,6 +188,7 @@
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
     document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
 
+    applyModeClass();             // sets .mode-cont on lesson-text wrap if needed
     sizeLessonMain();
     await new Promise(r => requestAnimationFrame(r));
     PAGES = paginateByHeight(LESSON.body || '');
@@ -168,6 +198,57 @@
     updateProgress();
     setupAudio();
     setupPopupDrag();
+    setupToggles();
+  }
+
+  // ---- toggle UI wiring ----
+  function applyModeClass() {
+    document.querySelectorAll('.lesson-text').forEach(el => {
+      el.classList.toggle('mode-cont',   MODE === 'cont');
+      el.classList.toggle('mode-single', MODE === 'single');
+    });
+  }
+  function setupToggles() {
+    // Mode toggle (하나씩 / 이어서)
+    const modeBtns = document.querySelectorAll('#mode-toggle .toggle-btn');
+    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === MODE));
+    modeBtns.forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.mode === MODE) return;
+      MODE = b.dataset.mode;
+      modeBtns.forEach(x => x.classList.toggle('active', x.dataset.mode === MODE));
+      savePrefs();
+      onModeChanged();
+    }));
+    // Dictionary toggle (N / D)
+    const dictBtns = document.querySelectorAll('#dict-toggle .toggle-btn');
+    dictBtns.forEach(b => b.classList.toggle('active', b.dataset.dict === DICT));
+    dictBtns.forEach(b => b.addEventListener('click', () => {
+      if (b.dataset.dict === DICT) return;
+      DICT = b.dataset.dict;
+      dictBtns.forEach(x => x.classList.toggle('active', x.dataset.dict === DICT));
+      savePrefs();
+    }));
+  }
+  function onModeChanged() {
+    // Clean up state from the previous mode.
+    hidePopup();
+    clearContSelection();
+    applyModeClass();
+    // Spacing differs between modes → re-paginate.
+    if (!LESSON) return;
+    requestAnimationFrame(() => {
+      PAGES = paginateByHeight(LESSON.body || '');
+      if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
+      if (pageIdx < 0) pageIdx = 0;
+      renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
+      bindWordInteractions(document.getElementById('lesson-text'));
+      updateProgress();
+    });
+  }
+  function clearContSelection() {
+    document.querySelectorAll('.w.cont-sel').forEach(el => el.classList.remove('cont-sel'));
+    document.querySelectorAll('.w[data-tx]').forEach(el => el.removeAttribute('data-tx'));
+    CONT_SELECTED.clear();
   }
 
   function sizeLessonMain() {
@@ -189,6 +270,7 @@
 
     const mirror = document.createElement('div');
     mirror.className = 'lesson-text';
+    if (MODE === 'cont') mirror.classList.add('mode-cont');   // measure with the same spacing as the live page
     mirror.style.position = 'absolute';
     mirror.style.visibility = 'hidden';
     mirror.style.pointerEvents = 'none';
@@ -283,6 +365,7 @@
     animating = true;
     closeStateMenu();
     hidePopup();
+    clearContSelection();          // selection is per-page in 이어서 mode
 
     const wrap = document.getElementById('lesson-text-wrap');
     const oldRoot = document.getElementById('lesson-text');
@@ -290,6 +373,7 @@
 
     const newRoot = document.createElement('div');
     newRoot.className = 'lesson-text';
+    if (MODE === 'cont') newRoot.classList.add('mode-cont');
     newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
     pageIdx = next;
     renderInto(newRoot, PAGES[pageIdx] || []);
@@ -376,6 +460,7 @@
     }
 
     root.addEventListener('mousedown', (e) => {
+      if (MODE === 'cont') return;       // no drag-select in 이어서 mode
       const w = getWordEl(e.target);
       if (!w) return;
       dragging = true; didDrag = false;
@@ -406,7 +491,9 @@
       const t = e.touches[0]; if (!t) return;
       touchStart = { x: t.clientX, y: t.clientY, t: Date.now() };
       const w = getWordEl(e.target);
-      if (w) {
+      // In 이어서 mode the touch is only used for page swipes — never as a
+      // drag-select start, so don't arm dragStartIdx.
+      if (w && MODE !== 'cont') {
         dragging = true; didDrag = false;
         dragStartIdx = Number(w.dataset.idx);
         dragLastIdx  = dragStartIdx;
@@ -466,17 +553,75 @@
       const w = getWordEl(e.target);
       if (!w) return;
       if (root.querySelectorAll('.w.sel').length > 0) clearSel();
-      root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
-      w.classList.add('active');
 
       const word = w.dataset.word;
+      // Always advance the learning state on a real click.
       const upd = await DB.clickWord(word);
       WORD_STATES[word.toLowerCase()] = { state: upd.state, last: upd.last };
       ['s1','s2','s3','s4','s5','sx'].forEach(c => w.classList.remove(c));
       const cls = classFor(upd.state);
       if (cls) w.classList.add(cls);
-      showWord(word, upd, w);
+
+      if (MODE === 'cont') {
+        await handleContClick(w, word);
+      } else {
+        root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+        w.classList.add('active');
+        showWord(word, upd, w);
+      }
     });
+  }
+
+  // ============== 이어서 (continuous) mode ==============
+  // Track the running selection. Clicking a non-adjacent word clears it;
+  // clicking a word that's already in the selection plays the joined phrase
+  // through TTS.
+  function wordsInParagraph(p) {
+    return Array.from(p.querySelectorAll('.w:not(.punct)'));
+  }
+  function isAdjacentToSelection(wEl) {
+    if (!CONT_SELECTED.size) return false;
+    const p = wEl.parentElement;
+    if (!p) return false;
+    const words = wordsInParagraph(p);
+    const i = words.indexOf(wEl);
+    if (i < 0) return false;
+    const prev = i > 0 ? words[i - 1] : null;
+    const next = i < words.length - 1 ? words[i + 1] : null;
+    return (prev && CONT_SELECTED.has(prev)) || (next && CONT_SELECTED.has(next));
+  }
+  function selectionToPhrase() {
+    return Array.from(CONT_SELECTED)
+      .sort((a, b) => {
+        const cmp = a.compareDocumentPosition(b);
+        if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      })
+      .map(el => el.dataset.word)
+      .join(' ');
+  }
+
+  async function handleContClick(wEl, word) {
+    // Tap on an already-selected word → speak the entire selection.
+    if (CONT_SELECTED.has(wEl)) {
+      const phrase = selectionToPhrase();
+      TTS.speak(phrase || word);
+      return;
+    }
+    // If not adjacent to existing selection, start fresh.
+    if (CONT_SELECTED.size > 0 && !isAdjacentToSelection(wEl)) {
+      clearContSelection();
+    }
+    CONT_SELECTED.add(wEl);
+    wEl.classList.add('cont-sel');
+    // Speak the new word immediately as feedback.
+    TTS.speak(word);
+    // Translate and pin the gray label below the word.
+    try {
+      const ko = await Translate.translate(word);
+      if (ko) wEl.dataset.tx = ko;
+    } catch (e) {}
   }
 
   // ============== anchored word popup ==============
@@ -484,37 +629,44 @@
 
   function placePopBelowAnchor(anchorEl) {
     POP.classList.remove('expanded');
-    POP.style.transition = 'none';
-    POP.style.transform = '';
-    POP.style.opacity = '';
-    POP.style.width = '';
-    POP.style.height = '';
+    // Clear ALL previous inline styles so leftovers from a prior interaction
+    // (transform, top, opacity, etc.) can't leak into the new placement.
+    POP.removeAttribute('style');
+    // Pre-position off-screen so the very first paint after hidden=false is at
+    // a safe location. (With position:fixed and no top set, the browser would
+    // otherwise place it at its natural document position, which on a tall
+    // page falls below the viewport — that was the visible bug.)
+    POP.style.top  = '0px';
+    POP.style.left = '-9999px';
     POP.hidden = false;
-
-    const margin = 8;
-    const popW = 280;
-
+    // Force layout so we can read accurate dimensions.
     void POP.offsetHeight;
     const popH = POP.offsetHeight;
+    const popW = POP.offsetWidth || 280;
 
+    const margin = 8;
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const vw = window.innerWidth;
     const r = anchorEl.getBoundingClientRect();
-    let top = r.bottom + 6;
+
+    // Default: directly below the word, left-aligned with it.
+    let top  = r.bottom + 6;
     let left = r.left;
 
-    // If popup goes below the viewport, pin above the word.
-    if (top + popH > window.innerHeight - margin) {
+    // Flip above if there's no room below.
+    if (top + popH + margin > vh) {
       top = r.top - popH - 6;
     }
+    // Hard clamp so the popup ALWAYS sits inside the viewport.
+    if (top + popH > vh - margin) top = vh - popH - margin;
     if (top < margin) top = margin;
 
-    if (left + popW > window.innerWidth - margin) {
-      left = window.innerWidth - popW - margin;
-    }
+    // Horizontal: shift inward if it would overrun the right edge.
+    if (left + popW + margin > vw) left = vw - popW - margin;
     if (left < margin) left = margin;
 
-    POP.style.top = top + 'px';
+    POP.style.top  = top + 'px';
     POP.style.left = left + 'px';
-    requestAnimationFrame(() => { POP.style.transition = ''; });
   }
 
   function hidePopup() {
@@ -533,42 +685,64 @@
     if (!CURRENT_WORD) return;
     POP.classList.add('expanded');
     const word = CURRENT_WORD;
-    const url = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
-    const fallback = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+    // Build URLs for both dictionaries; pick based on the user's toggle.
+    const naverUrl = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
+    const naverAlt = 'https://endic.naver.com/search.nhn?query='   + encodeURIComponent(word);
+    const daumUrl  = 'https://dic.daum.net/search.do?dic=eng&q='   + encodeURIComponent(word);
+
+    const isDaum = (DICT === 'daum');
+    const url     = isDaum ? daumUrl  : naverUrl;
+    const altUrl  = isDaum ? daumUrl  : naverAlt;
+    const dictName = isDaum ? '다음'   : 'Naver';
+
     document.getElementById('wp-word-large').textContent = word;
-    document.getElementById('wp-naver-open').href = url;
-    document.getElementById('wp-naver-link').href = fallback;
-    document.getElementById('wp-naver-link').textContent = `"${word}" — Naver 사전에서 결과 열기 →`;
+    const headLink = document.getElementById('wp-naver-open');
+    headLink.href = url;
+    headLink.textContent = `${dictName}에서 열기 ↗`;
+    const fbLink = document.getElementById('wp-naver-link');
+    fbLink.href = altUrl;
+    fbLink.textContent = `"${word}" — ${dictName} 사전에서 결과 열기 →`;
     document.getElementById('wp-iframe').src = url;
   }
 
   function setupPopupDrag() {
     const small = document.getElementById('wp-small');
     let down = null;
+    let lastTouchT = 0;   // dedup mouse events that follow a touch on iOS/Android
 
     function onDown(e) {
       if (POP.classList.contains('expanded')) return;
       // Don't start a drag from interactive children.
-      if (e.target.closest('.speak') || e.target.closest('.tx-state-badge')
-          || e.target.closest('.state-menu') || e.target.closest('a, button')) return;
+      if (e.target.closest('a, button, .state-menu')) return;
+      // Skip the synthetic mouse* events that touch devices fire ~50–300 ms
+      // after a real touchstart/touchend. Without this, a single tap fires
+      // onDown twice and the popup behaves unpredictably.
+      if (e.type === 'mousedown' && Date.now() - lastTouchT < 700) return;
+      if (e.type === 'touchstart') lastTouchT = Date.now();
 
       const isTouch = e.touches && e.touches.length;
       const x = isTouch ? e.touches[0].clientX : e.clientX;
       const y = isTouch ? e.touches[0].clientY : e.clientY;
-      down = { x, y };
+      down = { x, y, isTouch: !!isTouch };
       POP.style.transition = 'none';
-      if (e.cancelable) e.preventDefault();
     }
     function onMove(e) {
       if (!down) return;
       const isTouch = e.touches && e.touches.length;
+      // Ignore mouse-move stream while a touch drag is active.
+      if (down.isTouch && e.type === 'mousemove') return;
       const y = isTouch ? e.touches[0].clientY : e.clientY;
       const dy = y - down.y;
       POP.style.transform = `translateY(${dy}px)`;
       POP.style.opacity = String(Math.max(0.5, 1 - Math.abs(dy) / 220));
+      // Prevent the page from scrolling while we drag the popup.
+      if (isTouch && e.cancelable) e.preventDefault();
     }
     function onUp(e) {
       if (!down) return;
+      if (down.isTouch && e.type === 'mouseup') return;   // ignore phantom mouseup
+      if (e.type === 'touchend') lastTouchT = Date.now();
+
       const isTouch = e.changedTouches && e.changedTouches.length;
       const y = isTouch ? e.changedTouches[0].clientY : e.clientY;
       const dy = y - down.y;
@@ -586,12 +760,13 @@
       }
     }
 
-    small.addEventListener('mousedown',  onDown);
+    small.addEventListener('mousedown', onDown);
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
-    small.addEventListener('touchstart', onDown, { passive: false });
+    document.addEventListener('mouseup', onUp);
+    small.addEventListener('touchstart', onDown, { passive: true });
     document.addEventListener('touchmove', onMove, { passive: false });
-    document.addEventListener('touchend',  onUp);
+    document.addEventListener('touchend', onUp);
+    document.addEventListener('touchcancel', onUp);
 
     document.getElementById('wp-close').addEventListener('click', hidePopup);
   }

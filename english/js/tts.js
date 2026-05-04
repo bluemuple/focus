@@ -46,29 +46,39 @@
     });
   }
 
-  // Score each voice; the highest-scored female English voice wins.
+  // Score each voice. Quality dominates over accent — we want the most
+  // natural-sounding voice the browser/OS offers, regardless of locale.
+  // Edge's Microsoft Online (Natural) voices win on Windows/Edge; macOS
+  // Enhanced/Premium voices win on Apple; Google's voices win on Chrome.
   function score(v) {
     const name = v.name || '';
     const lang = v.lang || '';
     const isFemale = namedAs(name, FEMALE_NAMES);
     const isMale   = namedAs(name, MALE_NAMES);
 
-    // Hard exclusion: known male names → never pick.
+    // Must be English.
+    if (!/^en/i.test(lang)) return -1;
+    // Hard exclusion: known male names.
     if (isMale && !isFemale) return -1;
 
     let s = 0;
-    if (isFemale) s += 100;                       // female heavily preferred
-    if (/en[-_]GB/i.test(lang)) s += 40;          // British best
-    else if (/en[-_]NZ/i.test(lang)) s += 25;
-    else if (/en[-_]AU/i.test(lang)) s += 22;
-    else if (/en[-_]IE/i.test(lang)) s += 20;
-    else if (/en[-_]US/i.test(lang)) s += 15;
-    else if (/^en/i.test(lang)) s += 8;
-    else s -= 50;                                  // not English: avoid
+    // ===== Quality is the dominant signal =====
+    // Edge online neural (Sonia / Libby / Aria / Jenny / Emma) — top tier.
+    if (/online.*natural|natural.*online/i.test(name)) s += 130;
+    // Other neural / enhanced / premium voices (macOS enhanced, Google neural).
+    else if (/enhanced|premium|neural/i.test(name))   s += 90;
+    // Plain Edge online (without "Natural") still beats stock OS.
+    else if (/online|cloud/i.test(name))               s += 50;
 
-    // Prefer high-quality (Edge online / Apple enhanced / neural).
-    if (/online|natural|premium|enhanced|neural/i.test(name)) s += 8;
-    if (/desktop/i.test(name)) s += 1;             // tiebreak vs old voices
+    // Female bonus — accent doesn't matter to us.
+    if (isFemale) s += 40;
+
+    // Mild locale tiebreak so two equally-good voices fall back to en-GB/US.
+    if (/en[-_]GB/i.test(lang))      s += 8;
+    else if (/en[-_]US/i.test(lang)) s += 8;
+    else if (/en[-_]AU/i.test(lang)) s += 5;
+    else if (/en[-_]IE/i.test(lang)) s += 5;
+    else                              s += 3;
 
     return s;
   }
