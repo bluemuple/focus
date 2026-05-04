@@ -1509,6 +1509,28 @@
     font-size: .8rem; cursor: pointer; width: 100%;
   }
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
+  /* Inline task-input row — shown briefly while the user types a fresh task
+     name. No popup; commit on Enter / blur, cancel on × / Escape. */
+  .focus-cell .task-row.task-row-input {
+    background: rgba(255,255,255,.85);
+    padding: 4px 6px;
+  }
+  .focus-cell .task-text-input {
+    flex: 1; min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 4px;
+    font: inherit; font-size: .9rem;
+    background: #fff;
+  }
+  .focus-cell .task-text-input:focus {
+    outline: 2px solid #2563eb; outline-offset: -2px;
+  }
+  .focus-cell .task-cancel {
+    background: transparent; border: none; cursor: pointer;
+    color: #6b7280; padding: 0 6px; font-size: 1.1rem;
+    flex-shrink: 0;
+  }
+  .focus-cell .task-cancel:hover { color: #dc2626; }
 
   /* Tasks header — title click toggles collapse (handled by collapsible logic);
      a separate button toggles the phone 2×2 layout. */
@@ -3177,6 +3199,20 @@ const defaultState = () => ({
 let state = loadState();
 let stats = loadStats();
 migrateState();
+// Stuck-timer safeguard: if state.activeTimer claims to have started more
+// than 8 hours ago (likely the user closed the browser mid-pomodoro and
+// reopened the next day), drop it. The user can start a fresh timer.
+(function dropStaleActiveTimer() {
+  const at = state.activeTimer;
+  if (!at) return;
+  const ref = (+at.phaseStartedAt) || (+at.startedAt) || 0;
+  if (!ref) return;
+  const STALE_MS = 8 * 60 * 60 * 1000;
+  if (Date.now() - ref > STALE_MS) {
+    state.activeTimer = null;
+    saveState();
+  }
+})();
 function migrateState() {
   if (state.mana && Array.isArray(state.mana.muncher)) {
     // remove old split YT items
@@ -5626,7 +5662,58 @@ function renderFocusMatrix() {
     cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div>`;
     const tasksDiv = cell.querySelector('.tasks');
     state.tasks[q].forEach((t, i) => {
-      if (!t.text.trim()) return;
+      // Empty (newly-created) tasks render an inline input bar instead of a
+      // popup. The input auto-focuses; Enter / blur commits and saves; an
+      // empty commit deletes the task.
+      if (!t.text.trim()) {
+        const inputRow = document.createElement('div');
+        inputRow.className = 'task-row task-row-input';
+        inputRow.innerHTML = `
+          <input type="text" class="task-text-input" placeholder="Type task name…" maxlength="200">
+          <button class="task-cancel" title="Cancel" type="button">×</button>`;
+        const inp = inputRow.querySelector('.task-text-input');
+        const cancel = inputRow.querySelector('.task-cancel');
+        function commit() {
+          const v = (inp.value || '').trim();
+          if (!v) {
+            // Empty commit — remove the placeholder task.
+            deleteTaskAt(q, i);
+            saveState();
+            markSettingsChanged(); pushSettingsToCloud();
+            renderFocusMatrix();
+            return;
+          }
+          state.tasks[q][i].text = v.slice(0, 200);
+          if (!state.tasks[q][i].addLogged) firstTextLogIfNeeded(q, i);
+          saveState();
+          markSettingsChanged(); pushSettingsToCloud();
+          renderFocusMatrix();
+        }
+        let committed = false;
+        inp.addEventListener('blur', () => {
+          if (committed) return;
+          committed = true;
+          commit();
+        });
+        inp.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') { e.preventDefault(); committed = true; inp.blur(); commit(); }
+          else if (e.key === 'Escape') { inp.value = ''; committed = true; inp.blur(); commit(); }
+        });
+        cancel.addEventListener('mousedown', (e) => {
+          // mousedown so it fires BEFORE blur (and before commit clears the
+          // task). We treat this as "cancel = delete the empty task".
+          e.preventDefault();
+          committed = true;
+          deleteTaskAt(q, i);
+          saveState();
+          markSettingsChanged(); pushSettingsToCloud();
+          renderFocusMatrix();
+        });
+        tasksDiv.appendChild(inputRow);
+        // Auto-focus the new input. Defer to next tick so the DOM is in place.
+        setTimeout(() => { try { inp.focus(); } catch (_) {} }, 0);
+        return;
+      }
       const row = document.createElement('div');
       row.className = 'task-row';
       row.dataset.q = q;
@@ -5663,6 +5750,10 @@ function renderFocusMatrix() {
           applyMoney(-bid, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
           logEvent({ type: 'unfinish-task', name: task.text || '(task)', money: -bid, q });
         }
+        // Auto-reorder: completed tasks sink to the bottom of their quadrant,
+        // unchecked tasks rise back above. Stable sort preserves order within
+        // each group (so order among undone tasks doesn't shuffle randomly).
+        state.tasks[q].sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0));
         saveState();
         markSettingsChanged(); debouncedPushSettings();
         renderFocusMatrix();
@@ -5710,11 +5801,9 @@ function renderFocusMatrix() {
     addBtn.onclick = () => {
       createNewTask(q);
       saveState(); markSettingsChanged(); pushSettingsToCloud();
+      // The new (empty) task renders inline as an input bar (see the empty-
+      // task branch in renderFocusMatrix). It auto-focuses for direct typing.
       renderFocusMatrix();
-      // Open the name editor immediately on the new (empty) task so the user
-      // can type — same UX as the old setup-page Enter key.
-      const newIdx = state.tasks[q].length - 1;
-      setTimeout(() => editTaskNameFromFocus(q, newIdx), 0);
     };
     cell.appendChild(addBtn);
     root.appendChild(cell);
@@ -7069,6 +7158,21 @@ function entryDayKey(entry) {
 }
 function getCurrentDayKey() { return fmtDateLocal(new Date()); }
 
+/* Day-key helpers for the Focus page Activity log — use a 3 AM rollover so
+   late-night work stays under "today" even after midnight crosses. The
+   Statistics daily / weekly views still use plain calendar-day keys above. */
+function getActivityLogDayKey() {
+  const d = new Date();
+  if (d.getHours() < 3) d.setDate(d.getDate() - 1);
+  return fmtDateLocal(d);
+}
+function entryActivityLogDayKey(entry) {
+  if (!entry || !entry.startedAt) return '';
+  const d = new Date(+entry.startedAt);
+  if (d.getHours() < 3) d.setDate(d.getDate() - 1);
+  return fmtDateLocal(d);
+}
+
 /* ===== Shared activity-row renderer =====
    Used by:
    - Focus → Activity log
@@ -7185,9 +7289,10 @@ function renderWatchLog() {
   const total = document.getElementById('watch-log-total');
   const dateEl = document.getElementById('watch-log-date');
   if (!wrap) return;
-  // Filter to entries that STARTED today (entries crossing midnight stay on starting day)
-  const todayKey = getCurrentDayKey();
-  const todayEntries = (state.watchLog || []).filter(e => entryDayKey(e) === todayKey);
+  // Filter to entries that started in the current "Activity log day"
+  // (3 AM rollover — so late-night work stays under today after midnight).
+  const todayKey = getActivityLogDayKey();
+  const todayEntries = (state.watchLog || []).filter(e => entryActivityLogDayKey(e) === todayKey);
   if (dateEl) dateEl.textContent = todayKey;
   if (!todayEntries.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
