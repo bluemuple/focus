@@ -24,9 +24,8 @@
 
   <main class="container">
     <div class="lesson-layout">
-      <section class="lesson-main">
-        <!-- top progress: dot scrubber + page indicator -->
-        <div class="lesson-progress" id="lesson-progress">
+      <section class="lesson-main" id="lesson-main">
+        <div class="lesson-progress">
           <button class="lp-btn" id="page-prev" aria-label="이전 페이지">‹</button>
           <div class="lp-track">
             <div class="lp-fill" id="lp-fill"></div>
@@ -44,7 +43,11 @@
           </div>
         </div>
 
-        <div class="lesson-text" id="lesson-text"></div>
+        <!-- The wrapper clips horizontal slides; .lesson-text is absolutely
+             positioned inside it so two pages can coexist during a transition. -->
+        <div class="lesson-text-wrap" id="lesson-text-wrap">
+          <div class="lesson-text" id="lesson-text"></div>
+        </div>
       </section>
 
       <aside class="lesson-side" id="side">
@@ -58,7 +61,6 @@
             <button class="tx-state-badge" id="tx-state" style="display:none" title="단어 상태 변경">·</button>
           </div>
           <div class="tx-trans" id="tx-trans"><span class="tx-loading">번역 중...</span></div>
-          <div class="tx-meta" id="tx-meta"></div>
         </div>
       </aside>
     </div>
@@ -74,7 +76,6 @@
         <button class="tx-state-badge" id="tx-state-m" style="display:none" title="단어 상태 변경">·</button>
       </div>
       <div class="tx-trans" id="tx-trans-m"><span class="tx-loading">번역 중...</span></div>
-      <div class="tx-meta" id="tx-meta-m"></div>
     </div>
   </div>
 
@@ -111,8 +112,7 @@
     avatar.textContent = (label[0] || 'U').toUpperCase();
   }
 
-  // ============== state labels ==============
-  // -1 (ignore), 0 (default sky blue), 1..5 (green progression → no bg)
+  // ============== state metadata ==============
   const STATE_LABEL = {
     [-1]: '무시',
      0:   '새로운 단어',
@@ -123,12 +123,7 @@
      5:   '완전히 아는 단어',
   };
   const STATE_GLYPH = { '-1': '🗑', '1': '1', '2': '2', '3': '3', '4': '4', '5': '✓' };
-  function badgeClass(state) {
-    if (state === -1) return 'sx';
-    if (state >= 1 && state <= 5) return 's' + state;
-    return '';
-  }
-  function wordClass(state) {
+  function classFor(state) {
     if (state === -1) return 'sx';
     if (state >= 1 && state <= 5) return 's' + state;
     return '';
@@ -139,10 +134,11 @@
   const lessonId = params.get('id');
 
   let LESSON = null;
-  let WORD_STATES = {};   // { wordLower: { state, last } }
-  let PAGES = [];         // array of paragraph-arrays
+  let WORD_STATES = {};
+  let PAGES = [];
   let pageIdx = 0;
-  let CURRENT_WORD = null;  // last clicked word string (lowercase) for state-menu
+  let CURRENT_WORD = null;
+  let animating = false;
 
   async function renderLesson() {
     if (!lessonId) {
@@ -159,90 +155,124 @@
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
     document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
 
-    PAGES = paginate(LESSON.body || '', wordsPerPage());
+    sizeLessonMain();
+    // Wait for layout to settle before measuring page heights.
+    await new Promise(r => requestAnimationFrame(r));
+    PAGES = paginateByHeight(LESSON.body || '');
     pageIdx = 0;
-    renderPage();
+    renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
+    bindWordInteractions(document.getElementById('lesson-text'));
+    updateProgress();
     setupAudio();
   }
 
-  // Words per page: small screens get smaller pages.
-  function wordsPerPage() {
-    return window.matchMedia('(max-width: 1023px)').matches ? 60 : 140;
+  // Make the lesson card fill the viewport between topbar and playbar.
+  function sizeLessonMain() {
+    const main = document.getElementById('lesson-main');
+    if (!main) return;
+    const topY     = main.getBoundingClientRect().top;
+    const playbarH = document.querySelector('.playbar')?.offsetHeight || 64;
+    const bottomGap = 16;
+    const h = Math.max(360, window.innerHeight - topY - playbarH - bottomGap);
+    main.style.height = h + 'px';
   }
 
-  function paginate(body, perPage) {
-    // Split into paragraphs (blank line separator).
+  // ---------- pagination by rendered height ----------
+  // Render every paragraph into a hidden mirror element that has the same
+  // styles as the live one, then walk through and group paragraphs into pages
+  // that fit within the wrap's measured height.
+  function paginateByHeight(body) {
     const paragraphs = body.split(/\n{2,}|\r\n{2,}/).map(p => p.trim()).filter(Boolean);
     if (!paragraphs.length) return [['']];
+
+    const wrap = document.getElementById('lesson-text-wrap');
+    const maxH = wrap.clientHeight - 4;   // small safety margin
+    if (maxH <= 0) return [paragraphs];
+
+    // Build a mirror with identical width/typography but no overflow clipping.
+    const mirror = document.createElement('div');
+    mirror.className = 'lesson-text';
+    mirror.style.position = 'absolute';
+    mirror.style.visibility = 'hidden';
+    mirror.style.pointerEvents = 'none';
+    mirror.style.inset = '';
+    mirror.style.left = '-9999px';
+    mirror.style.top = '0';
+    mirror.style.width = wrap.clientWidth + 'px';
+    mirror.style.overflow = 'visible';
+    document.body.appendChild(mirror);
+
+    const paraEls = [];
+    for (const text of paragraphs) {
+      const pEl = renderParagraph(text);
+      mirror.appendChild(pEl);
+      paraEls.push({ text, el: pEl });
+    }
+    // Force a layout pass.
+    void mirror.offsetHeight;
+
     const pages = [];
-    let curr = [], count = 0;
-    for (const p of paragraphs) {
-      const wc = (p.match(/[\p{L}][\p{L}\p{M}'’-]*/gu) || []).length;
-      // Always include at least one paragraph per page; otherwise honor word budget.
-      if (curr.length && count + wc > perPage) {
+    let curr = [];
+    let pageStartTop = paraEls[0].el.offsetTop;
+    for (const info of paraEls) {
+      const localBottom = (info.el.offsetTop - pageStartTop) + info.el.offsetHeight;
+      if (curr.length && localBottom > maxH) {
         pages.push(curr);
         curr = [];
-        count = 0;
+        pageStartTop = info.el.offsetTop;
       }
-      curr.push(p);
-      count += wc;
+      curr.push(info.text);
     }
     if (curr.length) pages.push(curr);
-    return pages;
+
+    mirror.remove();
+    return pages.length ? pages : [paragraphs];
   }
 
-  function renderPage(direction) {
-    const root = document.getElementById('lesson-text');
-    if (direction === 'left' || direction === 'right') {
-      root.classList.add(direction === 'left' ? 'swipe-out-left' : 'swipe-out-right');
-      setTimeout(actuallyRender, 200);
-    } else {
-      actuallyRender();
-    }
-
-    function actuallyRender() {
-      root.classList.remove('swipe-out-left', 'swipe-out-right', 'swipe-in-left', 'swipe-in-right');
-      root.innerHTML = '';
-      let widx = 0;
-      const paragraphs = PAGES[pageIdx] || [];
-
-      paragraphs.forEach(par => {
-        const p = document.createElement('p');
-        p.className = 'para';
-        const lines = par.split(/\n/);
-        lines.forEach((line, li) => {
-          const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
-          for (const tk of tokens) {
-            if (/^[\p{L}]/u.test(tk)) {
-              const span = document.createElement('span');
-              span.className = 'w';
-              span.dataset.idx = String(widx++);
-              span.dataset.word = tk;
-              const lower = tk.toLowerCase();
-              const st = WORD_STATES[lower];
-              if (st) {
-                const cls = wordClass(st.state);
-                if (cls) span.classList.add(cls);
-              }
-              span.textContent = tk;
-              p.appendChild(span);
-            } else {
-              const sp = document.createElement('span');
-              sp.className = 'w punct';
-              sp.textContent = tk;
-              p.appendChild(sp);
-            }
+  // Render a single paragraph (with word spans) into a <p> element. Used both
+  // for measurement (mirror) and for the live page render.
+  function renderParagraph(par) {
+    const p = document.createElement('p');
+    p.className = 'para';
+    const lines = par.split(/\n/);
+    lines.forEach((line, li) => {
+      const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
+      for (const tk of tokens) {
+        if (/^[\p{L}]/u.test(tk)) {
+          const span = document.createElement('span');
+          span.className = 'w';
+          span.dataset.word = tk;
+          const lower = tk.toLowerCase();
+          const st = WORD_STATES[lower];
+          if (st) {
+            const cls = classFor(st.state);
+            if (cls) span.classList.add(cls);
           }
-          if (li < lines.length - 1) p.appendChild(document.createElement('br'));
-        });
-        root.appendChild(p);
+          span.textContent = tk;
+          p.appendChild(span);
+        } else {
+          const sp = document.createElement('span');
+          sp.className = 'w punct';
+          sp.textContent = tk;
+          p.appendChild(sp);
+        }
+      }
+      if (li < lines.length - 1) p.appendChild(document.createElement('br'));
+    });
+    return p;
+  }
+
+  function renderInto(container, paragraphs) {
+    container.innerHTML = '';
+    let widx = 0;
+    for (const text of paragraphs || []) {
+      const pEl = renderParagraph(text);
+      // Re-stamp data-idx for word ordering inside the page (used by drag-select)
+      pEl.querySelectorAll('.w').forEach(el => {
+        if (!el.classList.contains('punct')) el.dataset.idx = String(widx++);
+        else el.dataset.idx = String(widx++);
       });
-
-      if (direction === 'left')  root.classList.add('swipe-in-right');
-      if (direction === 'right') root.classList.add('swipe-in-left');
-
-      bindWordInteractions(root);
-      updateProgress();
+      container.appendChild(pEl);
     }
   }
 
@@ -257,23 +287,72 @@
     document.getElementById('page-next').disabled = pageIdx >= total - 1;
   }
 
+  // ---------- horizontal slide between pages ----------
   function goPage(delta) {
+    if (animating) return;
     const next = pageIdx + delta;
     if (next < 0 || next >= PAGES.length) return;
-    const direction = delta > 0 ? 'left' : 'right';
-    pageIdx = next;
+    animating = true;
     closeStateMenu();
     closeTxPanel();
-    renderPage(direction);
+
+    const wrap = document.getElementById('lesson-text-wrap');
+    const oldRoot = document.getElementById('lesson-text');
+    const goingForward = delta > 0;
+
+    // Build the new page off-screen.
+    const newRoot = document.createElement('div');
+    newRoot.className = 'lesson-text';
+    newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
+    pageIdx = next;
+    renderInto(newRoot, PAGES[pageIdx] || []);
+    wrap.appendChild(newRoot);
+    bindWordInteractions(newRoot);
+
+    // Force layout, then animate.
+    void newRoot.offsetWidth;
+    requestAnimationFrame(() => {
+      oldRoot.classList.add('slide-anim');
+      newRoot.classList.add('slide-anim');
+      // old slides off in the swipe direction; new slides into place.
+      oldRoot.classList.add(goingForward ? 'slide-out-left' : 'slide-out-right');
+      newRoot.classList.remove('slide-from-right', 'slide-from-left');
+    });
+
+    setTimeout(() => {
+      oldRoot.id = '';
+      oldRoot.remove();
+      newRoot.id = 'lesson-text';
+      newRoot.classList.remove('slide-anim');
+      updateProgress();
+      animating = false;
+    }, 300);
   }
 
   document.getElementById('page-prev').addEventListener('click', () => goPage(-1));
   document.getElementById('page-next').addEventListener('click', () => goPage(+1));
   document.addEventListener('keydown', (e) => {
-    // Don't hijack typing in inputs.
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
     if (e.key === 'ArrowLeft')  goPage(-1);
     if (e.key === 'ArrowRight') goPage(+1);
+  });
+
+  // Re-paginate on resize (debounced). Best-effort: clamp pageIdx.
+  let resizeT = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => {
+      sizeLessonMain();
+      requestAnimationFrame(() => {
+        if (!LESSON) return;
+        PAGES = paginateByHeight(LESSON.body || '');
+        if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
+        if (pageIdx < 0) pageIdx = 0;
+        renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
+        bindWordInteractions(document.getElementById('lesson-text'));
+        updateProgress();
+      });
+    }, 200);
   });
 
   // ============== word click + drag-select + page swipe ==============
@@ -281,8 +360,6 @@
     let dragging = false;
     let dragStartIdx = null, dragLastIdx = null;
     let didDrag = false;
-
-    // touch swipe state for page navigation
     let touchStart = null;
 
     function getWordEl(target) {
@@ -295,8 +372,7 @@
     function selectRange(a, b) {
       clearSel();
       const lo = Math.min(a, b), hi = Math.max(a, b);
-      const all = root.querySelectorAll('.w');
-      for (const el of all) {
+      for (const el of root.querySelectorAll('.w')) {
         const i = Number(el.dataset.idx);
         if (Number.isFinite(i) && i >= lo && i <= hi && !el.classList.contains('punct')) {
           el.classList.add('sel');
@@ -306,16 +382,14 @@
     function getSelectedText() {
       const all = root.querySelectorAll('.w');
       let firstSel = -1, lastSel = -1;
-      all.forEach((el, i) => {
-        if (el.classList.contains('sel')) { if (firstSel < 0) firstSel = i; lastSel = i; }
-      });
+      all.forEach((el, i) => { if (el.classList.contains('sel')) { if (firstSel < 0) firstSel = i; lastSel = i; } });
       if (firstSel < 0) return '';
       const chunks = [];
       for (let i = firstSel; i <= lastSel; i++) chunks.push(all[i].textContent);
       return chunks.join('').replace(/\s+/g, ' ').trim();
     }
 
-    // ---------- mouse: drag-select only ----------
+    // ---------- mouse: drag-select ----------
     root.addEventListener('mousedown', (e) => {
       const w = getWordEl(e.target);
       if (!w) return;
@@ -363,16 +437,12 @@
       const dx = t.clientX - touchStart.x;
       const dy = t.clientY - touchStart.y;
       const dt = Date.now() - touchStart.t;
-
-      // If movement is decisively horizontal AND fast → it's a page swipe;
-      // suppress the in-progress word selection.
       const isFastHoriz = Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.7 && dt < 350;
       if (isFastHoriz) {
         if (didDrag) clearSel();
         dragging = false;
         return;
       }
-
       if (!dragging) return;
       const el = document.elementFromPoint(t.clientX, t.clientY);
       const w = getWordEl(el);
@@ -388,15 +458,12 @@
     root.addEventListener('touchend', (e) => {
       const ts = touchStart; touchStart = null;
       const wasDragging = dragging; dragging = false;
-
       if (!ts) return;
       const ct = e.changedTouches && e.changedTouches[0];
       if (!ct) return;
       const dx = ct.clientX - ts.x;
       const dy = ct.clientY - ts.y;
       const dt = Date.now() - ts.t;
-
-      // Page swipe: fast, horizontal, not too vertical, > 60 px.
       const isSwipe = Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500;
       if (isSwipe) {
         if (didDrag) clearSel();
@@ -404,8 +471,6 @@
         else        goPage(-1);
         return;
       }
-
-      // Otherwise it was either a drag-select or a tap.
       if (wasDragging && didDrag) {
         const phrase = getSelectedText();
         if (phrase) showPhrase(phrase);
@@ -425,16 +490,13 @@
       const upd = await DB.clickWord(word);
       WORD_STATES[word.toLowerCase()] = { state: upd.state, last: upd.last };
       ['s1','s2','s3','s4','s5','sx'].forEach(c => w.classList.remove(c));
-      const cls = wordClass(upd.state);
+      const cls = classFor(upd.state);
       if (cls) w.classList.add(cls);
-
       showWord(word, upd);
     });
   }
 
   // ============== translation panel ==============
-  function isMobile() { return window.matchMedia('(max-width: 1023px)').matches; }
-
   function setBoth(idDesktop, idMobile, html) {
     const a = document.getElementById(idDesktop); if (a) a.innerHTML = html;
     const b = document.getElementById(idMobile);  if (b) b.innerHTML = html;
@@ -448,7 +510,7 @@
     }
     badgeEl.style.display = '';
     badgeEl.classList.remove('s1','s2','s3','s4','s5','sx');
-    const cls = badgeClass(state);
+    const cls = classFor(state);
     if (cls) badgeEl.classList.add(cls);
     const k = String(state);
     badgeEl.textContent = STATE_GLYPH[k] || '·';
@@ -470,12 +532,12 @@
     const menu = document.createElement('div');
     menu.className = 'state-menu';
     const items = [
-      { state: -1, label: '무시', glyph: '🗑' },
-      { state:  1, label: '새로운 단어',      glyph: '1' },
-      { state:  2, label: '어디선가 본 단어',  glyph: '2' },
-      { state:  3, label: '익숙한 단어',      glyph: '3' },
-      { state:  4, label: '배운 단어',        glyph: '4' },
-      { state:  5, label: '완전히 아는 단어',  glyph: '✓' },
+      { state: -1, label: '무시',              glyph: '🗑' },
+      { state:  1, label: '새로운 단어',        glyph: '1' },
+      { state:  2, label: '어디선가 본 단어',    glyph: '2' },
+      { state:  3, label: '익숙한 단어',        glyph: '3' },
+      { state:  4, label: '배운 단어',          glyph: '4' },
+      { state:  5, label: '완전히 아는 단어',    glyph: '✓' },
     ];
     for (const it of items) {
       const b = document.createElement('button');
@@ -490,31 +552,37 @@
     return menu;
   }
 
-  function attachStateMenuTo(badgeEl, currentState) {
-    closeStateMenu();
-    if (!badgeEl) return;
-    const menu = buildStateMenu(currentState, async (newState) => {
-      if (!CURRENT_WORD) return;
-      const upd = await DB.setWordState(CURRENT_WORD, newState);
-      WORD_STATES[CURRENT_WORD] = { state: upd.state, last: upd.last };
-      // Update the word in the page.
-      document.querySelectorAll('.w').forEach(el => {
-        if (!el.dataset.word) return;
-        if (el.dataset.word.toLowerCase() === CURRENT_WORD) {
-          ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
-          const cls = wordClass(upd.state);
-          if (cls) el.classList.add(cls);
-        }
-      });
-      // Update badges in both desktop + mobile cards.
-      renderStateBadge(document.getElementById('tx-state'),   upd.state);
-      renderStateBadge(document.getElementById('tx-state-m'), upd.state);
-      // Update meta line.
-      const metaHtml = `<span>상태: <b>${STATE_LABEL[upd.state] || ''}</b></span>`;
-      setBoth('tx-meta', 'tx-meta-m', metaHtml);
-      closeStateMenu();
-    });
-    badgeEl.parentElement.appendChild(menu);
+  // Position a menu next to the badge, in <body>, so it never gets clipped by
+  // the bottom-sheet's overflow:auto.
+  function placeMenu(menu, anchor) {
+    document.body.appendChild(menu);
+    void menu.offsetHeight;             // force layout to know its size
+    const r = anchor.getBoundingClientRect();
+    const margin = 8;
+    const menuW = menu.offsetWidth;
+    const menuH = menu.offsetHeight;
+
+    let top;
+    const spaceBelow = window.innerHeight - r.bottom - margin - 10;
+    const spaceAbove = r.top - margin - 10;
+    if (spaceBelow >= menuH) {
+      top = r.bottom + margin;
+    } else if (spaceAbove >= menuH) {
+      top = r.top - margin - menuH;
+    } else {
+      // Squeeze: pin to the side with more room and let it scroll.
+      top = (spaceBelow > spaceAbove)
+        ? r.bottom + margin
+        : Math.max(10, r.top - margin - Math.min(menuH, spaceAbove + 30));
+      menu.style.maxHeight = (Math.max(spaceBelow, spaceAbove) + 30) + 'px';
+    }
+
+    let left = r.right - menuW;
+    if (left < 10) left = 10;
+    if (left + menuW > window.innerWidth - 10) left = window.innerWidth - menuW - 10;
+
+    menu.style.top = top + 'px';
+    menu.style.left = left + 'px';
   }
 
   function bindBadgeClick(idBadge, getState) {
@@ -522,10 +590,25 @@
     if (!b) return;
     b.onclick = (ev) => {
       ev.stopPropagation();
-      // toggle
       const open = document.querySelector('.state-menu');
       if (open) { closeStateMenu(); return; }
-      attachStateMenuTo(b, getState());
+      const menu = buildStateMenu(getState(), async (newState) => {
+        if (!CURRENT_WORD) { closeStateMenu(); return; }
+        const upd = await DB.setWordState(CURRENT_WORD, newState);
+        WORD_STATES[CURRENT_WORD] = { state: upd.state, last: upd.last };
+        document.querySelectorAll('.w').forEach(el => {
+          if (!el.dataset.word) return;
+          if (el.dataset.word.toLowerCase() === CURRENT_WORD) {
+            ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
+            const cls = classFor(upd.state);
+            if (cls) el.classList.add(cls);
+          }
+        });
+        renderStateBadge(document.getElementById('tx-state'),   upd.state);
+        renderStateBadge(document.getElementById('tx-state-m'), upd.state);
+        closeStateMenu();
+      });
+      placeMenu(menu, b);
     };
   }
 
@@ -540,18 +623,15 @@
 
     setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(word));
     setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
-    setBoth('tx-meta',  'tx-meta-m',  '');
 
-    // First click ever: show the meaning only — no state badge.
-    // Otherwise show the state badge so the user can re-classify.
+    // First click ever (state 0) → meaning only, no badge.
+    // Otherwise show the level circle so the user can re-classify.
     if (info && info.isFirstClick) {
       renderStateBadge(document.getElementById('tx-state'),   0);
       renderStateBadge(document.getElementById('tx-state-m'), 0);
     } else {
       renderStateBadge(document.getElementById('tx-state'),   stateNow);
       renderStateBadge(document.getElementById('tx-state-m'), stateNow);
-      const metaHtml = `<span>상태: <b>${STATE_LABEL[stateNow] || ''}</b></span>`;
-      setBoth('tx-meta', 'tx-meta-m', metaHtml);
     }
 
     bindBadgeClick('tx-state',   () => (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0);
@@ -579,8 +659,6 @@
 
     setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(phrase));
     setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
-    setBoth('tx-meta', 'tx-meta-m', `<span class="muted">선택한 구문</span>`);
-    // Phrase has no per-word state — hide badges.
     renderStateBadge(document.getElementById('tx-state'),   0);
     renderStateBadge(document.getElementById('tx-state-m'), 0);
 
@@ -598,7 +676,6 @@
 
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
 
-  // Tap outside to close menu / sheet.
   document.addEventListener('click', (e) => {
     if (e.target.closest('.state-menu')) return;
     if (e.target.closest('.tx-state-badge')) return;
@@ -646,7 +723,6 @@
         fill.style.width = pct + '%';
       });
       audioEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
-
       playBtn.addEventListener('click', () => {
         if (audioEl.paused) { audioEl.play(); playBtn.textContent = '⏸'; }
         else { audioEl.pause(); playBtn.textContent = '▶'; }
@@ -666,7 +742,6 @@
       function estimateDuration() { return Math.max(2, text.length / (14 * speed)); }
       ttsDuration = estimateDuration();
       tot.textContent = fmt(ttsDuration);
-
       function tick() {
         if (!ttsPlaying) return;
         const elapsed = (Date.now() - ttsStartTime) / 1000;
