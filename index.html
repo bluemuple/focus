@@ -1123,6 +1123,16 @@
     min-width: 48px; text-align: center;
   }
   .gauge-mode-toggle:hover { background: #e5e7eb; }
+  /* "+ Event" button — same pill style as the gauge mode toggle so the two
+     read as a matched pair under the gauge. */
+  .gauge-event-btn {
+    background: #f3f4f6; color: #374151;
+    border: 1px solid var(--line);
+    padding: 4px 10px; border-radius: 6px; font-weight: 700;
+    cursor: pointer; font-size: .8rem; line-height: 1.2;
+    margin-left: 4px;
+  }
+  .gauge-event-btn:hover { background: #e5e7eb; color: #111827; }
   .gauge-mode-tip {
     display: block; text-align: center;
     margin-top: 4px; font-size: .72rem; color: #6b7280;
@@ -2540,7 +2550,8 @@
         <!-- Gauge mode toggle (Set / 2 / 4) — under the gauge, outside the
              clipping .gauge-col so it's always visible. -->
         <div class="gauge-controls">
-          <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range">Set</button>
+          <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range (Set / 2h / 4h)">Set</button>
+          <button class="gauge-event-btn"   id="gauge-event-btn"  type="button" title="Add an event to the gauge">+ Event</button>
           <span class="gauge-mode-tip" id="gauge-mode-tip"></span>
         </div>
       </div>
@@ -3009,6 +3020,25 @@
   </div>
 </div>
 
+<!-- Event creation / edit modal -->
+<div class="modal hidden" id="event-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="event-modal-backdrop"></div>
+  <div class="modal-content" style="width: 380px;">
+    <h3 id="event-modal-title" style="margin-top:0;">Add event</h3>
+    <p class="help" style="margin: 0 0 12px;">Events show as a light gray band on the gauge and weekly view.</p>
+    <div class="time-edit-inputs">
+      <label><span>Name</span><input type="text" id="event-name" placeholder="Doctor appointment, …" maxlength="120"></label>
+      <label><span>Start</span><input type="datetime-local" id="event-start"></label>
+      <label><span>End</span><input type="datetime-local" id="event-end"></label>
+    </div>
+    <div class="actions">
+      <button class="btn danger" id="event-delete" style="display:none;">Delete</button>
+      <button class="btn" id="event-cancel">Cancel</button>
+      <button class="btn primary" id="event-save">Save</button>
+    </div>
+  </div>
+</div>
+
 <!-- Custom prompt modal — replaces native prompt() so we can choose our own title -->
 <div class="modal hidden" id="custom-prompt-modal" aria-hidden="true">
   <div class="modal-backdrop" id="custom-prompt-backdrop"></div>
@@ -3160,6 +3190,9 @@ const defaultState = () => ({
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
   pomodoroSessionsInCycle: 0,  // 0..2 — increments after each work+short-break, resets after long break
   watchLog: [],
+  // User-created calendar events. Each: { id, name, startMs, endMs }.
+  // Painted as light-gray bands on the vertical gauge + weekly view.
+  events: [],
   scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
   // ----- Money system (replaces "Internal" score on the focus page) -----
   // money: total balance (USD, can go negative). $200 starting balance.
@@ -3305,6 +3338,7 @@ function migrateState() {
   if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
+  if (!Array.isArray(state.events))   state.events   = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
   if (!['focus','stats'].includes(state.currentPage)) state.currentPage = 'focus';
@@ -3685,6 +3719,7 @@ async function pushSettingsToCloud() {
         lastSnapshotDate:        state.lastSnapshotDate || '',
         last3amResetDate:        state.last3amResetDate || '',
         scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
+        events:                  Array.isArray(state.events)   ? state.events.slice(-500)    : [],
         motivationalCurrent:     state.motivationalCurrent || null,
         // ---- Money system (synced) ----
         money:                   +state.money || 0,
@@ -3905,6 +3940,7 @@ function applyRemoteSettings(remote) {
     if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
     if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
     if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
+    if (Array.isArray(ss.events))   state.events   = ss.events;
     if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
     // Money system — money/log/factors/sleep markers
     if (typeof ss.money === 'number') state.money = ss.money;
@@ -4180,7 +4216,7 @@ function syncGaugeModeBtn() {
   const btn = document.getElementById('gauge-mode-toggle');
   if (!btn) return;
   const m = state.gaugeMode || 'set';
-  btn.textContent = m === 'set' ? 'Set' : m === '2' ? '2' : '4';
+  btn.textContent = m === 'set' ? 'Set' : m === '2' ? '2h' : '4h';
 }
 function showGaugeTip(text) {
   const tip = document.getElementById('gauge-mode-tip');
@@ -5026,7 +5062,15 @@ if (matrixToggleEl) {
    instead of a generic "Added a task". */
 function createNewTask(q) {
   const bid = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
-  state.tasks[q].push({
+  // Insert at the TOP of the quadrant so the input bar lands above any
+  // existing tasks. Bump the activeTimer's idx if it pointed into the
+  // same quadrant (otherwise the running pomodoro would now appear to be
+  // attached to a different task after the unshift).
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro' && at.q === q && typeof at.idx === 'number') {
+    at.idx = at.idx + 1;
+  }
+  state.tasks[q].unshift({
     text: '', done: false, elapsedMs: 0, segments: [], bid: bid,
     addLogged: false   // becomes true once the +$ reward + log entry have fired
   });
@@ -5807,15 +5851,14 @@ function renderFocusMatrix() {
     addBtn.onclick = () => {
       createNewTask(q);
       saveState(); markSettingsChanged(); pushSettingsToCloud();
-      // The new (empty) task renders inline as an input bar (see the empty-
-      // task branch in renderFocusMatrix). Focus must be called SYNCHRONOUSLY
-      // here — iOS Safari only opens the keyboard when focus() runs inside
-      // the same user-gesture tick, not from a setTimeout callback.
+      // The new (empty) task renders inline as an input bar at the TOP of
+      // the cell. Focus must be called SYNCHRONOUSLY here — iOS Safari
+      // only opens the keyboard when focus() runs inside the same user-
+      // gesture tick, not from a setTimeout callback.
       renderFocusMatrix();
       const cellEl = document.querySelector(`.focus-cell.${q}`);
-      const inputs = cellEl ? cellEl.querySelectorAll('.task-text-input') : [];
-      const lastInput = inputs[inputs.length - 1];
-      if (lastInput) { try { lastInput.focus(); } catch (_) {} }
+      const firstInput = cellEl ? cellEl.querySelector('.task-text-input') : null;
+      if (firstInput) { try { firstInput.focus(); } catch (_) {} }
     };
     cell.appendChild(addBtn);
     root.appendChild(cell);
@@ -6385,6 +6428,18 @@ function drawGauge() {
   // ---- Segments (completed + active) ----
   segmentsEl.innerHTML = '';
   (state.timeSegments || []).forEach(seg => addGaugeSegment(segmentsEl, pct, seg, false));
+  // User-created events — light gray bands. Drawn UNDER pomodoro/tracker bands
+  // so the activity color always wins where they overlap.
+  (state.events || []).forEach(ev => {
+    if (!ev || !ev.startMs || !ev.endMs) return;
+    if (ev.endMs <= ev.startMs) return;
+    if (ev.endMs < topMs || ev.startMs > bottomMs) return;   // outside view
+    addGaugeSegment(segmentsEl, pct, {
+      startMs: ev.startMs, endMs: ev.endMs,
+      color: '#e5e7eb', name: ev.name || '(event)',
+      isEvent: true, eventId: ev.id
+    }, false);
+  });
   if (state.activeTimer) {
     const seg = activeTimerToSegment(state.activeTimer, now);
     if (seg) addGaugeSegment(segmentsEl, pct, seg, true);
@@ -6437,10 +6492,18 @@ function addGaugeSegment(parent, pct, seg, isActive) {
     lbl.textContent = seg.name;
     div.appendChild(lbl);
   }
+  if (seg.isEvent) div.classList.add('gauge-event');
   // Click to edit:
-  //   - completed segments → open edit modal directly
+  //   - event bands → open the event edit modal
+  //   - completed segments → open segment edit modal
   //   - active segment    → stop the timer first, then open edit on the just-logged segment
-  if (!isActive) {
+  if (seg.isEvent) {
+    div.onclick = (e) => {
+      e.stopPropagation();
+      const ev = (state.events || []).find(x => x.id === seg.eventId);
+      if (ev) openEventModal(ev);
+    };
+  } else if (!isActive) {
     div.onclick = (e) => { e.stopPropagation(); openSegmentEditModal(seg); };
   } else {
     div.title = (seg.name || '') + ' (running — click to stop & edit)';
@@ -6462,6 +6525,108 @@ function msToHHMM(ms) {
   const d = new Date(ms);
   return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
+/* ===== Calendar event modal =====
+   `+ Event` button under the gauge opens this. Stores user-created events in
+   state.events[]; each event paints a light-gray band on the vertical gauge
+   AND on the weekly view. Click an existing band to re-open the same modal
+   (with Delete enabled). */
+function openEventModal(existing) {
+  const modal     = document.getElementById('event-modal');
+  const titleEl   = document.getElementById('event-modal-title');
+  const nameEl    = document.getElementById('event-name');
+  const startEl   = document.getElementById('event-start');
+  const endEl     = document.getElementById('event-end');
+  const saveBtn   = document.getElementById('event-save');
+  const cancelBtn = document.getElementById('event-cancel');
+  const deleteBtn = document.getElementById('event-delete');
+  const backdrop  = document.getElementById('event-modal-backdrop');
+  if (!modal || !nameEl || !startEl || !endEl) return;
+
+  function msToInput(ms) {
+    if (!ms) return '';
+    const d = new Date(+ms);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+  function inputToMs(s) {
+    if (!s) return null;
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    if (!m) return null;
+    return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], 0, 0).getTime();
+  }
+  // Populate
+  if (existing && existing.id) {
+    titleEl.textContent = 'Edit event';
+    nameEl.value = existing.name || '';
+    startEl.value = msToInput(existing.startMs);
+    endEl.value   = msToInput(existing.endMs);
+    deleteBtn.style.display = '';
+  } else {
+    titleEl.textContent = 'Add event';
+    nameEl.value = '';
+    // Default: now → +1 hour
+    const now = new Date();
+    const later = new Date(now.getTime() + 60 * 60 * 1000);
+    startEl.value = msToInput(now.getTime());
+    endEl.value   = msToInput(later.getTime());
+    deleteBtn.style.display = 'none';
+  }
+  function close() {
+    modal.classList.add('hidden');
+    saveBtn.onclick = null; cancelBtn.onclick = null;
+    deleteBtn.onclick = null; backdrop.onclick = null;
+  }
+  saveBtn.onclick = () => {
+    const name = (nameEl.value || '').trim();
+    if (!name) { try { nameEl.focus(); } catch (_) {} return; }
+    let startMs = inputToMs(startEl.value);
+    let endMs   = inputToMs(endEl.value);
+    if (!startMs || !endMs) return;
+    if (endMs < startMs) { const t = startMs; startMs = endMs; endMs = t; }
+    if (!Array.isArray(state.events)) state.events = [];
+    if (existing && existing.id) {
+      const idx = state.events.findIndex(x => x.id === existing.id);
+      if (idx >= 0) state.events[idx] = { id: existing.id, name, startMs, endMs };
+      else state.events.push({ id: existing.id, name, startMs, endMs });
+    } else {
+      const id = 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      state.events.push({ id, name, startMs, endMs });
+    }
+    saveState();
+    markSettingsChanged(); pushSettingsToCloud();
+    if (typeof drawGauge === 'function') drawGauge();
+    if (typeof renderWeekView === 'function' &&
+        document.getElementById('stats-week') &&
+        !document.getElementById('stats-week').classList.contains('hidden')) {
+      renderWeekView();
+    }
+    close();
+  };
+  cancelBtn.onclick = () => close();
+  backdrop.onclick  = () => close();
+  deleteBtn.onclick = () => {
+    if (!existing || !existing.id) return close();
+    state.events = (state.events || []).filter(x => x.id !== existing.id);
+    saveState();
+    markSettingsChanged(); pushSettingsToCloud();
+    if (typeof drawGauge === 'function') drawGauge();
+    if (typeof renderWeekView === 'function' &&
+        document.getElementById('stats-week') &&
+        !document.getElementById('stats-week').classList.contains('hidden')) {
+      renderWeekView();
+    }
+    close();
+  };
+  modal.classList.remove('hidden');
+  setTimeout(() => { try { nameEl.focus(); } catch (_) {} }, 0);
+}
+
+(function wireGaugeEventBtn() {
+  const btn = document.getElementById('gauge-event-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => openEventModal(null));
+})();
+
 function openSegmentEditModal(seg) {
   _editingSegment = seg;
   _editingWatchLogEntry = null;
@@ -8178,6 +8343,17 @@ function renderWeekView() {
     const live = activeTimerToSegment(state.activeTimer, Date.now());
     if (live && live.startMs && live.endMs > live.startMs) pushSegmentSplit(live);
   }
+  // 4) User-created events — light gray bands.
+  (state.events || []).forEach(ev => {
+    if (!ev || !ev.startMs || !ev.endMs) return;
+    if (ev.endMs <= ev.startMs) return;
+    pushSegmentSplit({
+      startMs: ev.startMs, endMs: ev.endMs,
+      name: ev.name || '(event)',
+      color: '#e5e7eb',
+      isEvent: true, eventId: ev.id
+    });
+  });
   const todayKey = dayKey(new Date());
 
   // Build grid
