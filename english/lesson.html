@@ -44,13 +44,10 @@
           <div class="head-spacer"></div>
           <div class="head-tools">
             <div class="toggle-group" id="dict-toggle" role="group" aria-label="사전 선택">
-              <button class="toggle-btn dict active" data-dict="naver" title="네이버 영어사전">N</button>
-              <button class="toggle-btn dict"        data-dict="daum"  title="다음 영어사전">D</button>
+              <button class="toggle-btn dict active" data-dict="naver"  title="네이버 영어사전">N</button>
+              <button class="toggle-btn dict"        data-dict="corpus" title="Corpus — 단어가 쓰이는 예문">C</button>
             </div>
-            <div class="toggle-group" id="mode-toggle" role="group" aria-label="모드">
-              <button class="toggle-btn active" data-mode="single">하나씩</button>
-              <button class="toggle-btn"        data-mode="cont">이어서</button>
-            </div>
+            <button class="toggle-btn" id="mode-toggle-btn" title="모드 전환">하나씩</button>
           </div>
         </div>
 
@@ -209,17 +206,22 @@
     });
   }
   function setupToggles() {
-    // Mode toggle (하나씩 / 이어서)
-    const modeBtns = document.querySelectorAll('#mode-toggle .toggle-btn');
-    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === MODE));
-    modeBtns.forEach(b => b.addEventListener('click', () => {
-      if (b.dataset.mode === MODE) return;
-      MODE = b.dataset.mode;
-      modeBtns.forEach(x => x.classList.toggle('active', x.dataset.mode === MODE));
+    // Single-button mode toggle. Label always reflects the current mode and
+    // each click flips it (하나씩 ↔ 이어서).
+    const modeBtn = document.getElementById('mode-toggle-btn');
+    function refreshModeBtn() {
+      modeBtn.textContent = (MODE === 'cont') ? '이어서' : '하나씩';
+      modeBtn.classList.toggle('active', MODE === 'cont');
+    }
+    modeBtn.addEventListener('click', () => {
+      MODE = (MODE === 'cont') ? 'single' : 'cont';
+      refreshModeBtn();
       savePrefs();
       onModeChanged();
-    }));
-    // Dictionary toggle (N / D)
+    });
+    refreshModeBtn();
+
+    // Dictionary toggle (N / C)
     const dictBtns = document.querySelectorAll('#dict-toggle .toggle-btn');
     dictBtns.forEach(b => b.classList.toggle('active', b.dataset.dict === DICT));
     dictBtns.forEach(b => b.addEventListener('click', () => {
@@ -247,7 +249,7 @@
   }
   function clearContSelection() {
     document.querySelectorAll('.w.cont-sel').forEach(el => el.classList.remove('cont-sel'));
-    document.querySelectorAll('.w[data-tx]').forEach(el => el.removeAttribute('data-tx'));
+    document.querySelectorAll('.cont-trans').forEach(el => el.remove());
     CONT_SELECTED.clear();
   }
 
@@ -603,7 +605,7 @@
   }
 
   async function handleContClick(wEl, word) {
-    // Tap on an already-selected word → speak the entire selection.
+    // Tap on an already-selected word → speak the entire selection only.
     if (CONT_SELECTED.has(wEl)) {
       const phrase = selectionToPhrase();
       TTS.speak(phrase || word);
@@ -615,13 +617,57 @@
     }
     CONT_SELECTED.add(wEl);
     wEl.classList.add('cont-sel');
-    // Speak the new word immediately as feedback.
     TTS.speak(word);
-    // Translate and pin the gray label below the word.
-    try {
-      const ko = await Translate.translate(word);
-      if (ko) wEl.dataset.tx = ko;
-    } catch (e) {}
+
+    // Translate the WHOLE current selection as a single phrase, then render
+    // ONE floating gray label in the line gap below the selection's last line.
+    const phrase = selectionToPhrase();
+    let ko = '';
+    try { ko = await Translate.translate(phrase); } catch (e) {}
+    // The selection (or even the live page) might have changed during the
+    // async translation — only show if the phrase still matches.
+    if (selectionToPhrase() !== phrase) return;
+    renderContTranslation(ko);
+  }
+
+  // Compute the on-screen position of the selection's last visual line and
+  // place a single floating Korean label there.
+  function renderContTranslation(ko) {
+    document.querySelectorAll('.cont-trans').forEach(el => el.remove());
+    if (!ko || !CONT_SELECTED.size) return;
+
+    const sorted = Array.from(CONT_SELECTED).sort((a, b) => {
+      const cmp = a.compareDocumentPosition(b);
+      if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+    const last  = sorted[sorted.length - 1];
+    const lastRect = last.getBoundingClientRect();
+
+    // For multi-line selections, anchor to the leftmost selected word that
+    // shares the LAST word's line — so the label sits below the last line
+    // rather than below where the selection began.
+    let leftAnchor = last;
+    let leftMin = lastRect.left;
+    for (const el of sorted) {
+      const r = el.getBoundingClientRect();
+      if (Math.abs(r.top - lastRect.top) < 2 && r.left < leftMin) {
+        leftMin = r.left;
+        leftAnchor = el;
+      }
+    }
+    const leftRect = leftAnchor.getBoundingClientRect();
+
+    const lt = document.getElementById('lesson-text');
+    const ltRect = lt.getBoundingClientRect();
+
+    const trans = document.createElement('div');
+    trans.className = 'cont-trans';
+    trans.textContent = ko;
+    trans.style.top  = (lastRect.bottom - ltRect.top + 1) + 'px';
+    trans.style.left = (leftRect.left   - ltRect.left)    + 'px';
+    lt.appendChild(trans);
   }
 
   // ============== anchored word popup ==============
@@ -685,15 +731,16 @@
     if (!CURRENT_WORD) return;
     POP.classList.add('expanded');
     const word = CURRENT_WORD;
-    // Build URLs for both dictionaries; pick based on the user's toggle.
-    const naverUrl = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
-    const naverAlt = 'https://endic.naver.com/search.nhn?query='   + encodeURIComponent(word);
-    const daumUrl  = 'https://dic.daum.net/search.do?dic=eng&q='   + encodeURIComponent(word);
+    // N: Naver English Dictionary (definitions)
+    // C: Reverso Context — example sentences in real usage with KO translations
+    const naverUrl  = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
+    const naverAlt  = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+    const corpusUrl = 'https://context.reverso.net/translation/english-korean/' + encodeURIComponent(word);
 
-    const isDaum = (DICT === 'daum');
-    const url     = isDaum ? daumUrl  : naverUrl;
-    const altUrl  = isDaum ? daumUrl  : naverAlt;
-    const dictName = isDaum ? '다음'   : 'Naver';
+    const isCorpus = (DICT === 'corpus');
+    const url      = isCorpus ? corpusUrl : naverUrl;
+    const altUrl   = isCorpus ? corpusUrl : naverAlt;
+    const dictName = isCorpus ? 'Reverso Context' : 'Naver';
 
     document.getElementById('wp-word-large').textContent = word;
     const headLink = document.getElementById('wp-naver-open');
@@ -701,7 +748,7 @@
     headLink.textContent = `${dictName}에서 열기 ↗`;
     const fbLink = document.getElementById('wp-naver-link');
     fbLink.href = altUrl;
-    fbLink.textContent = `"${word}" — ${dictName} 사전에서 결과 열기 →`;
+    fbLink.textContent = `"${word}" — ${dictName}에서 결과 열기 →`;
     document.getElementById('wp-iframe').src = url;
   }
 
