@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>레슨 · English</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="signed-out">
+
+<div class="behind">
+  <header class="topbar">
+    <a class="btn ghost" href="index.html" aria-label="뒤로">‹ 뒤로</a>
+    <a class="brand" href="index.html"><span class="flag">🇬🇧</span> English</a>
+    <div class="spacer"></div>
+    <div class="acct" id="acct-chip">
+      <span class="avatar" id="acct-avatar">·</span>
+      <span id="acct-name">게스트</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="lesson-layout">
+      <section class="lesson-main">
+        <div class="lesson-head">
+          <div class="thumb" id="lesson-thumb">··</div>
+          <div>
+            <h1 id="lesson-title">불러오는 중...</h1>
+            <div class="crumb" id="lesson-crumb">English · 가져온 레슨</div>
+          </div>
+        </div>
+
+        <div class="lesson-text" id="lesson-text"></div>
+      </section>
+
+      <aside class="lesson-side" id="side">
+        <div class="tx-empty" id="tx-empty">
+          단어를 클릭하면 한국어 번역이<br>여기에 표시됩니다.
+        </div>
+        <div class="tx-card" id="tx-card" style="display:none">
+          <div class="tx-word">
+            <span id="tx-word-text">—</span>
+            <button class="speak" id="tx-speak" title="발음 듣기">🔊</button>
+          </div>
+          <div class="tx-trans" id="tx-trans"><span class="tx-loading">번역 중...</span></div>
+          <div class="tx-meta" id="tx-meta"></div>
+        </div>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Mobile bottom-sheet translation -->
+  <div class="tx-sheet" id="tx-sheet">
+    <div class="grab"></div>
+    <div class="tx-card">
+      <div class="tx-word">
+        <span id="tx-word-text-m">—</span>
+        <button class="speak" id="tx-speak-m" title="발음 듣기">🔊</button>
+      </div>
+      <div class="tx-trans" id="tx-trans-m"><span class="tx-loading">번역 중...</span></div>
+      <div class="tx-meta" id="tx-meta-m"></div>
+    </div>
+  </div>
+
+  <!-- Bottom playbar -->
+  <div class="playbar">
+    <button class="play" id="play-btn" aria-label="재생">▶</button>
+    <span class="time" id="time-cur">0:00</span>
+    <div class="progress" id="prog"><i id="prog-fill"></i></div>
+    <span class="time" id="time-tot">0:00</span>
+    <button class="speed" id="speed-btn" title="재생 속도">1×</button>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/db.js"></script>
+<script src="js/tts.js"></script>
+<script src="js/translate.js"></script>
+<script src="js/auth.js"></script>
+<script>
+(async function () {
+  Auth.gate(async () => {
+    await renderHeader();
+    await renderLesson();
+  });
+
+  async function renderHeader() {
+    const avatar = document.getElementById('acct-avatar');
+    const name = document.getElementById('acct-name');
+    if (DB.isTryMode()) { name.textContent = '체험 모드'; avatar.textContent = '체'; return; }
+    const u = await DB.currentUser();
+    const label = (u && (u.email || '').split('@')[0]) || '사용자';
+    name.textContent = label;
+    avatar.textContent = (label[0] || 'U').toUpperCase();
+  }
+
+  // ============== load + render lesson ==============
+  const params = new URLSearchParams(location.search);
+  const lessonId = params.get('id');
+
+  let LESSON = null;
+  let WORD_STATES = {};   // { wordLower: { state, last } }
+
+  async function renderLesson() {
+    if (!lessonId) {
+      document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
+      return;
+    }
+    LESSON = await DB.getLesson(lessonId);
+    if (!LESSON) {
+      document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
+      return;
+    }
+    WORD_STATES = await DB.loadWordStates();
+
+    document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
+    document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
+
+    renderText(LESSON.body || '');
+    setupAudio();
+  }
+
+  // Tokenize: keep words and non-word chunks separately, render as inline spans.
+  // The regex matches sequences of letters (any script), apostrophes, and hyphens
+  // — the rest is whitespace/punctuation and is rendered as plain text spans.
+  function renderText(body) {
+    const root = document.getElementById('lesson-text');
+    root.innerHTML = '';
+    const paragraphs = body.split(/\n{2,}|\r\n{2,}/);
+    let widx = 0;
+
+    paragraphs.forEach(par => {
+      const p = document.createElement('p');
+      p.className = 'para';
+      // For single-line breaks inside a paragraph, replace with <br>.
+      const lines = par.split(/\n/);
+      lines.forEach((line, li) => {
+        const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
+        for (const tk of tokens) {
+          if (/^[\p{L}]/u.test(tk)) {
+            const span = document.createElement('span');
+            span.className = 'w';
+            span.dataset.idx = String(widx++);
+            span.dataset.word = tk;
+            const lower = tk.toLowerCase();
+            const st = WORD_STATES[lower];
+            if (st && st.state) span.classList.add('s' + Math.min(st.state, 5));
+            span.textContent = tk;
+            p.appendChild(span);
+          } else {
+            // punctuation / whitespace
+            const sp = document.createElement('span');
+            sp.className = 'w punct';
+            sp.textContent = tk;
+            p.appendChild(sp);
+          }
+        }
+        if (li < lines.length - 1) p.appendChild(document.createElement('br'));
+      });
+      root.appendChild(p);
+    });
+
+    bindWordInteractions(root);
+  }
+
+  // ============== word click + drag-select ==============
+  function bindWordInteractions(root) {
+    let dragging = false;
+    let dragStartIdx = null;
+    let dragLastIdx  = null;
+    let didDrag = false;
+
+    function getWordEl(target) {
+      if (!target) return null;
+      const el = target.closest('.w');
+      if (!el || el.classList.contains('punct')) return null;
+      return el;
+    }
+    function clearSel() { root.querySelectorAll('.w.sel').forEach(el => el.classList.remove('sel')); }
+    function selectRange(a, b) {
+      clearSel();
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      const all = root.querySelectorAll('.w');
+      for (const el of all) {
+        const i = Number(el.dataset.idx);
+        if (Number.isFinite(i) && i >= lo && i <= hi && !el.classList.contains('punct')) {
+          el.classList.add('sel');
+        }
+      }
+    }
+    function getSelectedText() {
+      // Collect selected words AND any punct/whitespace between them in DOM order.
+      const all = root.querySelectorAll('.w');
+      let inRange = false, lastWasSel = false;
+      let chunks = [];
+      // find first/last sel index in DOM
+      let firstSel = -1, lastSel = -1;
+      all.forEach((el, i) => {
+        if (el.classList.contains('sel')) { if (firstSel<0) firstSel = i; lastSel = i; }
+      });
+      if (firstSel < 0) return '';
+      for (let i = firstSel; i <= lastSel; i++) {
+        chunks.push(all[i].textContent);
+      }
+      return chunks.join('').replace(/\s+/g, ' ').trim();
+    }
+
+    root.addEventListener('mousedown', (e) => {
+      const w = getWordEl(e.target);
+      if (!w) return;
+      dragging = true;
+      didDrag = false;
+      dragStartIdx = Number(w.dataset.idx);
+      dragLastIdx  = dragStartIdx;
+      // initial single-word "preview" highlight on press? We won't, so click and drag look distinct.
+    });
+    root.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      const w = getWordEl(e.target);
+      if (!w) return;
+      const i = Number(w.dataset.idx);
+      if (i !== dragLastIdx) {
+        didDrag = didDrag || (i !== dragStartIdx);
+        dragLastIdx = i;
+        if (didDrag) selectRange(dragStartIdx, dragLastIdx);
+      }
+    });
+    document.addEventListener('mouseup', async (e) => {
+      if (!dragging) return;
+      dragging = false;
+      if (didDrag) {
+        const phrase = getSelectedText();
+        if (phrase) showPhrase(phrase);
+      }
+      // single click: treated by click handler below
+    });
+
+    // Touch drag for mobile.
+    root.addEventListener('touchstart', (e) => {
+      const w = getWordEl(e.target);
+      if (!w) return;
+      dragging = true; didDrag = false;
+      dragStartIdx = Number(w.dataset.idx); dragLastIdx = dragStartIdx;
+    }, { passive: true });
+    root.addEventListener('touchmove', (e) => {
+      if (!dragging) return;
+      const t = e.touches[0]; if (!t) return;
+      const el = document.elementFromPoint(t.clientX, t.clientY);
+      const w = getWordEl(el);
+      if (!w) return;
+      const i = Number(w.dataset.idx);
+      if (i !== dragLastIdx) {
+        didDrag = didDrag || (i !== dragStartIdx);
+        dragLastIdx = i;
+        if (didDrag) { e.preventDefault(); selectRange(dragStartIdx, dragLastIdx); }
+      }
+    }, { passive: false });
+    root.addEventListener('touchend', () => {
+      if (!dragging) return;
+      dragging = false;
+      if (didDrag) {
+        const phrase = getSelectedText();
+        if (phrase) showPhrase(phrase);
+      }
+    });
+
+    // Click on a single word.
+    root.addEventListener('click', async (e) => {
+      // Ignore clicks that ended a drag.
+      if (didDrag) { didDrag = false; return; }
+      const w = getWordEl(e.target);
+      if (!w) return;
+      // If a phrase selection is active and user clicks elsewhere, clear it.
+      if (root.querySelectorAll('.w.sel').length > 0) clearSel();
+      // mark active
+      root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+      w.classList.add('active');
+
+      const word = w.dataset.word;
+      // 1) advance state in DB
+      const upd = await DB.clickWord(word);
+      WORD_STATES[word.toLowerCase()] = upd;
+      ['s1','s2','s3','s4','s5'].forEach(c => w.classList.remove(c));
+      if (upd && upd.state) w.classList.add('s' + Math.min(upd.state, 5));
+
+      // 2) show translation panel + speak word
+      showWord(word, upd);
+    });
+  }
+
+  // ============== translation panel ==============
+  function isMobile() { return window.matchMedia('(max-width: 1023px)').matches; }
+
+  async function showWord(word, stateInfo) {
+    const set = (idDesktop, idMobile, val) => {
+      const a = document.getElementById(idDesktop); if (a) a.innerHTML = val;
+      const b = document.getElementById(idMobile);  if (b) b.innerHTML = val;
+    };
+
+    document.getElementById('tx-empty').style.display = 'none';
+    document.getElementById('tx-card').style.display = '';
+    document.getElementById('tx-sheet').classList.add('open');
+
+    set('tx-word-text', 'tx-word-text-m', escapeHtml(word));
+    set('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
+    const stateLabel = ['새 단어','오늘 학습','학습 중 (1)','학습 중 (2)','학습 중 (3)','마스터'];
+    const sIdx = stateInfo && stateInfo.state ? Math.min(stateInfo.state, 5) : 0;
+    set('tx-meta', 'tx-meta-m', `<span>상태: <b>${stateLabel[sIdx]}</b></span>`);
+
+    // bind speakers
+    const sp1 = document.getElementById('tx-speak');
+    const sp2 = document.getElementById('tx-speak-m');
+    [sp1, sp2].forEach(b => b && (b.onclick = () => TTS.speak(word)));
+
+    // auto-speak the word once on click
+    TTS.speak(word);
+
+    try {
+      const ko = await Translate.translate(word);
+      set('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+    } catch (err) {
+      set('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+    }
+  }
+
+  async function showPhrase(phrase) {
+    const set = (idDesktop, idMobile, val) => {
+      const a = document.getElementById(idDesktop); if (a) a.innerHTML = val;
+      const b = document.getElementById(idMobile);  if (b) b.innerHTML = val;
+    };
+    document.getElementById('tx-empty').style.display = 'none';
+    document.getElementById('tx-card').style.display = '';
+    document.getElementById('tx-sheet').classList.add('open');
+
+    set('tx-word-text', 'tx-word-text-m', escapeHtml(phrase));
+    set('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
+    set('tx-meta', 'tx-meta-m', `<span class="muted">선택한 구문</span>`);
+
+    const sp1 = document.getElementById('tx-speak');
+    const sp2 = document.getElementById('tx-speak-m');
+    [sp1, sp2].forEach(b => b && (b.onclick = () => TTS.speak(phrase)));
+
+    try {
+      const ko = await Translate.translate(phrase);
+      set('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+    } catch (err) {
+      set('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+    }
+  }
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+
+  // Tap outside the sheet to close (mobile).
+  document.addEventListener('click', (e) => {
+    const sheet = document.getElementById('tx-sheet');
+    if (!sheet.classList.contains('open')) return;
+    if (sheet.contains(e.target)) return;
+    if (e.target.closest('.lesson-text')) return;  // word click manages it
+    if (e.target.closest('.playbar')) return;
+    sheet.classList.remove('open');
+  });
+
+  // ============== audio playback ==============
+  // If there's an audio_url, use HTMLAudioElement.
+  // Otherwise, synthesize the lesson body with TTS.
+  let audioEl = null;
+  let ttsPlaying = false;
+  let ttsStartTime = 0;
+  let ttsDuration  = 0;
+  let ttsTimer = null;
+  let speed = 1;
+  const speeds = [0.75, 1, 1.25, 1.5];
+
+  function setupAudio() {
+    const playBtn = document.getElementById('play-btn');
+    const speedBtn = document.getElementById('speed-btn');
+    const fill = document.getElementById('prog-fill');
+    const cur = document.getElementById('time-cur');
+    const tot = document.getElementById('time-tot');
+    const prog = document.getElementById('prog');
+
+    function fmt(s) {
+      s = Math.max(0, Math.floor(s || 0));
+      const m = Math.floor(s/60);
+      const r = s % 60;
+      return `${m}:${r.toString().padStart(2,'0')}`;
+    }
+
+    if (LESSON && LESSON.audio_url) {
+      audioEl = new Audio(LESSON.audio_url);
+      audioEl.preload = 'metadata';
+      audioEl.addEventListener('loadedmetadata', () => {
+        tot.textContent = fmt(audioEl.duration);
+      });
+      audioEl.addEventListener('timeupdate', () => {
+        cur.textContent = fmt(audioEl.currentTime);
+        const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
+        fill.style.width = pct + '%';
+      });
+      audioEl.addEventListener('ended', () => {
+        playBtn.textContent = '▶';
+      });
+
+      playBtn.addEventListener('click', () => {
+        if (audioEl.paused) { audioEl.play(); playBtn.textContent = '⏸'; }
+        else { audioEl.pause(); playBtn.textContent = '▶'; }
+      });
+
+      prog.addEventListener('click', (e) => {
+        const r = prog.getBoundingClientRect();
+        const pct = (e.clientX - r.left) / r.width;
+        if (audioEl.duration) audioEl.currentTime = pct * audioEl.duration;
+      });
+
+      speedBtn.addEventListener('click', () => {
+        const i = (speeds.indexOf(speed) + 1) % speeds.length;
+        speed = speeds[i];
+        speedBtn.textContent = speed + '×';
+        audioEl.playbackRate = speed;
+      });
+
+    } else {
+      // TTS-driven playback. We estimate the duration by character count.
+      const text = (LESSON.body || '').trim();
+      // ~14 chars/sec at rate 1 for English speech. Recompute when speed changes.
+      function estimateDuration() {
+        return Math.max(2, text.length / (14 * speed));
+      }
+      ttsDuration = estimateDuration();
+      tot.textContent = fmt(ttsDuration);
+
+      function tick() {
+        if (!ttsPlaying) return;
+        const elapsed = (Date.now() - ttsStartTime) / 1000;
+        cur.textContent = fmt(Math.min(elapsed, ttsDuration));
+        const pct = Math.min(100, (elapsed / ttsDuration) * 100);
+        fill.style.width = pct + '%';
+        if (elapsed < ttsDuration) ttsTimer = setTimeout(tick, 250);
+      }
+
+      function startTTS() {
+        ttsPlaying = true;
+        ttsStartTime = Date.now();
+        ttsDuration = estimateDuration();
+        tot.textContent = fmt(ttsDuration);
+        playBtn.textContent = '⏸';
+        TTS.speak(text, {
+          rate: 0.9 * speed,
+          onend: () => {
+            ttsPlaying = false;
+            playBtn.textContent = '▶';
+            fill.style.width = '100%';
+            cur.textContent = fmt(ttsDuration);
+          }
+        });
+        tick();
+      }
+      function stopTTS() {
+        ttsPlaying = false;
+        TTS.stop();
+        clearTimeout(ttsTimer);
+        playBtn.textContent = '▶';
+      }
+
+      playBtn.addEventListener('click', () => {
+        if (!ttsPlaying) startTTS();
+        else stopTTS();
+      });
+      speedBtn.addEventListener('click', () => {
+        const i = (speeds.indexOf(speed) + 1) % speeds.length;
+        speed = speeds[i];
+        speedBtn.textContent = speed + '×';
+        if (ttsPlaying) { stopTTS(); startTTS(); }
+        else { ttsDuration = estimateDuration(); tot.textContent = fmt(ttsDuration); }
+      });
+    }
+  }
+})();
+</script>
+
+</body>
+</html>

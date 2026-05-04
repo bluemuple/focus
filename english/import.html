@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>가져오기 · English</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body class="signed-out">
+
+<div class="behind">
+  <header class="topbar">
+    <a class="btn ghost" href="index.html" aria-label="뒤로">‹ 뒤로</a>
+    <a class="brand" href="index.html"><span class="flag">🇬🇧</span> English</a>
+    <div class="spacer"></div>
+    <div class="acct" id="acct-chip">
+      <span class="avatar" id="acct-avatar">·</span>
+      <span id="acct-name">게스트</span>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1 style="margin:6px 0 16px">새 레슨 가져오기</h1>
+
+    <form class="import-form" id="import-form">
+      <div class="field">
+        <label for="f-title">제목</label>
+        <input id="f-title" name="title" type="text" placeholder="레슨 제목을 입력하세요" maxlength="120" required>
+      </div>
+
+      <div class="field">
+        <label for="f-body">텍스트</label>
+        <textarea id="f-body" name="body" placeholder="여기에 영어 텍스트를 붙여 넣으세요." required></textarea>
+      </div>
+
+      <div class="field">
+        <label>오디오 파일 (선택)</label>
+        <div class="audio-zone" id="f-zone">
+          <div class="icon">🎧</div>
+          <div id="zone-text">클릭하거나 파일을 끌어다 놓아 오디오(MP3 등)를 추가</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">텍스트 듣기에 사용됩니다. 비워두면 영국식 여성 음성(TTS)으로 자동 생성됩니다.</div>
+          <input id="f-audio" type="file" accept="audio/*" style="display:none">
+        </div>
+      </div>
+
+      <div class="err" id="form-err" style="color:#b03a3a;font-size:13px;min-height:18px"></div>
+
+      <div class="actions">
+        <a class="btn ghost" href="index.html">취소</a>
+        <button class="btn primary lg" type="submit" id="save-btn">가져오기</button>
+      </div>
+    </form>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="js/supabase-config.js"></script>
+<script src="js/db.js"></script>
+<script src="js/tts.js"></script>
+<script src="js/translate.js"></script>
+<script src="js/auth.js"></script>
+<script>
+(async function () {
+  Auth.gate(async () => {
+    await renderHeader();
+    bindForm();
+  });
+
+  async function renderHeader() {
+    const avatar = document.getElementById('acct-avatar');
+    const name = document.getElementById('acct-name');
+    if (DB.isTryMode()) { name.textContent = '체험 모드'; avatar.textContent = '체'; return; }
+    const u = await DB.currentUser();
+    const label = (u && (u.email || '').split('@')[0]) || '사용자';
+    name.textContent = label;
+    avatar.textContent = (label[0] || 'U').toUpperCase();
+  }
+
+  function bindForm() {
+    const form = document.getElementById('import-form');
+    const zone = document.getElementById('f-zone');
+    const fileInput = document.getElementById('f-audio');
+    const zoneText = document.getElementById('zone-text');
+    const errBox = document.getElementById('form-err');
+    const saveBtn = document.getElementById('save-btn');
+
+    let chosenFile = null;
+
+    zone.addEventListener('click', () => fileInput.click());
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; });
+    zone.addEventListener('dragleave', () => { zone.style.borderColor = ''; });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.style.borderColor = '';
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files[0]) setFile(fileInput.files[0]);
+    });
+    function setFile(f) {
+      if (!/^audio\//.test(f.type)) { errBox.textContent = '오디오 파일만 업로드 가능합니다.'; return; }
+      chosenFile = f;
+      zone.classList.add('has-file');
+      zoneText.innerHTML = '✓ ' + escapeHtml(f.name) + ' <span class="muted" style="font-weight:400">· 다른 파일로 변경하려면 클릭</span>';
+      errBox.textContent = '';
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errBox.textContent = '';
+      const title = document.getElementById('f-title').value.trim();
+      const body  = document.getElementById('f-body').value.trim();
+      if (!title || !body) { errBox.textContent = '제목과 텍스트를 모두 입력해 주세요.'; return; }
+      saveBtn.disabled = true;
+      saveBtn.textContent = '저장 중...';
+      try {
+        const row = await DB.addLesson({ title, body, audioFile: chosenFile });
+        location.href = 'lesson.html?id=' + encodeURIComponent(row.id);
+      } catch (err) {
+        console.error(err);
+        errBox.textContent = '저장에 실패했습니다: ' + ((err && err.message) || err);
+        saveBtn.disabled = false;
+        saveBtn.textContent = '가져오기';
+      }
+    });
+  }
+  function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+})();
+</script>
+
+</body>
+</html>
