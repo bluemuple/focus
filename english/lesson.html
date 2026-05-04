@@ -43,19 +43,10 @@
           </div>
           <div class="head-spacer"></div>
           <div class="head-tools">
-            <div class="toggle-group" id="tts-toggle" role="group" aria-label="음성 엔진 선택">
-              <button class="toggle-btn dict active" data-tts="cloud" title="Google Cloud TTS (Neural2)">GC</button>
-              <button class="toggle-btn dict"        data-tts="web"   title="브라우저 Web Speech">WS</button>
-            </div>
-            <div class="toggle-group" id="tx-toggle" role="group" aria-label="번역기 선택">
-              <button class="toggle-btn dict active" data-tx="deepl"  title="DeepL (Supabase 프록시)">DL</button>
-              <button class="toggle-btn dict"        data-tx="google" title="Google Translate">G</button>
-            </div>
-            <div class="toggle-group" id="dict-toggle" role="group" aria-label="사전 선택">
-              <button class="toggle-btn dict active" data-dict="naver"  title="네이버 영어사전">N</button>
-              <button class="toggle-btn dict"        data-dict="corpus" title="Tatoeba — 단어가 쓰이는 예문">C</button>
-            </div>
-            <button class="toggle-btn" id="mode-toggle-btn" title="모드 전환">하나씩</button>
+            <button class="toggle-btn dict" id="tts-toggle-btn"  title="음성 엔진 전환 (Google Cloud ↔ Web Speech)">GC</button>
+            <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
+            <button class="toggle-btn dict" id="dict-toggle-btn" title="사전 전환 (Naver ↔ Corpus)">N</button>
+            <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
           </div>
         </div>
 
@@ -95,6 +86,9 @@
         <iframe id="wp-iframe" src="" title="Naver English Dictionary"
                 referrerpolicy="origin"
                 sandbox="allow-scripts allow-same-origin allow-popups allow-forms"></iframe>
+        <!-- KWIC corpus view: built from the user's own lessons. Shown when
+             the dictionary toggle is set to C. -->
+        <div class="wp-corpus" id="wp-corpus" hidden></div>
       </div>
     </div>
   </div>
@@ -214,54 +208,54 @@
     });
   }
   function setupToggles() {
-    // Single-button mode toggle. Label always reflects the current mode and
-    // each click flips it (하나씩 ↔ 이어서).
+    // All four toggles are single-button "flip" controls — the label of the
+    // button is the CURRENT setting and clicking flips to the other option.
+    // (User-facing visual: pale sky-blue background, never black.)
+
+    // Mode toggle (하나씩 ↔ 이어서)
     const modeBtn = document.getElementById('mode-toggle-btn');
-    function refreshModeBtn() {
-      modeBtn.textContent = (MODE === 'cont') ? '이어서' : '하나씩';
-      modeBtn.classList.toggle('active', MODE === 'cont');
-    }
+    function refreshMode() { modeBtn.textContent = (MODE === 'cont') ? '이어서' : '하나씩'; }
     modeBtn.addEventListener('click', () => {
       MODE = (MODE === 'cont') ? 'single' : 'cont';
-      refreshModeBtn();
-      savePrefs();
-      onModeChanged();
+      refreshMode(); savePrefs(); onModeChanged();
     });
-    refreshModeBtn();
+    refreshMode();
 
-    // Dictionary toggle (N / C)
-    const dictBtns = document.querySelectorAll('#dict-toggle .toggle-btn');
-    dictBtns.forEach(b => b.classList.toggle('active', b.dataset.dict === DICT));
-    dictBtns.forEach(b => b.addEventListener('click', () => {
-      if (b.dataset.dict === DICT) return;
-      DICT = b.dataset.dict;
-      dictBtns.forEach(x => x.classList.toggle('active', x.dataset.dict === DICT));
-      savePrefs();
-    }));
+    // Dictionary toggle (N ↔ C)
+    const dictBtn = document.getElementById('dict-toggle-btn');
+    function refreshDict() { dictBtn.textContent = (DICT === 'corpus') ? 'C' : 'N'; }
+    dictBtn.addEventListener('click', () => {
+      DICT = (DICT === 'corpus') ? 'naver' : 'corpus';
+      refreshDict(); savePrefs();
+    });
+    refreshDict();
 
-    // Translator toggle (DL / G). The selected engine is the *primary*; the
-    // others remain available as automatic fallbacks inside Translate.translate.
-    const txBtns = document.querySelectorAll('#tx-toggle .toggle-btn');
-    const curEngine = (window.Translate && Translate.getEngine && Translate.getEngine()) || 'deepl';
-    txBtns.forEach(b => b.classList.toggle('active', b.dataset.tx === curEngine));
-    txBtns.forEach(b => b.addEventListener('click', () => {
-      const next = b.dataset.tx;
-      if (Translate.getEngine() === next) return;
-      Translate.setEngine(next);
-      txBtns.forEach(x => x.classList.toggle('active', x.dataset.tx === next));
-    }));
+    // Translator toggle (DL ↔ G). Selected engine is the primary; the other
+    // remains an automatic fallback inside Translate.translate().
+    const txBtn = document.getElementById('tx-toggle-btn');
+    function refreshTx() {
+      const cur = (window.Translate && Translate.getEngine && Translate.getEngine()) || 'deepl';
+      txBtn.textContent = cur === 'deepl' ? 'DL' : 'G';
+    }
+    txBtn.addEventListener('click', () => {
+      const cur = Translate.getEngine();
+      Translate.setEngine(cur === 'deepl' ? 'google' : 'deepl');
+      refreshTx();
+    });
+    refreshTx();
 
-    // TTS engine toggle (GC / WS). GC = Google Cloud TTS via Supabase proxy
-    // (highest quality); WS = browser Web Speech API (no setup, decent on Edge).
-    const ttsBtns = document.querySelectorAll('#tts-toggle .toggle-btn');
-    const curTts = (window.TTS && TTS.getEngine && TTS.getEngine()) || 'cloud';
-    ttsBtns.forEach(b => b.classList.toggle('active', b.dataset.tts === curTts));
-    ttsBtns.forEach(b => b.addEventListener('click', () => {
-      const next = b.dataset.tts;
-      if (TTS.getEngine() === next) return;
-      TTS.setEngine(next);
-      ttsBtns.forEach(x => x.classList.toggle('active', x.dataset.tts === next));
-    }));
+    // TTS engine toggle (GC ↔ WS).
+    const ttsBtn = document.getElementById('tts-toggle-btn');
+    function refreshTts() {
+      const cur = (window.TTS && TTS.getEngine && TTS.getEngine()) || 'cloud';
+      ttsBtn.textContent = cur === 'cloud' ? 'GC' : 'WS';
+    }
+    ttsBtn.addEventListener('click', () => {
+      const cur = TTS.getEngine();
+      TTS.setEngine(cur === 'cloud' ? 'web' : 'cloud');
+      refreshTts();
+    });
+    refreshTts();
   }
   function onModeChanged() {
     // Clean up state from the previous mode.
@@ -461,6 +455,13 @@
 
   // ============== word click + drag-select + page swipe ==============
   function bindWordInteractions(root) {
+    // Idempotent guard: re-renders that REUSE the same DOM element (mode
+    // change, resize) must NOT add a second copy of these listeners — that
+    // was making one click fire showWord twice and TTS speak the word twice
+    // (the audible "be-begin" stutter).
+    if (root.dataset.bound === '1') return;
+    root.dataset.bound = '1';
+
     let dragging = false;
     let dragStartIdx = null, dragLastIdx = null;
     let didDrag = false;
@@ -763,28 +764,107 @@
     if (!CURRENT_WORD) return;
     POP.classList.add('expanded');
     const word = CURRENT_WORD;
-    // N: Naver English Dictionary (definitions)
-    // C: Tatoeba — community-maintained sentence corpus, English ⇄ Korean.
-    //    Reverso Context blocks iframe embedding (X-Frame-Options); Tatoeba
-    //    is iframe-friendly. The fallback link still opens in a new tab in
-    //    case any future CSP change blocks Tatoeba too.
-    const naverUrl   = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
-    const naverAlt   = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
-    const corpusUrl  = 'https://tatoeba.org/en/sentences/search?from=eng&to=kor&query=' + encodeURIComponent(word);
 
     const isCorpus = (DICT === 'corpus');
-    const url      = isCorpus ? corpusUrl : naverUrl;
-    const altUrl   = isCorpus ? corpusUrl : naverAlt;
-    const dictName = isCorpus ? 'Tatoeba 예문' : 'Naver';
-
     document.getElementById('wp-word-large').textContent = word;
+
+    const iframe = document.getElementById('wp-iframe');
+    const corpus = document.getElementById('wp-corpus');
     const headLink = document.getElementById('wp-naver-open');
-    headLink.href = url;
-    headLink.textContent = `${dictName}에서 열기 ↗`;
-    const fbLink = document.getElementById('wp-naver-link');
-    fbLink.href = altUrl;
-    fbLink.textContent = `"${word}" — ${dictName}에서 결과 열기 →`;
-    document.getElementById('wp-iframe').src = url;
+    const fbLink   = document.getElementById('wp-naver-link');
+
+    if (isCorpus) {
+      // C: build a KWIC concordance from the user's OWN lessons. External
+      // corpora (Reverso, Tatoeba, COCA) all block iframe embedding, and the
+      // BYU/COCA site requires an account, so we render our own.
+      iframe.src = 'about:blank';
+      iframe.style.display = 'none';
+      corpus.hidden = false;
+      headLink.href = 'https://www.english-corpora.org/coca/';
+      headLink.textContent = 'COCA에서 열기 ↗';
+      fbLink.href = 'https://www.english-corpora.org/coca/';
+      fbLink.textContent = '외부 코퍼스 (COCA) 열기 →';
+      renderCorpus(word, corpus);
+    } else {
+      // N: Naver English Dictionary (definitions)
+      const naverUrl = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
+      const naverAlt = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+      iframe.style.display = '';
+      corpus.hidden = true;
+      iframe.src = naverUrl;
+      headLink.href = naverUrl;
+      headLink.textContent = 'Naver에서 열기 ↗';
+      fbLink.href = naverAlt;
+      fbLink.textContent = `"${word}" — Naver 사전에서 결과 열기 →`;
+    }
+  }
+
+  // ---------- KWIC corpus from user lessons ----------
+  function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  function escapeHtml2(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+
+  function splitSentences(text) {
+    // Roughly split on sentence-ending punctuation followed by whitespace.
+    // We keep the punctuation attached to the preceding sentence.
+    return (text || '')
+      .replace(/\s+/g, ' ')
+      .split(/(?<=[.!?])\s+(?=[A-Z"'(])/)
+      .map(s => s.trim())
+      .filter(Boolean);
+  }
+
+  async function renderCorpus(word, container) {
+    container.innerHTML =
+      '<div class="corpus-loading">"' + escapeHtml2(word) +
+      '"이(가) 쓰인 문장을 내 레슨에서 찾는 중...</div>';
+
+    let lessons = [];
+    try { lessons = await DB.listLessons(); }
+    catch (e) { console.warn('listLessons failed', e); }
+
+    const re = new RegExp('\\b' + escapeRegex(word) + '\\b', 'gi');
+    const hits = [];
+    for (const lesson of (lessons || [])) {
+      const sentences = splitSentences(lesson.body || '');
+      for (const s of sentences) {
+        re.lastIndex = 0;
+        const m = re.exec(s);
+        if (!m) continue;
+        // Build left + match + right around the FIRST occurrence in the sentence.
+        hits.push({
+          title: lesson.title || '제목 없음',
+          left:  s.slice(0, m.index),
+          mid:   m[0],
+          right: s.slice(m.index + m[0].length),
+        });
+      }
+    }
+
+    // If nothing came back, this word doesn't appear in any of the user's
+    // imported lessons — show a friendly hint.
+    if (!hits.length) {
+      container.innerHTML =
+        '<div class="corpus-empty">' +
+        '내 레슨에 "<b>' + escapeHtml2(word) + '</b>"이(가) 사용된 문장이 아직 없어요.<br>' +
+        '<span class="hint">레슨을 더 가져오면 이 단어가 쓰인 문장이 여기에 모입니다. ' +
+        '또는 위쪽 "COCA에서 열기" 링크로 외부 코퍼스를 새 탭에서 볼 수 있습니다.</span>' +
+        '</div>';
+      return;
+    }
+
+    let html = '<div class="corpus-info">"<b>' + escapeHtml2(word) + '</b>" — 내 레슨에서 ' +
+               hits.length + '개 문장 발견</div>';
+    html += '<table><tbody>';
+    hits.forEach((h, i) => {
+      html += '<tr>' +
+        '<td class="num">' + (i + 1) + '</td>' +
+        '<td class="left"><span>' + escapeHtml2(h.left) + '</span></td>' +
+        '<td class="kw"><mark>' + escapeHtml2(h.mid) + '</mark></td>' +
+        '<td class="right">' + escapeHtml2(h.right) + '</td>' +
+      '</tr>';
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
   }
 
   function setupPopupDrag() {
