@@ -11,8 +11,11 @@
 <div class="behind">
   <header class="topbar">
     <a class="btn ghost" href="index.html" aria-label="뒤로">‹ 뒤로</a>
-    <a class="brand" href="index.html"><span class="flag">🇬🇧</span> English</a>
+    <a class="brand" href="index.html">또박또박</a>
     <div class="spacer"></div>
+    <a class="bidoro-btn" href="../index.html" title="비도로 사이트로 돌아가기">
+      <span class="arrow">←</span><span class="label">비도로</span>
+    </a>
     <div class="acct" id="acct-chip">
       <span class="avatar" id="acct-avatar">·</span>
       <span id="acct-name">게스트</span>
@@ -22,11 +25,22 @@
   <main class="container">
     <div class="lesson-layout">
       <section class="lesson-main">
+        <!-- top progress: dot scrubber + page indicator -->
+        <div class="lesson-progress" id="lesson-progress">
+          <button class="lp-btn" id="page-prev" aria-label="이전 페이지">‹</button>
+          <div class="lp-track">
+            <div class="lp-fill" id="lp-fill"></div>
+            <div class="lp-dot"  id="lp-dot"></div>
+          </div>
+          <span class="lp-pages" id="lp-pages">1 / 1</span>
+          <button class="lp-btn" id="page-next" aria-label="다음 페이지">›</button>
+        </div>
+
         <div class="lesson-head">
           <div class="thumb" id="lesson-thumb">··</div>
           <div>
             <h1 id="lesson-title">불러오는 중...</h1>
-            <div class="crumb" id="lesson-crumb">English · 가져온 레슨</div>
+            <div class="crumb" id="lesson-crumb">또박또박 · 가져온 레슨</div>
           </div>
         </div>
 
@@ -39,8 +53,9 @@
         </div>
         <div class="tx-card" id="tx-card" style="display:none">
           <div class="tx-word">
-            <span id="tx-word-text">—</span>
             <button class="speak" id="tx-speak" title="발음 듣기">🔊</button>
+            <span class="word-text" id="tx-word-text">—</span>
+            <button class="tx-state-badge" id="tx-state" style="display:none" title="단어 상태 변경">·</button>
           </div>
           <div class="tx-trans" id="tx-trans"><span class="tx-loading">번역 중...</span></div>
           <div class="tx-meta" id="tx-meta"></div>
@@ -54,8 +69,9 @@
     <div class="grab"></div>
     <div class="tx-card">
       <div class="tx-word">
-        <span id="tx-word-text-m">—</span>
         <button class="speak" id="tx-speak-m" title="발음 듣기">🔊</button>
+        <span class="word-text" id="tx-word-text-m">—</span>
+        <button class="tx-state-badge" id="tx-state-m" style="display:none" title="단어 상태 변경">·</button>
       </div>
       <div class="tx-trans" id="tx-trans-m"><span class="tx-loading">번역 중...</span></div>
       <div class="tx-meta" id="tx-meta-m"></div>
@@ -95,12 +111,38 @@
     avatar.textContent = (label[0] || 'U').toUpperCase();
   }
 
+  // ============== state labels ==============
+  // -1 (ignore), 0 (default sky blue), 1..5 (green progression → no bg)
+  const STATE_LABEL = {
+    [-1]: '무시',
+     0:   '새로운 단어',
+     1:   '새로운 단어',
+     2:   '어디선가 본 단어',
+     3:   '익숙한 단어',
+     4:   '배운 단어',
+     5:   '완전히 아는 단어',
+  };
+  const STATE_GLYPH = { '-1': '🗑', '1': '1', '2': '2', '3': '3', '4': '4', '5': '✓' };
+  function badgeClass(state) {
+    if (state === -1) return 'sx';
+    if (state >= 1 && state <= 5) return 's' + state;
+    return '';
+  }
+  function wordClass(state) {
+    if (state === -1) return 'sx';
+    if (state >= 1 && state <= 5) return 's' + state;
+    return '';
+  }
+
   // ============== load + render lesson ==============
   const params = new URLSearchParams(location.search);
   const lessonId = params.get('id');
 
   let LESSON = null;
   let WORD_STATES = {};   // { wordLower: { state, last } }
+  let PAGES = [];         // array of paragraph-arrays
+  let pageIdx = 0;
+  let CURRENT_WORD = null;  // last clicked word string (lowercase) for state-menu
 
   async function renderLesson() {
     if (!lessonId) {
@@ -117,63 +159,135 @@
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
     document.getElementById('lesson-thumb').textContent = (LESSON.title || '?').trim().slice(0,2).toUpperCase();
 
-    renderText(LESSON.body || '');
+    PAGES = paginate(LESSON.body || '', wordsPerPage());
+    pageIdx = 0;
+    renderPage();
     setupAudio();
   }
 
-  // Tokenize: keep words and non-word chunks separately, render as inline spans.
-  // The regex matches sequences of letters (any script), apostrophes, and hyphens
-  // — the rest is whitespace/punctuation and is rendered as plain text spans.
-  function renderText(body) {
-    const root = document.getElementById('lesson-text');
-    root.innerHTML = '';
-    const paragraphs = body.split(/\n{2,}|\r\n{2,}/);
-    let widx = 0;
-
-    paragraphs.forEach(par => {
-      const p = document.createElement('p');
-      p.className = 'para';
-      // For single-line breaks inside a paragraph, replace with <br>.
-      const lines = par.split(/\n/);
-      lines.forEach((line, li) => {
-        const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
-        for (const tk of tokens) {
-          if (/^[\p{L}]/u.test(tk)) {
-            const span = document.createElement('span');
-            span.className = 'w';
-            span.dataset.idx = String(widx++);
-            span.dataset.word = tk;
-            const lower = tk.toLowerCase();
-            const st = WORD_STATES[lower];
-            if (st && st.state) span.classList.add('s' + Math.min(st.state, 5));
-            span.textContent = tk;
-            p.appendChild(span);
-          } else {
-            // punctuation / whitespace
-            const sp = document.createElement('span');
-            sp.className = 'w punct';
-            sp.textContent = tk;
-            p.appendChild(sp);
-          }
-        }
-        if (li < lines.length - 1) p.appendChild(document.createElement('br'));
-      });
-      root.appendChild(p);
-    });
-
-    bindWordInteractions(root);
+  // Words per page: small screens get smaller pages.
+  function wordsPerPage() {
+    return window.matchMedia('(max-width: 1023px)').matches ? 60 : 140;
   }
 
-  // ============== word click + drag-select ==============
+  function paginate(body, perPage) {
+    // Split into paragraphs (blank line separator).
+    const paragraphs = body.split(/\n{2,}|\r\n{2,}/).map(p => p.trim()).filter(Boolean);
+    if (!paragraphs.length) return [['']];
+    const pages = [];
+    let curr = [], count = 0;
+    for (const p of paragraphs) {
+      const wc = (p.match(/[\p{L}][\p{L}\p{M}'’-]*/gu) || []).length;
+      // Always include at least one paragraph per page; otherwise honor word budget.
+      if (curr.length && count + wc > perPage) {
+        pages.push(curr);
+        curr = [];
+        count = 0;
+      }
+      curr.push(p);
+      count += wc;
+    }
+    if (curr.length) pages.push(curr);
+    return pages;
+  }
+
+  function renderPage(direction) {
+    const root = document.getElementById('lesson-text');
+    if (direction === 'left' || direction === 'right') {
+      root.classList.add(direction === 'left' ? 'swipe-out-left' : 'swipe-out-right');
+      setTimeout(actuallyRender, 200);
+    } else {
+      actuallyRender();
+    }
+
+    function actuallyRender() {
+      root.classList.remove('swipe-out-left', 'swipe-out-right', 'swipe-in-left', 'swipe-in-right');
+      root.innerHTML = '';
+      let widx = 0;
+      const paragraphs = PAGES[pageIdx] || [];
+
+      paragraphs.forEach(par => {
+        const p = document.createElement('p');
+        p.className = 'para';
+        const lines = par.split(/\n/);
+        lines.forEach((line, li) => {
+          const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
+          for (const tk of tokens) {
+            if (/^[\p{L}]/u.test(tk)) {
+              const span = document.createElement('span');
+              span.className = 'w';
+              span.dataset.idx = String(widx++);
+              span.dataset.word = tk;
+              const lower = tk.toLowerCase();
+              const st = WORD_STATES[lower];
+              if (st) {
+                const cls = wordClass(st.state);
+                if (cls) span.classList.add(cls);
+              }
+              span.textContent = tk;
+              p.appendChild(span);
+            } else {
+              const sp = document.createElement('span');
+              sp.className = 'w punct';
+              sp.textContent = tk;
+              p.appendChild(sp);
+            }
+          }
+          if (li < lines.length - 1) p.appendChild(document.createElement('br'));
+        });
+        root.appendChild(p);
+      });
+
+      if (direction === 'left')  root.classList.add('swipe-in-right');
+      if (direction === 'right') root.classList.add('swipe-in-left');
+
+      bindWordInteractions(root);
+      updateProgress();
+    }
+  }
+
+  function updateProgress() {
+    const total = PAGES.length || 1;
+    const cur = pageIdx + 1;
+    const pct = total > 1 ? (pageIdx / (total - 1)) * 100 : 0;
+    document.getElementById('lp-pages').textContent = `${cur} / ${total}`;
+    document.getElementById('lp-fill').style.width = pct + '%';
+    document.getElementById('lp-dot').style.left = pct + '%';
+    document.getElementById('page-prev').disabled = pageIdx === 0;
+    document.getElementById('page-next').disabled = pageIdx >= total - 1;
+  }
+
+  function goPage(delta) {
+    const next = pageIdx + delta;
+    if (next < 0 || next >= PAGES.length) return;
+    const direction = delta > 0 ? 'left' : 'right';
+    pageIdx = next;
+    closeStateMenu();
+    closeTxPanel();
+    renderPage(direction);
+  }
+
+  document.getElementById('page-prev').addEventListener('click', () => goPage(-1));
+  document.getElementById('page-next').addEventListener('click', () => goPage(+1));
+  document.addEventListener('keydown', (e) => {
+    // Don't hijack typing in inputs.
+    if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
+    if (e.key === 'ArrowLeft')  goPage(-1);
+    if (e.key === 'ArrowRight') goPage(+1);
+  });
+
+  // ============== word click + drag-select + page swipe ==============
   function bindWordInteractions(root) {
     let dragging = false;
-    let dragStartIdx = null;
-    let dragLastIdx  = null;
+    let dragStartIdx = null, dragLastIdx = null;
     let didDrag = false;
+
+    // touch swipe state for page navigation
+    let touchStart = null;
 
     function getWordEl(target) {
       if (!target) return null;
-      const el = target.closest('.w');
+      const el = target.closest && target.closest('.w');
       if (!el || el.classList.contains('punct')) return null;
       return el;
     }
@@ -190,30 +304,24 @@
       }
     }
     function getSelectedText() {
-      // Collect selected words AND any punct/whitespace between them in DOM order.
       const all = root.querySelectorAll('.w');
-      let inRange = false, lastWasSel = false;
-      let chunks = [];
-      // find first/last sel index in DOM
       let firstSel = -1, lastSel = -1;
       all.forEach((el, i) => {
-        if (el.classList.contains('sel')) { if (firstSel<0) firstSel = i; lastSel = i; }
+        if (el.classList.contains('sel')) { if (firstSel < 0) firstSel = i; lastSel = i; }
       });
       if (firstSel < 0) return '';
-      for (let i = firstSel; i <= lastSel; i++) {
-        chunks.push(all[i].textContent);
-      }
+      const chunks = [];
+      for (let i = firstSel; i <= lastSel; i++) chunks.push(all[i].textContent);
       return chunks.join('').replace(/\s+/g, ' ').trim();
     }
 
+    // ---------- mouse: drag-select only ----------
     root.addEventListener('mousedown', (e) => {
       const w = getWordEl(e.target);
       if (!w) return;
-      dragging = true;
-      didDrag = false;
+      dragging = true; didDrag = false;
       dragStartIdx = Number(w.dataset.idx);
       dragLastIdx  = dragStartIdx;
-      // initial single-word "preview" highlight on press? We won't, so click and drag look distinct.
     });
     root.addEventListener('mousemove', (e) => {
       if (!dragging) return;
@@ -226,26 +334,46 @@
         if (didDrag) selectRange(dragStartIdx, dragLastIdx);
       }
     });
-    document.addEventListener('mouseup', async (e) => {
+    document.addEventListener('mouseup', async () => {
       if (!dragging) return;
       dragging = false;
       if (didDrag) {
         const phrase = getSelectedText();
         if (phrase) showPhrase(phrase);
       }
-      // single click: treated by click handler below
     });
 
-    // Touch drag for mobile.
+    // ---------- touch: drag-select OR page-swipe ----------
     root.addEventListener('touchstart', (e) => {
-      const w = getWordEl(e.target);
-      if (!w) return;
-      dragging = true; didDrag = false;
-      dragStartIdx = Number(w.dataset.idx); dragLastIdx = dragStartIdx;
-    }, { passive: true });
-    root.addEventListener('touchmove', (e) => {
-      if (!dragging) return;
       const t = e.touches[0]; if (!t) return;
+      touchStart = { x: t.clientX, y: t.clientY, t: Date.now() };
+      const w = getWordEl(e.target);
+      if (w) {
+        dragging = true; didDrag = false;
+        dragStartIdx = Number(w.dataset.idx);
+        dragLastIdx  = dragStartIdx;
+      } else {
+        dragging = false;
+      }
+    }, { passive: true });
+
+    root.addEventListener('touchmove', (e) => {
+      if (!touchStart) return;
+      const t = e.touches[0]; if (!t) return;
+      const dx = t.clientX - touchStart.x;
+      const dy = t.clientY - touchStart.y;
+      const dt = Date.now() - touchStart.t;
+
+      // If movement is decisively horizontal AND fast → it's a page swipe;
+      // suppress the in-progress word selection.
+      const isFastHoriz = Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.7 && dt < 350;
+      if (isFastHoriz) {
+        if (didDrag) clearSel();
+        dragging = false;
+        return;
+      }
+
+      if (!dragging) return;
       const el = document.elementFromPoint(t.clientX, t.clientY);
       const w = getWordEl(el);
       if (!w) return;
@@ -256,35 +384,50 @@
         if (didDrag) { e.preventDefault(); selectRange(dragStartIdx, dragLastIdx); }
       }
     }, { passive: false });
-    root.addEventListener('touchend', () => {
-      if (!dragging) return;
-      dragging = false;
-      if (didDrag) {
+
+    root.addEventListener('touchend', (e) => {
+      const ts = touchStart; touchStart = null;
+      const wasDragging = dragging; dragging = false;
+
+      if (!ts) return;
+      const ct = e.changedTouches && e.changedTouches[0];
+      if (!ct) return;
+      const dx = ct.clientX - ts.x;
+      const dy = ct.clientY - ts.y;
+      const dt = Date.now() - ts.t;
+
+      // Page swipe: fast, horizontal, not too vertical, > 60 px.
+      const isSwipe = Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500;
+      if (isSwipe) {
+        if (didDrag) clearSel();
+        if (dx < 0) goPage(+1);
+        else        goPage(-1);
+        return;
+      }
+
+      // Otherwise it was either a drag-select or a tap.
+      if (wasDragging && didDrag) {
         const phrase = getSelectedText();
         if (phrase) showPhrase(phrase);
       }
     });
 
-    // Click on a single word.
+    // ---------- click: single word ----------
     root.addEventListener('click', async (e) => {
-      // Ignore clicks that ended a drag.
       if (didDrag) { didDrag = false; return; }
       const w = getWordEl(e.target);
       if (!w) return;
-      // If a phrase selection is active and user clicks elsewhere, clear it.
       if (root.querySelectorAll('.w.sel').length > 0) clearSel();
-      // mark active
       root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
       w.classList.add('active');
 
       const word = w.dataset.word;
-      // 1) advance state in DB
       const upd = await DB.clickWord(word);
-      WORD_STATES[word.toLowerCase()] = upd;
-      ['s1','s2','s3','s4','s5'].forEach(c => w.classList.remove(c));
-      if (upd && upd.state) w.classList.add('s' + Math.min(upd.state, 5));
+      WORD_STATES[word.toLowerCase()] = { state: upd.state, last: upd.last };
+      ['s1','s2','s3','s4','s5','sx'].forEach(c => w.classList.remove(c));
+      const cls = wordClass(upd.state);
+      if (cls) w.classList.add(cls);
 
-      // 2) show translation panel + speak word
       showWord(word, upd);
     });
   }
@@ -292,50 +435,154 @@
   // ============== translation panel ==============
   function isMobile() { return window.matchMedia('(max-width: 1023px)').matches; }
 
-  async function showWord(word, stateInfo) {
-    const set = (idDesktop, idMobile, val) => {
-      const a = document.getElementById(idDesktop); if (a) a.innerHTML = val;
-      const b = document.getElementById(idMobile);  if (b) b.innerHTML = val;
+  function setBoth(idDesktop, idMobile, html) {
+    const a = document.getElementById(idDesktop); if (a) a.innerHTML = html;
+    const b = document.getElementById(idMobile);  if (b) b.innerHTML = html;
+  }
+
+  function renderStateBadge(badgeEl, state) {
+    if (!badgeEl) return;
+    if (state === undefined || state === null || state === 0) {
+      badgeEl.style.display = 'none';
+      return;
+    }
+    badgeEl.style.display = '';
+    badgeEl.classList.remove('s1','s2','s3','s4','s5','sx');
+    const cls = badgeClass(state);
+    if (cls) badgeEl.classList.add(cls);
+    const k = String(state);
+    badgeEl.textContent = STATE_GLYPH[k] || '·';
+    badgeEl.setAttribute('aria-label', '단어 상태: ' + (STATE_LABEL[state] || ''));
+  }
+
+  function closeStateMenu() {
+    document.querySelectorAll('.state-menu').forEach(m => m.remove());
+  }
+  function closeTxPanel() {
+    document.getElementById('tx-empty').style.display = '';
+    document.getElementById('tx-card').style.display = 'none';
+    document.getElementById('tx-sheet').classList.remove('open');
+    closeStateMenu();
+    CURRENT_WORD = null;
+  }
+
+  function buildStateMenu(currentState, onPick) {
+    const menu = document.createElement('div');
+    menu.className = 'state-menu';
+    const items = [
+      { state: -1, label: '무시', glyph: '🗑' },
+      { state:  1, label: '새로운 단어',      glyph: '1' },
+      { state:  2, label: '어디선가 본 단어',  glyph: '2' },
+      { state:  3, label: '익숙한 단어',      glyph: '3' },
+      { state:  4, label: '배운 단어',        glyph: '4' },
+      { state:  5, label: '완전히 아는 단어',  glyph: '✓' },
+    ];
+    for (const it of items) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'state-menu-item';
+      if (it.state === currentState) b.classList.add('active');
+      b.dataset.state = String(it.state);
+      b.innerHTML = `<span class="icon">${it.glyph}</span><span>${it.label}</span>`;
+      b.addEventListener('click', (ev) => { ev.stopPropagation(); onPick(it.state); });
+      menu.appendChild(b);
+    }
+    return menu;
+  }
+
+  function attachStateMenuTo(badgeEl, currentState) {
+    closeStateMenu();
+    if (!badgeEl) return;
+    const menu = buildStateMenu(currentState, async (newState) => {
+      if (!CURRENT_WORD) return;
+      const upd = await DB.setWordState(CURRENT_WORD, newState);
+      WORD_STATES[CURRENT_WORD] = { state: upd.state, last: upd.last };
+      // Update the word in the page.
+      document.querySelectorAll('.w').forEach(el => {
+        if (!el.dataset.word) return;
+        if (el.dataset.word.toLowerCase() === CURRENT_WORD) {
+          ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
+          const cls = wordClass(upd.state);
+          if (cls) el.classList.add(cls);
+        }
+      });
+      // Update badges in both desktop + mobile cards.
+      renderStateBadge(document.getElementById('tx-state'),   upd.state);
+      renderStateBadge(document.getElementById('tx-state-m'), upd.state);
+      // Update meta line.
+      const metaHtml = `<span>상태: <b>${STATE_LABEL[upd.state] || ''}</b></span>`;
+      setBoth('tx-meta', 'tx-meta-m', metaHtml);
+      closeStateMenu();
+    });
+    badgeEl.parentElement.appendChild(menu);
+  }
+
+  function bindBadgeClick(idBadge, getState) {
+    const b = document.getElementById(idBadge);
+    if (!b) return;
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      // toggle
+      const open = document.querySelector('.state-menu');
+      if (open) { closeStateMenu(); return; }
+      attachStateMenuTo(b, getState());
     };
+  }
+
+  async function showWord(word, info) {
+    closeStateMenu();
+    CURRENT_WORD = word.toLowerCase();
+    const stateNow = (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0;
 
     document.getElementById('tx-empty').style.display = 'none';
     document.getElementById('tx-card').style.display = '';
     document.getElementById('tx-sheet').classList.add('open');
 
-    set('tx-word-text', 'tx-word-text-m', escapeHtml(word));
-    set('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
-    const stateLabel = ['새 단어','오늘 학습','학습 중 (1)','학습 중 (2)','학습 중 (3)','마스터'];
-    const sIdx = stateInfo && stateInfo.state ? Math.min(stateInfo.state, 5) : 0;
-    set('tx-meta', 'tx-meta-m', `<span>상태: <b>${stateLabel[sIdx]}</b></span>`);
+    setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(word));
+    setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
+    setBoth('tx-meta',  'tx-meta-m',  '');
 
-    // bind speakers
+    // First click ever: show the meaning only — no state badge.
+    // Otherwise show the state badge so the user can re-classify.
+    if (info && info.isFirstClick) {
+      renderStateBadge(document.getElementById('tx-state'),   0);
+      renderStateBadge(document.getElementById('tx-state-m'), 0);
+    } else {
+      renderStateBadge(document.getElementById('tx-state'),   stateNow);
+      renderStateBadge(document.getElementById('tx-state-m'), stateNow);
+      const metaHtml = `<span>상태: <b>${STATE_LABEL[stateNow] || ''}</b></span>`;
+      setBoth('tx-meta', 'tx-meta-m', metaHtml);
+    }
+
+    bindBadgeClick('tx-state',   () => (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0);
+    bindBadgeClick('tx-state-m', () => (WORD_STATES[CURRENT_WORD] && WORD_STATES[CURRENT_WORD].state) || 0);
+
     const sp1 = document.getElementById('tx-speak');
     const sp2 = document.getElementById('tx-speak-m');
     [sp1, sp2].forEach(b => b && (b.onclick = () => TTS.speak(word)));
-
-    // auto-speak the word once on click
     TTS.speak(word);
 
     try {
       const ko = await Translate.translate(word);
-      set('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+      setBoth('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
     } catch (err) {
-      set('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+      setBoth('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
     }
   }
 
   async function showPhrase(phrase) {
-    const set = (idDesktop, idMobile, val) => {
-      const a = document.getElementById(idDesktop); if (a) a.innerHTML = val;
-      const b = document.getElementById(idMobile);  if (b) b.innerHTML = val;
-    };
+    closeStateMenu();
+    CURRENT_WORD = null;
     document.getElementById('tx-empty').style.display = 'none';
     document.getElementById('tx-card').style.display = '';
     document.getElementById('tx-sheet').classList.add('open');
 
-    set('tx-word-text', 'tx-word-text-m', escapeHtml(phrase));
-    set('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
-    set('tx-meta', 'tx-meta-m', `<span class="muted">선택한 구문</span>`);
+    setBoth('tx-word-text', 'tx-word-text-m', escapeHtml(phrase));
+    setBoth('tx-trans', 'tx-trans-m', '<span class="tx-loading">번역 중...</span>');
+    setBoth('tx-meta', 'tx-meta-m', `<span class="muted">선택한 구문</span>`);
+    // Phrase has no per-word state — hide badges.
+    renderStateBadge(document.getElementById('tx-state'),   0);
+    renderStateBadge(document.getElementById('tx-state-m'), 0);
 
     const sp1 = document.getElementById('tx-speak');
     const sp2 = document.getElementById('tx-speak-m');
@@ -343,27 +590,29 @@
 
     try {
       const ko = await Translate.translate(phrase);
-      set('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
+      setBoth('tx-trans', 'tx-trans-m', `<div class="ko">${escapeHtml(ko)}</div>`);
     } catch (err) {
-      set('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
+      setBoth('tx-trans', 'tx-trans-m', '<span class="muted">번역을 불러오지 못했습니다.</span>');
     }
   }
 
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
 
-  // Tap outside the sheet to close (mobile).
+  // Tap outside to close menu / sheet.
   document.addEventListener('click', (e) => {
+    if (e.target.closest('.state-menu')) return;
+    if (e.target.closest('.tx-state-badge')) return;
+    closeStateMenu();
     const sheet = document.getElementById('tx-sheet');
     if (!sheet.classList.contains('open')) return;
     if (sheet.contains(e.target)) return;
-    if (e.target.closest('.lesson-text')) return;  // word click manages it
+    if (e.target.closest('.lesson-text')) return;
     if (e.target.closest('.playbar')) return;
+    if (e.target.closest('.lesson-progress')) return;
     sheet.classList.remove('open');
   });
 
   // ============== audio playback ==============
-  // If there's an audio_url, use HTMLAudioElement.
-  // Otherwise, synthesize the lesson body with TTS.
   let audioEl = null;
   let ttsPlaying = false;
   let ttsStartTime = 0;
@@ -390,43 +639,31 @@
     if (LESSON && LESSON.audio_url) {
       audioEl = new Audio(LESSON.audio_url);
       audioEl.preload = 'metadata';
-      audioEl.addEventListener('loadedmetadata', () => {
-        tot.textContent = fmt(audioEl.duration);
-      });
+      audioEl.addEventListener('loadedmetadata', () => { tot.textContent = fmt(audioEl.duration); });
       audioEl.addEventListener('timeupdate', () => {
         cur.textContent = fmt(audioEl.currentTime);
         const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
         fill.style.width = pct + '%';
       });
-      audioEl.addEventListener('ended', () => {
-        playBtn.textContent = '▶';
-      });
+      audioEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
 
       playBtn.addEventListener('click', () => {
         if (audioEl.paused) { audioEl.play(); playBtn.textContent = '⏸'; }
         else { audioEl.pause(); playBtn.textContent = '▶'; }
       });
-
       prog.addEventListener('click', (e) => {
         const r = prog.getBoundingClientRect();
         const pct = (e.clientX - r.left) / r.width;
         if (audioEl.duration) audioEl.currentTime = pct * audioEl.duration;
       });
-
       speedBtn.addEventListener('click', () => {
         const i = (speeds.indexOf(speed) + 1) % speeds.length;
-        speed = speeds[i];
-        speedBtn.textContent = speed + '×';
+        speed = speeds[i]; speedBtn.textContent = speed + '×';
         audioEl.playbackRate = speed;
       });
-
     } else {
-      // TTS-driven playback. We estimate the duration by character count.
       const text = (LESSON.body || '').trim();
-      // ~14 chars/sec at rate 1 for English speech. Recompute when speed changes.
-      function estimateDuration() {
-        return Math.max(2, text.length / (14 * speed));
-      }
+      function estimateDuration() { return Math.max(2, text.length / (14 * speed)); }
       ttsDuration = estimateDuration();
       tot.textContent = fmt(ttsDuration);
 
@@ -438,7 +675,6 @@
         fill.style.width = pct + '%';
         if (elapsed < ttsDuration) ttsTimer = setTimeout(tick, 250);
       }
-
       function startTTS() {
         ttsPlaying = true;
         ttsStartTime = Date.now();
@@ -457,20 +693,14 @@
         tick();
       }
       function stopTTS() {
-        ttsPlaying = false;
-        TTS.stop();
+        ttsPlaying = false; TTS.stop();
         clearTimeout(ttsTimer);
         playBtn.textContent = '▶';
       }
-
-      playBtn.addEventListener('click', () => {
-        if (!ttsPlaying) startTTS();
-        else stopTTS();
-      });
+      playBtn.addEventListener('click', () => { if (!ttsPlaying) startTTS(); else stopTTS(); });
       speedBtn.addEventListener('click', () => {
         const i = (speeds.indexOf(speed) + 1) % speeds.length;
-        speed = speeds[i];
-        speedBtn.textContent = speed + '×';
+        speed = speeds[i]; speedBtn.textContent = speed + '×';
         if (ttsPlaying) { stopTTS(); startTTS(); }
         else { ttsDuration = estimateDuration(); tot.textContent = fmt(ttsDuration); }
       });

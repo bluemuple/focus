@@ -18,13 +18,16 @@
   --blue: #4a72d6;
   --blue-ink: #2a4ea8;
 
-  /* word states */
-  --word-new:    #d8edd8;  /* light green - never seen */
-  --word-seen:   #ffd9b3;  /* light orange - clicked once today */
-  --word-known1: #b8e0b8;  /* light green - known (clicked next day) */
-  --word-known2: #d8c8f0;  /* light purple */
-  --word-known3: #ffc8de;  /* light pink */
-  --word-known4: #d8d8d8;  /* light grey - mastered */
+  /* word states (LingQ-inspired)
+     state 0 = sky blue: not yet advanced (default for unseen + 1st click)
+     state 1 = darkest green: 새로운 단어 (clicked twice)
+     state 2..4 = progressively lighter green
+     state 5 = no highlight: 완전히 아는 단어 / 무시(-1) shares this look */
+  --word-new: #c9def0;  /* sky blue, state 0 */
+  --word-1:   #8ac68c;  /* darkest green */
+  --word-2:   #b1d8b1;
+  --word-3:   #cee5cb;
+  --word-4:   #e3efe0;  /* very pale green */
 
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
   --shadow:    0 2px 8px rgba(0,0,0,0.06);
@@ -54,16 +57,36 @@ a { color: inherit; }
   display: flex; align-items: center; gap: 14px;
 }
 .topbar .brand {
-  font-weight: 800; font-size: 18px; color: var(--ink);
-  display: flex; align-items: center; gap: 8px;
-  text-decoration: none;
+  font-weight: 900; font-size: 20px; color: var(--accent-ink);
+  background: var(--accent-soft); border-radius: 999px;
+  padding: 5px 14px;
+  letter-spacing: -0.5px;
+  text-decoration: none; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px;
 }
-.topbar .brand .flag { font-size: 22px; }
+.topbar .brand:hover { background: #d8ebe1; }
 .topbar .spacer { flex: 1; }
+/* Bidoro return button — small "← 비도로" link */
+.topbar .bidoro-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 700;
+  color: var(--muted); text-decoration: none;
+  padding: 6px 12px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff;
+  white-space: nowrap;
+}
+.topbar .bidoro-btn:hover { background: #f1f3f5; color: var(--ink); }
+.topbar .bidoro-btn .arrow { font-size: 14px; }
 .topbar .acct {
   display: flex; align-items: center; gap: 8px;
   background: var(--accent-soft); border-radius: 999px;
   padding: 6px 14px 6px 6px; font-weight: 700; font-size: 14px;
+  max-width: 200px;
+  white-space: nowrap;
+}
+.topbar .acct #acct-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
 }
 .topbar .acct .avatar {
   width: 28px; height: 28px; border-radius: 999px;
@@ -87,6 +110,7 @@ a { color: inherit; }
   padding: 9px 16px; border-radius: 10px; border: 1px solid var(--line);
   background: #fff; color: var(--ink); font-weight: 700; font-size: 14px;
   text-decoration: none; transition: transform .05s, box-shadow .15s, background .15s;
+  white-space: nowrap;
 }
 .btn:hover { box-shadow: var(--shadow); }
 .btn:active { transform: translateY(1px); }
@@ -282,15 +306,16 @@ a { color: inherit; }
 .w {
   display: inline-block; padding: 2px 6px; margin: 0 1px;
   border-radius: 6px; cursor: pointer;
-  background: var(--word-new);
-  transition: background .12s, box-shadow .12s, transform .05s;
+  background: var(--word-new);            /* state 0: sky blue */
+  transition: background .25s, box-shadow .12s, transform .05s;
 }
 .w:hover { box-shadow: 0 0 0 2px rgba(0,0,0,0.06) inset; }
-.w.s1 { background: var(--word-seen); }
-.w.s2 { background: var(--word-known1); }
-.w.s3 { background: var(--word-known2); }
-.w.s4 { background: var(--word-known3); }
-.w.s5 { background: var(--word-known4); }
+.w.s1 { background: var(--word-1); }      /* 새로운 단어 (clicked ≥ 2) */
+.w.s2 { background: var(--word-2); }      /* 어디선가 본 단어 */
+.w.s3 { background: var(--word-3); }      /* 익숙한 단어 */
+.w.s4 { background: var(--word-4); }      /* 배운 단어 */
+.w.s5 { background: transparent; }        /* 완전히 아는 단어 */
+.w.sx { background: transparent; }        /* 무시 */
 .w.active { box-shadow: 0 0 0 2px var(--ink) inset; }
 /* drag selection - grey outlined rectangle */
 .w.sel { outline: 1.5px solid #888; outline-offset: 1px; background: rgba(0,0,0,0.04) !important; }
@@ -305,7 +330,7 @@ a { color: inherit; }
 }
 @media (max-width: 1023px) { .lesson-side { display: none; } }
 
-.tx-card { }
+.tx-card { position: relative; }
 .tx-word {
   display: flex; align-items: center; gap: 8px;
   font-size: 22px; font-weight: 700; margin-bottom: 6px;
@@ -313,13 +338,106 @@ a { color: inherit; }
 .tx-word .speak {
   border: none; background: #f1f3f5; width: 32px; height: 32px;
   border-radius: 999px; display: grid; place-items: center; font-size: 16px;
+  flex-shrink: 0;
 }
 .tx-word .speak:hover { background: #e7eaee; }
+.tx-word .word-text { flex: 1; min-width: 0; overflow-wrap: break-word; }
 .tx-trans { font-size: 17px; color: var(--ink); margin-top: 8px; }
 .tx-trans .ko { font-size: 18px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .tx-meta { color: var(--muted); font-size: 13px; margin-top: 10px; }
 .tx-empty { color: var(--muted); text-align: center; padding-top: 20px; }
 .tx-loading { color: var(--muted); font-style: italic; }
+
+/* ===== state badge: small round button on the right of the word row ===== */
+.tx-state-badge {
+  width: 36px; height: 36px; border-radius: 999px;
+  border: 1.5px solid var(--line); background: #fff;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 14px; color: var(--ink);
+  cursor: pointer; flex-shrink: 0;
+  transition: transform .08s, box-shadow .15s;
+}
+.tx-state-badge:hover { box-shadow: var(--shadow); }
+.tx-state-badge:active { transform: scale(0.95); }
+.tx-state-badge.s1 { background: var(--word-1); border-color: var(--word-1); }
+.tx-state-badge.s2 { background: var(--word-2); border-color: var(--word-2); }
+.tx-state-badge.s3 { background: var(--word-3); border-color: var(--word-3); }
+.tx-state-badge.s4 { background: var(--word-4); border-color: var(--word-4); }
+.tx-state-badge.s5 { background: #fff; border-color: var(--ink); }
+.tx-state-badge.sx { background: #f1f3f5; color: var(--muted); }
+
+/* ===== state picker menu ===== */
+.state-menu {
+  position: absolute; top: 100%; right: 0; margin-top: 8px;
+  background: #fff; border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--shadow-lg); z-index: 60;
+  min-width: 240px; padding: 6px;
+}
+.state-menu-item {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 10px 12px; border: none; background: transparent;
+  text-align: left; border-radius: 9px; font-size: 14px; cursor: pointer;
+  font-weight: 600; color: var(--ink);
+}
+.state-menu-item:hover { background: #f4f6f8; }
+.state-menu-item.active { background: var(--accent-soft); }
+.state-menu-item .icon {
+  width: 30px; height: 30px; border-radius: 999px;
+  border: 1.5px solid var(--line); background: #fff;
+  display: grid; place-items: center;
+  font-weight: 800; font-size: 13px; flex-shrink: 0;
+}
+.state-menu-item[data-state="-1"] .icon { background: #fff; color: var(--muted); border-style: dashed; }
+.state-menu-item[data-state="1"]  .icon { background: var(--word-1); border-color: var(--word-1); }
+.state-menu-item[data-state="2"]  .icon { background: var(--word-2); border-color: var(--word-2); }
+.state-menu-item[data-state="3"]  .icon { background: var(--word-3); border-color: var(--word-3); }
+.state-menu-item[data-state="4"]  .icon { background: var(--word-4); border-color: var(--word-4); }
+.state-menu-item[data-state="5"]  .icon { background: #fff; color: var(--ink); border-color: var(--ink); }
+/* mobile sheet variant: anchor menu inside the sheet */
+.tx-sheet .state-menu {
+  position: absolute; top: auto; right: 16px; margin-top: 0;
+  bottom: calc(100% - 8px); left: auto;
+}
+
+/* ===== lesson page progress (top, mobile-style scrubber) ===== */
+.lesson-progress {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 14px;
+}
+.lesson-progress .lp-track {
+  position: relative; flex: 1; height: 4px; background: #eef0f3;
+  border-radius: 999px; overflow: visible;
+}
+.lesson-progress .lp-fill {
+  position: absolute; left: 0; top: 0; height: 100%;
+  background: var(--accent); border-radius: 999px;
+}
+.lesson-progress .lp-dot {
+  position: absolute; top: 50%; transform: translate(-50%, -50%);
+  width: 12px; height: 12px; border-radius: 999px;
+  background: var(--accent); box-shadow: 0 0 0 4px rgba(58,167,118,0.18);
+}
+.lesson-progress .lp-pages {
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+}
+.lesson-progress .lp-btn {
+  border: none; background: transparent; width: 32px; height: 32px;
+  border-radius: 8px; display: grid; place-items: center;
+  font-size: 16px; color: var(--muted); cursor: pointer;
+}
+.lesson-progress .lp-btn:hover { background: #f1f3f5; color: var(--ink); }
+.lesson-progress .lp-btn[disabled] { opacity: .35; cursor: not-allowed; }
+
+/* swipe transition for the page body */
+.lesson-text { will-change: transform, opacity; }
+.lesson-text.swipe-out-left  { animation: swipeOutLeft  .22s ease forwards; }
+.lesson-text.swipe-out-right { animation: swipeOutRight .22s ease forwards; }
+.lesson-text.swipe-in-right  { animation: swipeInRight  .22s ease backwards; }
+.lesson-text.swipe-in-left   { animation: swipeInLeft   .22s ease backwards; }
+@keyframes swipeOutLeft  { to { transform: translateX(-30px); opacity: 0; } }
+@keyframes swipeOutRight { to { transform: translateX(30px);  opacity: 0; } }
+@keyframes swipeInRight  { from { transform: translateX(30px);  opacity: 0; } }
+@keyframes swipeInLeft   { from { transform: translateX(-30px); opacity: 0; } }
 
 /* mobile: bottom sheet for translation */
 .tx-sheet {
@@ -376,11 +494,29 @@ a { color: inherit; }
 
 /* ============== mobile tweaks ============== */
 @media (max-width: 600px) {
-  .topbar { padding: 8px 14px; gap: 10px; }
-  .topbar .brand { font-size: 16px; }
+  .topbar {
+    padding: 8px 12px; gap: 6px;
+    flex-wrap: nowrap;       /* never wrap to a second line */
+  }
+  .topbar .brand { font-size: 16px; padding: 4px 10px; }
+  .topbar .acct {
+    font-size: 12px; padding: 4px 10px 4px 4px; gap: 6px;
+    max-width: 110px;
+  }
+  .topbar .acct .avatar { width: 24px; height: 24px; font-size: 11px; }
+  .topbar .bidoro-btn {
+    padding: 5px 8px; font-size: 12px;
+  }
+  .topbar .bidoro-btn .label { display: none; }   /* mobile: arrow only */
+  .topbar .btn { padding: 6px 10px; font-size: 12px; }
   .container { padding: 14px; }
   .lesson-text { font-size: 17px; line-height: 2.3; }
   .lesson-main { padding: 16px 14px 100px; }
   .modal { padding: 22px 18px 18px; }
   .fab { right: 16px; bottom: 78px; width: 52px; height: 52px; }
+}
+@media (max-width: 380px) {
+  /* Very narrow phones: shrink the account chip further so logout still fits. */
+  .topbar .acct { max-width: 80px; }
+  .topbar .acct #acct-name { font-size: 11px; }
 }

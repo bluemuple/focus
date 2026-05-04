@@ -137,19 +137,20 @@
   }
 
   // ---------- WORD STATES ----------
-  // State semantics:
-  //   0 = new (light green)            - never clicked
-  //   1 = seen (light orange)          - clicked at least once today's session-start
-  //   2 = known1 (light green-known)
-  //   3 = known2 (light purple)
-  //   4 = known3 (light pink)
-  //   5 = mastered (light grey)
+  // State semantics (user-controlled, LingQ-style):
+  //   -1 = ignored ("무시")                — no highlight
+  //    0 = new, never advanced            — sky-blue highlight (default)
+  //    1 = 새로운 단어                      — darkest green
+  //    2 = 어디선가 본 단어                  — medium green
+  //    3 = 익숙한 단어                      — light green
+  //    4 = 배운 단어                        — pale green
+  //    5 = 완전히 아는 단어                  — no highlight
   //
-  // On click:
-  //   - If never seen → state 1.
-  //   - Else if last_clicked_date === today → no level change.
-  //   - Else (clicked on a different day) → state = min(state+1, 5).
-  //   Last_clicked_date is always updated to today.
+  // Click flow:
+  //   1st click on an unseen word → row inserted at state 0 (still sky blue);
+  //                                  caller shows the meaning only, no badge.
+  //   2nd click on a state-0 word → auto-advance to state 1, badge appears.
+  //   click on a state ≥ 1 word   → no auto change. User picks via the menu.
   async function loadWordStates() {
     if (await useCloud()) {
       const u = await currentUser();
@@ -161,35 +162,58 @@
     }
     return ls.get('word_states', {});
   }
+
   async function clickWord(word) {
+    word = (word || '').toLowerCase();
+    if (!word) return null;
+    const t = today();
+
+    function decide(prevState) {
+      if (prevState === undefined || prevState === null) {
+        return { state: 0, isFirstClick: true,  justAdvanced: false };
+      }
+      if (prevState === 0) {
+        return { state: 1, isFirstClick: false, justAdvanced: true  };
+      }
+      return { state: prevState, isFirstClick: false, justAdvanced: false };
+    }
+
+    if (await useCloud()) {
+      const u = await currentUser();
+      const { data: existing } = await sb.from('word_states')
+        .select('*').eq('user_id', u.id).eq('word', word).maybeSingle();
+      const d = decide(existing ? existing.state : null);
+      const row = { user_id: u.id, word, state: d.state, last_clicked_date: t };
+      const { error } = await sb.from('word_states')
+        .upsert(row, { onConflict: 'user_id,word' });
+      if (error) console.error(error);
+      return { ...d, last: t };
+    }
+
+    const map = ls.get('word_states', {});
+    const cur = map[word];
+    const d = decide(cur ? cur.state : null);
+    map[word] = { state: d.state, last: t };
+    ls.set('word_states', map);
+    return { ...d, last: t };
+  }
+
+  // Explicitly set the state from the picker menu. newState ∈ {-1, 1, 2, 3, 4, 5}.
+  async function setWordState(word, newState) {
     word = (word || '').toLowerCase();
     if (!word) return null;
     const t = today();
 
     if (await useCloud()) {
       const u = await currentUser();
-      const { data: existing } = await sb.from('word_states')
-        .select('*').eq('user_id', u.id).eq('word', word).maybeSingle();
-      let state = 1;
-      if (existing) {
-        state = (existing.last_clicked_date === t)
-          ? existing.state
-          : Math.min((existing.state || 0) + 1, 5);
-      }
-      const row = { user_id: u.id, word, state, last_clicked_date: t };
+      const row = { user_id: u.id, word, state: newState, last_clicked_date: t };
       const { error } = await sb.from('word_states')
         .upsert(row, { onConflict: 'user_id,word' });
       if (error) console.error(error);
-      return { state, last: t };
+      return { state: newState, last: t };
     }
-
     const map = ls.get('word_states', {});
-    const cur = map[word];
-    let state = 1;
-    if (cur) {
-      state = (cur.last === t) ? cur.state : Math.min((cur.state || 0) + 1, 5);
-    }
-    map[word] = { state, last: t };
+    map[word] = { state: newState, last: t };
     ls.set('word_states', map);
     return map[word];
   }
@@ -209,7 +233,7 @@
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
     listLessons, getLesson, addLesson, deleteLesson,
-    loadWordStates, clickWord,
+    loadWordStates, clickWord, setWordState,
     useCloud,
   };
 })();
