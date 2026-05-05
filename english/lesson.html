@@ -195,6 +195,16 @@
   let SENTENCE_MAP = [];     // [{ text, words: [HTMLElement] }]
   let CURRENT_SENTENCE = -1;
 
+  // Per-page character counts. Used by audio-file playback to map the
+  // current playback time to a page index (so we can auto-flip pages while
+  // the audio keeps playing).
+  let PAGE_CHARS  = [];
+  let TOTAL_CHARS = 0;
+  function computePageCharCounts() {
+    PAGE_CHARS = (PAGES || []).map(p => (p || []).join(' ').length);
+    TOTAL_CHARS = PAGE_CHARS.reduce((s, x) => s + x, 0);
+  }
+
   async function renderLesson() {
     if (!lessonId) {
       document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
@@ -215,6 +225,7 @@
     sizeLessonMain();
     await new Promise(r => requestAnimationFrame(r));
     PAGES = paginateByHeight(LESSON.body || '');
+    computePageCharCounts();
     pageIdx = 0;
     renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
     bindWordInteractions(document.getElementById('lesson-text'));
@@ -307,6 +318,7 @@
     if (!LESSON) return;
     requestAnimationFrame(() => {
       PAGES = paginateByHeight(LESSON.body || '');
+      computePageCharCounts();
       if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
       if (pageIdx < 0) pageIdx = 0;
       renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
@@ -620,6 +632,7 @@
       requestAnimationFrame(() => {
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');
+        computePageCharCounts();
         if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
         if (pageIdx < 0) pageIdx = 0;
         renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
@@ -1365,17 +1378,39 @@
         const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
         fill.style.width = pct + '%';
 
-        // Estimate which sentence on the current page is playing right now
-        // by mapping the audio's progress ratio to cumulative character count
-        // across SENTENCE_MAP. Imperfect (a real audio file may not split
-        // evenly by character) but good enough to highlight the line.
-        if (audioEl.duration && SENTENCE_MAP.length > 0) {
-          const ratio = audioEl.currentTime / audioEl.duration;
-          const totalChars = SENTENCE_MAP.reduce((s, x) => s + x.text.length, 0) || 1;
-          let cum = 0, idx = SENTENCE_MAP.length - 1;
+        // Skip page / sentence updates while the slide animation is running
+        // — the DOM is mid-swap and SENTENCE_MAP isn't valid for the new page yet.
+        if (animating) return;
+        if (!audioEl.duration || TOTAL_CHARS === 0 || !PAGE_CHARS.length) return;
+
+        // 1) Convert "where are we in the audio" into "how many chars into the
+        //    whole lesson" so we can find the matching page and sentence.
+        const ratio       = audioEl.currentTime / audioEl.duration;
+        const targetChars = ratio * TOTAL_CHARS;
+
+        let cum = 0;
+        let targetPage = PAGE_CHARS.length - 1;
+        for (let p = 0; p < PAGE_CHARS.length; p++) {
+          if (cum + PAGE_CHARS[p] > targetChars) { targetPage = p; break; }
+          cum += PAGE_CHARS[p];
+        }
+
+        // 2) If the audio has crossed into a different page, slide the page
+        //    one step in that direction. Audio keeps playing.
+        if (targetPage !== pageIdx) {
+          goPage(targetPage > pageIdx ? +1 : -1);
+          return;
+        }
+
+        // 3) Same page — underline the sentence the audio is currently on,
+        //    using the LOCAL position within this page.
+        if (SENTENCE_MAP.length > 0) {
+          const localChars  = targetChars - cum;
+          const sentTotal   = SENTENCE_MAP.reduce((s, x) => s + x.text.length, 0) || 1;
+          let scum = 0, idx = SENTENCE_MAP.length - 1;
           for (let i = 0; i < SENTENCE_MAP.length; i++) {
-            cum += SENTENCE_MAP[i].text.length;
-            if (cum / totalChars >= ratio) { idx = i; break; }
+            scum += SENTENCE_MAP[i].text.length;
+            if (scum >= localChars) { idx = i; break; }
           }
           if (idx !== CURRENT_SENTENCE) setCurrentSentence(idx);
         }
@@ -1414,10 +1449,10 @@
         if (elapsed < ttsDuration) ttsTimer = setTimeout(tick, 250);
       }
       // Sentence-by-sentence TTS so we can underline the current line as it
-      // is being read. Falls back to whole-page if the sentence map is empty.
+      // is being read. After the last sentence on the current page, auto-flip
+      // to the next page (with the slide animation) and keep going from its
+      // first sentence — playback continues uninterrupted across pages.
       async function startTTS() {
-        // Refresh sentence map in case the page just changed.
-        buildSentenceMap(document.getElementById('lesson-text'));
         ttsPlaying = true;
         ttsStartTime = Date.now();
         ttsDuration = estimateDuration();
@@ -1425,20 +1460,36 @@
         playBtn.textContent = '⏸';
         tick();
 
-        const list = SENTENCE_MAP.length
-          ? SENTENCE_MAP.map(s => s.text)
-          : [text];
-        for (let i = 0; i < list.length; i++) {
-          if (!ttsPlaying) break;
-          if (SENTENCE_MAP.length) setCurrentSentence(i);
-          // Wait for THIS sentence to finish before starting the next.
-          await new Promise(resolve => {
-            TTS.speak(list[i], {
-              rate: 0.9 * speed,
-              onend: resolve,
+        // Outer loop: advance through pages while the user hasn't paused.
+        while (ttsPlaying) {
+          // Always re-read SENTENCE_MAP at the start of each page so we
+          // pick up the freshly-rendered text (page may have just changed).
+          buildSentenceMap(document.getElementById('lesson-text'));
+          const list = SENTENCE_MAP.length
+            ? SENTENCE_MAP.map(s => s.text)
+            : [text];
+
+          for (let i = 0; i < list.length; i++) {
+            if (!ttsPlaying) break;
+            if (SENTENCE_MAP.length) setCurrentSentence(i);
+            await new Promise(resolve => {
+              TTS.speak(list[i], { rate: 0.9 * speed, onend: resolve });
             });
+          }
+          if (!ttsPlaying) break;
+
+          // Last page reached — finish.
+          if (pageIdx >= PAGES.length - 1) break;
+
+          // Otherwise, slide to the next page and resume on its sentence 0.
+          await new Promise(resolve => {
+            goPage(+1);
+            // Wait a hair longer than goPage's 300 ms slide so SENTENCE_MAP
+            // is rebuilt for the new page before we loop again.
+            setTimeout(resolve, 340);
           });
         }
+
         ttsPlaying = false;
         setCurrentSentence(-1);
         playBtn.textContent = '▶';

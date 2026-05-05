@@ -8706,9 +8706,18 @@ async function handleSignUp() {
   }
 }
 async function handleSignOut() {
-  await authSignOut();
+  // Always clear local UI state even if the Supabase signOut call hangs or
+  // errors (offline, expired session, etc.) — otherwise the user is stuck
+  // on a "signed-in" view that no longer reflects reality.
+  try {
+    await authSignOut();
+  } catch (e) {
+    console.warn('Sign out error:', e);
+  }
   updateAuthUI(null);
   setAuthStatus('Signed out');
+  const status2 = document.getElementById('auth-status2');
+  if (status2) { status2.textContent = 'Signed out'; status2.style.color = '#6b7280'; }
 }
 async function handleForceResync() {
   const el = document.getElementById('auth-status2');
@@ -8752,6 +8761,19 @@ if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
 if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
 const _authPushNowBtn = document.getElementById('auth-push-now');
 if (_authPushNowBtn) _authPushNowBtn.onclick = handleDeviceToCloud;
+
+/* Delegated backup — the Account panel gets relocated by the focus-page
+   layout IIFE later in the script, and a few interactions (collapsible
+   wire-up, layout reflow) have been observed to drop the direct .onclick
+   on the Sign out / sync buttons. A click-delegation on document is
+   immune to that since it matches by id at the click moment. */
+document.addEventListener('click', (ev) => {
+  const t = ev.target;
+  if (!t) return;
+  if (t.closest && t.closest('#auth-signout'))   { handleSignOut();      return; }
+  if (t.closest && t.closest('#auth-resync'))    { handleForceResync();  return; }
+  if (t.closest && t.closest('#auth-push-now'))  { handleDeviceToCloud();return; }
+});
 // Allow pressing Enter in either field to sign in
 [authEmailInput, authPasswordInput].forEach(el => {
   if (!el) return;
