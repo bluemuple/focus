@@ -107,18 +107,22 @@
       이어서 모드에서<br>단어를 선택하면<br>여기에 표시됩니다.
     </div>
     <div class="ls-card" id="ls-card" hidden>
-      <div class="ls-head">
-        <button class="speak" id="ls-speak" title="발음 듣기">🔊</button>
+      <div class="ls-card-head">
         <span class="ls-word" id="ls-word">—</span>
+        <span class="ls-pos-tags" id="ls-pos-tags"></span>
         <button class="wp-heart" id="ls-heart" title="퀴즈 카드에 추가" aria-pressed="false">♡</button>
-        <button class="tx-state-badge" id="ls-state" style="display:none" title="단어 상태 변경">·</button>
+        <button class="speak" id="ls-speak" title="발음 듣기">🔊</button>
       </div>
+      <div class="ls-section-label">한국어 뜻</div>
       <div class="ls-trans" id="ls-trans"><span class="tx-loading">번역 중...</span></div>
-      <ul class="wp-senses" id="ls-senses" hidden></ul>
-      <button class="ls-add" id="ls-add">
+      <div class="ls-section-label" id="ls-meanings-label" hidden>Popular Meanings</div>
+      <ul class="ls-senses" id="ls-senses" hidden></ul>
+      <button class="ls-add" id="ls-add" hidden>
         <img src="images/add.jpg" alt="" onerror="this.style.display='none';">
         <span>구문에 추가</span>
       </button>
+      <div class="ls-section-label">단계</div>
+      <div class="level-bar" id="ls-level"></div>
     </div>
   </aside>
   <!-- Floating toggle so the user can re-open the sidebar after closing it,
@@ -407,19 +411,18 @@
     empty.hidden = true;
 
     const isPhrase = /\s/.test(text);
+    const lower = text.toLowerCase();
     document.getElementById('ls-word').textContent = text;
 
     const sp = document.getElementById('ls-speak');
     if (sp) sp.onclick = () => TTS.speak(text);
     TTS.speak(text);
 
-    // Heart + state badge: only meaningful for a single word.
+    // Heart: only meaningful for a single word.
     const heart = document.getElementById('ls-heart');
-    const stateBadge = document.getElementById('ls-state');
     if (heart) {
       heart.style.display = isPhrase ? 'none' : '';
       if (!isPhrase) {
-        const lower = text.toLowerCase();
         const refresh = () => {
           const on = DB.isHearted(lower);
           heart.classList.toggle('on', on);
@@ -429,29 +432,33 @@
         refresh();
       }
     }
-    if (stateBadge) {
-      if (isPhrase) {
-        stateBadge.style.display = 'none';
-      } else {
-        const stateNow = (WORD_STATES[text.toLowerCase()] && WORD_STATES[text.toLowerCase()].state) || 0;
-        renderStateBadge(stateBadge, stateNow);
-      }
+
+    // Level-picker bar at the bottom of the sidebar — same component the
+    // quiz-feedback card uses. Phrases skip this (state is per-word).
+    const levelHost = document.getElementById('ls-level');
+    if (levelHost) {
+      if (isPhrase) levelHost.innerHTML = '';
+      else mountLevelBar(levelHost, text);
     }
 
-    // Add button: only for phrases (multi-word selections).
+    // Add button: only for phrases.
     const addBtn = document.getElementById('ls-add');
     if (addBtn) {
-      addBtn.style.display = isPhrase ? '' : 'none';
+      addBtn.hidden = !isPhrase;
       addBtn.classList.remove('added');
       const span = addBtn.querySelector('span');
       if (span) span.textContent = '구문에 추가';
     }
 
     // Translation + senses (lazy-fill).
-    const transEl  = document.getElementById('ls-trans');
-    const sensesEl = document.getElementById('ls-senses');
-    if (transEl)  transEl.innerHTML  = '<span class="tx-loading">번역 중...</span>';
-    if (sensesEl) { sensesEl.innerHTML = ''; sensesEl.hidden = true; }
+    const transEl    = document.getElementById('ls-trans');
+    const sensesEl   = document.getElementById('ls-senses');
+    const sensesLab  = document.getElementById('ls-meanings-label');
+    const posTagsEl  = document.getElementById('ls-pos-tags');
+    if (transEl)   transEl.innerHTML   = '<span class="tx-loading">번역 중...</span>';
+    if (sensesEl)  { sensesEl.innerHTML = ''; sensesEl.hidden = true; }
+    if (sensesLab) sensesLab.hidden = true;
+    if (posTagsEl) posTagsEl.innerHTML = '';
     SIDEBAR_PHRASE = { text, ko: '' };
 
     try {
@@ -464,20 +471,40 @@
 
     if (!isPhrase && Translate.lookupSenses && sensesEl) {
       Translate.lookupSenses(text).then(senses => {
-        if (!senses || senses.length < 2) return;
+        if (!senses || senses.length < 1) return;
+        // Part-of-speech tags rendered next to the word (Noun / Verb chips).
+        const posSet = new Set();
         const byPos = {};
         for (const s of senses) {
-          const k = s.pos || '';
+          const k = (s.pos || '').trim();
+          if (k) posSet.add(k);
           (byPos[k] = byPos[k] || []).push(s.ko);
         }
-        sensesEl.innerHTML = '';
-        for (const [pos, kos] of Object.entries(byPos)) {
-          const li = document.createElement('li');
-          li.innerHTML = (pos ? `<span class="pos">${escapeHtml(pos)}</span> ` : '') +
-                         escapeHtml(kos.slice(0, 6).join(', '));
-          sensesEl.appendChild(li);
+        if (posTagsEl) {
+          for (const p of posSet) {
+            const tag = document.createElement('span');
+            tag.className = 'ls-pos-tag';
+            tag.textContent = p;
+            posTagsEl.appendChild(tag);
+          }
         }
-        sensesEl.hidden = false;
+        // "Popular Meanings" — one row per Korean meaning, with a + button
+        // (shown for visual parity with the reference; clicking is a noop
+        // for now since we always use the primary translation).
+        if (senses.length >= 2 || (senses.length === 1 && senses[0].ko !== (SIDEBAR_PHRASE && SIDEBAR_PHRASE.ko))) {
+          sensesEl.innerHTML = '';
+          for (const [pos, kos] of Object.entries(byPos)) {
+            for (const ko of kos.slice(0, 6)) {
+              const li = document.createElement('li');
+              li.innerHTML =
+                `<span class="ls-sense-ko">${escapeHtml(ko)}</span>` +
+                (pos ? ` <span class="ls-sense-pos">${escapeHtml(pos)}</span>` : '');
+              sensesEl.appendChild(li);
+            }
+          }
+          sensesEl.hidden = false;
+          if (sensesLab) sensesLab.hidden = false;
+        }
       }).catch(()=>{});
     }
   }
@@ -541,41 +568,47 @@
   }
 
   function renderPracticeMenu() {
+    // Layout follows practice.jpeg: a small white card anchored to the lower
+    // right of the screen (NOT centered), with a list of menu items each
+    // showing an icon and a label + count. Header is borrowed from the quiz
+    // chrome so the user can still see ✕ + progress + ⋯.
     const heartedCount = DB.getHearted().size;
     const phrasesCount = (DB.listPhrases() || []).length;
+    const dueCount     = (DB.dueWordsForPractice && DB.dueWordsForPractice(999) || []).length;
     const stage = document.getElementById('practice-stage');
     stage.innerHTML = `
-      <div class="practice-menu">
-        <button class="pm-close" data-act="close" aria-label="닫기">×</button>
-        <h3>연습</h3>
-        <button class="pm-item" data-act="words">
-          <span class="pm-ico">🃏</span>
-          <span class="pm-body">
-            <span class="pm-title">단어 연습</span>
-            <span class="pm-desc">하트 누른 단어 ${heartedCount}개를 카드로 외우기 (간격 반복)</span>
-          </span>
-        </button>
-        <button class="pm-item" data-act="sentences">
-          <span class="pm-ico">🧩</span>
-          <span class="pm-body">
-            <span class="pm-title">문장 연습</span>
-            <span class="pm-desc">등록한 구문 ${phrasesCount}개의 단어 순서 맞추기</span>
-          </span>
-        </button>
-        <button class="pm-item" data-act="quiz">
-          <span class="pm-ico">📝</span>
-          <span class="pm-body">
-            <span class="pm-title">퀴즈</span>
-            <span class="pm-desc">12문제 4지선다 (발음 → 뜻, 뜻 → 단어, 단어 → 뜻)</span>
-          </span>
-        </button>
+      <div class="quiz-screen menu-screen">
+        <div class="quiz-header">
+          <button class="qz-x" data-close-overlay aria-label="닫기">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6L18 18M6 18L18 6"/></svg>
+          </button>
+          <div class="qz-bar"><div class="qz-bar-fill" style="width:${dueCount ? 0 : 100}%"></div></div>
+          <button class="qz-dots" aria-label="더 보기">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+          </button>
+        </div>
+        <div class="practice-anchor">
+          <div class="practice-card-anchored">
+            <button class="pa-item" data-act="words">
+              <span class="pa-ico">🃏</span>
+              <span class="pa-text">단어 연습 <span class="pa-count">(${heartedCount})</span></span>
+            </button>
+            <button class="pa-item" data-act="sentences">
+              <span class="pa-ico">🧩</span>
+              <span class="pa-text">문장 연습 <span class="pa-count">(${phrasesCount})</span></span>
+            </button>
+            <button class="pa-item" data-act="quiz">
+              <span class="pa-ico">📝</span>
+              <span class="pa-text">퀴즈 <span class="pa-count">(12)</span></span>
+            </button>
+          </div>
+        </div>
       </div>
     `;
     stage.querySelectorAll('[data-act]').forEach(el => {
       el.onclick = () => {
         const a = el.dataset.act;
-        if (a === 'close') document.getElementById('practice-overlay').hidden = true;
-        else if (a === 'words')     startWordPractice();
+        if (a === 'words')     startWordPractice();
         else if (a === 'sentences') startSentencePractice();
         else if (a === 'quiz')      startQuiz();
       };
@@ -791,12 +824,17 @@
   }
 
   // ===== Quiz (12 questions, 4-option multi-choice) =====
+  // Layout follows the reference quiz1–quiz4 mocks:
+  //   header  : ✕ (close)  ─── progress ───  ⚙ (settings)
+  //   prompt  : audio = big ▶ + 🐢 (slow)   /   text = audio icon + word
+  //   options : 4 white cards with subtle outline + generous padding
+  //   bottom  : "I don't know" link
+  //   feedback: dialog card with Correct/Incorrect, context sentence,
+  //             level-picker bar (🗑 1 2 3 4 ✓), "Continue" full-width button.
   async function startQuiz() {
     const stage = document.getElementById('practice-stage');
-    stage.innerHTML = practiceFrame(`<div class="empty-msg"><h3>퀴즈 준비 중...</h3></div>`);
+    stage.innerHTML = quizFrame(0, 12, `<div class="qz-loading">퀴즈 준비 중…</div>`);
 
-    // Build word pool: hearted words preferred; if too few, pad from the
-    // user's clicked words (state ≥ 1).
     const pool = [...DB.getHearted()];
     if (pool.length < 8) {
       for (const [w, v] of Object.entries(WORD_STATES || {})) {
@@ -816,87 +854,132 @@
       return;
     }
 
-    // Pre-translate every word in the pool so questions render instantly.
     const tx = {};
     await Promise.all(pool.map(async w => {
       try { tx[w] = await Translate.translate(w); } catch (e) { tx[w] = ''; }
     }));
 
-    // Generate 12 questions: 4 audio→KO, 4 KO→EN, 4 EN→KO.
+    // Look up an example sentence from the user's lessons that contains
+    // the target word — used as context in the feedback card.
+    const lessons = await DB.listLessons().catch(() => []);
+    function findContext(word) {
+      const re = new RegExp('([^.!?]*\\b' + escapeRegex(word) + '\\b[^.!?]*[.!?])', 'i');
+      for (const l of (lessons || [])) {
+        const m = (l.body || '').match(re);
+        if (m && m[1]) return m[1].trim();
+      }
+      return '';
+    }
+
     const targets = shuffle(pool).slice(0, 12);
     const questions = targets.map((target, i) => {
       const kind = i < 4 ? 'audio' : (i < 8 ? 'ko-to-en' : 'en-to-ko');
-      // Distractors from other pool words.
       const distractors = shuffle(pool.filter(w => w !== target)).slice(0, 3);
       const optsRaw = shuffle([target, ...distractors]);
       const correctIdx = optsRaw.indexOf(target);
       let prompt, optionLabels;
       if (kind === 'ko-to-en') {
         prompt = { type: 'text', text: tx[target] || '(번역 없음)' };
-        optionLabels = optsRaw;        // English words
+        optionLabels = optsRaw;
       } else if (kind === 'en-to-ko') {
-        prompt = { type: 'text', text: target };
-        optionLabels = optsRaw.map(w => tx[w] || w);   // Korean meanings
+        prompt = { type: 'text', text: target, audio: true };
+        optionLabels = optsRaw.map(w => tx[w] || w);
       } else {
         prompt = { type: 'audio', word: target };
-        optionLabels = optsRaw.map(w => tx[w] || w);   // Korean meanings
+        optionLabels = optsRaw.map(w => tx[w] || w);
       }
       return { kind, prompt, options: optsRaw, optionLabels, correctIdx };
     });
 
-    let qi = 0;
-    let score = 0;
-    let chosen = null;
+    let qi = 0, score = 0, chosen = null;
 
     function paint() {
       const q = questions[qi];
-      const promptHtml = q.prompt.type === 'audio'
-        ? `<button class="quiz-audio" data-audio>🔊 발음 듣기</button>`
-        : `<div class="quiz-prompt-text">${escapeHtml(q.prompt.text)}</div>`;
-      stage.innerHTML = practiceFrame(`
-        <div class="wp-progress"><div class="wp-progress-bar" style="width:${(qi/questions.length)*100}%"></div></div>
-        <div class="wp-meta">${qi + 1} / ${questions.length} · 점수 ${score}</div>
-        <div class="quiz-prompt">${promptHtml}</div>
-        <div class="quiz-options" id="quiz-options"></div>
-        <div class="quiz-feedback" id="quiz-feedback"></div>
+      let promptHtml;
+      if (q.prompt.type === 'audio') {
+        // Big ▶ in a circle with a smaller turtle "slow" circle in the corner.
+        promptHtml = `
+          <div class="qz-audio-prompt">
+            <button class="qz-play"  data-audio="normal" aria-label="발음 듣기">
+              <svg viewBox="0 0 24 24" width="38" height="38" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+            </button>
+            <button class="qz-slow"  data-audio="slow"   aria-label="천천히 듣기">🐢</button>
+          </div>`;
+      } else {
+        // Word/phrase prompt with a small audio icon above.
+        promptHtml = `
+          <div class="qz-text-prompt">
+            <button class="qz-icon-speak" data-audio="normal" aria-label="발음 듣기">
+              <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+            </button>
+            <div class="qz-prompt-word">${escapeHtml(q.prompt.text)}</div>
+          </div>`;
+      }
+      const helper = q.kind === 'ko-to-en'
+        ? '올바른 영어 단어를 고르세요.'
+        : 'Select the correct meaning.';
+
+      stage.innerHTML = quizFrame(qi, questions.length, `
+        ${promptHtml}
+        <div class="qz-helper">${helper}</div>
+        <div class="qz-options" id="qz-options"></div>
+        <button class="qz-skip" data-skip>I don't know</button>
       `);
-      const optsEl = stage.querySelector('#quiz-options');
+      const optsEl = stage.querySelector('#qz-options');
       q.optionLabels.forEach((label, i) => {
         const b = document.createElement('button');
-        b.className = 'quiz-option';
+        b.className = 'qz-option';
         b.textContent = label;
-        b.onclick = () => choose(i, b);
+        b.onclick = () => choose(i);
         optsEl.appendChild(b);
       });
-      const audioBtn = stage.querySelector('[data-audio]');
-      if (audioBtn) {
-        audioBtn.onclick = () => TTS.speak(q.prompt.word);
-        TTS.speak(q.prompt.word);
+      stage.querySelectorAll('[data-audio]').forEach(b => {
+        b.onclick = () => TTS.speak(targetWord(q), { rate: b.dataset.audio === 'slow' ? 0.65 : 0.95 });
+      });
+      stage.querySelector('[data-skip]').onclick = () => choose(-1);
+      // Auto-play the spoken word if relevant.
+      if (q.prompt.type === 'audio' || (q.prompt.type === 'text' && q.prompt.audio)) {
+        TTS.speak(targetWord(q));
       }
     }
-    function choose(i, btn) {
+    function targetWord(q) {
+      return q.options[q.correctIdx];
+    }
+    function choose(i) {
       if (chosen !== null) return;
-      const q = questions[qi];
       chosen = i;
-      const opts = stage.querySelectorAll('.quiz-option');
+      const q = questions[qi];
       const correct = (i === q.correctIdx);
-      opts.forEach((b, k) => {
-        b.disabled = true;
-        if (k === q.correctIdx) b.classList.add('correct');
-        if (k === i && !correct) b.classList.add('wrong');
-      });
-      if (correct) {
-        score++;
-        DB.rateReview(q.options[q.correctIdx], 1);   // mild SR boost
-      } else {
-        DB.rateReview(q.options[q.correctIdx], 0);   // mark for re-review
-      }
-      const fb = stage.querySelector('#quiz-feedback');
-      fb.innerHTML = correct
-        ? '<div class="quiz-ok">✓ 정답</div><button class="btn primary" data-next>다음 →</button>'
-        : `<div class="quiz-bad">정답: <b>${escapeHtml(q.optionLabels[q.correctIdx])}</b></div>` +
-          '<button class="btn primary" data-next>다음 →</button>';
-      fb.querySelector('[data-next]').onclick = () => {
+      if (correct) score++;
+      DB.rateReview(targetWord(q), correct ? 1 : 0);
+      // Feedback card overlays the existing screen.
+      paintFeedback(q, i, correct);
+    }
+    function paintFeedback(q, picked, correct) {
+      const target = targetWord(q);
+      const koAns  = tx[target] || '';
+      const ctx    = findContext(target);
+      const youSaid = picked < 0 ? null : q.optionLabels[picked];
+
+      stage.innerHTML = quizFrame(qi, questions.length, `
+        ${youSaid ? `<div class="qz-you-said">You answered: ${escapeHtml(youSaid)}</div>` : ''}
+        <div class="qz-feedback-card">
+          <div class="qz-fb-status ${correct ? 'ok' : 'bad'}">
+            ${correct ? 'Correct 🎉' : 'Incorrect 😟'}
+          </div>
+          <button class="qz-icon-speak" data-audio="normal" aria-label="발음 듣기">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+          </button>
+          <div class="qz-fb-word">${escapeHtml(target)}</div>
+          <div class="qz-fb-ko">${escapeHtml(koAns)}</div>
+          ${ctx ? `<div class="qz-fb-ctx">${escapeHtml(ctx)}</div>` : ''}
+          <div class="level-bar" id="qz-level"></div>
+        </div>
+        <button class="qz-continue" data-continue>Continue</button>
+      `);
+      stage.querySelector('[data-audio]').onclick = () => TTS.speak(target);
+      mountLevelBar(stage.querySelector('#qz-level'), target);
+      stage.querySelector('[data-continue]').onclick = () => {
         qi++; chosen = null;
         if (qi >= questions.length) finish();
         else paint();
@@ -907,7 +990,8 @@
       stage.innerHTML = practiceFrame(`
         <div class="empty-msg">
           <h3>🎉 퀴즈 완료</h3>
-          <p style="font-size:24px;font-weight:800;margin:8px 0">${score} / ${questions.length} <span class="muted" style="font-size:14px;font-weight:600">(${pct}%)</span></p>
+          <p style="font-size:28px;font-weight:800;margin:8px 0">${score} / ${questions.length}
+            <span class="muted" style="font-size:14px;font-weight:600">(${pct}%)</span></p>
           <div class="row" style="gap:10px;justify-content:center;margin-top:14px">
             <button class="btn" data-back>← 메뉴로</button>
             <button class="btn primary" data-again>새 퀴즈</button>
@@ -918,6 +1002,64 @@
       stage.querySelector('[data-again]').onclick = startQuiz;
     }
     paint();
+  }
+  function escapeRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
+  // Reusable header chrome for quiz screens (matches the reference mock).
+  function quizFrame(currentIdx, total, inner) {
+    const pct = total ? (currentIdx / total) * 100 : 0;
+    return `
+      <div class="quiz-screen">
+        <div class="quiz-header">
+          <button class="qz-x" data-close-overlay aria-label="닫기">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6L18 18M6 18L18 6"/></svg>
+          </button>
+          <div class="qz-bar"><div class="qz-bar-fill" style="width:${pct}%"></div></div>
+          <button class="qz-gear" aria-label="설정">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+          </button>
+        </div>
+        <div class="quiz-body">${inner}</div>
+      </div>
+    `;
+  }
+
+  // Shared component: a level-picker strip (🗑 1 2 3 4 ✓) used in the quiz
+  // feedback card AND the PC sidebar. Hooks into DB.setWordState directly.
+  function mountLevelBar(host, word) {
+    if (!host || !word) return;
+    const lower = word.toLowerCase();
+    const cur = (WORD_STATES[lower] && WORD_STATES[lower].state) || 0;
+    function btn(s, label, cls) {
+      const active = (cur === s);
+      return `<button class="lv-btn ${cls || ''} ${active ? 'active' : ''}" data-lv="${s}" aria-label="단계 ${label}">${label}</button>`;
+    }
+    host.innerHTML =
+      btn(-1, '🗑', 'ignore') +
+      btn(1,  '1') +
+      btn(2,  '2') +
+      btn(3,  '3') +
+      btn(4,  '4') +
+      btn(5,  '✓', 'known');
+    host.querySelectorAll('[data-lv]').forEach(b => {
+      b.onclick = async () => {
+        const s = Number(b.dataset.lv);
+        await DB.setWordState(lower, s);
+        WORD_STATES[lower] = { state: s, last: new Date().toISOString().slice(0,10) };
+        // Re-mount to reflect the new active circle.
+        mountLevelBar(host, word);
+        // Update any visible word elements on the page so the colour change
+        // is immediate.
+        document.querySelectorAll('.w').forEach(el => {
+          if (!el.dataset.word) return;
+          if (el.dataset.word.toLowerCase() === lower) {
+            ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
+            const cls = classFor(s);
+            if (cls) el.classList.add(cls);
+          }
+        });
+      };
+    });
   }
 
   function practiceFrame(inner) {
