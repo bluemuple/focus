@@ -164,7 +164,18 @@
       saveBtn.disabled = true;
       saveBtn.textContent = '저장 중...';
       try {
-        const row = await DB.addLesson({ title, body, audioFile: chosenFile, thumbFile: chosenThumb });
+        // Shrink the thumbnail before uploading. Cards display ~220–280 px
+        // wide so 1024×640 @ JPEG q0.85 is plenty and saves storage / bandwidth.
+        let thumbToUpload = chosenThumb;
+        if (thumbToUpload) {
+          try { thumbToUpload = await resizeImage(thumbToUpload, 1024, 640, 0.85); }
+          catch (err) { console.warn('thumb resize failed, uploading original', err); }
+        }
+        const row = await DB.addLesson({
+          title, body,
+          audioFile: chosenFile,
+          thumbFile: thumbToUpload,
+        });
         location.href = 'lesson.html?id=' + encodeURIComponent(row.id);
       } catch (err) {
         console.error(err);
@@ -175,6 +186,57 @@
     });
   }
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
+
+  // Client-side image downscale. Reads the file into an Image, draws onto a
+  // canvas at the target size (preserving aspect), and returns a new
+  // JPEG-encoded File. If the image is already small enough or the input
+  // isn't a regular image, returns the original file unchanged.
+  async function resizeImage(file, maxW, maxH, quality) {
+    if (!file || !/^image\//.test(file.type)) return file;
+    // GIFs lose animation when redrawn — leave them alone.
+    if (/^image\/gif$/i.test(file.type)) return file;
+
+    const url = URL.createObjectURL(file);
+    let img;
+    try {
+      img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload  = () => resolve(i);
+        i.onerror = (e) => reject(e);
+        i.src = url;
+      });
+    } finally { URL.revokeObjectURL(url); }
+
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return file;
+
+    // Already within bounds → keep original to avoid quality loss from
+    // re-encoding small PNGs as JPEG.
+    if (w <= maxW && h <= maxH && file.size <= 250 * 1024) return file;
+
+    const ratio   = Math.min(maxW / w, maxH / h, 1);
+    const targetW = Math.max(1, Math.round(w * ratio));
+    const targetH = Math.max(1, Math.round(h * ratio));
+
+    const canvas = document.createElement('canvas');
+    canvas.width  = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext('2d');
+    // White background so transparent PNGs don't become black after JPEG.
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, targetW, targetH);
+    ctx.drawImage(img, 0, 0, targetW, targetH);
+
+    const blob = await new Promise(resolve =>
+      canvas.toBlob(b => resolve(b), 'image/jpeg', quality)
+    );
+    if (!blob) return file;
+    // Don't bother if the "shrunk" version somehow ended up larger.
+    if (blob.size >= file.size) return file;
+
+    const baseName = (file.name || 'thumbnail').replace(/\.[^.]+$/, '');
+    return new File([blob], baseName + '.jpg', { type: 'image/jpeg' });
+  }
 })();
 </script>
 

@@ -257,12 +257,45 @@
     });
   }
 
+  // ---------- hearted words (for the quiz / word-practice deck) ----------
+  // Stored locally for now; can sync via a Supabase column later if needed.
+  function getHearted() {
+    return new Set(ls.get('hearted', []) || []);
+  }
+  function setHearted(word, on) {
+    const s = getHearted();
+    const k = (word || '').toLowerCase();
+    if (!k) return false;
+    if (on) s.add(k); else s.delete(k);
+    ls.set('hearted', [...s]);
+    return s.has(k);
+  }
+  function isHearted(word) {
+    return getHearted().has((word || '').toLowerCase());
+  }
+
+  // ---------- saved phrases (built up via the "이어서" mode add button) ----
+  function listPhrases() { return ls.get('phrases', []) || []; }
+  function addPhrase(phrase, koTranslation, lessonId) {
+    if (!phrase) return null;
+    const list = listPhrases();
+    list.unshift({
+      id: 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6),
+      phrase, ko: koTranslation || '', lessonId: lessonId || null,
+      created_at: new Date().toISOString(),
+    });
+    ls.set('phrases', list);
+    return list[0];
+  }
+
   window.DB = {
     haveSupabase,
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
     listLessons, getLesson, addLesson, deleteLesson, setBookmark,
     loadWordStates, clickWord, setWordState,
+    getHearted, setHearted, isHearted,
+    listPhrases, addPhrase,
     useCloud,
   };
 })();

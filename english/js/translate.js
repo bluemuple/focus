@@ -161,5 +161,48 @@
     persist();
   }
 
-  window.Translate = { translate, clearCache, setEngine, getEngine };
+  // Bilingual-dictionary lookup via Google's gtx endpoint with dt=bd. Returns
+  // multiple senses grouped by part-of-speech (noun / verb / adj / etc.) for
+  // a single word — exactly what the user wants to display when a word has
+  // several meanings. Returns an empty array if there's only one sense.
+  // Cached per-word in localStorage.
+  const SENSE_KEY = 'eng.v1.senses';
+  const senseCache = {};
+  try {
+    const raw = localStorage.getItem(SENSE_KEY);
+    if (raw) Object.assign(senseCache, JSON.parse(raw));
+  } catch (e) {}
+  function persistSenses() {
+    try { localStorage.setItem(SENSE_KEY, JSON.stringify(senseCache)); } catch (e) {}
+  }
+  async function lookupSenses(word) {
+    word = (word || '').trim();
+    if (!word) return [];
+    // Only single words have meaningful bilingual dictionary entries.
+    if (/\s/.test(word)) return [];
+    const key = word.toLowerCase();
+    if (senseCache[key]) return senseCache[key];
+
+    try {
+      const url = 'https://translate.googleapis.com/translate_a/single' +
+                  '?client=gtx&sl=en&tl=ko&dt=bd&q=' + encodeURIComponent(word);
+      const r = await fetch(url);
+      if (!r.ok) return [];
+      const j = await r.json();
+      const dict = (j && j[1]) || [];
+      const senses = [];
+      for (const entry of dict) {
+        const pos = entry[0] || '';
+        const items = entry[1] || [];
+        for (const item of items) {
+          if (item && item[0]) senses.push({ pos, ko: String(item[0]) });
+        }
+      }
+      senseCache[key] = senses;
+      persistSenses();
+      return senses;
+    } catch (e) { return []; }
+  }
+
+  window.Translate = { translate, clearCache, setEngine, getEngine, lookupSenses };
 })();
