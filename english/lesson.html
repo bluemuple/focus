@@ -95,6 +95,38 @@
     </button>
   </div>
 
+  <!-- PC sidebar for 이어서 mode. Hidden on mobile (CSS) and unused in
+       하나씩 / 이어서(밑줄) modes. Content mirrors what the popup card would
+       show, plus a "+ 구문에 추가" button for saving phrases. -->
+  <aside class="lesson-sidebar" id="lesson-sidebar" hidden>
+    <button class="ls-close" id="ls-close" aria-label="사이드바 닫기" title="사이드바 닫기">
+      <img src="images/closeside.png" alt="" onerror="this.style.display='none';this.parentNode.textContent='›';">
+    </button>
+    <div class="ls-empty" id="ls-empty">
+      <div class="ls-empty-ico">↩</div>
+      이어서 모드에서<br>단어를 선택하면<br>여기에 표시됩니다.
+    </div>
+    <div class="ls-card" id="ls-card" hidden>
+      <div class="ls-head">
+        <button class="speak" id="ls-speak" title="발음 듣기">🔊</button>
+        <span class="ls-word" id="ls-word">—</span>
+        <button class="wp-heart" id="ls-heart" title="퀴즈 카드에 추가" aria-pressed="false">♡</button>
+        <button class="tx-state-badge" id="ls-state" style="display:none" title="단어 상태 변경">·</button>
+      </div>
+      <div class="ls-trans" id="ls-trans"><span class="tx-loading">번역 중...</span></div>
+      <ul class="wp-senses" id="ls-senses" hidden></ul>
+      <button class="ls-add" id="ls-add">
+        <img src="images/add.jpg" alt="" onerror="this.style.display='none';">
+        <span>구문에 추가</span>
+      </button>
+    </div>
+  </aside>
+  <!-- Floating toggle so the user can re-open the sidebar after closing it,
+       without leaving 이어서 mode. -->
+  <button class="lesson-sidebar-toggle" id="ls-toggle" aria-label="사이드바 열기">
+    <img src="images/closeside.png" alt="" onerror="this.style.display='none';this.parentNode.textContent='‹';">
+  </button>
+
   <!-- Practice menu (placeholder). The three sub-flows (word memorization,
        sentence reorder, quiz) are scaffolded for the next iteration. -->
   <div class="practice-overlay" id="practice-overlay" hidden>
@@ -278,6 +310,144 @@
     setupPracticeMenu();
     setupHeartButton();
     setupCloseXButton();
+    setupSidebar();
+    applySidebarVisibility();
+  }
+
+  // ============== PC sidebar (이어서 mode only) ==============
+  let SIDEBAR_OPEN = true;          // user pref within cont mode
+  let SIDEBAR_PHRASE = null;        // { text, ko } currently displayed (for the add button)
+
+  function useSidebar() {
+    return MODE === 'cont' && window.matchMedia('(min-width: 1024px)').matches;
+  }
+
+  function applySidebarVisibility() {
+    const sb = document.getElementById('lesson-sidebar');
+    const tg = document.getElementById('ls-toggle');
+    if (!sb || !tg) return;
+    const shouldShow = useSidebar();
+    if (!shouldShow) {
+      sb.hidden = true;
+      tg.hidden = true;
+      document.body.classList.remove('sidebar-open');
+      return;
+    }
+    if (SIDEBAR_OPEN) {
+      sb.hidden = false;
+      tg.hidden = true;
+      document.body.classList.add('sidebar-open');
+    } else {
+      sb.hidden = true;
+      tg.hidden = false;
+      document.body.classList.remove('sidebar-open');
+    }
+  }
+
+  function setupSidebar() {
+    const close = document.getElementById('ls-close');
+    const toggle = document.getElementById('ls-toggle');
+    const add = document.getElementById('ls-add');
+    if (close)  close.addEventListener('click', () => { SIDEBAR_OPEN = false; applySidebarVisibility(); });
+    if (toggle) toggle.addEventListener('click', () => { SIDEBAR_OPEN = true;  applySidebarVisibility(); });
+    if (add) add.addEventListener('click', () => {
+      if (!SIDEBAR_PHRASE) return;
+      try { DB.addPhrase(SIDEBAR_PHRASE.text, SIDEBAR_PHRASE.ko, lessonId); } catch (e) {}
+      add.classList.add('added');
+      const span = add.querySelector('span');
+      if (span) span.textContent = '추가됨 ✓';
+    });
+  }
+
+  function clearSidebar() {
+    const card  = document.getElementById('ls-card');
+    const empty = document.getElementById('ls-empty');
+    if (card)  card.hidden = true;
+    if (empty) empty.hidden = false;
+    SIDEBAR_PHRASE = null;
+  }
+
+  async function showInSidebar(text) {
+    const card  = document.getElementById('ls-card');
+    const empty = document.getElementById('ls-empty');
+    if (!card || !empty) return;
+    card.hidden = false;
+    empty.hidden = true;
+
+    const isPhrase = /\s/.test(text);
+    document.getElementById('ls-word').textContent = text;
+
+    const sp = document.getElementById('ls-speak');
+    if (sp) sp.onclick = () => TTS.speak(text);
+    TTS.speak(text);
+
+    // Heart + state badge: only meaningful for a single word.
+    const heart = document.getElementById('ls-heart');
+    const stateBadge = document.getElementById('ls-state');
+    if (heart) {
+      heart.style.display = isPhrase ? 'none' : '';
+      if (!isPhrase) {
+        const lower = text.toLowerCase();
+        const refresh = () => {
+          const on = DB.isHearted(lower);
+          heart.classList.toggle('on', on);
+          heart.textContent = on ? '♥' : '♡';
+        };
+        heart.onclick = (e) => { e.stopPropagation(); DB.setHearted(lower, !DB.isHearted(lower)); refresh(); };
+        refresh();
+      }
+    }
+    if (stateBadge) {
+      if (isPhrase) {
+        stateBadge.style.display = 'none';
+      } else {
+        const stateNow = (WORD_STATES[text.toLowerCase()] && WORD_STATES[text.toLowerCase()].state) || 0;
+        renderStateBadge(stateBadge, stateNow);
+      }
+    }
+
+    // Add button: only for phrases (multi-word selections).
+    const addBtn = document.getElementById('ls-add');
+    if (addBtn) {
+      addBtn.style.display = isPhrase ? '' : 'none';
+      addBtn.classList.remove('added');
+      const span = addBtn.querySelector('span');
+      if (span) span.textContent = '구문에 추가';
+    }
+
+    // Translation + senses (lazy-fill).
+    const transEl  = document.getElementById('ls-trans');
+    const sensesEl = document.getElementById('ls-senses');
+    if (transEl)  transEl.innerHTML  = '<span class="tx-loading">번역 중...</span>';
+    if (sensesEl) { sensesEl.innerHTML = ''; sensesEl.hidden = true; }
+    SIDEBAR_PHRASE = { text, ko: '' };
+
+    try {
+      const ko = await Translate.translate(text);
+      SIDEBAR_PHRASE = { text, ko };
+      if (transEl) transEl.innerHTML = `<span class="ko">${escapeHtml(ko)}</span>`;
+    } catch (err) {
+      if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
+    }
+
+    if (!isPhrase && Translate.lookupSenses && sensesEl) {
+      Translate.lookupSenses(text).then(senses => {
+        if (!senses || senses.length < 2) return;
+        const byPos = {};
+        for (const s of senses) {
+          const k = s.pos || '';
+          (byPos[k] = byPos[k] || []).push(s.ko);
+        }
+        sensesEl.innerHTML = '';
+        for (const [pos, kos] of Object.entries(byPos)) {
+          const li = document.createElement('li');
+          li.innerHTML = (pos ? `<span class="pos">${escapeHtml(pos)}</span> ` : '') +
+                         escapeHtml(kos.slice(0, 6).join(', '));
+          sensesEl.appendChild(li);
+        }
+        sensesEl.hidden = false;
+      }).catch(()=>{});
+    }
   }
 
   // ---------- keyboard shortcuts ----------
@@ -435,7 +605,9 @@
     // Clean up state from the previous mode.
     hidePopup();
     clearContSelection();
+    clearSidebar();
     applyModeClass();
+    applySidebarVisibility();
     // Spacing differs between modes → re-paginate.
     if (!LESSON) return;
     requestAnimationFrame(() => {
@@ -484,7 +656,8 @@
     const currentRoot = document.getElementById('lesson-text');
     const peekRoot = document.createElement('div');
     peekRoot.className = 'lesson-text';
-    if (MODE === 'cont') peekRoot.classList.add('mode-cont');
+    if (MODE === 'cont')  peekRoot.classList.add('mode-cont');
+    if (MODE === 'contU') peekRoot.classList.add('mode-contU');
     renderInto(peekRoot, PAGES[pageIdx + direction] || []);
 
     const width = currentRoot.offsetWidth;
@@ -606,7 +779,8 @@
 
     const mirror = document.createElement('div');
     mirror.className = 'lesson-text';
-    if (MODE === 'cont') mirror.classList.add('mode-cont');   // measure with the same spacing as the live page
+    if (MODE === 'cont')  mirror.classList.add('mode-cont');   // measure with the same spacing as the live page
+    if (MODE === 'contU') mirror.classList.add('mode-contU');
     mirror.style.position = 'absolute';
     mirror.style.visibility = 'hidden';
     mirror.style.pointerEvents = 'none';
@@ -709,7 +883,8 @@
 
     const newRoot = document.createElement('div');
     newRoot.className = 'lesson-text';
-    if (MODE === 'cont') newRoot.classList.add('mode-cont');
+    if (MODE === 'cont')  newRoot.classList.add('mode-cont');
+    if (MODE === 'contU') newRoot.classList.add('mode-contU');
     newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
     pageIdx = next;
     renderInto(newRoot, PAGES[pageIdx] || []);
@@ -751,6 +926,7 @@
     resizeT = setTimeout(() => {
       sizeLessonMain();
       hidePopup();
+      applySidebarVisibility();
       requestAnimationFrame(() => {
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');
@@ -808,7 +984,7 @@
     }
 
     root.addEventListener('mousedown', (e) => {
-      if (MODE === 'cont') return;       // no drag-select in 이어서 mode
+      if (MODE === 'cont' || MODE === 'contU') return; // no drag-select in 이어서 modes
       const w = getWordEl(e.target);
       if (!w) return;
       dragging = true; didDrag = false;
@@ -841,7 +1017,7 @@
       const w = getWordEl(e.target);
       // In 이어서 mode the touch is only used for page swipes — never as a
       // drag-select start, so don't arm dragStartIdx.
-      if (w && MODE !== 'cont') {
+      if (w && MODE !== 'cont' && MODE !== 'contU') {
         dragging = true; didDrag = false;
         dragStartIdx = Number(w.dataset.idx);
         dragLastIdx  = dragStartIdx;
@@ -929,7 +1105,9 @@
       const cls = classFor(upd.state);
       if (cls) w.classList.add(cls);
 
-      if (MODE === 'cont') {
+      if (MODE === 'cont' || MODE === 'contU') {
+        // Both 이어서 modes share the same selection rules. Routing to the
+        // popup vs the inline gray label happens inside refreshContTranslation.
         await handleContClick(w, word);
       } else {
         root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
@@ -994,10 +1172,12 @@
       wEl.classList.remove('cont-sel');
       if (CONT_SELECTED.size === 0) {
         document.querySelectorAll('.cont-trans').forEach(el => el.remove());
-        if (MODE === 'cont') hidePopup();
+        if (MODE === 'cont') {
+          if (useSidebar()) clearSidebar();
+          else              hidePopup();
+        }
         return;
       }
-      // Re-translate the remaining selection.
       await refreshContTranslation();
       return;
     }
@@ -1012,24 +1192,28 @@
     await refreshContTranslation(wEl);
   }
 
-  // Shared updater for both 이어서 and 이어서(밑줄): re-translates the WHOLE
-  // current selection and routes the result to the correct surface
-  // (popup card for 'cont', inline gray label for 'contU').
+  // Shared updater. Routes the result to:
+  //   • PC sidebar      — when MODE='cont' AND viewport ≥ 1024 px
+  //   • popup card      — when MODE='cont' on mobile
+  //   • inline gray     — when MODE='contU'
   async function refreshContTranslation(anchorEl) {
     const phrase = selectionToPhrase();
     if (!phrase) return;
+
+    if (MODE === 'cont' && useSidebar()) {
+      // Sidebar populates its own translation/senses asynchronously.
+      showInSidebar(phrase);
+      return;
+    }
+
     let ko = '';
     try { ko = await Translate.translate(phrase); } catch (e) {}
     if (selectionToPhrase() !== phrase) return;        // selection changed mid-fetch
 
     if (MODE === 'cont') {
-      // Show / refresh the popup card with the joined phrase.
-      const wEl = anchorEl
-        || Array.from(CONT_SELECTED).pop();
+      // Mobile cont: show the popup card.
+      const wEl = anchorEl || Array.from(CONT_SELECTED).pop();
       showWord(phrase, { isFirstClick: false }, wEl);
-      // Replace the spoken word in the card with the running phrase + meaning.
-      // showWord already kicked off TTS for `phrase` and Translate.translate;
-      // by the time DeepL returns we already updated the inner DOM there.
     } else {
       // contU: inline gray label below the line.
       renderContTranslation(ko);

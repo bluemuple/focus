@@ -166,11 +166,14 @@
   // a single word — exactly what the user wants to display when a word has
   // several meanings. Returns an empty array if there's only one sense.
   // Cached per-word in localStorage.
-  const SENSE_KEY = 'eng.v1.senses';
+  // v2: parser was fixed to handle both shapes of Google's dt=bd response.
+  // Drop v1 so previously-cached garbage like "지/으/나" gets re-fetched.
+  const SENSE_KEY = 'eng.v2.senses';
   const senseCache = {};
   try {
     const raw = localStorage.getItem(SENSE_KEY);
     if (raw) Object.assign(senseCache, JSON.parse(raw));
+    localStorage.removeItem('eng.v1.senses');
   } catch (e) {}
   function persistSenses() {
     try { localStorage.setItem(SENSE_KEY, JSON.stringify(senseCache)); } catch (e) {}
@@ -191,11 +194,34 @@
       const j = await r.json();
       const dict = (j && j[1]) || [];
       const senses = [];
-      for (const entry of dict) {
+      const seen  = new Set();
+      for (const entry of (dict || [])) {
+        if (!entry) continue;
         const pos = entry[0] || '';
         const items = entry[1] || [];
+        if (!Array.isArray(items)) continue;
         for (const item of items) {
-          if (item && item[0]) senses.push({ pos, ko: String(item[0]) });
+          // Google's response shape varies between queries. Sometimes each
+          // item is `[korean, [back-translations], score, isVerbatim]`, other
+          // times it's just the Korean string. Reading `item[0]` blindly on
+          // a string yields a single character (the bug behind "지/으/나"
+          // garbage senses on words like "Trump"). Handle both forms.
+          let ko = '';
+          if (typeof item === 'string') {
+            ko = item;
+          } else if (Array.isArray(item) && typeof item[0] === 'string') {
+            ko = item[0];
+          }
+          ko = (ko || '').trim();
+          if (!ko) continue;
+          // Skip suspicious one-character results unless they're recognisable
+          // Korean syllables that ARE legitimate words (그, 나, 너, 등 etc.).
+          if (ko.length === 1 && !/^[가-힣]$/.test(ko)) continue;
+          // Dedupe across pos groups.
+          const k = pos + '|' + ko;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          senses.push({ pos, ko });
         }
       }
       senseCache[key] = senses;

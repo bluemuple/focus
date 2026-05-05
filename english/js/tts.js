@@ -94,6 +94,14 @@
 
   let lastUtter = null;
   let currentAudio = null;
+  // Track the most recently registered onend callback so stop() / a play()
+  // rejection can release any outer await that's waiting for "this sentence
+  // finished playing" — otherwise the sentence-loop in startTTS hangs.
+  let pendingOnend = null;
+  function firePending() {
+    const cb = pendingOnend; pendingOnend = null;
+    if (typeof cb === 'function') { try { cb(); } catch (e) {} }
+  }
 
   function stop() {
     try { speechSynthesis.cancel(); } catch (e) {}
@@ -102,6 +110,7 @@
       currentAudio = null;
     }
     lastUtter = null;
+    firePending();
   }
 
   async function speakViaWeb(text, opts = {}) {
@@ -113,7 +122,9 @@
     u.rate   = opts.rate   ?? 0.95;
     u.pitch  = opts.pitch  ?? 1.1;
     u.volume = opts.volume ?? 1;
-    if (typeof opts.onend === 'function') u.onend = opts.onend;
+    pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
+    u.onend   = () => firePending();
+    u.onerror = () => firePending();
     lastUtter = u;
     speechSynthesis.speak(u);
   }
@@ -121,6 +132,23 @@
   // ================== Google Cloud TTS (via Supabase) ==================
   // In-memory cache: same text + voice → same Blob URL (instant replay).
   const audioCache = new Map();   // key: voice + '|' + text  →  objectURL
+
+  // SINGLE <audio> element shared across all sentences. Creating a new
+  // Audio element per sentence breaks two things:
+  //   1) iOS Safari treats each new Audio as needing its own user gesture,
+  //      so the second sentence's play() is rejected.
+  //   2) Chrome/Edge's `play()` returns a Promise that rejects if the audio
+  //      is paused / its src is changed before playback starts. The fast
+  //      sentence-handoff in startTTS hits this reliably.
+  // Re-using the same element with src swaps avoids both.
+  let cloudAudio = null;
+  function getCloudAudio() {
+    if (!cloudAudio) {
+      cloudAudio = new Audio();
+      cloudAudio.preload = 'auto';
+    }
+    return cloudAudio;
+  }
 
   async function fetchCloudAudio(text, voice, rate) {
     const cfg = window.SUPABASE_CONFIG;
@@ -154,11 +182,30 @@
       url = await fetchCloudAudio(text, voice, rate);
       audioCache.set(ck, url);
     }
-    const audio = new Audio(url);
-    audio.preload = 'auto';
-    if (typeof opts.onend === 'function') audio.onended = opts.onend;
+    const audio = getCloudAudio();
+    // Detach previous handlers and stop any previous playback cleanly so the
+    // src swap below doesn't reject the prior play() promise as a "hard"
+    // failure — we still need to do this, but we'll catch AbortError below.
+    audio.onended = null;
+    audio.onerror = null;
+    try { audio.pause(); } catch (e) {}
+    audio.src = url;
+    pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
+    audio.onended = () => firePending();
     currentAudio = audio;
-    await audio.play();
+    try {
+      await audio.play();
+    } catch (e) {
+      // AbortError = play() was interrupted (sibling stop()/src swap during
+      // fast sentence handoff, or a stale autoplay policy hiccup). Treat as
+      // benign — fire the pending callback so the caller's loop moves on,
+      // and DON'T mark cloud TTS as failed for the rest of the session.
+      if (e && (e.name === 'AbortError' || /interrupt/i.test(e.message || ''))) {
+        firePending();
+        return;
+      }
+      throw e;
+    }
   }
 
   // ================== unified entry point ==================
