@@ -81,17 +81,9 @@
        button on the right. Pressing play swaps in the playbar below. -->
   <div class="lesson-bar" id="lesson-bar">
     <button class="lb-play" id="lb-play" aria-label="재생 시작">▶</button>
-    <div class="lesson-progress lb-progress" id="lb-progress">
-      <button class="lp-btn" id="page-prev" aria-label="이전 페이지">‹</button>
-      <div class="lp-track">
-        <div class="lp-fill" id="lp-fill"></div>
-        <div class="lp-dot"  id="lp-dot"></div>
-      </div>
-      <span class="lp-pages" id="lp-pages">1 / 1</span>
-      <button class="lp-btn" id="page-next" aria-label="다음 페이지">›</button>
-    </div>
-    <!-- Mobile-only middle controls for 이어서 mode: ← extends/shrinks left
-         (or right depending on the eye toggle), then the eye toggle, then →. -->
+    <!-- Cont-mode middle controls: ← extends/shrinks left (or right depending
+         on the eye toggle), then the eye toggle, then →. Hidden in single /
+         contU modes — the bar then leaves the center empty. -->
     <div class="lb-cont-controls" id="lb-cont-controls" hidden>
       <button class="lb-arrow" id="lb-arrow-left"  aria-label="←">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>
@@ -364,12 +356,12 @@
 
   // ---- mobile bottom-bar cont controls (← [eye] →) ----
   function applyMobileContBar() {
-    const sliderEl = document.getElementById('lb-progress');
-    const ctrlEl   = document.getElementById('lb-cont-controls');
-    if (!sliderEl || !ctrlEl) return;
-    const isCont = (MODE === 'cont') && isMobileViewport();
-    sliderEl.hidden = isCont;
-    ctrlEl.hidden   = !isCont;
+    // The bottom page slider was removed; the only thing we toggle here is
+    // the cont-mode controls (← eye →). They show on phones whenever the
+    // user is in 이어서 mode. (PC keeps using the sidebar's anchor toggle.)
+    const ctrlEl = document.getElementById('lb-cont-controls');
+    if (!ctrlEl) return;
+    ctrlEl.hidden = !((MODE === 'cont') && isMobileViewport());
     refreshMobileEyeUI();
   }
   function setupMobileContBar() {
@@ -451,8 +443,8 @@
   }
   // Returns true when this keypress was used for selection; the caller
   // should then NOT also trigger page navigation.
+  // Works on both PC (keyboard) and mobile (← / → tap buttons in lesson-bar).
   function tryAnchorKey(direction /* 'left' | 'right' */) {
-    if (!useSidebar()) return false;
     if (MODE !== 'cont') return false;
     if (!CONT_SELECTED.size) return false;
 
@@ -1614,14 +1606,17 @@
   }
 
   function updateProgress() {
+    // The bottom page slider was removed, so most of these elements no
+    // longer exist. We keep the function as a no-op safety net (with null
+    // guards) in case any of them get re-introduced.
     const total = PAGES.length || 1;
     const cur = pageIdx + 1;
     const pct = total > 1 ? (pageIdx / (total - 1)) * 100 : 0;
-    document.getElementById('lp-pages').textContent = `${cur} / ${total}`;
-    document.getElementById('lp-fill').style.width = pct + '%';
-    document.getElementById('lp-dot').style.left = pct + '%';
-    document.getElementById('page-prev').disabled = pageIdx === 0;
-    document.getElementById('page-next').disabled = pageIdx >= total - 1;
+    const pages = document.getElementById('lp-pages');  if (pages) pages.textContent = `${cur} / ${total}`;
+    const fill  = document.getElementById('lp-fill');   if (fill)  fill.style.width = pct + '%';
+    const dot   = document.getElementById('lp-dot');    if (dot)   dot.style.left   = pct + '%';
+    const prev  = document.getElementById('page-prev'); if (prev)  prev.disabled = pageIdx === 0;
+    const next  = document.getElementById('page-next'); if (next)  next.disabled = pageIdx >= total - 1;
   }
 
   function goPage(delta) {
@@ -1667,8 +1662,12 @@
     }, 300);
   }
 
-  document.getElementById('page-prev').addEventListener('click', () => goPage(-1));
-  document.getElementById('page-next').addEventListener('click', () => goPage(+1));
+  // The page-prev / page-next buttons were part of the old bottom slider
+  // (now removed). Wire them up only if they still exist.
+  const prevBtn = document.getElementById('page-prev');
+  const nextBtn = document.getElementById('page-next');
+  if (prevBtn) prevBtn.addEventListener('click', () => goPage(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => goPage(+1));
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
     if (e.key === 'Escape') hidePopup();
