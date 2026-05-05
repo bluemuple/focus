@@ -6787,18 +6787,39 @@ function saveSegmentEdit() {
     closeSegmentEditModal();
     return;
   }
-  // Plain segment edit (clicked directly on the gauge)
+  // Plain segment edit (clicked directly on the gauge band).
   if (_editingSegment) {
     const seg = _editingSegment;
-    let newStart = applyTime(seg.startMs, startStr);
-    let newEnd   = applyTime(seg.endMs,   endStr);
+    const oldStart = seg.startMs;
+    const oldEnd   = seg.endMs;
+    let newStart = applyTime(oldStart, startStr);
+    let newEnd   = applyTime(oldEnd,   endStr);
     if (newEnd < newStart) newEnd += 24 * 60 * 60 * 1000;
+    // Find the matching watch-log entry BEFORE mutating the segment, so
+    // tracker entries (Habits & Triggers) stay in sync and their money /
+    // mana effects scale with the new duration.
+    const entry = (state.watchLog || []).find(x =>
+      Math.abs(+x.startedAt - oldStart) < 500 && Math.abs(+x.endedAt - oldEnd) < 500
+    );
+    const oldDuration = oldEnd - oldStart;
+    const newDuration = newEnd - newStart;
     seg.startMs = newStart;
     seg.endMs   = newEnd;
-    // Also update matching watch-log entry
-    const entry = (state.watchLog || []).find(x => x.startedAt === seg.startMs || x.endedAt === seg.endMs);
+    if (entry) {
+      entry.startedAt  = newStart;
+      entry.endedAt    = newEnd;
+      entry.durationMs = newDuration;
+      // Re-apply the money / mana that scales with this entry's duration.
+      // For pomodoro: per-minute money + quadrant bonus. For trackers
+      // (muncher/multiplier): per-minute money + rate-based adjustment.
+      if (typeof reconcileEntryMoneyAfterTimeEdit === 'function') {
+        reconcileEntryMoneyAfterTimeEdit(entry, oldDuration, newDuration);
+      }
+    }
     saveState();
     drawGauge(); renderWatchLog();
+    if (typeof renderMoneyCard === 'function') renderMoneyCard();
+    if (typeof renderScores    === 'function') renderScores();
     markSettingsChanged(); pushSettingsToCloud();
   }
   closeSegmentEditModal();
