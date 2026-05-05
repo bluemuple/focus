@@ -420,17 +420,25 @@
     wEl.classList.add('tap-pulse');
     setTimeout(() => wEl.classList.remove('tap-pulse'), 320);
   }
-  // 2) "+1" floater that drifts up and fades out — small XP-style reward.
+  // 2) Streak floater. Within a 1-minute rolling window the counter ticks
+  //    up: first tap = +1, the second tap inside 60 s = +2, +3, … The
+  //    counter resets to 1 after 60 s of inactivity, so each new "session"
+  //    starts fresh.
+  let _plusCount = 0;
+  let _plusLastT = 0;
   function showPlusOne(wEl) {
     if (!wEl) return;
+    const now = Date.now();
+    if (now - _plusLastT > 60 * 1000) _plusCount = 0;
+    _plusCount++;
+    _plusLastT = now;
     const r = wEl.getBoundingClientRect();
     const div = document.createElement('div');
     div.className = 'plus-one';
-    div.textContent = '+1';
+    div.textContent = '+' + _plusCount;
     div.style.top  = (r.top  + window.scrollY - 4) + 'px';
     div.style.left = (r.left + window.scrollX + r.width / 2) + 'px';
     document.body.appendChild(div);
-    // Force layout then start animation.
     requestAnimationFrame(() => div.classList.add('go'));
     setTimeout(() => div.remove(), 900);
   }
@@ -534,41 +542,60 @@
     const ri = sentence.indexOf(rightmost);
     if (li < 0 || ri < 0) return false;
 
+    // Two helpers so each branch can extend in its preferred direction and
+    // automatically fall through to the OPPOSITE side when the natural one
+    // is at the sentence boundary. This is what makes "press the same arrow
+    // continuously" keep walking through the sentence instead of locking.
+    function extendLeft() {
+      const prev = sentence[li - 1];
+      if (prev && !CONT_SELECTED.has(prev)) {
+        CONT_SELECTED.add(prev); prev.classList.add('cont-sel');
+        return true;
+      }
+      return false;
+    }
+    function extendRight() {
+      const next = sentence[ri + 1];
+      if (next && !CONT_SELECTED.has(next)) {
+        CONT_SELECTED.add(next); next.classList.add('cont-sel');
+        return true;
+      }
+      return false;
+    }
+
     let changed = false;
     if (ANCHOR_MODE === 'right') {
-      // Right side anchored — manipulate the LEFT edge.
+      // Eye-LEFT: working from the left edge.
       if (direction === 'right') {
-        // Shrink: drop the leftmost word.
+        // → key: shrink from left. When we run out of words on the left we
+        // also try removing from the right instead so continuous → press
+        // keeps reducing the selection until it's empty.
         if (CONT_SELECTED.size > 1) {
           CONT_SELECTED.delete(leftmost);
           leftmost.classList.remove('cont-sel');
           changed = true;
         } else {
-          // Selection of 1 → deselecting it clears the running selection.
           CONT_SELECTED.delete(leftmost);
           leftmost.classList.remove('cont-sel');
-          clearSidebar();
+          document.querySelectorAll('.cont-trans').forEach(el => el.remove());
+          document.querySelectorAll('.cont-outline').forEach(el => el.remove());
+          if (useSidebar()) clearSidebar();
+          else              hidePopup();
           return true;
         }
       } else {
-        // Extend leftward: select the word just before the current leftmost.
-        const prev = sentence[li - 1];
-        if (prev && !CONT_SELECTED.has(prev)) {
-          CONT_SELECTED.add(prev);
-          prev.classList.add('cont-sel');
-          changed = true;
-        }
+        // ← key: try to extend leftward. If we're already at the start of
+        // the sentence (no word at li-1), keep doing useful work by
+        // extending RIGHTWARD instead.
+        changed = extendLeft() || extendRight();
       }
     } else {
-      // Left side anchored — manipulate the RIGHT edge.
+      // Eye-RIGHT: working from the right edge.
       if (direction === 'right') {
-        const next = sentence[ri + 1];
-        if (next && !CONT_SELECTED.has(next)) {
-          CONT_SELECTED.add(next);
-          next.classList.add('cont-sel');
-          changed = true;
-        }
+        // → key: try to extend rightward, fall back to leftward at end.
+        changed = extendRight() || extendLeft();
       } else {
+        // ← key: shrink from right.
         if (CONT_SELECTED.size > 1) {
           CONT_SELECTED.delete(rightmost);
           rightmost.classList.remove('cont-sel');
@@ -576,7 +603,10 @@
         } else {
           CONT_SELECTED.delete(rightmost);
           rightmost.classList.remove('cont-sel');
-          clearSidebar();
+          document.querySelectorAll('.cont-trans').forEach(el => el.remove());
+          document.querySelectorAll('.cont-outline').forEach(el => el.remove());
+          if (useSidebar()) clearSidebar();
+          else              hidePopup();
           return true;
         }
       }
