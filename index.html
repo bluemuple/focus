@@ -3287,6 +3287,33 @@ migrateState();
     saveState();
   }
 })();
+/* Remove duplicate habit entries that share the same label across the two
+   lists (Money Habits / Energy Habits). Caused by an old race where one
+   device defaulted "Unrelated news" into Energy Habits while another device
+   had already moved it to Money Habits — both copies ended up in the cloud
+   state. Multiplier (Money) wins since that's typically where the user
+   moved items to. Also dedupes within each list. */
+function dedupManaLists() {
+  if (!state.mana) return;
+  const seenInMult = new Set();
+  state.mana.multiplier = (state.mana.multiplier || []).filter(m => {
+    const name = (m && m.lbl || '').trim().toLowerCase();
+    if (!name) return true;
+    if (seenInMult.has(name)) return false;
+    seenInMult.add(name);
+    return true;
+  });
+  const seenInMunch = new Set();
+  state.mana.muncher = (state.mana.muncher || []).filter(m => {
+    const name = (m && m.lbl || '').trim().toLowerCase();
+    if (!name) return true;
+    if (seenInMult.has(name))   return false;   // multiplier wins
+    if (seenInMunch.has(name))  return false;
+    seenInMunch.add(name);
+    return true;
+  });
+}
+
 function migrateState() {
   if (state.mana && Array.isArray(state.mana.muncher)) {
     // remove old split YT items
@@ -3330,6 +3357,9 @@ function migrateState() {
     }
     state._manaListsV3 = true;
   }
+  // Always run a dedup pass — fixes cross-device-sync duplicates where the
+  // same label ended up in BOTH multiplier and muncher.
+  dedupManaLists();
   // remove old yt single-timer state, replaced by activeTimer
   delete state.ytTimer;
   if (state.activeTimer === undefined) state.activeTimer = null;
@@ -3962,6 +3992,9 @@ function applyRemoteSettings(remote) {
   if (remote.mana && typeof remote.mana === 'object') {
     if (Array.isArray(remote.mana.multiplier)) state.mana.multiplier = remote.mana.multiplier;
     if (Array.isArray(remote.mana.muncher))    state.mana.muncher    = remote.mana.muncher;
+    // Dedup after pull — guards against the cross-device race that put the
+    // same label in both lists.
+    if (typeof dedupManaLists === 'function') dedupManaLists();
   }
   // ---- Activity log ----
   if (Array.isArray(remote.watch_log)) state.watchLog = remote.watch_log;
