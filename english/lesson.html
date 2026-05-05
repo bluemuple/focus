@@ -369,7 +369,12 @@
     const left  = document.getElementById('lb-arrow-left');
     const right = document.getElementById('lb-arrow-right');
     if (eye)   eye.addEventListener('click', () => {
+      // Eye toggle: flip the anchor side AND clear the running selection
+      // so the user starts fresh with the new direction.
       ANCHOR_MODE = (ANCHOR_MODE === 'right') ? 'left' : 'right';
+      clearContSelection();
+      if (useSidebar()) clearSidebar();
+      else              hidePopup();
       savePrefs();
       refreshMobileEyeUI();
       refreshAnchorToggleUI();
@@ -400,8 +405,14 @@
       anchorWrap.querySelectorAll('[data-anchor]').forEach(b => {
         b.onclick = () => {
           ANCHOR_MODE = b.dataset.anchor;
+          // Same as the mobile eye toggle: flipping the anchor clears the
+          // running selection so the user starts fresh with the new side.
+          clearContSelection();
+          if (useSidebar()) clearSidebar();
+          else              hidePopup();
           savePrefs();
           refreshAnchorToggleUI();
+          refreshMobileEyeUI();
         };
       });
       refreshAnchorToggleUI();
@@ -421,17 +432,23 @@
     setTimeout(() => wEl.classList.remove('tap-pulse'), 320);
   }
   // 2) Streak floater. Within a 1-minute rolling window the counter ticks
-  //    up: first tap = +1, the second tap inside 60 s = +2, +3, … The
-  //    counter resets to 1 after 60 s of inactivity, so each new "session"
-  //    starts fresh.
+  //    up: first tap = +1, the second tap inside 60 s on a DIFFERENT word
+  //    = +2, +3, … The counter resets to 1 after 60 s of inactivity, and
+  //    repeating the same word twice in a row never bumps the counter.
   let _plusCount = 0;
   let _plusLastT = 0;
+  let _plusLastWord = '';
   function showPlusOne(wEl) {
     if (!wEl) return;
     const now = Date.now();
+    const key = (wEl.dataset.word || wEl.textContent || '').toLowerCase();
+    // Skip when the user re-tapped the SAME word as the previous click —
+    // counter shouldn't move and the +N bubble shouldn't appear.
+    if (key && key === _plusLastWord) return;
     if (now - _plusLastT > 60 * 1000) _plusCount = 0;
     _plusCount++;
     _plusLastT = now;
+    _plusLastWord = key;
     const r = wEl.getBoundingClientRect();
     const div = document.createElement('div');
     div.className = 'plus-one';
@@ -442,29 +459,38 @@
     requestAnimationFrame(() => div.classList.add('go'));
     setTimeout(() => div.remove(), 900);
   }
-  // 3) Combo: count clicks within a rolling 5-second window. Show badge
-  //    when ≥ 3 in window. Auto-fades when the user pauses.
+
+  // 3) Bottom-right unified bubble. Shows "잘했어요" on every word click;
+  //    once the rolling click count crosses 3 it switches to "🔥 콤보 ×N";
+  //    at every multiple of 10 (10, 20, 30, ...) it pops a bigger
+  //    celebratory variant for an extra dopamine hit.
   let _comboTimes = [];
-  let _comboBadge = null;
+  let _comboBubble = null;
   let _comboFadeT = null;
   function recordCombo() {
     const now = Date.now();
-    _comboTimes = _comboTimes.filter(t => now - t < 5000);
+    _comboTimes = _comboTimes.filter(t => now - t < 8000);
     _comboTimes.push(now);
-    if (_comboTimes.length >= 3) showCombo(_comboTimes.length);
+    const n = _comboTimes.length;
+    if (n >= 3)  showBubble('🔥 콤보 ×' + n, n % 10 === 0 ? 'milestone' : 'combo');
+    else         showBubble('잘했어요', 'praise');
   }
-  function showCombo(n) {
-    if (!_comboBadge) {
-      _comboBadge = document.createElement('div');
-      _comboBadge.className = 'combo-badge';
-      document.body.appendChild(_comboBadge);
+  function showBubble(text, kind) {
+    if (!_comboBubble) {
+      _comboBubble = document.createElement('div');
+      _comboBubble.className = 'streak-bubble';
+      document.body.appendChild(_comboBubble);
     }
-    _comboBadge.textContent = '🔥 콤보 ×' + n;
-    _comboBadge.classList.add('show');
+    _comboBubble.classList.remove('praise', 'combo', 'milestone');
+    _comboBubble.classList.add(kind);
+    _comboBubble.textContent = text;
+    _comboBubble.classList.add('show');
     clearTimeout(_comboFadeT);
+    // Praise fades quickly; combos linger; milestones linger longer.
+    const dur = kind === 'milestone' ? 3500 : kind === 'combo' ? 2200 : 1200;
     _comboFadeT = setTimeout(() => {
-      _comboBadge && _comboBadge.classList.remove('show');
-    }, 2400);
+      _comboBubble && _comboBubble.classList.remove('show');
+    }, dur);
   }
   // 4) Variable-reinforcement: ~1/30 chance of a tiny celebratory toast.
   function maybeBonus() {
@@ -514,9 +540,10 @@
   function tryAnchorKey(direction /* 'left' | 'right' */) {
     if (MODE !== 'cont') return false;
 
-    // Empty selection — first arrow press starts a new selection at one end
-    // of the first sentence on the visible page. Eye-left (ANCHOR 'right')
-    // → first word; eye-right (ANCHOR 'left') → last word.
+    // Empty selection — first arrow press starts a new selection at the
+    // OPPOSITE end of the first sentence. eye-left → last word, eye-right
+    // → first word. After this initial pick, normal anchor logic takes over
+    // (no fallback walking past sentence boundaries).
     if (!CONT_SELECTED.size) {
       const root = document.getElementById('lesson-text');
       if (!root) return false;
@@ -525,8 +552,8 @@
       const sentence = getSentenceWordsOf(firstWord);
       if (!sentence.length) return false;
       const target = (ANCHOR_MODE === 'right')
-        ? sentence[0]                          // eye-left → start at first word
-        : sentence[sentence.length - 1];       // eye-right → start at last word
+        ? sentence[sentence.length - 1]   // eye-left → start at LAST word
+        : sentence[0];                    // eye-right → start at FIRST word
       CONT_SELECTED.add(target);
       target.classList.add('cont-sel');
       TTS.speak(target.dataset.word);
@@ -542,73 +569,53 @@
     const ri = sentence.indexOf(rightmost);
     if (li < 0 || ri < 0) return false;
 
-    // Two helpers so each branch can extend in its preferred direction and
-    // automatically fall through to the OPPOSITE side when the natural one
-    // is at the sentence boundary. This is what makes "press the same arrow
-    // continuously" keep walking through the sentence instead of locking.
-    function extendLeft() {
-      const prev = sentence[li - 1];
-      if (prev && !CONT_SELECTED.has(prev)) {
-        CONT_SELECTED.add(prev); prev.classList.add('cont-sel');
-        return true;
-      }
-      return false;
-    }
-    function extendRight() {
-      const next = sentence[ri + 1];
-      if (next && !CONT_SELECTED.has(next)) {
-        CONT_SELECTED.add(next); next.classList.add('cont-sel');
-        return true;
-      }
-      return false;
-    }
-
+    // Once the user has at least one word selected, the keys behave as the
+    // straightforward anchor logic (NO walking past the sentence boundary):
+    // eye-left → ← extends left / → shrinks left.
+    // eye-right → → extends right / ← shrinks right.
     let changed = false;
     if (ANCHOR_MODE === 'right') {
-      // Eye-LEFT: working from the left edge.
+      // Eye-LEFT: anchor on the right; manipulate the LEFT edge.
       if (direction === 'right') {
-        // → key: shrink from left. When we run out of words on the left we
-        // also try removing from the right instead so continuous → press
-        // keeps reducing the selection until it's empty.
-        if (CONT_SELECTED.size > 1) {
-          CONT_SELECTED.delete(leftmost);
-          leftmost.classList.remove('cont-sel');
-          changed = true;
-        } else {
-          CONT_SELECTED.delete(leftmost);
-          leftmost.classList.remove('cont-sel');
+        // → key: drop the leftmost word. If we just emptied the selection,
+        // tear down any visible card / outline.
+        CONT_SELECTED.delete(leftmost);
+        leftmost.classList.remove('cont-sel');
+        if (CONT_SELECTED.size === 0) {
           document.querySelectorAll('.cont-trans').forEach(el => el.remove());
           document.querySelectorAll('.cont-outline').forEach(el => el.remove());
           if (useSidebar()) clearSidebar();
           else              hidePopup();
           return true;
         }
+        changed = true;
       } else {
-        // ← key: try to extend leftward. If we're already at the start of
-        // the sentence (no word at li-1), keep doing useful work by
-        // extending RIGHTWARD instead.
-        changed = extendLeft() || extendRight();
+        // ← key: extend leftward by one word, if there is one.
+        const prev = sentence[li - 1];
+        if (prev && !CONT_SELECTED.has(prev)) {
+          CONT_SELECTED.add(prev); prev.classList.add('cont-sel');
+          changed = true;
+        }
       }
     } else {
-      // Eye-RIGHT: working from the right edge.
+      // Eye-RIGHT: anchor on the left; manipulate the RIGHT edge.
       if (direction === 'right') {
-        // → key: try to extend rightward, fall back to leftward at end.
-        changed = extendRight() || extendLeft();
-      } else {
-        // ← key: shrink from right.
-        if (CONT_SELECTED.size > 1) {
-          CONT_SELECTED.delete(rightmost);
-          rightmost.classList.remove('cont-sel');
+        const next = sentence[ri + 1];
+        if (next && !CONT_SELECTED.has(next)) {
+          CONT_SELECTED.add(next); next.classList.add('cont-sel');
           changed = true;
-        } else {
-          CONT_SELECTED.delete(rightmost);
-          rightmost.classList.remove('cont-sel');
+        }
+      } else {
+        CONT_SELECTED.delete(rightmost);
+        rightmost.classList.remove('cont-sel');
+        if (CONT_SELECTED.size === 0) {
           document.querySelectorAll('.cont-trans').forEach(el => el.remove());
           document.querySelectorAll('.cont-outline').forEach(el => el.remove());
           if (useSidebar()) clearSidebar();
           else              hidePopup();
           return true;
         }
+        changed = true;
       }
     }
     if (changed) refreshContTranslation();
