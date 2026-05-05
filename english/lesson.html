@@ -504,8 +504,9 @@
       }
     }
     if (changed) refreshContTranslation();
-    // We always "claim" the keystroke when in this PC+cont+sidebar mode so
-    // the page doesn't slide while the user is curating their selection.
+    else         renderContOutlines();
+    // We always "claim" the keystroke so the page doesn't slide while the
+    // user is curating their selection (PC arrow keys / mobile tap buttons).
     return true;
   }
 
@@ -1497,7 +1498,56 @@
   function clearContSelection() {
     document.querySelectorAll('.w.cont-sel').forEach(el => el.classList.remove('cont-sel'));
     document.querySelectorAll('.cont-trans').forEach(el => el.remove());
+    document.querySelectorAll('.cont-outline').forEach(el => el.remove());
     CONT_SELECTED.clear();
+  }
+
+  // Draw one rectangle per visual LINE that the current selection spans.
+  //   • 0 or 1 word selected → no rectangle (a single word is just bolded).
+  //   • 2+ words on one line → a single rectangle wrapping them all.
+  //   • 2+ words wrapping across N lines → N rectangles (one per line).
+  // Called whenever the selection changes.
+  function renderContOutlines() {
+    document.querySelectorAll('.cont-outline').forEach(el => el.remove());
+    if (CONT_SELECTED.size < 2) return;
+
+    const lt = document.getElementById('lesson-text');
+    if (!lt) return;
+    const ltRect = lt.getBoundingClientRect();
+
+    // Sort by visual position (top-to-bottom, then left-to-right).
+    const sorted = Array.from(CONT_SELECTED)
+      .map(el => ({ el, r: el.getBoundingClientRect() }))
+      .sort((a, b) => Math.abs(a.r.top - b.r.top) > 4
+        ? (a.r.top - b.r.top)
+        : (a.r.left - b.r.left));
+
+    // Group consecutive entries that share a line (within 4 px of each other).
+    const lines = [];
+    let curr = [], currTop = null;
+    for (const x of sorted) {
+      if (currTop === null || Math.abs(x.r.top - currTop) < 4) {
+        curr.push(x); currTop = x.r.top;
+      } else {
+        lines.push(curr); curr = [x]; currTop = x.r.top;
+      }
+    }
+    if (curr.length) lines.push(curr);
+
+    // Render one outline div per line group.
+    for (const line of lines) {
+      const top    = Math.min(...line.map(x => x.r.top));
+      const bottom = Math.max(...line.map(x => x.r.bottom));
+      const left   = Math.min(...line.map(x => x.r.left));
+      const right  = Math.max(...line.map(x => x.r.right));
+      const div = document.createElement('div');
+      div.className = 'cont-outline';
+      div.style.top    = (top    - ltRect.top  - 2) + 'px';
+      div.style.left   = (left   - ltRect.left - 3) + 'px';
+      div.style.width  = (right  - left + 6) + 'px';
+      div.style.height = (bottom - top   + 4) + 'px';
+      lt.appendChild(div);
+    }
   }
 
   function sizeLessonMain() {
@@ -1881,7 +1931,20 @@
       if (Date.now() - lastSwipeT < 350) return;
       if (didDrag) { didDrag = false; return; }
       const w = getWordEl(e.target);
-      if (!w) return;
+      if (!w) {
+        // Tap landed on empty space (the lesson background, paragraph
+        // padding, or a whitespace token between words). In 이어서 modes
+        // this clears the running selection — same as tapping outside any
+        // popup card. In 하나씩 mode there's nothing to clear here.
+        if ((MODE === 'cont' || MODE === 'contU') && CONT_SELECTED.size > 0) {
+          clearContSelection();
+          if (MODE === 'cont') {
+            if (useSidebar()) clearSidebar();
+            else              hidePopup();
+          }
+        }
+        return;
+      }
       if (root.querySelectorAll('.w.sel').length > 0) clearSel();
 
       const word = w.dataset.word;
@@ -1959,6 +2022,7 @@
       wEl.classList.remove('cont-sel');
       if (CONT_SELECTED.size === 0) {
         document.querySelectorAll('.cont-trans').forEach(el => el.remove());
+        document.querySelectorAll('.cont-outline').forEach(el => el.remove());
         if (MODE === 'cont') {
           if (useSidebar()) clearSidebar();
           else              hidePopup();
@@ -1986,6 +2050,9 @@
   async function refreshContTranslation(anchorEl) {
     const phrase = selectionToPhrase();
     if (!phrase) return;
+
+    // Always refresh the per-line selection outlines first.
+    renderContOutlines();
 
     if (MODE === 'cont' && useSidebar()) {
       // Sidebar populates its own translation/senses asynchronously.
