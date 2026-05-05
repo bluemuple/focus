@@ -1,146 +1,18 @@
-// Text-to-speech.
+// Text-to-speech — Cloud-only.
 //
-// Two engines:
-//   • cloud — Google Cloud TTS (Neural2 voices) via Supabase Edge Function
-//             `tts`. Highest quality. Default when configured.
-//   • web   — Browser's built-in Web Speech API. Uses Edge / OS voices. Free,
-//             zero-setup, but lower quality than Neural2 on most browsers.
+// We only call Google Cloud TTS via the Supabase Edge Function (`tts`) — Web
+// Speech is intentionally NOT used. There's no engine toggle for the user;
+// every speak() call goes through Cloud and any failure logs a warning.
 //
-// Selection is persisted in localStorage. If cloud fails (no key, network,
-// rate limit, etc.) we automatically fall back to web for the rest of the
-// session and remember the failure so we don't keep paying the round-trip.
-//
-// Audio cache: cloud responses are cached as object URLs in memory keyed by
+// Audio cache: Cloud responses are cached as Blob URLs in memory keyed by
 // (voice + text). Same word clicked again replays from memory instantly.
+// We also reuse a SINGLE <audio> element (src-swap) to avoid the iOS Safari
+// autoplay-policy reject on every new Audio object, and to dodge Chrome's
+// "play() interrupted by pause()" race when sentences hand off quickly.
 
 (() => {
-  const ENGINE_KEY = 'eng.v1.tts_engine';
-  let ENGINE = (function () {
-    try {
-      const v = localStorage.getItem(ENGINE_KEY);
-      return v === 'web' ? 'web' : 'cloud';   // default: cloud
-    } catch (e) { return 'cloud'; }
-  })();
-  let cloudFailedThisSession = false;
+  const audioCache = new Map();   // voice + '|' + text  →  objectURL
 
-  function setEngine(name) {
-    if (!['web', 'cloud'].includes(name)) return;
-    ENGINE = name;
-    cloudFailedThisSession = false;
-    try { localStorage.setItem(ENGINE_KEY, name); } catch (e) {}
-  }
-  function getEngine() { return ENGINE; }
-
-  // ================== Web Speech (built-in) ==================
-  let cachedVoices = null;
-  const FEMALE_NAMES = [
-    'Sonia', 'Libby', 'Hollie', 'Olivia', 'Maisie', 'Aria', 'Jenny',
-    'Ana', 'Michelle', 'Nancy', 'Sara', 'Ashley', 'Cora', 'Elizabeth',
-    'Hazel', 'Zira', 'Susan', 'Eva',
-    'Samantha', 'Allison', 'Ava', 'Karen', 'Moira', 'Tessa',
-    'Fiona', 'Veena', 'Catherine', 'Kate', 'Serena', 'Nicole', 'Kathy',
-    'female',
-  ];
-  const MALE_NAMES = [
-    'David', 'Mark', 'James', 'George', 'Liam', 'Ryan', 'Brian',
-    'Guy', 'Thomas', 'Connor', 'William', 'Mitchell', 'Daniel',
-    'Alex', 'Fred', 'Aaron', 'Bruce', 'Tom', 'Matthew',
-    'Joey', 'Justin', 'Kevin', 'Russell', 'Reed', 'Eddy',
-    'Oliver', 'Arthur', 'Diego', 'Jorge', 'male', 'man',
-  ];
-  function namedAs(name, list) {
-    if (!name) return false;
-    return list.some(n => new RegExp('\\b' + n + '\\b', 'i').test(name));
-  }
-  function loadVoices() {
-    return new Promise((resolve) => {
-      const v = speechSynthesis.getVoices();
-      if (v && v.length) { cachedVoices = v; resolve(v); return; }
-      speechSynthesis.onvoiceschanged = () => {
-        cachedVoices = speechSynthesis.getVoices();
-        resolve(cachedVoices);
-      };
-      setTimeout(() => resolve(speechSynthesis.getVoices() || []), 1500);
-    });
-  }
-  function score(v) {
-    const name = v.name || '';
-    const lang = v.lang || '';
-    if (!/^en/i.test(lang)) return -1;
-    const isFemale = namedAs(name, FEMALE_NAMES);
-    const isMale   = namedAs(name, MALE_NAMES);
-    if (isMale && !isFemale) return -1;
-    let s = 0;
-    if (/online.*natural|natural.*online/i.test(name)) s += 130;
-    else if (/enhanced|premium|neural/i.test(name))   s += 90;
-    else if (/online|cloud/i.test(name))               s += 50;
-    if (isFemale) s += 40;
-    if (/en[-_]GB/i.test(lang))      s += 8;
-    else if (/en[-_]US/i.test(lang)) s += 8;
-    else if (/en[-_]AU/i.test(lang)) s += 5;
-    else if (/en[-_]IE/i.test(lang)) s += 5;
-    else                              s += 3;
-    return s;
-  }
-  function pickVoice(voices) {
-    if (!voices || !voices.length) return null;
-    const ranked = voices.map(v => ({ v, s: score(v) }))
-                         .filter(x => x.s > 0)
-                         .sort((a, b) => b.s - a.s);
-    if (ranked.length) return ranked[0].v;
-    const anyEng = voices.find(x => /^en/i.test(x.lang) && !namedAs(x.name, MALE_NAMES));
-    return anyEng || voices.find(x => /^en/i.test(x.lang)) || voices[0];
-  }
-
-  let lastUtter = null;
-  let currentAudio = null;
-  // Track the most recently registered onend callback so stop() / a play()
-  // rejection can release any outer await that's waiting for "this sentence
-  // finished playing" — otherwise the sentence-loop in startTTS hangs.
-  let pendingOnend = null;
-  function firePending() {
-    const cb = pendingOnend; pendingOnend = null;
-    if (typeof cb === 'function') { try { cb(); } catch (e) {} }
-  }
-
-  function stop() {
-    try { speechSynthesis.cancel(); } catch (e) {}
-    if (currentAudio) {
-      try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (e) {}
-      currentAudio = null;
-    }
-    lastUtter = null;
-    firePending();
-  }
-
-  async function speakViaWeb(text, opts = {}) {
-    if (!('speechSynthesis' in window)) return;
-    const voices = await loadVoices();
-    const voice = pickVoice(voices);
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) { u.voice = voice; u.lang = voice.lang; } else { u.lang = 'en-GB'; }
-    u.rate   = opts.rate   ?? 0.95;
-    u.pitch  = opts.pitch  ?? 1.1;
-    u.volume = opts.volume ?? 1;
-    pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
-    u.onend   = () => firePending();
-    u.onerror = () => firePending();
-    lastUtter = u;
-    speechSynthesis.speak(u);
-  }
-
-  // ================== Google Cloud TTS (via Supabase) ==================
-  // In-memory cache: same text + voice → same Blob URL (instant replay).
-  const audioCache = new Map();   // key: voice + '|' + text  →  objectURL
-
-  // SINGLE <audio> element shared across all sentences. Creating a new
-  // Audio element per sentence breaks two things:
-  //   1) iOS Safari treats each new Audio as needing its own user gesture,
-  //      so the second sentence's play() is rejected.
-  //   2) Chrome/Edge's `play()` returns a Promise that rejects if the audio
-  //      is paused / its src is changed before playback starts. The fast
-  //      sentence-handoff in startTTS hits this reliably.
-  // Re-using the same element with src swaps avoids both.
   let cloudAudio = null;
   function getCloudAudio() {
     if (!cloudAudio) {
@@ -148,6 +20,24 @@
       cloudAudio.preload = 'auto';
     }
     return cloudAudio;
+  }
+
+  let currentAudio = null;
+  // Track the most recently registered onend callback so stop() / a play()
+  // rejection can release any outer await waiting for "this sentence is
+  // done" — otherwise the sentence-loop in startTTS hangs.
+  let pendingOnend = null;
+  function firePending() {
+    const cb = pendingOnend; pendingOnend = null;
+    if (typeof cb === 'function') { try { cb(); } catch (e) {} }
+  }
+
+  function stop() {
+    if (currentAudio) {
+      try { currentAudio.pause(); currentAudio.currentTime = 0; } catch (e) {}
+      currentAudio = null;
+    }
+    firePending();
   }
 
   async function fetchCloudAudio(text, voice, rate) {
@@ -173,19 +63,35 @@
     return URL.createObjectURL(blob);
   }
 
-  async function speakViaCloud(text, opts = {}) {
+  async function speak(text, opts = {}) {
+    text = (text || '').toString().trim();
+    if (!text) return;
+    stop();
+
     const voice = opts.voice || 'en-US-Neural2-F';
     const rate  = opts.rate  ?? 1.0;
-    const ck = voice + '|' + text;
+    const ck    = voice + '|' + text;
+
     let url = audioCache.get(ck);
     if (!url) {
-      url = await fetchCloudAudio(text, voice, rate);
-      audioCache.set(ck, url);
+      try {
+        url = await fetchCloudAudio(text, voice, rate);
+        audioCache.set(ck, url);
+      } catch (e) {
+        console.warn('[TTS] cloud failed:', e && e.message || e);
+        // No fallback engine — fire the pending onend so the caller's loop
+        // doesn't hang waiting for an end-of-audio signal that will never come.
+        if (typeof opts.onend === 'function') {
+          try { opts.onend(); } catch (er) {}
+        }
+        return;
+      }
     }
+
     const audio = getCloudAudio();
-    // Detach previous handlers and stop any previous playback cleanly so the
-    // src swap below doesn't reject the prior play() promise as a "hard"
-    // failure — we still need to do this, but we'll catch AbortError below.
+    // Detach previous handlers and stop the current playback. The src swap
+    // below would otherwise reject the prior play() promise as "hard"
+    // failure, which we silently catch as benign at the bottom of this fn.
     audio.onended = null;
     audio.onerror = null;
     try { audio.pause(); } catch (e) {}
@@ -193,52 +99,24 @@
     pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
     audio.onended = () => firePending();
     currentAudio = audio;
+
     try {
       await audio.play();
     } catch (e) {
-      // AbortError = play() was interrupted (sibling stop()/src swap during
-      // fast sentence handoff, or a stale autoplay policy hiccup). Treat as
-      // benign — fire the pending callback so the caller's loop moves on,
-      // and DON'T mark cloud TTS as failed for the rest of the session.
+      // play() preempted by a sibling stop() / src swap during fast handoff.
+      // Treat as benign — fire pending so the caller's loop moves on.
       if (e && (e.name === 'AbortError' || /interrupt/i.test(e.message || ''))) {
         firePending();
         return;
       }
-      throw e;
+      console.warn('[TTS] play failed:', e && e.message || e);
+      firePending();
     }
-  }
-
-  // ================== unified entry point ==================
-  async function speak(text, opts = {}) {
-    text = (text || '').toString().trim();
-    if (!text) return;
-    stop();
-
-    if (ENGINE === 'cloud' && !cloudFailedThisSession) {
-      try { await speakViaCloud(text, opts); return; }
-      catch (e) {
-        cloudFailedThisSession = true;
-        console.warn('[TTS] cloud failed, falling back to web speech:', e && e.message || e);
-      }
-    }
-    return speakViaWeb(text, opts);
   }
 
   function isSpeaking() {
-    if (currentAudio && !currentAudio.paused && !currentAudio.ended) return true;
-    return !!('speechSynthesis' in window) && speechSynthesis.speaking;
+    return !!(currentAudio && !currentAudio.paused && !currentAudio.ended);
   }
 
-  function listVoices() {
-    const voices = speechSynthesis.getVoices();
-    const ranked = voices.map(v => ({ name: v.name, lang: v.lang, score: score(v) }))
-                         .sort((a, b) => b.score - a.score);
-    console.table(ranked);
-    return ranked;
-  }
-
-  window.TTS = {
-    speak, stop, isSpeaking, loadVoices, listVoices,
-    setEngine, getEngine,
-  };
+  window.TTS = { speak, stop, isSpeaking };
 })();

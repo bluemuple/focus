@@ -18,12 +18,12 @@
             <img src="images/back.jpg" alt="뒤로" onerror="this.style.display='none';this.parentNode.textContent='‹';">
           </a>
           <h1 id="lesson-title">불러오는 중...</h1>
+          <img class="lesson-thumb-img" id="lesson-thumb-img" alt="" hidden>
         </div>
 
         <div class="lesson-head">
           <div class="head-spacer"></div>
           <div class="head-tools">
-            <button class="toggle-btn dict" id="tts-toggle-btn"  title="음성 엔진 전환 (Google Cloud ↔ Web Speech)">GC</button>
             <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
             <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
             <button class="toggle-btn"      id="bookmark-btn"    title="이 레슨을 찜한 레슨으로 추가/제거">찜</button>
@@ -81,7 +81,7 @@
        button on the right. Pressing play swaps in the playbar below. -->
   <div class="lesson-bar" id="lesson-bar">
     <button class="lb-play" id="lb-play" aria-label="재생 시작">▶</button>
-    <div class="lesson-progress lb-progress">
+    <div class="lesson-progress lb-progress" id="lb-progress">
       <button class="lp-btn" id="page-prev" aria-label="이전 페이지">‹</button>
       <div class="lp-track">
         <div class="lp-fill" id="lp-fill"></div>
@@ -89,6 +89,19 @@
       </div>
       <span class="lp-pages" id="lp-pages">1 / 1</span>
       <button class="lp-btn" id="page-next" aria-label="다음 페이지">›</button>
+    </div>
+    <!-- Mobile-only middle controls for 이어서 mode: ← extends/shrinks left
+         (or right depending on the eye toggle), then the eye toggle, then →. -->
+    <div class="lb-cont-controls" id="lb-cont-controls" hidden>
+      <button class="lb-arrow" id="lb-arrow-left"  aria-label="←">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>
+      </button>
+      <button class="lb-eye" id="lb-eye" aria-label="방향 전환">
+        <img id="lb-eye-img" src="images/eye-left.svg" alt="">
+      </button>
+      <button class="lb-arrow" id="lb-arrow-right" aria-label="→">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+      </button>
     </div>
     <button class="lb-practice" id="lb-practice" aria-label="연습">
       <img src="images/card.png" alt="연습" onerror="this.style.display='none';this.parentNode.textContent='연습';">
@@ -280,6 +293,19 @@
     WORD_STATES = await DB.loadWordStates();
 
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
+    // Lesson thumbnail (set when the lesson was imported). Rounded image
+    // pinned to the right of the title row; hidden if the lesson didn't
+    // upload one. The title gets ellipsis when it would overlap the image.
+    const thumbImg = document.getElementById('lesson-thumb-img');
+    if (thumbImg) {
+      if (LESSON.thumbnail_url) {
+        thumbImg.src = LESSON.thumbnail_url;
+        thumbImg.hidden = false;
+      } else {
+        thumbImg.removeAttribute('src');
+        thumbImg.hidden = true;
+      }
+    }
     refreshBookmarkBtn();
 
     applyModeClass();             // sets .mode-cont on lesson-text wrap if needed
@@ -301,7 +327,9 @@
     setupHeartButton();
     setupCloseXButton();
     setupSidebar();
+    setupMobileContBar();
     applySidebarVisibility();
+    applyMobileContBar();
   }
 
   // ============== PC sidebar (이어서 mode only) ==============
@@ -332,6 +360,31 @@
       tg.hidden = false;
       document.body.classList.remove('sidebar-open');
     }
+  }
+
+  // ---- mobile bottom-bar cont controls (← [eye] →) ----
+  function applyMobileContBar() {
+    const sliderEl = document.getElementById('lb-progress');
+    const ctrlEl   = document.getElementById('lb-cont-controls');
+    if (!sliderEl || !ctrlEl) return;
+    const isCont = (MODE === 'cont') && isMobileViewport();
+    sliderEl.hidden = isCont;
+    ctrlEl.hidden   = !isCont;
+    refreshMobileEyeUI();
+  }
+  function setupMobileContBar() {
+    const eye   = document.getElementById('lb-eye');
+    const left  = document.getElementById('lb-arrow-left');
+    const right = document.getElementById('lb-arrow-right');
+    if (eye)   eye.addEventListener('click', () => {
+      ANCHOR_MODE = (ANCHOR_MODE === 'right') ? 'left' : 'right';
+      savePrefs();
+      refreshMobileEyeUI();
+      refreshAnchorToggleUI();
+    });
+    // Tapping ←/→ on mobile triggers the same logic as the PC arrow keys.
+    if (left)  left.addEventListener('click',  () => tryAnchorKey('left'));
+    if (right) right.addEventListener('click', () => tryAnchorKey('right'));
   }
 
   function setupSidebar() {
@@ -715,15 +768,39 @@
         <div class="practice-anchor">
           <div class="practice-card-anchored">
             <button class="pa-item" data-act="words">
-              <span class="pa-ico">🃏</span>
+              <span class="pa-ico">
+                <!-- stacked papers — vocabulary deck icon -->
+                <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+                  <rect x="6" y="3" width="14" height="18" rx="1.5" fill="#fff"/>
+                  <rect x="9" y="6" width="14" height="18" rx="1.5" fill="#fff"/>
+                  <line x1="12" y1="11" x2="20" y2="11"/>
+                  <line x1="12" y1="14" x2="18" y2="14"/>
+                  <line x1="12" y1="17" x2="19" y2="17"/>
+                </svg>
+              </span>
               <span class="pa-text">단어 연습 <span class="pa-count">(${heartedCount})</span></span>
             </button>
             <button class="pa-item" data-act="sentences">
-              <span class="pa-ico">🧩</span>
+              <span class="pa-ico">
+                <!-- stacked papers with a clock — sentence reorder icon -->
+                <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+                  <rect x="5" y="4" width="13" height="17" rx="1.5" fill="#fff"/>
+                  <rect x="8" y="7" width="13" height="17" rx="1.5" fill="#fff"/>
+                  <circle cx="18" cy="18" r="4" fill="#fff"/>
+                  <polyline points="18 16 18 18 20 19" stroke-linecap="round"/>
+                </svg>
+              </span>
               <span class="pa-text">문장 연습 <span class="pa-count">(${phrasesCount})</span></span>
             </button>
             <button class="pa-item" data-act="quiz">
-              <span class="pa-ico">📝</span>
+              <span class="pa-ico">
+                <!-- stacked papers with a check — quiz icon -->
+                <svg viewBox="0 0 28 28" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round">
+                  <rect x="5" y="4" width="13" height="17" rx="1.5" fill="#fff"/>
+                  <rect x="8" y="7" width="13" height="17" rx="1.5" fill="#fff"/>
+                  <polyline points="12 16 14.5 18.5 19 13.5" stroke-linecap="round"/>
+                </svg>
+              </span>
               <span class="pa-text">퀴즈 <span class="pa-count">(12)</span></span>
             </button>
           </div>
@@ -796,7 +873,7 @@
         flipped = !flipped;
         card.classList.toggle('flipped', flipped);
       };
-      stage.querySelector('[data-speak]').onclick = (e) => { e.stopPropagation(); TTS.speak(word); };
+      stage.querySelector('[data-speak]').onclick = (e) => { e.stopPropagation(); TTS.speak(word, { engine: 'cloud' }); };
       stage.querySelectorAll('[data-rate]').forEach(b => {
         b.onclick = () => {
           const r = Number(b.dataset.rate);
@@ -809,7 +886,7 @@
         };
       });
       // Auto-speak on each new card so listening practice is a freebie.
-      TTS.speak(word);
+      TTS.speak(word, { engine: 'cloud' });
     }
     function finish() {
       stage.innerHTML = practiceFrame(`
@@ -930,7 +1007,7 @@
       };
 
       // Read the phrase aloud as a hint.
-      TTS.speak(p.phrase);
+      TTS.speak(p.phrase, { engine: 'cloud' });
     }
     function finish() {
       stage.innerHTML = practiceFrame(`
@@ -1059,12 +1136,12 @@
         optsEl.appendChild(b);
       });
       stage.querySelectorAll('[data-audio]').forEach(b => {
-        b.onclick = () => TTS.speak(targetWord(q), { rate: b.dataset.audio === 'slow' ? 0.65 : 0.95 });
+        b.onclick = () => TTS.speak(targetWord(q), { rate: b.dataset.audio === 'slow' ? 0.65 : 0.95, engine: 'cloud' });
       });
       stage.querySelector('[data-skip]').onclick = () => choose(-1);
       // Auto-play the spoken word if relevant.
       if (q.prompt.type === 'audio' || (q.prompt.type === 'text' && q.prompt.audio)) {
-        TTS.speak(targetWord(q));
+        TTS.speak(targetWord(q), { engine: 'cloud' });
       }
     }
     function targetWord(q) {
@@ -1102,7 +1179,7 @@
         </div>
         <button class="qz-continue" data-continue>Continue</button>
       `);
-      stage.querySelector('[data-audio]').onclick = () => TTS.speak(target);
+      stage.querySelector('[data-audio]').onclick = () => TTS.speak(target, { engine: 'cloud' });
       mountLevelBar(stage.querySelector('#qz-level'), target);
       stage.querySelector('[data-continue]').onclick = () => {
         qi++; chosen = null;
@@ -1245,18 +1322,7 @@
     });
     refreshTx();
 
-    // TTS engine toggle (GC ↔ WS).
-    const ttsBtn = document.getElementById('tts-toggle-btn');
-    function refreshTts() {
-      const cur = (window.TTS && TTS.getEngine && TTS.getEngine()) || 'cloud';
-      ttsBtn.textContent = cur === 'cloud' ? 'GC' : 'WS';
-    }
-    ttsBtn.addEventListener('click', () => {
-      const cur = TTS.getEngine();
-      TTS.setEngine(cur === 'cloud' ? 'web' : 'cloud');
-      refreshTts();
-    });
-    refreshTts();
+    // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
     // Bookmark toggle (찜). Pink when on. Stays "찜" text either way; only
     // the colour communicates state.
@@ -1290,6 +1356,7 @@
     clearSidebar();
     applyModeClass();
     applySidebarVisibility();
+    applyMobileContBar();
     // Spacing differs between modes → re-paginate.
     if (!LESSON) return;
     requestAnimationFrame(() => {
@@ -1323,8 +1390,11 @@
     CURRENT_SENTENCE = idx;
     document.querySelectorAll('.w.reading').forEach(el => el.classList.remove('reading'));
     if (idx < 0 || idx >= SENTENCE_MAP.length) return;
+    // Apply .reading to ALL elements in the sentence — including punctuation
+    // and the whitespace tokens between words — so the underline is one
+    // continuous line and the whole sentence reads as bold.
     for (const w of SENTENCE_MAP[idx].words) {
-      if (!w.classList.contains('punct')) w.classList.add('reading');
+      w.classList.add('reading');
     }
   }
 
@@ -1456,7 +1526,11 @@
     const paragraphs = body.split(/\n{2,}|\r\n{2,}/).map(p => p.trim()).filter(Boolean);
     if (!paragraphs.length) return [['']];
     const wrap = document.getElementById('lesson-text-wrap');
-    const maxH = wrap.clientHeight - 4;
+    // Bigger safety margin so the last paragraph never gets clipped by
+    // descenders / line-height rounding. PC has a slightly taller font so
+    // it needs more.
+    const safety = window.matchMedia('(min-width: 1024px)').matches ? 24 : 12;
+    const maxH = wrap.clientHeight - safety;
     if (maxH <= 0) return [paragraphs];
 
     const mirror = document.createElement('div');
@@ -1598,16 +1672,40 @@
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
     if (e.key === 'Escape') hidePopup();
-    // Arrow keys: in PC + 이어서 mode WITH a running selection, the keys
-    // grow/shrink the selection within the current sentence (anchor toggle
-    // controls which side is movable). Otherwise they navigate pages.
+
+    // Spacebar in 이어서 mode flips the anchor side (←/→ toggle). We only
+    // grab it when the user is actually using the cont selection — that way
+    // it doesn't conflict with the popup-card "Space → Corpus" shortcut.
+    if (e.code === 'Space' && MODE === 'cont' && CONT_SELECTED.size > 0
+        && (useSidebar() || isMobileViewport())) {
+      e.preventDefault();
+      ANCHOR_MODE = (ANCHOR_MODE === 'right') ? 'left' : 'right';
+      savePrefs();
+      refreshAnchorToggleUI();
+      refreshMobileEyeUI();
+      return;
+    }
+
+    // ',' / '.' navigate pages on PC. We use these instead of ←/→ so that
+    // arrow keys are reserved for the cont-mode selection grower/shrinker.
+    if (e.key === ',' || e.key === '<') { e.preventDefault(); goPage(-1); return; }
+    if (e.key === '.' || e.key === '>') { e.preventDefault(); goPage(+1); return; }
+
+    // Arrow keys: only used for cont-mode selection. They no longer
+    // navigate pages — that's now ',' and '.' above.
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const dir = e.key === 'ArrowLeft' ? 'left' : 'right';
       if (tryAnchorKey(dir)) { e.preventDefault(); return; }
-      if (e.key === 'ArrowLeft')  goPage(-1);
-      if (e.key === 'ArrowRight') goPage(+1);
     }
   });
+  function isMobileViewport() {
+    return window.matchMedia('(max-width: 1023px)').matches;
+  }
+  function refreshMobileEyeUI() {
+    const img = document.getElementById('lb-eye-img');
+    if (!img) return;
+    img.src = (ANCHOR_MODE === 'right') ? 'images/eye-left.svg' : 'images/eye-right.svg';
+  }
 
   let resizeT = null;
   window.addEventListener('resize', () => {
@@ -1616,6 +1714,7 @@
       sizeLessonMain();
       hidePopup();
       applySidebarVisibility();
+      applyMobileContBar();
       requestAnimationFrame(() => {
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');

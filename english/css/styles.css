@@ -23,7 +23,7 @@
      state 1 = darkest green: 새로운 단어 (clicked twice)
      state 2..4 = progressively lighter green
      state 5 = no highlight: 완전히 아는 단어 / 무시(-1) shares this look */
-  --word-new: #e6eef7;  /* very pale sky blue, state 0 */
+  --word-new: #c6dfff;  /* sky blue, state 0 — clearly visible without being loud */
   --word-1:   #8ac68c;  /* darkest green */
   --word-2:   #b1d8b1;
   --word-3:   #cee5cb;
@@ -359,12 +359,27 @@ a { color: inherit; }
 .lesson-title-row .back-btn img {
   width: 22px; height: 22px; object-fit: contain;
 }
+/* Lesson thumbnail pinned to the right of the title row. Title above
+   has flex: 1 + ellipsis already, so it truncates if it would overlap. */
+.lesson-title-row .lesson-thumb-img {
+  width: 56px; height: 40px;
+  object-fit: cover;
+  border-radius: 10px;
+  flex-shrink: 0;
+  background: #f1f3f5;
+}
+.lesson-title-row .lesson-thumb-img[hidden] { display: none; }
 
 /* The lesson page no longer renders the global topbar — the back button +
    title row above the body takes its place. Hide topbar JUST on this page. */
 .lesson-page > .topbar { display: none; }
 .lesson-head .head-spacer { flex: 1; }
 .lesson-head .head-tools { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+@media (max-width: 600px) {
+  /* Mobile: toggle row is LEFT-aligned, sitting just below the title row. */
+  .lesson-head .head-spacer { display: none; }
+  .lesson-head .head-tools  { flex-wrap: wrap; }
+}
 
 /* Toggle button: a single pill that shows its CURRENT state in its label.
    Click flips state and label. Background is always pale sky-blue — never
@@ -425,7 +440,13 @@ a { color: inherit; }
 @media (max-width: 600px) {
   .lesson-text { font-size: 19px; line-height: 2.35; }
 }
-.lesson-text .para { margin: 0 0 16px; }
+.lesson-text .para { margin: 0 0 14px; }
+@media (min-width: 1024px) {
+  /* Tighter paragraph gap on PC so the last paragraph isn't half-cut by
+     the playbar / lesson-bar. Pagination's safety margin (in JS) is also
+     bumped to make this robust. */
+  .lesson-text .para { margin: 0 0 10px; }
+}
 
 /* Word chip — inline (default) so the background hugs the character only,
    with no surrounding padding. The line-height of the parent gives breathing
@@ -445,12 +466,20 @@ a { color: inherit; }
 .w.active { box-shadow: 0 0 0 1.5px var(--ink); }
 .w.sel { box-shadow: 0 0 0 1.5px #888; background: rgba(0,0,0,0.04) !important; }
 .w.punct { background: transparent !important; cursor: default; }
-/* Sentence currently being read aloud — underline every word in it. */
+/* Sentence currently being read aloud — bold + a continuous underline that
+   runs across the whole sentence (including the spaces / punctuation
+   between words, so there are no gaps). */
 .w.reading {
   text-decoration: underline;
   text-decoration-color: var(--accent);
   text-decoration-thickness: 2px;
   text-underline-offset: 4px;
+  font-weight: 800;
+}
+.w.punct.reading {
+  /* punct elements get the underline too so the line is continuous,
+     and they inherit bold from the rule above. */
+  text-decoration-color: var(--accent);
 }
 
 /* ===== 이어서 (cont) mode =====
@@ -560,9 +589,21 @@ a { color: inherit; }
 .lesson-sidebar-toggle img { width: 22px; height: 22px; object-fit: contain; transform: scaleX(-1); }
 .lesson-sidebar-toggle[hidden] { display: none; }
 
-/* When sidebar is open on PC, the lesson card shrinks left so it isn't
-   covered by the panel. The toggle button is hidden (use the in-sidebar X). */
-body.sidebar-open .lesson-main { margin-right: 360px; transition: margin-right .28s; }
+/* On PC we always reserve space for the sidebar in the lesson layout, so
+   that closing the sidebar leaves the text at the SAME width — just centered
+   in the viewport instead of shifted left. */
+@media (min-width: 1024px) {
+  .lesson-main {
+    max-width: calc(100% - 360px);
+    margin-left: auto;
+    margin-right: auto;
+    transition: margin-left .28s, margin-right .28s;
+  }
+  body.sidebar-open .lesson-main {
+    margin-right: 360px;
+    margin-left: 0;
+  }
+}
 
 /* Don't show the sidebar or its toggle on small screens — those use the
    anchored popup card instead. */
@@ -1383,6 +1424,49 @@ body.sidebar-open .lesson-main { margin-right: 360px; transition: margin-right .
 }
 .lesson-bar .lb-practice:hover { background: #f1f3f5; }
 .lesson-bar .lb-practice img { width: 30px; height: 30px; object-fit: contain; }
+
+/* Mobile-only middle controls when the user is in 이어서 mode: replaces the
+   page-progress slider with [←] [eye toggle] [→]. The eye is a single button
+   whose icon (eye-left.svg / eye-right.svg) reflects the current ANCHOR_MODE. */
+.lesson-bar .lb-cont-controls {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px;
+  margin: 0 8px;
+}
+.lesson-bar .lb-cont-controls[hidden] { display: none; }
+.lesson-bar .lb-arrow {
+  width: 44px; height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  display: grid; place-items: center;
+  cursor: pointer;
+  color: var(--ink);
+  transition: background .12s, transform .05s;
+}
+.lesson-bar .lb-arrow:hover  { background: #f1f3f5; }
+.lesson-bar .lb-arrow:active { transform: translateY(1px); }
+.lesson-bar .lb-eye {
+  width: 56px; height: 44px;
+  border-radius: 999px;
+  border: 1px solid #cdd2d8;
+  background: #fff;
+  display: grid; place-items: center;
+  cursor: pointer;
+  padding: 0;
+}
+.lesson-bar .lb-eye:hover { background: #f8f9fa; }
+.lesson-bar .lb-eye img { width: 36px; height: 28px; object-fit: contain; }
+
+/* Practice menu icons — matched to practice.jpeg's gray paper-stack style. */
+.practice-card-anchored .pa-ico {
+  width: 36px; height: 36px;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+  color: #6b7280;
+}
+.practice-card-anchored .pa-ico svg { display: block; }
 
 /* Audio playback bar (revealed when the lesson-bar play button is pressed).
    All buttons share the same circular pill shape. */
