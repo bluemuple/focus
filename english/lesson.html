@@ -123,6 +123,12 @@
       </button>
       <div class="ls-section-label">단계</div>
       <div class="level-bar" id="ls-level"></div>
+
+      <div class="ls-section-label">키보드 화살표 방향</div>
+      <div class="ls-anchor-toggle" id="ls-anchor-toggle" role="group" aria-label="화살표 키 방향">
+        <button class="lat-btn" data-anchor="right" title="→ 키로 왼쪽부터 줄이기 / ← 키로 왼쪽으로 늘리기">→</button>
+        <button class="lat-btn" data-anchor="left"  title="→ 키로 오른쪽으로 늘리기 / ← 키로 오른쪽부터 줄이기">←</button>
+      </div>
     </div>
   </aside>
   <!-- Floating toggle so the user can re-open the sidebar after closing it,
@@ -192,8 +198,12 @@
   //   cont    — 이어서       (popup card too, but selection accumulates within a sentence)
   //   contU   — 이어서(밑줄) — inline gray translation under the line; bigger KR font
   let MODE = ({ single: 'single', cont: 'cont', contU: 'contU' })[prefs.mode] || 'single';
+  // Arrow-key behaviour for the running cont selection (PC sidebar only):
+  //   'right' (icon →) = anchor on the right; ← extends LEFT, → shrinks left
+  //   'left'  (icon ←) = anchor on the left;  → extends RIGHT, ← shrinks right
+  let ANCHOR_MODE = (prefs.anchor === 'left' || prefs.anchor === 'right') ? prefs.anchor : 'right';
   function savePrefs() {
-    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE })); }
+    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE, anchor: ANCHOR_MODE })); }
     catch (e) {}
   }
   function modeLabel(m) {
@@ -337,6 +347,121 @@
       const span = add.querySelector('span');
       if (span) span.textContent = '추가됨 ✓';
     });
+
+    // Anchor-mode pill toggle (→ ←). Click flips the active side; arrow keys
+    // in cont mode then extend/shrink the running selection accordingly.
+    const anchorWrap = document.getElementById('ls-anchor-toggle');
+    if (anchorWrap) {
+      anchorWrap.querySelectorAll('[data-anchor]').forEach(b => {
+        b.onclick = () => {
+          ANCHOR_MODE = b.dataset.anchor;
+          savePrefs();
+          refreshAnchorToggleUI();
+        };
+      });
+      refreshAnchorToggleUI();
+    }
+  }
+  function refreshAnchorToggleUI() {
+    document.querySelectorAll('#ls-anchor-toggle [data-anchor]').forEach(b => {
+      b.classList.toggle('active', b.dataset.anchor === ANCHOR_MODE);
+    });
+  }
+
+  // ---- arrow-key selection helpers ----
+  function getSelectedSorted() {
+    return Array.from(CONT_SELECTED).sort((a, b) => {
+      const cmp = a.compareDocumentPosition(b);
+      if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+      if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+      return 0;
+    });
+  }
+  // All non-punct .w elements inside the same sentence as `refWord`,
+  // in DOM order. Used by the arrow-key selection grower/shrinker.
+  function getSentenceWordsOf(refWord) {
+    const p = refWord && refWord.parentElement;
+    if (!p) return [];
+    const sIdx = getSentenceIdxOf(refWord);
+    const result = [];
+    let cur = 0;
+    for (const el of p.children) {
+      if (cur === sIdx
+          && el.classList && el.classList.contains('w')
+          && !el.classList.contains('punct')) {
+        result.push(el);
+      }
+      if (el.classList && el.classList.contains('punct') && /[.!?]/.test(el.textContent)) cur++;
+      if (cur > sIdx) break;
+    }
+    return result;
+  }
+  // Returns true when this keypress was used for selection; the caller
+  // should then NOT also trigger page navigation.
+  function tryAnchorKey(direction /* 'left' | 'right' */) {
+    if (!useSidebar()) return false;
+    if (MODE !== 'cont') return false;
+    if (!CONT_SELECTED.size) return false;
+
+    const sorted    = getSelectedSorted();
+    const leftmost  = sorted[0];
+    const rightmost = sorted[sorted.length - 1];
+    const sentence  = getSentenceWordsOf(leftmost);
+    const li = sentence.indexOf(leftmost);
+    const ri = sentence.indexOf(rightmost);
+    if (li < 0 || ri < 0) return false;
+
+    let changed = false;
+    if (ANCHOR_MODE === 'right') {
+      // Right side anchored — manipulate the LEFT edge.
+      if (direction === 'right') {
+        // Shrink: drop the leftmost word.
+        if (CONT_SELECTED.size > 1) {
+          CONT_SELECTED.delete(leftmost);
+          leftmost.classList.remove('cont-sel');
+          changed = true;
+        } else {
+          // Selection of 1 → deselecting it clears the running selection.
+          CONT_SELECTED.delete(leftmost);
+          leftmost.classList.remove('cont-sel');
+          clearSidebar();
+          return true;
+        }
+      } else {
+        // Extend leftward: select the word just before the current leftmost.
+        const prev = sentence[li - 1];
+        if (prev && !CONT_SELECTED.has(prev)) {
+          CONT_SELECTED.add(prev);
+          prev.classList.add('cont-sel');
+          changed = true;
+        }
+      }
+    } else {
+      // Left side anchored — manipulate the RIGHT edge.
+      if (direction === 'right') {
+        const next = sentence[ri + 1];
+        if (next && !CONT_SELECTED.has(next)) {
+          CONT_SELECTED.add(next);
+          next.classList.add('cont-sel');
+          changed = true;
+        }
+      } else {
+        if (CONT_SELECTED.size > 1) {
+          CONT_SELECTED.delete(rightmost);
+          rightmost.classList.remove('cont-sel');
+          changed = true;
+        } else {
+          CONT_SELECTED.delete(rightmost);
+          rightmost.classList.remove('cont-sel');
+          clearSidebar();
+          return true;
+        }
+      }
+    }
+    if (changed) refreshContTranslation();
+    // We always "claim" the keystroke when in this PC+cont+sidebar mode so
+    // the page doesn't slide while the user is curating their selection.
+    return true;
   }
 
   function clearSidebar() {
@@ -1472,9 +1597,16 @@
   document.getElementById('page-next').addEventListener('click', () => goPage(+1));
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
-    if (e.key === 'ArrowLeft')  goPage(-1);
-    if (e.key === 'ArrowRight') goPage(+1);
-    if (e.key === 'Escape')    hidePopup();
+    if (e.key === 'Escape') hidePopup();
+    // Arrow keys: in PC + 이어서 mode WITH a running selection, the keys
+    // grow/shrink the selection within the current sentence (anchor toggle
+    // controls which side is movable). Otherwise they navigate pages.
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      const dir = e.key === 'ArrowLeft' ? 'left' : 'right';
+      if (tryAnchorKey(dir)) { e.preventDefault(); return; }
+      if (e.key === 'ArrowLeft')  goPage(-1);
+      if (e.key === 'ArrowRight') goPage(+1);
+    }
   });
 
   let resizeT = null;
