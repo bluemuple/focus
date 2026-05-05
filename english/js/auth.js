@@ -5,11 +5,21 @@
 (() => {
   // Pages that don't require auth (none in this app — but the lesson and import
   // pages also need to either be authed or in try-mode).
+  //
+  // Check the real Supabase session FIRST so that a user who has signed in
+  // via the parent Bidoro app (same origin → same localStorage) is recognised
+  // even if a stale `try_mode` flag is hanging around from an earlier visit.
+  // When that happens we clear the flag so the rest of the app talks to the
+  // cloud instead of localStorage.
   async function isAuthed() {
-    if (DB.isTryMode()) return true;
-    if (!DB.haveSupabase) return false;
-    const u = await DB.currentUser();
-    return !!u;
+    if (DB.haveSupabase) {
+      const u = await DB.currentUser();
+      if (u) {
+        if (DB.isTryMode()) DB.setTryMode(false);
+        return true;
+      }
+    }
+    return DB.isTryMode();
   }
 
   function ensureModalRoot() {

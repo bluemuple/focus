@@ -6155,21 +6155,15 @@ function toggleActiveTimerPause() {
   const at = state.activeTimer;
   if (!at) return;
   if (at.type === 'pomodoro') return togglePomodoroPause();
-  // Muncher / multiplier — generic stopwatch pause.
-  if (at.paused) {
-    const pauseDur = Date.now() - (at.pausedAt || Date.now());
-    at.totalPausedMs = (at.totalPausedMs || 0) + pauseDur;
-    at.paused = false;
-    at.pausedAt = null;
-  } else {
-    at.paused = true;
-    at.pausedAt = Date.now();
-  }
-  saveState();
-  markSettingsChanged(); pushSettingsToCloud();
-  if (typeof renderManaList === 'function') {
-    renderManaList(at.type === 'multiplier' ? 'multiplier' : 'muncher');
-  }
+  // Habits & Triggers tracker (muncher / multiplier) — tapping the timer
+  // STOPS the tracker entirely (logs it + clears the active timer + the
+  // matching ●/○ indicator on the Habits & Triggers row clears too). The
+  // user has explicitly asked for this behavior so there's a single,
+  // unambiguous "stop" action.
+  stopActiveTimer('finish');
+  if (typeof renderManaLists === 'function') renderManaLists();
+  if (typeof renderWatchLog  === 'function') renderWatchLog();
+  if (typeof drawGauge       === 'function') drawGauge();
   renderImDoing();
 }
 function pomodoroPhaseLabel(phase) {
@@ -7105,6 +7099,11 @@ function renderImDoing() {
   }
   nameEl.textContent = name;
   timeEl.textContent = imDoingElapsedString(at);
+  // Tooltip differs by timer type: pomodoro uses pause/resume; trackers stop
+  // and log. This matches the actual behavior wired in toggleActiveTimerPause.
+  timeEl.title = (at.type === 'pomodoro')
+    ? 'Click to pause / resume'
+    : 'Click to stop the tracker';
 }
 function imDoingElapsedString(at) {
   // Mirrors the corresponding focus-page timer (pomodoro/muncher/multiplier).

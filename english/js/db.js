@@ -69,11 +69,14 @@
   }
 
   // Returns true when we should hit Supabase, false to use localStorage.
+  // A real Supabase session always trumps a leftover `try_mode` flag — once
+  // the user has signed in (here, or in the parent Bidoro app at the same
+  // origin), every read/write should go to the cloud.
   async function useCloud() {
     if (!sb) return false;
-    if (isTryMode()) return false;
     const u = await currentUser();
-    return !!u;
+    if (u) return true;
+    return false;
   }
 
   // ---------- LESSONS ----------
