@@ -184,6 +184,17 @@
   let CURRENT_WORD_EL = null;
   let animating = false;
 
+  // Finger-follow page swipe state. While the user is dragging horizontally
+  // we live-translate the current page AND the next/prev page; on release
+  // we either commit (animate to next slot) or snap back.
+  let SWIPE = null;          // { direction, peekRoot, currentRoot, width }
+  let lastSwipeT = 0;        // suppresses the synthetic click after a commit
+
+  // Sentence index for the currently-rendered page. Lets us underline the
+  // sentence the audio is reading and step through TTS one sentence at a time.
+  let SENTENCE_MAP = [];     // [{ text, words: [HTMLElement] }]
+  let CURRENT_SENTENCE = -1;
+
   async function renderLesson() {
     if (!lessonId) {
       document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
@@ -207,6 +218,7 @@
     pageIdx = 0;
     renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
     bindWordInteractions(document.getElementById('lesson-text'));
+    buildSentenceMap(document.getElementById('lesson-text'));
     updateProgress();
     setupAudio();
     setupPopupDrag();
@@ -299,13 +311,113 @@
       if (pageIdx < 0) pageIdx = 0;
       renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
       bindWordInteractions(document.getElementById('lesson-text'));
+      buildSentenceMap(document.getElementById('lesson-text'));
+      setCurrentSentence(-1);
       updateProgress();
     });
   }
+  // ---- sentence map for the rendered page (used by playback underline) ----
+  function buildSentenceMap(root) {
+    SENTENCE_MAP = [];
+    if (!root) return;
+    let curr = { text: '', words: [] };
+    for (const el of root.querySelectorAll('.w')) {
+      curr.text += el.textContent;
+      curr.words.push(el);
+      if (el.classList.contains('punct') && /[.!?]/.test(el.textContent)) {
+        if (curr.text.trim()) SENTENCE_MAP.push(curr);
+        curr = { text: '', words: [] };
+      }
+    }
+    if (curr.text.trim()) SENTENCE_MAP.push(curr);
+  }
+  function setCurrentSentence(idx) {
+    CURRENT_SENTENCE = idx;
+    document.querySelectorAll('.w.reading').forEach(el => el.classList.remove('reading'));
+    if (idx < 0 || idx >= SENTENCE_MAP.length) return;
+    for (const w of SENTENCE_MAP[idx].words) {
+      if (!w.classList.contains('punct')) w.classList.add('reading');
+    }
+  }
+
+  // ---- finger-follow page swipe ----
+  function startSwipeFollow(direction) {
+    if (animating) return null;
+    if (direction > 0 && pageIdx >= PAGES.length - 1) return null;
+    if (direction < 0 && pageIdx <= 0) return null;
+
+    const wrap = document.getElementById('lesson-text-wrap');
+    const currentRoot = document.getElementById('lesson-text');
+    const peekRoot = document.createElement('div');
+    peekRoot.className = 'lesson-text';
+    if (MODE === 'cont') peekRoot.classList.add('mode-cont');
+    renderInto(peekRoot, PAGES[pageIdx + direction] || []);
+
+    const width = currentRoot.offsetWidth;
+    peekRoot.style.transition = 'none';
+    peekRoot.style.transform  = direction > 0 ? `translateX(${width}px)` : `translateX(-${width}px)`;
+    currentRoot.style.transition = 'none';
+    wrap.appendChild(peekRoot);
+    bindWordInteractions(peekRoot);
+    return { direction, peekRoot, currentRoot, width };
+  }
+  function updateSwipeFollow(dx) {
+    if (!SWIPE) return;
+    const { direction, peekRoot, currentRoot, width } = SWIPE;
+    // Slight rubber-band when the user drags AGAINST the swipe direction.
+    let cdx = dx;
+    if ((direction > 0 && cdx > 0) || (direction < 0 && cdx < 0)) cdx = cdx * 0.3;
+    currentRoot.style.transform = `translateX(${cdx}px)`;
+    const peekX = direction > 0 ? width + cdx : -width + cdx;
+    peekRoot.style.transform = `translateX(${peekX}px)`;
+  }
+  function endSwipeFollow(dx) {
+    if (!SWIPE) return;
+    const { direction, peekRoot, currentRoot, width } = SWIPE;
+    SWIPE = null;
+    animating = true;
+    lastSwipeT = Date.now();
+
+    const threshold = Math.min(120, width * 0.25);
+    const willCommit = (direction > 0 && dx < -threshold) ||
+                       (direction < 0 && dx >  threshold);
+
+    const ease = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+    currentRoot.style.transition = ease;
+    peekRoot.style.transition    = ease;
+
+    if (willCommit) {
+      currentRoot.style.transform = direction > 0 ? `translateX(-${width}px)` : `translateX(${width}px)`;
+      peekRoot.style.transform    = 'translateX(0)';
+      setTimeout(() => {
+        currentRoot.id = '';
+        currentRoot.remove();
+        peekRoot.id = 'lesson-text';
+        peekRoot.style.transition = '';
+        peekRoot.style.transform  = '';
+        pageIdx += direction;
+        updateProgress();
+        buildSentenceMap(peekRoot);
+        setCurrentSentence(-1);
+        animating = false;
+      }, 230);
+    } else {
+      currentRoot.style.transform = 'translateX(0)';
+      peekRoot.style.transform    = direction > 0 ? `translateX(${width}px)` : `translateX(-${width}px)`;
+      setTimeout(() => {
+        peekRoot.remove();
+        currentRoot.style.transition = '';
+        currentRoot.style.transform  = '';
+        animating = false;
+      }, 230);
+    }
+  }
+
   // ---- bottom bar swap: lesson-bar ⇄ playbar ----
   function showLessonBar() {
     document.getElementById('lesson-bar').hidden = false;
     document.getElementById('playbar').hidden    = true;
+    setCurrentSentence(-1);   // wipe any reading underline when leaving playback
     sizeLessonMain();
   }
   function showPlaybar() {
@@ -484,6 +596,8 @@
       newRoot.id = 'lesson-text';
       newRoot.classList.remove('slide-anim');
       updateProgress();
+      buildSentenceMap(newRoot);
+      setCurrentSentence(-1);
       animating = false;
     }, 300);
   }
@@ -510,6 +624,8 @@
         if (pageIdx < 0) pageIdx = 0;
         renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
         bindWordInteractions(document.getElementById('lesson-text'));
+        buildSentenceMap(document.getElementById('lesson-text'));
+        setCurrentSentence(-1);
         updateProgress();
       });
     }, 200);
@@ -605,12 +721,30 @@
       const dx = t.clientX - touchStart.x;
       const dy = t.clientY - touchStart.y;
       const dt = Date.now() - touchStart.t;
-      const isFastHoriz = Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.7 && dt < 350;
+
+      // If we're already in finger-follow swipe, just keep updating it.
+      if (SWIPE) {
+        if (e.cancelable) e.preventDefault();
+        updateSwipeFollow(dx);
+        return;
+      }
+
+      // Detect transition from neutral / drag-select to finger-follow swipe:
+      // a fast and decisively horizontal motion. Once we trigger, the page
+      // moves under the finger in real time.
+      const isFastHoriz = Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 400;
       if (isFastHoriz) {
         if (didDrag) clearSel();
         dragging = false;
+        const direction = dx < 0 ? +1 : -1;
+        SWIPE = startSwipeFollow(direction);
+        if (SWIPE) {
+          if (e.cancelable) e.preventDefault();
+          updateSwipeFollow(dx);
+        }
         return;
       }
+
       if (!dragging) return;
       const el = document.elementFromPoint(t.clientX, t.clientY);
       const w = getWordEl(el);
@@ -625,20 +759,17 @@
 
     root.addEventListener('touchend', (e) => {
       const ts = touchStart; touchStart = null;
-      const wasDragging = dragging; dragging = false;
-      if (!ts) return;
-      const ct = e.changedTouches && e.changedTouches[0];
-      if (!ct) return;
-      const dx = ct.clientX - ts.x;
-      const dy = ct.clientY - ts.y;
-      const dt = Date.now() - ts.t;
-      const isSwipe = Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 500;
-      if (isSwipe) {
-        if (didDrag) clearSel();
-        if (dx < 0) goPage(+1);
-        else        goPage(-1);
+
+      // Finish the finger-follow swipe if one is active.
+      if (SWIPE) {
+        const ct = e.changedTouches && e.changedTouches[0];
+        const dx = (ct && ts) ? ct.clientX - ts.x : 0;
+        endSwipeFollow(dx);
         return;
       }
+
+      const wasDragging = dragging; dragging = false;
+      if (!ts) return;
       if (wasDragging && didDrag) {
         const phrase = getSelectedText();
         if (phrase) showPhrase(phrase, null);
@@ -646,6 +777,10 @@
     });
 
     root.addEventListener('click', async (e) => {
+      // Suppress the synthetic click that follows a finger-follow swipe so
+      // the touch that just changed the page doesn't also tap a word on the
+      // newly-revealed page.
+      if (Date.now() - lastSwipeT < 350) return;
       if (didDrag) { didDrag = false; return; }
       const w = getWordEl(e.target);
       if (!w) return;
@@ -1229,11 +1364,31 @@
         cur.textContent = fmt(audioEl.currentTime);
         const pct = audioEl.duration ? (audioEl.currentTime / audioEl.duration) * 100 : 0;
         fill.style.width = pct + '%';
+
+        // Estimate which sentence on the current page is playing right now
+        // by mapping the audio's progress ratio to cumulative character count
+        // across SENTENCE_MAP. Imperfect (a real audio file may not split
+        // evenly by character) but good enough to highlight the line.
+        if (audioEl.duration && SENTENCE_MAP.length > 0) {
+          const ratio = audioEl.currentTime / audioEl.duration;
+          const totalChars = SENTENCE_MAP.reduce((s, x) => s + x.text.length, 0) || 1;
+          let cum = 0, idx = SENTENCE_MAP.length - 1;
+          for (let i = 0; i < SENTENCE_MAP.length; i++) {
+            cum += SENTENCE_MAP[i].text.length;
+            if (cum / totalChars >= ratio) { idx = i; break; }
+          }
+          if (idx !== CURRENT_SENTENCE) setCurrentSentence(idx);
+        }
       });
-      audioEl.addEventListener('ended', () => { playBtn.textContent = '▶'; });
+      audioEl.addEventListener('ended', () => {
+        playBtn.textContent = '▶';
+        setCurrentSentence(-1);
+      });
+      audioEl.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+      audioEl.addEventListener('play',  () => { playBtn.textContent = '⏸'; });
       playBtn.addEventListener('click', () => {
-        if (audioEl.paused) { audioEl.play(); playBtn.textContent = '⏸'; }
-        else { audioEl.pause(); playBtn.textContent = '▶'; }
+        if (audioEl.paused) audioEl.play();
+        else                audioEl.pause();
       });
       prog.addEventListener('click', (e) => {
         const r = prog.getBoundingClientRect();
@@ -1258,26 +1413,42 @@
         fill.style.width = pct + '%';
         if (elapsed < ttsDuration) ttsTimer = setTimeout(tick, 250);
       }
-      function startTTS() {
+      // Sentence-by-sentence TTS so we can underline the current line as it
+      // is being read. Falls back to whole-page if the sentence map is empty.
+      async function startTTS() {
+        // Refresh sentence map in case the page just changed.
+        buildSentenceMap(document.getElementById('lesson-text'));
         ttsPlaying = true;
         ttsStartTime = Date.now();
         ttsDuration = estimateDuration();
         tot.textContent = fmt(ttsDuration);
         playBtn.textContent = '⏸';
-        TTS.speak(text, {
-          rate: 0.9 * speed,
-          onend: () => {
-            ttsPlaying = false;
-            playBtn.textContent = '▶';
-            fill.style.width = '100%';
-            cur.textContent = fmt(ttsDuration);
-          }
-        });
         tick();
+
+        const list = SENTENCE_MAP.length
+          ? SENTENCE_MAP.map(s => s.text)
+          : [text];
+        for (let i = 0; i < list.length; i++) {
+          if (!ttsPlaying) break;
+          if (SENTENCE_MAP.length) setCurrentSentence(i);
+          // Wait for THIS sentence to finish before starting the next.
+          await new Promise(resolve => {
+            TTS.speak(list[i], {
+              rate: 0.9 * speed,
+              onend: resolve,
+            });
+          });
+        }
+        ttsPlaying = false;
+        setCurrentSentence(-1);
+        playBtn.textContent = '▶';
+        fill.style.width = '100%';
+        cur.textContent = fmt(ttsDuration);
       }
       function stopTTS() {
         ttsPlaying = false; TTS.stop();
         clearTimeout(ttsTimer);
+        setCurrentSentence(-1);
         playBtn.textContent = '▶';
       }
       playBtn.addEventListener('click', () => { if (!ttsPlaying) startTTS(); else stopTTS(); });
