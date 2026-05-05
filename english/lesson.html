@@ -127,34 +127,10 @@
     <img src="images/closeside.png" alt="" onerror="this.style.display='none';this.parentNode.textContent='‹';">
   </button>
 
-  <!-- Practice menu (placeholder). The three sub-flows (word memorization,
-       sentence reorder, quiz) are scaffolded for the next iteration. -->
+  <!-- Practice overlay. Switches between three stages: menu, word memo,
+       sentence reorder, quiz. JS owns the contents of `practice-stage`. -->
   <div class="practice-overlay" id="practice-overlay" hidden>
-    <div class="practice-menu" role="dialog" aria-label="연습 메뉴">
-      <button class="pm-close" id="pm-close" aria-label="닫기">×</button>
-      <h3>연습</h3>
-      <button class="pm-item" data-pm="words">
-        <span class="pm-ico">🃏</span>
-        <span class="pm-body">
-          <span class="pm-title">단어 연습</span>
-          <span class="pm-desc">하트 누른 단어를 카드 형식으로 외우기 (앞: 영어 / 뒤: 한국어)</span>
-        </span>
-      </button>
-      <button class="pm-item" data-pm="sentences">
-        <span class="pm-ico">🧩</span>
-        <span class="pm-body">
-          <span class="pm-title">문장 연습</span>
-          <span class="pm-desc">"이어서"로 등록한 구문의 단어 순서 맞추기</span>
-        </span>
-      </button>
-      <button class="pm-item" data-pm="quiz">
-        <span class="pm-ico">📝</span>
-        <span class="pm-body">
-          <span class="pm-title">퀴즈</span>
-          <span class="pm-desc">12문제 4지선다 (발음·뜻 → 단어, 단어 → 뜻)</span>
-        </span>
-      </button>
-    </div>
+    <div class="practice-stage" id="practice-stage" role="dialog" aria-label="연습"></div>
   </div>
 
   <!-- Audio playback bar (hidden until the play button on the lesson bar
@@ -363,8 +339,64 @@
     const card  = document.getElementById('ls-card');
     const empty = document.getElementById('ls-empty');
     if (card)  card.hidden = true;
-    if (empty) empty.hidden = false;
+    if (empty) {
+      empty.hidden = false;
+      // Replace the placeholder with a list of words the user has clicked
+      // before in this lesson, paired with the cached Korean meaning when
+      // we have one. Keeps the sidebar useful even with no active selection.
+      renderSidebarWordList(empty);
+    }
     SIDEBAR_PHRASE = null;
+  }
+
+  function renderSidebarWordList(host) {
+    // Pull every word state with state ≥ 1 (clicked at least twice).
+    const entries = Object.entries(WORD_STATES || {})
+      .filter(([w, v]) => v && v.state >= 1)
+      .map(([w, v]) => ({ word: w, state: v.state }));
+    if (!entries.length) {
+      host.innerHTML = `
+        <div class="ls-empty-ico">↩</div>
+        이어서 모드에서<br>단어를 선택하면<br>여기에 표시됩니다.
+      `;
+      return;
+    }
+    // Group by state, keep highest first (newest clicks usually).
+    entries.sort((a, b) => a.state - b.state);
+    host.innerHTML = `
+      <div class="ls-list-head">
+        <span class="ls-list-title">내가 본 단어</span>
+        <span class="ls-list-count">${entries.length}</span>
+      </div>
+      <ul class="ls-word-list" id="ls-word-list"></ul>
+    `;
+    const ul = host.querySelector('#ls-word-list');
+    // Synchronously render rows; fill translations from cache if present,
+    // otherwise lazy-fetch in the background so initial paint is instant.
+    const STATE_COLOR = { 1:'word-1', 2:'word-2', 3:'word-3', 4:'word-4', 5:'word-5' };
+    entries.forEach(e => {
+      const li = document.createElement('li');
+      li.className = 'ls-word-item';
+      li.innerHTML = `
+        <span class="ls-w" data-word="${escapeHtml(e.word)}">${escapeHtml(e.word)}</span>
+        <span class="ls-tx muted">…</span>
+      `;
+      const sw = li.querySelector('.ls-w');
+      sw.style.background = `var(--${STATE_COLOR[e.state] || 'word-new'})`;
+      sw.onclick = () => {
+        // Clicking a row in the empty-state list speaks the word and shows
+        // the full card for it.
+        TTS.speak(e.word);
+        showInSidebar(e.word);
+      };
+      ul.appendChild(li);
+
+      // Lazy translation: cache check first.
+      Translate.translate(e.word).then(ko => {
+        const tx = li.querySelector('.ls-tx');
+        if (tx) { tx.textContent = ko || ''; tx.classList.remove('muted'); }
+      }).catch(()=>{});
+    });
   }
 
   async function showInSidebar(text) {
@@ -495,34 +527,417 @@
     if (btn) btn.addEventListener('click', (ev) => { ev.stopPropagation(); hidePopup(); });
   }
 
-  // ---------- practice menu ----------
+  // ============== practice (words / sentences / quiz) ==============
   function setupPracticeMenu() {
     const overlay = document.getElementById('practice-overlay');
     const openBtn = document.getElementById('lb-practice');
-    const closeBtn = document.getElementById('pm-close');
-    function open()  { overlay.hidden = false; }
     function close() { overlay.hidden = true; }
-    if (openBtn)  openBtn.addEventListener('click', open);
-    if (closeBtn) closeBtn.addEventListener('click', close);
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) close();
-    });
-    overlay.querySelectorAll('.pm-item').forEach(b => {
-      b.addEventListener('click', () => {
-        const which = b.dataset.pm;
-        // Sub-flows scaffold for the next iteration; for now show a friendly
-        // notice so the click feedback is real.
-        const labels = { words: '단어 연습', sentences: '문장 연습', quiz: '퀴즈' };
-        const heartedCount = DB.getHearted().size;
-        const phrasesCount = (DB.listPhrases() || []).length;
-        const detail =
-          which === 'words'     ? `현재 하트로 추가된 단어: ${heartedCount}개\n곧 카드 외우기 모드가 추가됩니다.`
-        : which === 'sentences' ? `현재 등록된 구문: ${phrasesCount}개\n곧 단어 순서 맞추기가 추가됩니다.`
-        :                          `12문제 4지선다 퀴즈 모드는 다음 업데이트에서 추가됩니다.`;
-        alert(`${labels[which]}\n\n${detail}`);
-      });
+    if (openBtn) openBtn.addEventListener('click', () => { overlay.hidden = false; renderPracticeMenu(); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.addEventListener('keydown', (e) => {
+      if (overlay.hidden) return;
+      if (e.key === 'Escape') { e.preventDefault(); close(); }
     });
   }
+
+  function renderPracticeMenu() {
+    const heartedCount = DB.getHearted().size;
+    const phrasesCount = (DB.listPhrases() || []).length;
+    const stage = document.getElementById('practice-stage');
+    stage.innerHTML = `
+      <div class="practice-menu">
+        <button class="pm-close" data-act="close" aria-label="닫기">×</button>
+        <h3>연습</h3>
+        <button class="pm-item" data-act="words">
+          <span class="pm-ico">🃏</span>
+          <span class="pm-body">
+            <span class="pm-title">단어 연습</span>
+            <span class="pm-desc">하트 누른 단어 ${heartedCount}개를 카드로 외우기 (간격 반복)</span>
+          </span>
+        </button>
+        <button class="pm-item" data-act="sentences">
+          <span class="pm-ico">🧩</span>
+          <span class="pm-body">
+            <span class="pm-title">문장 연습</span>
+            <span class="pm-desc">등록한 구문 ${phrasesCount}개의 단어 순서 맞추기</span>
+          </span>
+        </button>
+        <button class="pm-item" data-act="quiz">
+          <span class="pm-ico">📝</span>
+          <span class="pm-body">
+            <span class="pm-title">퀴즈</span>
+            <span class="pm-desc">12문제 4지선다 (발음 → 뜻, 뜻 → 단어, 단어 → 뜻)</span>
+          </span>
+        </button>
+      </div>
+    `;
+    stage.querySelectorAll('[data-act]').forEach(el => {
+      el.onclick = () => {
+        const a = el.dataset.act;
+        if (a === 'close') document.getElementById('practice-overlay').hidden = true;
+        else if (a === 'words')     startWordPractice();
+        else if (a === 'sentences') startSentencePractice();
+        else if (a === 'quiz')      startQuiz();
+      };
+    });
+  }
+
+  // ===== Word practice (Anki-style cards with simple SR) =====
+  async function startWordPractice() {
+    const stage = document.getElementById('practice-stage');
+    const queue = DB.dueWordsForPractice(20);
+    if (!queue.length) {
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>외울 단어가 없어요</h3>
+          <p>레슨에서 단어를 클릭하고 ♡ 버튼을 눌러 카드에 추가해보세요.</p>
+          <button class="btn primary" data-back>← 메뉴로</button>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick = renderPracticeMenu;
+      return;
+    }
+    // Pre-translate all words in parallel (uses cache if available).
+    const translations = {};
+    await Promise.all(queue.map(async w => {
+      try { translations[w] = await Translate.translate(w); } catch (e) { translations[w] = ''; }
+    }));
+
+    let idx = 0;
+    let flipped = false;
+    const session = { right: 0, again: 0 };
+
+    function paint() {
+      const word = queue[idx];
+      const ko = translations[word] || '';
+      stage.innerHTML = practiceFrame(`
+        <div class="wp-progress"><div class="wp-progress-bar" style="width:${(idx/queue.length)*100}%"></div></div>
+        <div class="wp-meta">${idx + 1} / ${queue.length}</div>
+        <div class="flip-card ${flipped ? 'flipped' : ''}" id="flip-card">
+          <div class="fc-inner">
+            <div class="fc-front">
+              <button class="fc-speak" aria-label="발음" data-speak>🔊</button>
+              <div class="fc-en">${escapeHtml(word)}</div>
+              <div class="fc-hint">탭하면 뜻 보기</div>
+            </div>
+            <div class="fc-back">
+              <div class="fc-ko">${escapeHtml(ko || '(번역 없음)')}</div>
+              <div class="fc-en-small">${escapeHtml(word)}</div>
+            </div>
+          </div>
+        </div>
+        <div class="wp-rating">
+          <button class="wp-rate r0" data-rate="0">다시<span>1분 후</span></button>
+          <button class="wp-rate r1" data-rate="1">알겠음<span>1일 후</span></button>
+          <button class="wp-rate r2" data-rate="2">쉬움<span>3일+</span></button>
+        </div>
+      `);
+      const card = stage.querySelector('#flip-card');
+      card.onclick = (e) => {
+        if (e.target.closest('[data-speak]')) return;
+        flipped = !flipped;
+        card.classList.toggle('flipped', flipped);
+      };
+      stage.querySelector('[data-speak]').onclick = (e) => { e.stopPropagation(); TTS.speak(word); };
+      stage.querySelectorAll('[data-rate]').forEach(b => {
+        b.onclick = () => {
+          const r = Number(b.dataset.rate);
+          DB.rateReview(word, r);
+          if (r === 0) session.again++; else session.right++;
+          idx++;
+          flipped = false;
+          if (idx >= queue.length) finish();
+          else paint();
+        };
+      });
+      // Auto-speak on each new card so listening practice is a freebie.
+      TTS.speak(word);
+    }
+    function finish() {
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>🎉 완료!</h3>
+          <p>맞힘 ${session.right}개 · 다시 볼 단어 ${session.again}개</p>
+          <div class="row" style="gap:10px;justify-content:center;margin-top:14px">
+            <button class="btn" data-back>← 메뉴로</button>
+            <button class="btn primary" data-again>다시 한 번</button>
+          </div>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick  = renderPracticeMenu;
+      stage.querySelector('[data-again]').onclick = startWordPractice;
+    }
+    paint();
+  }
+
+  // ===== Sentence practice (tap-to-reorder) =====
+  function shuffle(arr) {
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+  function startSentencePractice() {
+    const stage = document.getElementById('practice-stage');
+    const phrases = DB.listPhrases().filter(p => /\s/.test(p.phrase || ''));
+    if (!phrases.length) {
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>등록된 구문이 없어요</h3>
+          <p>"이어서" 모드에서 여러 단어를 선택한 뒤 "+ 구문에 추가" 버튼을 눌러보세요.</p>
+          <button class="btn primary" data-back>← 메뉴로</button>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick = renderPracticeMenu;
+      return;
+    }
+
+    const list = shuffle(phrases);
+    let idx = 0;
+    let answer = [];        // selected token indices in order
+    let revealed = false;
+
+    function tokenize(s) { return (s || '').match(/[\p{L}][\p{L}\p{M}'’-]*/gu) || []; }
+
+    function paint() {
+      const p = list[idx];
+      const tokens = tokenize(p.phrase);
+      const shuffled = shuffle(tokens.map((t, i) => ({ t, i })));
+      // (Re-shuffle every time paint() is called for the same idx is OK
+      // because we paint() once at start; subsequent paints re-render answer
+      // and remaining via inner functions below.)
+      const answerSet = new Set(answer);
+      const correctSoFar = answer.every((origIdx, k) => origIdx === k);
+
+      stage.innerHTML = practiceFrame(`
+        <div class="wp-meta">${idx + 1} / ${list.length} · 한글 뜻</div>
+        <div class="sp-ko">${escapeHtml(p.ko || '(번역 없음)')}</div>
+        <div class="sp-answer" id="sp-answer"></div>
+        <div class="sp-pool" id="sp-pool"></div>
+        <div class="row" style="gap:10px;justify-content:center;margin-top:16px">
+          <button class="btn" data-clear>지우기</button>
+          <button class="btn primary" data-check ${answer.length !== tokens.length ? 'disabled' : ''}>확인</button>
+        </div>
+        <div class="sp-feedback" id="sp-feedback"></div>
+      `);
+
+      const ansEl  = stage.querySelector('#sp-answer');
+      const poolEl = stage.querySelector('#sp-pool');
+
+      // Answer line: tokens placed so far. Tap one to remove it.
+      answer.forEach((origIdx, slotIdx) => {
+        const b = document.createElement('button');
+        b.className = 'sp-tile placed';
+        b.textContent = tokens[origIdx];
+        b.onclick = () => { answer.splice(slotIdx, 1); paint(); };
+        ansEl.appendChild(b);
+      });
+
+      // Pool: remaining shuffled tokens. Tap one to append to answer.
+      shuffled.forEach(({ t, i }) => {
+        if (answerSet.has(i)) return;
+        const b = document.createElement('button');
+        b.className = 'sp-tile';
+        b.textContent = t;
+        b.onclick = () => { answer.push(i); paint(); };
+        poolEl.appendChild(b);
+      });
+
+      stage.querySelector('[data-clear]').onclick = () => { answer = []; revealed = false; paint(); };
+      stage.querySelector('[data-check]').onclick = () => {
+        if (answer.length !== tokens.length) return;
+        const correct = answer.every((origIdx, k) => origIdx === k);
+        const fb = stage.querySelector('#sp-feedback');
+        if (correct) {
+          fb.innerHTML = '<div class="sp-ok">✓ 정답!</div>' +
+                         '<button class="btn primary" data-next>다음 →</button>';
+          fb.querySelector('[data-next]').onclick = () => {
+            idx++; answer = []; revealed = false;
+            if (idx >= list.length) finish();
+            else paint();
+          };
+        } else {
+          fb.innerHTML = '<div class="sp-bad">정답: <b>' + escapeHtml(tokens.join(' ')) + '</b></div>' +
+                         '<button class="btn" data-retry>다시 시도</button>' +
+                         '<button class="btn primary" data-skip>건너뛰기</button>';
+          fb.querySelector('[data-retry]').onclick = () => { answer = []; paint(); };
+          fb.querySelector('[data-skip]').onclick  = () => {
+            idx++; answer = []; revealed = false;
+            if (idx >= list.length) finish();
+            else paint();
+          };
+        }
+      };
+
+      // Read the phrase aloud as a hint.
+      TTS.speak(p.phrase);
+    }
+    function finish() {
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>🎉 모든 구문 완료</h3>
+          <div class="row" style="gap:10px;justify-content:center;margin-top:14px">
+            <button class="btn" data-back>← 메뉴로</button>
+            <button class="btn primary" data-again>다시 한 번</button>
+          </div>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick  = renderPracticeMenu;
+      stage.querySelector('[data-again]').onclick = startSentencePractice;
+    }
+    paint();
+  }
+
+  // ===== Quiz (12 questions, 4-option multi-choice) =====
+  async function startQuiz() {
+    const stage = document.getElementById('practice-stage');
+    stage.innerHTML = practiceFrame(`<div class="empty-msg"><h3>퀴즈 준비 중...</h3></div>`);
+
+    // Build word pool: hearted words preferred; if too few, pad from the
+    // user's clicked words (state ≥ 1).
+    const pool = [...DB.getHearted()];
+    if (pool.length < 8) {
+      for (const [w, v] of Object.entries(WORD_STATES || {})) {
+        if (v && v.state >= 1 && !pool.includes(w)) pool.push(w);
+        if (pool.length >= 16) break;
+      }
+    }
+    if (pool.length < 4) {
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>단어가 너무 적어요</h3>
+          <p>퀴즈를 시작하려면 최소 4개 단어가 필요합니다. 레슨에서 단어를 더 클릭하거나 ♡로 추가해보세요.</p>
+          <button class="btn primary" data-back>← 메뉴로</button>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick = renderPracticeMenu;
+      return;
+    }
+
+    // Pre-translate every word in the pool so questions render instantly.
+    const tx = {};
+    await Promise.all(pool.map(async w => {
+      try { tx[w] = await Translate.translate(w); } catch (e) { tx[w] = ''; }
+    }));
+
+    // Generate 12 questions: 4 audio→KO, 4 KO→EN, 4 EN→KO.
+    const targets = shuffle(pool).slice(0, 12);
+    const questions = targets.map((target, i) => {
+      const kind = i < 4 ? 'audio' : (i < 8 ? 'ko-to-en' : 'en-to-ko');
+      // Distractors from other pool words.
+      const distractors = shuffle(pool.filter(w => w !== target)).slice(0, 3);
+      const optsRaw = shuffle([target, ...distractors]);
+      const correctIdx = optsRaw.indexOf(target);
+      let prompt, optionLabels;
+      if (kind === 'ko-to-en') {
+        prompt = { type: 'text', text: tx[target] || '(번역 없음)' };
+        optionLabels = optsRaw;        // English words
+      } else if (kind === 'en-to-ko') {
+        prompt = { type: 'text', text: target };
+        optionLabels = optsRaw.map(w => tx[w] || w);   // Korean meanings
+      } else {
+        prompt = { type: 'audio', word: target };
+        optionLabels = optsRaw.map(w => tx[w] || w);   // Korean meanings
+      }
+      return { kind, prompt, options: optsRaw, optionLabels, correctIdx };
+    });
+
+    let qi = 0;
+    let score = 0;
+    let chosen = null;
+
+    function paint() {
+      const q = questions[qi];
+      const promptHtml = q.prompt.type === 'audio'
+        ? `<button class="quiz-audio" data-audio>🔊 발음 듣기</button>`
+        : `<div class="quiz-prompt-text">${escapeHtml(q.prompt.text)}</div>`;
+      stage.innerHTML = practiceFrame(`
+        <div class="wp-progress"><div class="wp-progress-bar" style="width:${(qi/questions.length)*100}%"></div></div>
+        <div class="wp-meta">${qi + 1} / ${questions.length} · 점수 ${score}</div>
+        <div class="quiz-prompt">${promptHtml}</div>
+        <div class="quiz-options" id="quiz-options"></div>
+        <div class="quiz-feedback" id="quiz-feedback"></div>
+      `);
+      const optsEl = stage.querySelector('#quiz-options');
+      q.optionLabels.forEach((label, i) => {
+        const b = document.createElement('button');
+        b.className = 'quiz-option';
+        b.textContent = label;
+        b.onclick = () => choose(i, b);
+        optsEl.appendChild(b);
+      });
+      const audioBtn = stage.querySelector('[data-audio]');
+      if (audioBtn) {
+        audioBtn.onclick = () => TTS.speak(q.prompt.word);
+        TTS.speak(q.prompt.word);
+      }
+    }
+    function choose(i, btn) {
+      if (chosen !== null) return;
+      const q = questions[qi];
+      chosen = i;
+      const opts = stage.querySelectorAll('.quiz-option');
+      const correct = (i === q.correctIdx);
+      opts.forEach((b, k) => {
+        b.disabled = true;
+        if (k === q.correctIdx) b.classList.add('correct');
+        if (k === i && !correct) b.classList.add('wrong');
+      });
+      if (correct) {
+        score++;
+        DB.rateReview(q.options[q.correctIdx], 1);   // mild SR boost
+      } else {
+        DB.rateReview(q.options[q.correctIdx], 0);   // mark for re-review
+      }
+      const fb = stage.querySelector('#quiz-feedback');
+      fb.innerHTML = correct
+        ? '<div class="quiz-ok">✓ 정답</div><button class="btn primary" data-next>다음 →</button>'
+        : `<div class="quiz-bad">정답: <b>${escapeHtml(q.optionLabels[q.correctIdx])}</b></div>` +
+          '<button class="btn primary" data-next>다음 →</button>';
+      fb.querySelector('[data-next]').onclick = () => {
+        qi++; chosen = null;
+        if (qi >= questions.length) finish();
+        else paint();
+      };
+    }
+    function finish() {
+      const pct = Math.round((score / questions.length) * 100);
+      stage.innerHTML = practiceFrame(`
+        <div class="empty-msg">
+          <h3>🎉 퀴즈 완료</h3>
+          <p style="font-size:24px;font-weight:800;margin:8px 0">${score} / ${questions.length} <span class="muted" style="font-size:14px;font-weight:600">(${pct}%)</span></p>
+          <div class="row" style="gap:10px;justify-content:center;margin-top:14px">
+            <button class="btn" data-back>← 메뉴로</button>
+            <button class="btn primary" data-again>새 퀴즈</button>
+          </div>
+        </div>
+      `);
+      stage.querySelector('[data-back]').onclick  = renderPracticeMenu;
+      stage.querySelector('[data-again]').onclick = startQuiz;
+    }
+    paint();
+  }
+
+  function practiceFrame(inner) {
+    return `<div class="practice-card">
+      <button class="pm-close" data-back-to-menu aria-label="메뉴로">←</button>
+      <button class="pm-x" data-close-overlay aria-label="닫기">×</button>
+      ${inner}
+    </div>`;
+    // (back-to-menu / close-overlay are wired below right after innerHTML
+    // is set, in renderPracticeStage helpers.)
+  }
+  // Delegate clicks for the back-to-menu and close-overlay buttons that are
+  // injected by practiceFrame() into every practice stage.
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-back-to-menu]')) renderPracticeMenu();
+    if (e.target.closest('[data-close-overlay]')) {
+      const ov = document.getElementById('practice-overlay');
+      if (ov) ov.hidden = true;
+    }
+  });
 
   // ---- toggle UI wiring ----
   function applyModeClass() {
@@ -1211,9 +1626,11 @@
     if (selectionToPhrase() !== phrase) return;        // selection changed mid-fetch
 
     if (MODE === 'cont') {
-      // Mobile cont: show the popup card.
+      // Mobile cont: show the popup card, anchored to the WHOLE sentence
+      // (not just the last clicked word) so every word stays clickable.
       const wEl = anchorEl || Array.from(CONT_SELECTED).pop();
-      showWord(phrase, { isFirstClick: false }, wEl);
+      await showWord(phrase, { isFirstClick: false }, wEl);
+      placePopBySentence();
     } else {
       // contU: inline gray label below the line.
       renderContTranslation(ko);
@@ -1262,6 +1679,62 @@
 
   // ============== anchored word popup ==============
   const POP = document.getElementById('word-pop');
+
+  // Anchor the popup relative to the *currently selected sentence* (이어서
+  // mode) instead of a single word: if the sentence sits in the upper half
+  // of the viewport the popup goes below it, otherwise it goes above. That
+  // way every word in the sentence stays reachable by the user's thumb.
+  function placePopBySentence() {
+    if (!CONT_SELECTED.size) return false;
+    const sorted = Array.from(CONT_SELECTED);
+    const para = sorted[0].parentElement; if (!para) return false;
+    const sIdx = getSentenceIdxOf(sorted[0]);
+    // Collect every .w in this paragraph that belongs to the same sentence.
+    const allInPara = Array.from(para.children);
+    const sentenceWords = [];
+    let cur = 0;
+    for (const el of allInPara) {
+      if (cur === sIdx && el.classList && el.classList.contains('w')) sentenceWords.push(el);
+      if (el.classList && el.classList.contains('punct') && /[.!?]/.test(el.textContent)) cur++;
+      if (cur > sIdx) break;
+    }
+    if (!sentenceWords.length) return false;
+
+    // Bounding rectangle of the sentence (covers wrapped lines too).
+    let top = Infinity, bottom = -Infinity;
+    for (const w of sentenceWords) {
+      const r = w.getBoundingClientRect();
+      if (r.top < top) top = r.top;
+      if (r.bottom > bottom) bottom = r.bottom;
+    }
+
+    POP.classList.remove('expanded');
+    POP.removeAttribute('style');
+    POP.style.top  = '0px';
+    POP.style.left = '-9999px';
+    POP.hidden = false;
+    void POP.offsetHeight;
+    const popH = POP.offsetHeight;
+    const popW = POP.offsetWidth || 280;
+
+    const margin = 8;
+    const vh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    const vw = window.innerWidth;
+    const sentenceMid = (top + bottom) / 2;
+    const placeAbove  = sentenceMid > vh / 2;          // sentence is in lower half
+
+    let popTop = placeAbove ? (top - popH - margin)
+                            : (bottom + margin);
+    if (popTop + popH > vh - margin) popTop = vh - popH - margin;
+    if (popTop < margin) popTop = margin;
+
+    let popLeft = (vw - popW) / 2;                     // horizontally centered
+    if (popLeft < margin) popLeft = margin;
+
+    POP.style.top  = popTop  + 'px';
+    POP.style.left = popLeft + 'px';
+    return true;
+  }
 
   function placePopBelowAnchor(anchorEl) {
     POP.classList.remove('expanded');

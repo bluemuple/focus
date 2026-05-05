@@ -290,6 +290,58 @@
     ls.set('phrases', list);
     return list[0];
   }
+  function deletePhrase(id) {
+    const list = listPhrases().filter(p => p.id !== id);
+    ls.set('phrases', list);
+  }
+
+  // ---------- spaced-repetition state (SM-2 lite) ----------
+  // Per word: { ef: ease factor, interval: days, due: ms timestamp }.
+  // Stored locally (the quiz/practice flows are device-private for now).
+  const SR_KEY = 'review';
+  function getReviewStates() { return ls.get(SR_KEY, {}) || {}; }
+  function getReview(word) {
+    const k = (word || '').toLowerCase();
+    const all = getReviewStates();
+    return all[k] || { ef: 2.5, interval: 0, due: Date.now() };
+  }
+  function rateReview(word, rating) {
+    // rating: 0 = "다시" (forgot), 1 = "알겠음" (good), 2 = "쉬움" (easy)
+    const k = (word || '').toLowerCase();
+    if (!k) return;
+    const all = getReviewStates();
+    const cur = all[k] || { ef: 2.5, interval: 0, due: Date.now() };
+    let { ef, interval } = cur;
+    if (rating === 0) {
+      interval = 0;             // see again in ~1 min
+      ef = Math.max(1.3, ef - 0.2);
+    } else if (rating === 1) {
+      if (interval < 1) interval = 1;
+      else interval = Math.round(interval * ef);
+    } else {
+      if (interval < 1) interval = 3;
+      else interval = Math.round(interval * ef * 1.3);
+      ef = Math.min(3.0, ef + 0.15);
+    }
+    const dueMs = (rating === 0 ? 60 * 1000 : interval * 86400 * 1000);
+    all[k] = { ef, interval, due: Date.now() + dueMs };
+    ls.set(SR_KEY, all);
+    return all[k];
+  }
+  // List hearted words sorted by due (overdue first), capped at `cap`.
+  function dueWordsForPractice(cap) {
+    const hearted = [...getHearted()];
+    if (!hearted.length) return [];
+    const all = getReviewStates();
+    const now = Date.now();
+    const ranked = hearted.map(w => {
+      const r = all[w] || { ef: 2.5, interval: 0, due: now };
+      return { word: w, due: r.due };
+    });
+    // Overdue (due <= now) first, then nearest-future. Random tiebreaker.
+    ranked.sort((a, b) => (a.due - b.due) || (Math.random() - 0.5));
+    return ranked.slice(0, cap || 20).map(x => x.word);
+  }
 
   window.DB = {
     haveSupabase,
@@ -298,7 +350,8 @@
     listLessons, getLesson, addLesson, deleteLesson, setBookmark,
     loadWordStates, clickWord, setWordState,
     getHearted, setHearted, isHearted,
-    listPhrases, addPhrase,
+    listPhrases, addPhrase, deletePhrase,
+    getReview, rateReview, dueWordsForPractice,
     useCloud,
   };
 })();
