@@ -413,6 +413,65 @@
     });
   }
 
+  // ============== motivation feedback (per-tap rewards) ==============
+  // 1) Tiny scale-pulse on the tapped word so taps feel ALIVE.
+  function pulseWord(wEl) {
+    if (!wEl) return;
+    wEl.classList.add('tap-pulse');
+    setTimeout(() => wEl.classList.remove('tap-pulse'), 320);
+  }
+  // 2) "+1" floater that drifts up and fades out — small XP-style reward.
+  function showPlusOne(wEl) {
+    if (!wEl) return;
+    const r = wEl.getBoundingClientRect();
+    const div = document.createElement('div');
+    div.className = 'plus-one';
+    div.textContent = '+1';
+    div.style.top  = (r.top  + window.scrollY - 4) + 'px';
+    div.style.left = (r.left + window.scrollX + r.width / 2) + 'px';
+    document.body.appendChild(div);
+    // Force layout then start animation.
+    requestAnimationFrame(() => div.classList.add('go'));
+    setTimeout(() => div.remove(), 900);
+  }
+  // 3) Combo: count clicks within a rolling 5-second window. Show badge
+  //    when ≥ 3 in window. Auto-fades when the user pauses.
+  let _comboTimes = [];
+  let _comboBadge = null;
+  let _comboFadeT = null;
+  function recordCombo() {
+    const now = Date.now();
+    _comboTimes = _comboTimes.filter(t => now - t < 5000);
+    _comboTimes.push(now);
+    if (_comboTimes.length >= 3) showCombo(_comboTimes.length);
+  }
+  function showCombo(n) {
+    if (!_comboBadge) {
+      _comboBadge = document.createElement('div');
+      _comboBadge.className = 'combo-badge';
+      document.body.appendChild(_comboBadge);
+    }
+    _comboBadge.textContent = '🔥 콤보 ×' + n;
+    _comboBadge.classList.add('show');
+    clearTimeout(_comboFadeT);
+    _comboFadeT = setTimeout(() => {
+      _comboBadge && _comboBadge.classList.remove('show');
+    }, 2400);
+  }
+  // 4) Variable-reinforcement: ~1/30 chance of a tiny celebratory toast.
+  function maybeBonus() {
+    if (Math.random() >= 1 / 30) return;
+    const div = document.createElement('div');
+    div.className = 'bonus-toast';
+    div.innerHTML = '🌟 보너스!<br><span class="bt-sub">잘하고 있어요</span>';
+    document.body.appendChild(div);
+    requestAnimationFrame(() => div.classList.add('show'));
+    setTimeout(() => {
+      div.classList.remove('show');
+      setTimeout(() => div.remove(), 360);
+    }, 1700);
+  }
+
   // ---- arrow-key selection helpers ----
   function getSelectedSorted() {
     return Array.from(CONT_SELECTED).sort((a, b) => {
@@ -446,7 +505,26 @@
   // Works on both PC (keyboard) and mobile (← / → tap buttons in lesson-bar).
   function tryAnchorKey(direction /* 'left' | 'right' */) {
     if (MODE !== 'cont') return false;
-    if (!CONT_SELECTED.size) return false;
+
+    // Empty selection — first arrow press starts a new selection at one end
+    // of the first sentence on the visible page. Eye-left (ANCHOR 'right')
+    // → first word; eye-right (ANCHOR 'left') → last word.
+    if (!CONT_SELECTED.size) {
+      const root = document.getElementById('lesson-text');
+      if (!root) return false;
+      const firstWord = root.querySelector('.w:not(.punct)');
+      if (!firstWord) return false;
+      const sentence = getSentenceWordsOf(firstWord);
+      if (!sentence.length) return false;
+      const target = (ANCHOR_MODE === 'right')
+        ? sentence[0]                          // eye-left → start at first word
+        : sentence[sentence.length - 1];       // eye-right → start at last word
+      CONT_SELECTED.add(target);
+      target.classList.add('cont-sel');
+      TTS.speak(target.dataset.word);
+      refreshContTranslation();
+      return true;
+    }
 
     const sorted    = getSelectedSorted();
     const leftmost  = sorted[0];
@@ -1948,6 +2026,13 @@
       if (root.querySelectorAll('.w.sel').length > 0) clearSel();
 
       const word = w.dataset.word;
+
+      // ===== Motivation feedback =====
+      pulseWord(w);                    // micro scale-pulse on the tapped word
+      showPlusOne(w);                  // floating "+1" near the word
+      recordCombo();                   // rolling 5-second click streak badge
+      maybeBonus();                    // ~1/30 surprise reward toast
+
       // Always advance the learning state on a real click.
       const upd = await DB.clickWord(word);
       WORD_STATES[word.toLowerCase()] = { state: upd.state, last: upd.last };

@@ -295,6 +295,44 @@
     ls.set('phrases', list);
   }
 
+  // ---------- Word Master (state ≥ ?) + Word Stories ----------
+  // A "mastered" word is one the user has placed at level 3, 4, or 5
+  // (익숙한 단어 / 배운 단어 / 완전히 아는 단어). The home page surfaces
+  // these in the 워드 마스터 section and uses their TOTAL count to decide
+  // when to mint a new auto-generated 단어 스토리.
+  //
+  // Threshold for the (n+1)-th story (cumulative mastered-word count):
+  //   stories  1..10 → +10 each
+  //   stories 11..30 → +15 each
+  //   stories 31..   → +25 each
+  function thresholdForNthStory(n) {
+    let total = 0;
+    for (let i = 1; i <= n; i++) {
+      total += (i <= 10) ? 10 : (i <= 30) ? 15 : 25;
+    }
+    return total;
+  }
+  // Count how many distinct words are currently at state 3, 4 or 5.
+  // Caller passes the live word_states map (cloud or local — same shape).
+  function countMastered(wordStates) {
+    let n = 0;
+    for (const v of Object.values(wordStates || {})) {
+      if (v && v.state >= 3 && v.state <= 5) n++;
+    }
+    return n;
+  }
+
+  function listStories() { return ls.get('stories', []) || []; }
+  function addStory(s)   {
+    const list = listStories();
+    list.unshift(s);
+    ls.set('stories', list);
+    return s;
+  }
+  function deleteStory(id) {
+    ls.set('stories', listStories().filter(s => s.id !== id));
+  }
+
   // ---------- spaced-repetition state (SM-2 lite) ----------
   // Per word: { ef: ease factor, interval: days, due: ms timestamp }.
   // Stored locally (the quiz/practice flows are device-private for now).
@@ -352,6 +390,8 @@
     getHearted, setHearted, isHearted,
     listPhrases, addPhrase, deletePhrase,
     getReview, rateReview, dueWordsForPractice,
+    countMastered, thresholdForNthStory,
+    listStories, addStory, deleteStory,
     useCloud,
   };
 })();

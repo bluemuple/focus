@@ -185,6 +185,96 @@ a { color: inherit; }
 /* ============== home page sections ============== */
 .section { margin: 26px 0; }
 .section-tight { margin-top: 6px; }      /* tighter spacing above 계속 학습하기 */
+
+/* Section header right-side hint count, e.g. "(12) 다음까지 4개". */
+.section h2 .hsub {
+  font-size: 13px; font-weight: 600; color: var(--muted);
+  margin-left: 6px;
+}
+
+/* ===== 워드 마스터 — chip grid of fully-mastered (state 5) words ===== */
+.wm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+.wm-chip {
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px;
+  transition: background .12s, border-color .12s, transform .05s;
+}
+.wm-chip:hover  { background: #f8f9fa; border-color: #cdd2d8; }
+.wm-chip:active { transform: translateY(1px); }
+.wm-chip .wm-en { font-weight: 800; font-size: 14px; color: var(--ink); }
+.wm-chip .wm-ko { font-size: 12px; color: var(--muted); }
+
+/* ===== 단어 스토리 — bar list ===== */
+.ws-list {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ws-bar {
+  text-align: left;
+  background: linear-gradient(135deg, #e8f5e9 0%, #fff 100%);
+  border: 1px solid #c8e6c9;
+  border-radius: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 4px;
+  transition: transform .08s, box-shadow .15s;
+}
+.ws-bar:hover  { box-shadow: 0 4px 12px rgba(0,0,0,0.06); transform: translateY(-1px); }
+.ws-bar:active { transform: translateY(0); }
+.ws-bar .ws-bar-title {
+  font-weight: 800; font-size: 15px; color: var(--ink);
+}
+.ws-bar .ws-bar-meta {
+  font-size: 12px; color: var(--muted);
+}
+
+/* Story modal — opened when a bar is tapped. */
+.story-overlay {
+  position: fixed; inset: 0; z-index: 240;
+  background: rgba(20,30,50,0.45);
+  backdrop-filter: blur(4px);
+  display: grid; place-items: center;
+  padding: 16px;
+}
+.story-card {
+  background: #fff; border-radius: 16px;
+  width: 100%; max-width: 440px;
+  padding: 24px 22px 20px;
+  box-shadow: var(--shadow-lg);
+  position: relative;
+}
+.story-card .sc-close {
+  position: absolute; top: 12px; right: 14px;
+  width: 32px; height: 32px; border-radius: 999px;
+  border: none; background: #f1f3f5; cursor: pointer;
+  font-size: 20px; line-height: 1;
+}
+.story-card h3 { margin: 0 0 12px; font-size: 18px; }
+.story-card .sc-body {
+  font-size: 16px; line-height: 1.7; color: var(--ink);
+  margin-bottom: 12px;
+}
+.story-card .sc-words {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  border-top: 1px solid var(--line); padding-top: 12px;
+}
+.story-card .sc-word {
+  background: var(--word-new);
+  border: 1px solid #a8c2dc;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px; font-weight: 700; color: var(--ink);
+  cursor: pointer;
+}
+.story-card .sc-word:hover { background: #d8e5f3; }
 .section h2 {
   font-size: 18px; margin: 0 0 12px;
   display: flex; align-items: center; gap: 10px;
@@ -472,6 +562,80 @@ a { color: inherit; }
 .w.active { box-shadow: 0 0 0 1.5px var(--ink); }
 .w.sel { box-shadow: 0 0 0 1.5px #888; background: rgba(0,0,0,0.04) !important; }
 .w.punct { background: transparent !important; cursor: default; }
+/* ===== Motivation feedback animations =====
+   Tiny rewards that fire on every word tap to make learning feel alive. */
+
+/* Word tap-pulse: brief scale + slight glow without affecting layout. */
+@keyframes tap-pulse-kf {
+  0%   { transform: scale(1);    }
+  40%  { transform: scale(1.18); }
+  100% { transform: scale(1);    }
+}
+.w.tap-pulse {
+  animation: tap-pulse-kf .32s cubic-bezier(.22,.6,.36,1);
+  transform-origin: center;
+}
+
+/* Floating "+1" near the tapped word. */
+.plus-one {
+  position: absolute;
+  z-index: 220;
+  pointer-events: none;
+  font-size: 14px; font-weight: 800;
+  color: var(--accent-ink);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  transform: translate(-50%, 0);
+  opacity: 0;
+  transition: transform .85s ease, opacity .85s ease;
+}
+.plus-one.go {
+  transform: translate(-50%, -28px);
+  opacity: 1;
+}
+/* The fade-out begins after the upward motion peaks. */
+.plus-one.go { animation: plus-one-fade .85s forwards; }
+@keyframes plus-one-fade {
+  0%   { opacity: 0; transform: translate(-50%, 0); }
+  20%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -32px); }
+}
+
+/* Combo streak badge — tucks into the bottom-right and fades when paused. */
+.combo-badge {
+  position: fixed;
+  right: 18px; bottom: 88px;
+  z-index: 220;
+  background: linear-gradient(135deg, #ff8a3d 0%, #ff5722 100%);
+  color: #fff; font-weight: 800; font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  box-shadow: 0 6px 16px rgba(255,87,34,0.35);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .22s ease, transform .22s ease;
+  pointer-events: none;
+}
+.combo-badge.show { opacity: 1; transform: translateY(0); }
+
+/* Random bonus toast — appears center-top, fades in/out. */
+.bonus-toast {
+  position: fixed;
+  top: 14%; left: 50%;
+  transform: translate(-50%, -10px);
+  z-index: 230;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 16px;
+  padding: 14px 22px;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.16);
+  font-size: 18px; font-weight: 800; color: var(--accent-ink);
+  text-align: center;
+  opacity: 0;
+  transition: opacity .26s ease, transform .26s ease;
+  pointer-events: none;
+}
+.bonus-toast.show { opacity: 1; transform: translate(-50%, 0); }
+.bonus-toast .bt-sub { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 2px; }
+
 /* Sentence currently being read aloud — bold + a continuous underline that
    runs across the whole sentence (including the spaces / punctuation
    between words, so there are no gaps). */
