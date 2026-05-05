@@ -6,7 +6,7 @@
 <title>레슨 · English</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
-<body class="signed-out">
+<body>
 
 <div class="behind">
   <header class="topbar">
@@ -42,7 +42,6 @@
           <div class="head-tools">
             <button class="toggle-btn dict" id="tts-toggle-btn"  title="음성 엔진 전환 (Google Cloud ↔ Web Speech)">GC</button>
             <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
-            <button class="toggle-btn dict" id="dict-toggle-btn" title="사전 전환 (Naver ↔ Corpus)">N</button>
             <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
             <button class="toggle-btn"      id="bookmark-btn"    title="이 레슨을 찜한 레슨으로 추가/제거">찜</button>
           </div>
@@ -66,7 +65,7 @@
         <button class="tx-state-badge" id="wp-state" style="display:none" title="단어 상태 변경">·</button>
       </div>
       <div class="wp-trans" id="wp-trans"><span class="tx-loading">번역 중...</span></div>
-      <div class="wp-hint">↑ 위로 끌면 사전 검색 · ↓ 아래로 끌면 닫기</div>
+      <div class="wp-hint">↑ 사전 · ← 예문 · ↓ 닫기</div>
     </div>
 
     <div class="wp-large" id="wp-large">
@@ -91,12 +90,27 @@
     </div>
   </div>
 
-  <div class="playbar">
-    <button class="play" id="play-btn" aria-label="재생">▶</button>
+  <!-- Default lesson bar — slim bottom strip with a round play button
+       on the left and the study-card icon on the right. Pressing play
+       hides this bar and reveals the playbar below. -->
+  <div class="lesson-bar" id="lesson-bar">
+    <button class="lb-play" id="lb-play" aria-label="재생 시작">▶</button>
+    <div class="lb-spacer"></div>
+    <a class="lb-card" id="lb-card" href="#" title="단어 카드">
+      <img src="images/card.png" alt="단어 카드" onerror="this.style.opacity='.3';this.alt='card.png 누락';">
+    </a>
+  </div>
+
+  <!-- Audio playback bar (hidden until the play button on the lesson bar
+       is pressed). The X on the right hides this bar and brings back the
+       lesson bar. -->
+  <div class="playbar" id="playbar" hidden>
+    <button class="pb-btn pb-play" id="play-btn" aria-label="재생/일시정지">▶</button>
     <span class="time" id="time-cur">0:00</span>
     <div class="progress" id="prog"><i id="prog-fill"></i></div>
     <span class="time" id="time-tot">0:00</span>
-    <button class="speed" id="speed-btn" title="재생 속도">1×</button>
+    <button class="pb-btn" id="speed-btn" title="재생 속도">1×</button>
+    <button class="pb-btn pb-close" id="pb-close" aria-label="플레이바 닫기">×</button>
   </div>
 </div>
 
@@ -123,19 +137,19 @@
     avatar.textContent = (label[0] || 'U').toUpperCase();
   }
 
-  // ============== mode + dictionary toggles ==============
+  // ============== mode toggle ==============
   // MODE: 'single' (popup-per-word) | 'cont' (inline gray translations).
-  // DICT: 'naver' | 'daum' — controls which dictionary the expanded popup loads.
-  // Both are persisted in localStorage so the user's preference survives reload.
+  // The dictionary (Naver vs Corpus) is no longer a toggle — it's chosen by
+  // gesture on the small popup: drag UP for Naver, swipe LEFT for Corpus,
+  // drag DOWN to close.
   const PREF_KEY = 'eng.v1.lessonPrefs';
   const prefs = (() => {
     try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}') || {}; }
     catch (e) { return {}; }
   })();
-  let MODE = prefs.mode === 'cont'   ? 'cont'   : 'single';
-  let DICT = prefs.dict === 'daum'   ? 'daum'   : 'naver';
+  let MODE = prefs.mode === 'cont' ? 'cont' : 'single';
   function savePrefs() {
-    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE, dict: DICT })); }
+    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE })); }
     catch (e) {}
   }
   // Selected words in 이어서 mode (Set of .w elements on the live page).
@@ -186,6 +200,7 @@
     refreshBookmarkBtn();
 
     applyModeClass();             // sets .mode-cont on lesson-text wrap if needed
+    setupLessonBar();
     sizeLessonMain();
     await new Promise(r => requestAnimationFrame(r));
     PAGES = paginateByHeight(LESSON.body || '');
@@ -218,15 +233,6 @@
       refreshMode(); savePrefs(); onModeChanged();
     });
     refreshMode();
-
-    // Dictionary toggle (N ↔ C)
-    const dictBtn = document.getElementById('dict-toggle-btn');
-    function refreshDict() { dictBtn.textContent = (DICT === 'corpus') ? 'C' : 'N'; }
-    dictBtn.addEventListener('click', () => {
-      DICT = (DICT === 'corpus') ? 'naver' : 'corpus';
-      refreshDict(); savePrefs();
-    });
-    refreshDict();
 
     // Translator toggle (DL ↔ G). Selected engine is the primary; the other
     // remains an automatic fallback inside Translate.translate().
@@ -296,6 +302,35 @@
       updateProgress();
     });
   }
+  // ---- bottom bar swap: lesson-bar ⇄ playbar ----
+  function showLessonBar() {
+    document.getElementById('lesson-bar').hidden = false;
+    document.getElementById('playbar').hidden    = true;
+    sizeLessonMain();
+  }
+  function showPlaybar() {
+    document.getElementById('lesson-bar').hidden = true;
+    document.getElementById('playbar').hidden    = false;
+    sizeLessonMain();
+    // Forward the click to the playbar's existing play button so audio
+    // actually starts on the first press.
+    const pb = document.getElementById('play-btn');
+    if (pb) pb.click();
+  }
+  function setupLessonBar() {
+    const lbPlay = document.getElementById('lb-play');
+    const pbClose = document.getElementById('pb-close');
+    if (lbPlay) lbPlay.addEventListener('click', showPlaybar);
+    if (pbClose) pbClose.addEventListener('click', () => {
+      // Stop any audio before hiding the playbar.
+      try {
+        if (audioEl && !audioEl.paused) audioEl.pause();
+        if (typeof TTS !== 'undefined' && TTS.stop) TTS.stop();
+      } catch (e) {}
+      showLessonBar();
+    });
+  }
+
   function clearContSelection() {
     document.querySelectorAll('.w.cont-sel').forEach(el => el.classList.remove('cont-sel'));
     document.querySelectorAll('.cont-trans').forEach(el => el.remove());
@@ -305,10 +340,14 @@
   function sizeLessonMain() {
     const main = document.getElementById('lesson-main');
     if (!main) return;
-    const topY     = main.getBoundingClientRect().top;
-    const playbarH = document.querySelector('.playbar')?.offsetHeight || 64;
+    const topY = main.getBoundingClientRect().top;
+    // Whichever of lesson-bar / playbar is visible owns the bottom strip.
+    const lb = document.getElementById('lesson-bar');
+    const pb = document.getElementById('playbar');
+    const bottomEl = (pb && !pb.hidden) ? pb : lb;
+    const bottomH = (bottomEl && !bottomEl.hidden) ? bottomEl.offsetHeight : 0;
     const bottomGap = 16;
-    const h = Math.max(360, window.innerHeight - topY - playbarH - bottomGap);
+    const h = Math.max(320, window.innerHeight - topY - bottomH - bottomGap);
     main.style.height = h + 'px';
   }
 
@@ -783,12 +822,13 @@
     document.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
   }
 
-  function expandPopup() {
+  // mode: 'naver' (default) | 'corpus'
+  function expandPopup(mode) {
     if (!CURRENT_WORD) return;
     POP.classList.add('expanded');
     const word = CURRENT_WORD;
 
-    const isCorpus = (DICT === 'corpus');
+    const isCorpus = (mode === 'corpus');
     document.getElementById('wp-word-large').textContent = word;
 
     const iframe = document.getElementById('wp-iframe');
@@ -877,35 +917,33 @@
       return;
     }
 
-    // Each row is its own horizontally-scrollable single line. The keyword
-    // is centered initially; the user can drag/scroll left or right to see
-    // more context without clipping or overlap.
-    let html = '<div class="corpus-info">"<b>' + escapeHtml2(word) + '</b>" — 내 레슨에서 ' +
-               hits.length + '개 문장 발견</div>';
-    html += '<div class="corpus-rows">';
+    // Update the big title to show the count: "begin (5개)".
+    const titleEl = document.getElementById('wp-word-large');
+    if (titleEl) titleEl.textContent = word + ' (' + hits.length + '개)';
+
+    // Single CSS-grid layout where all rows share the same columns. With
+    // `text-align: right` on the left column, every keyword lines up in a
+    // single vertical strip — that's the alignment the user asked for.
+    // The grid lives inside one scroll container, so swiping any row pans
+    // ALL rows together (mobile + desktop both get horizontal scroll).
+    let html = '<div class="corpus-grid">';
     hits.forEach((h, i) => {
-      html += '<div class="row">' +
-        '<div class="num">' + (i + 1) + '</div>' +
-        '<div class="line">' +
-          '<span class="left">'  + escapeHtml2(h.left)  + '</span>' +
-          '<mark>'               + escapeHtml2(h.mid)   + '</mark>' +
-          '<span class="right">' + escapeHtml2(h.right) + '</span>' +
-        '</div>' +
-      '</div>';
+      html += '<span class="num">'  + (i + 1)            + '</span>';
+      html += '<span class="left">' + escapeHtml2(h.left)  + '</span>';
+      html += '<mark>'              + escapeHtml2(h.mid)   + '</mark>';
+      html += '<span class="right">'+ escapeHtml2(h.right) + '</span>';
     });
     html += '</div>';
     container.innerHTML = html;
 
-    // After the layout settles, scroll each row so the highlighted keyword
-    // sits roughly in the middle of its line.
+    // Center the keyword column in the visible viewport so the surrounding
+    // context on both sides is visible from the start.
     requestAnimationFrame(() => {
-      container.querySelectorAll('.corpus-rows .row').forEach(row => {
-        const line = row.querySelector('.line');
-        const kw   = row.querySelector('mark');
-        if (!line || !kw) return;
-        const target = kw.offsetLeft - (line.clientWidth - kw.offsetWidth) / 2;
-        line.scrollLeft = Math.max(0, target);
-      });
+      const grid = container.querySelector('.corpus-grid');
+      const kw   = container.querySelector('mark');
+      if (!grid || !kw) return;
+      const target = kw.offsetLeft - (grid.clientWidth - kw.offsetWidth) / 2;
+      grid.scrollLeft = Math.max(0, target);
     });
   }
 
@@ -935,10 +973,16 @@
       const isTouch = e.touches && e.touches.length;
       // Ignore mouse-move stream while a touch drag is active.
       if (down.isTouch && e.type === 'mousemove') return;
+      const x = isTouch ? e.touches[0].clientX : e.clientX;
       const y = isTouch ? e.touches[0].clientY : e.clientY;
+      const dx = x - down.x;
       const dy = y - down.y;
-      POP.style.transform = `translateY(${dy}px)`;
-      POP.style.opacity = String(Math.max(0.5, 1 - Math.abs(dy) / 220));
+      // Move the card with the finger in the dominant direction so the user
+      // can see what gesture they're performing.
+      const horiz = Math.abs(dx) > Math.abs(dy);
+      POP.style.transform = horiz ? `translateX(${dx}px)` : `translateY(${dy}px)`;
+      const dist = Math.max(Math.abs(dx), Math.abs(dy));
+      POP.style.opacity = String(Math.max(0.5, 1 - dist / 240));
       // Prevent the page from scrolling while we drag the popup.
       if (isTouch && e.cancelable) e.preventDefault();
     }
@@ -948,16 +992,25 @@
       if (e.type === 'touchend') lastTouchT = Date.now();
 
       const isTouch = e.changedTouches && e.changedTouches.length;
+      const x = isTouch ? e.changedTouches[0].clientX : e.clientX;
       const y = isTouch ? e.changedTouches[0].clientY : e.clientY;
+      const dx = x - down.x;
       const dy = y - down.y;
       down = null;
       POP.style.transition = 'transform .2s ease, opacity .2s ease';
       POP.style.transform = '';
       POP.style.opacity = '';
-      if (dy < -40) {
-        expandPopup();
-      } else if (dy > 50) {
-        // Slide down out, then hide.
+
+      // Direction-based dispatch:
+      //   ↑   ⇒  Naver dictionary (full-screen)
+      //   ←   ⇒  Corpus (KWIC view from user lessons)
+      //   ↓   ⇒  close
+      const horiz = Math.abs(dx) > Math.abs(dy);
+      if (!horiz && dy < -40) {
+        expandPopup('naver');
+      } else if (horiz && dx < -50) {
+        expandPopup('corpus');
+      } else if (!horiz && dy > 50) {
         POP.style.transform = 'translateY(60px)';
         POP.style.opacity = '0';
         setTimeout(hidePopup, 180);
