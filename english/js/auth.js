@@ -140,9 +140,30 @@
     if (await isAuthed()) {
       document.body.classList.remove('signed-out');
       onAuthed && onAuthed();
+      // Listen for mid-session sign-outs (token refresh failures, another
+      // tab signing out, iOS storage wipe). When that happens we put the
+      // login modal back up — without this the user just sees a broken
+      // page after Supabase silently invalidates their session.
+      attachSignOutWatcher(onAuthed);
       return;
     }
     renderModal(onAuthed);
+  }
+
+  // Idempotent: only attaches the listener once per page load.
+  let _signOutWatcherAttached = false;
+  function attachSignOutWatcher(onAuthed) {
+    if (_signOutWatcherAttached) return;
+    _signOutWatcherAttached = true;
+    window.addEventListener('eng:signed-out', () => {
+      // The user might already be in try-mode at this point (e.g. they
+      // tapped 체험하기 in another tab). Don't show the modal in that case.
+      if (DB.isTryMode()) return;
+      // Also ignore if a modal is already up.
+      if (document.getElementById('auth-modal-root') &&
+          document.getElementById('auth-modal-root').innerHTML.trim()) return;
+      renderModal(onAuthed || (() => location.reload()));
+    });
   }
 
   async function signOutAndReload() {

@@ -42,14 +42,50 @@
   function isTryMode() { return !!ls.get('try_mode', false); }
 
   // ---------- AUTH ----------
+  // `_user` is a fast in-memory cache; the source of truth is whatever
+  // sb.auth.getSession() returns from local storage. We re-read the
+  // session on every currentUser() call so a quietly-expired token
+  // (e.g. ITP wiped the storage on iOS Safari) is detected immediately
+  // instead of returning a stale user object that survives a real logout.
   let _user = null;
   async function currentUser() {
     if (!sb) return null;
-    if (_user) return _user;
-    const { data } = await sb.auth.getUser();
-    _user = data && data.user ? data.user : null;
-    return _user;
+    try {
+      const { data: { session } } = await sb.auth.getSession();
+      if (!session) { _user = null; return null; }
+      // Defensive expiry check — autoRefreshToken handles this when the
+      // network is up, but if a refresh failed silently we still want to
+      // treat an expired session as signed-out rather than returning a
+      // ghost user.
+      const expSec = session.expires_at || 0;
+      if (expSec && (expSec * 1000) < Date.now() - 5000) {
+        _user = null;
+        return null;
+      }
+      _user = session.user || null;
+      return _user;
+    } catch (e) {
+      console.warn('[auth] getSession failed', e);
+      _user = null;
+      return null;
+    }
   }
+
+  // React to login / logout events from anywhere — Supabase fires these
+  // when a token refresh fails, when the user signs out in another tab,
+  // when ITP wipes storage, etc. We update the cached user and dispatch
+  // a window event so auth.js can re-show the login modal.
+  if (sb) {
+    sb.auth.onAuthStateChange((event, session) => {
+      _user = (session && session.user) || null;
+      if (event === 'SIGNED_OUT' || (!session && event !== 'INITIAL_SESSION')) {
+        try {
+          window.dispatchEvent(new CustomEvent('eng:signed-out', { detail: { event } }));
+        } catch (e) {}
+      }
+    });
+  }
+
   async function signUp(email, password) {
     if (!sb) throw new Error('Supabase가 설정되지 않았습니다.');
     const { data, error } = await sb.auth.signUp({ email, password });
@@ -389,18 +425,40 @@
   let _bootstrapped = false;
   async function bootstrapUserState() {
     if (_bootstrapped) return;
-    _bootstrapped = true;
-    if (!(await useCloud())) return;
+    if (!(await useCloud())) return;     // try-mode / signed out → no-op
     try {
       const [money, streak] = await Promise.all([
         _fetchUserState('money'),
         _fetchUserState('streak'),
       ]);
+      // Only mark bootstrapped on a successful round-trip — that way a
+      // transient failure (offline, RLS hiccup) doesn't permanently
+      // disable sync for this tab.
+      _bootstrapped = true;
       if (money)  ls.set('money',  money);
       if (streak) ls.set('streak', streak);
+      console.info('[user_state] synced down',
+        money  ? ('money=' + JSON.stringify(money.daily || {})) : 'money=∅',
+        streak ? ('streak=' + (streak.count || 0) + 'd')        : 'streak=∅');
     } catch (e) {
-      console.warn('[user_state] bootstrap', e);
+      console.warn('[user_state] bootstrap failed — will retry next load', e);
     }
+  }
+  // Flush any pending debounced money push when the user backgrounds the
+  // tab or closes it. Without this, a quick "click → switch tabs" sequence
+  // on mobile would lose the last bit of progress.
+  if (typeof window !== 'undefined') {
+    const flush = () => {
+      if (_moneyPushT) {
+        clearTimeout(_moneyPushT);
+        _moneyPushT = null;
+        _pushUserState('money', _moneyData());
+      }
+    };
+    window.addEventListener('pagehide', flush);
+    window.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flush();
+    });
   }
 
   // ---------- streak (연속 학습일) ----------
@@ -448,19 +506,28 @@
     if (word === d.lastWord) return d;            // same word twice → skip
     d.lastWord = word;
     d.runCount = (d.runCount || 0) + 1;
-    let earnedCent = false;
     if (d.runCount >= 3) {
       d.runCount = 0;
       const t = _ymd();
       d.daily[t] = Math.min(200, (d.daily[t] || 0) + 1);
-      earnedCent = true;
     }
     ls.set('money', d);
-    // Push every 3rd click (when a cent actually lands) — that's the only
-    // change other devices need to see. Skipping the in-between increments
-    // avoids hammering Supabase on every word click.
-    if (earnedCent) _pushUserState('money', d);
+    // Sync EVERY mutation to Supabase (debounced ~500ms so a flurry of
+    // taps coalesces into a single upsert). Earlier we only pushed on
+    // cent-earn, but that meant the runCount / lastWord state diverged
+    // between devices and the daily total occasionally lagged. Pushing
+    // every change keeps PC and mobile perfectly in sync.
+    _scheduleMoneyPush(d);
     return d;
+  }
+  // Debounced push so a sequence of clicks doesn't fire one upsert per click.
+  let _moneyPushT = null;
+  function _scheduleMoneyPush(d) {
+    if (_moneyPushT) clearTimeout(_moneyPushT);
+    _moneyPushT = setTimeout(() => {
+      _moneyPushT = null;
+      _pushUserState('money', d);
+    }, 500);
   }
   function getTodayCents() {
     const d = _moneyData();

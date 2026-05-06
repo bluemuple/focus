@@ -40,8 +40,12 @@
 
           <!-- Thumbnail uses background-image so it can stretch to the
                full height of .lh-left (title row + tools row). Hidden when
-               the lesson has no uploaded thumbnail. -->
-          <div class="lesson-thumb-img" id="lesson-thumb-img" hidden></div>
+               the lesson has no uploaded thumbnail. The inner span is the
+               "current/total" page indicator that overlays the image when
+               the lesson is paginated to 2+ pages. -->
+          <div class="lesson-thumb-img" id="lesson-thumb-img" hidden>
+            <span class="thumb-pages" id="thumb-pages" hidden></span>
+          </div>
         </div>
 
         <div class="lesson-text-wrap" id="lesson-text-wrap">
@@ -764,7 +768,14 @@
     phEl.textContent = phrase;
     transEl.innerHTML = '<span class="tx-loading">번역 중...</span>';
     bar.hidden = false;
-    requestAnimationFrame(() => bar.classList.add('show'));
+    requestAnimationFrame(() => {
+      bar.classList.add('show');
+      // After the bar is in the DOM and laid out, push the white lesson
+      // card upward by exactly the bar's height so the bottom of the text
+      // is no longer hidden behind the bar. Only the title row clips off
+      // the top of the viewport — acceptable while reading a translation.
+      applyContBarShift();
+    });
     CONT_BAR_PHRASE = { text: phrase, ko: '' };
 
     // Speak right away (matches the sidebar / popup paths).
@@ -790,6 +801,25 @@
     bar.classList.remove('show');
     bar.hidden = true;
     CONT_BAR_PHRASE = null;
+    applyContBarShift();   // restores the lesson card to its normal position
+  }
+  // Sync the body's `cont-bar-open` class + the --cont-bar-shift CSS var to
+  // the actual on-screen height of the cont-bar. Called on show, hide, and
+  // resize so a layout reflow (e.g. font-size change) keeps the shift exact.
+  function applyContBarShift() {
+    const bar = document.getElementById('cont-bar');
+    const visible = bar && !bar.hidden;
+    if (visible) {
+      const h = bar.offsetHeight || 120;
+      // The shift must EXCEED the bar height a little so the bottom edge of
+      // the white card sits ABOVE the bar's top edge (with a small visual
+      // gap). 8px gap looks good on phones.
+      document.documentElement.style.setProperty('--cont-bar-shift', `-${h + 8}px`);
+      document.body.classList.add('cont-bar-open');
+    } else {
+      document.documentElement.style.removeProperty('--cont-bar-shift');
+      document.body.classList.remove('cont-bar-open');
+    }
   }
 
   function renderSidebarWordList(host) {
@@ -1939,8 +1969,10 @@
     const pb = document.getElementById('playbar');
     const bottomEl = (pb && !pb.hidden) ? pb : lb;
     const bottomH = (bottomEl && !bottomEl.hidden) ? bottomEl.offsetHeight : 0;
-    const bottomGap = 16;
-    const h = Math.max(320, window.innerHeight - topY - bottomH - bottomGap);
+    // Tightened from 16px to 6px so the visible gray strip below the white
+    // card is minimised (mobile focus). Also avoids unnecessary scroll.
+    const bottomGap = 6;
+    const h = Math.max(280, window.innerHeight - topY - bottomH - bottomGap);
     main.style.height = h + 'px';
   }
 
@@ -2047,6 +2079,26 @@
     const dot   = document.getElementById('lp-dot');    if (dot)   dot.style.left   = pct + '%';
     const prev  = document.getElementById('page-prev'); if (prev)  prev.disabled = pageIdx === 0;
     const next  = document.getElementById('page-next'); if (next)  next.disabled = pageIdx >= total - 1;
+
+    // Overlay "current/total" on the thumbnail when the lesson spans
+    // multiple pages. The thumb is also force-shown for paginated lessons
+    // even if the user hasn't uploaded an image — the page indicator is
+    // useful enough on its own to warrant a gray placeholder box.
+    const tp    = document.getElementById('thumb-pages');
+    const thumb = document.getElementById('lesson-thumb-img');
+    const hasThumbImg = !!(LESSON && LESSON.thumbnail_url);
+    if (tp && thumb) {
+      if (total > 1) {
+        tp.textContent = cur + ' / ' + total;
+        tp.hidden = false;
+        thumb.hidden = false;             // show even without an image
+        thumb.classList.add('has-pages');
+      } else {
+        tp.hidden = true;
+        thumb.classList.remove('has-pages');
+        thumb.hidden = !hasThumbImg;      // hide again if no real image
+      }
+    }
   }
 
   function goPage(delta) {
@@ -2145,6 +2197,7 @@
       hidePopup();
       applySidebarVisibility();
       applyMobileContBar();
+      applyContBarShift();           // keep the upward shift accurate on rotate
       requestAnimationFrame(() => {
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');
@@ -2438,9 +2491,9 @@
   }
 
   // Shared updater. Routes the result to:
-  //   • PC sidebar      — any mode on viewport ≥ 1024 px
-  //   • popup card      — MODE='cont' on mobile
-  //   • inline gray     — MODE='contU' on mobile
+  //   • inline gray     — MODE='contU' (both PC and mobile)
+  //   • PC sidebar      — single / cont on viewport ≥ 1024 px
+  //   • cont-bar        — MODE='cont' on mobile
   async function refreshContTranslation(anchorEl) {
     const phrase = selectionToPhrase();
     if (!phrase) return;
@@ -2448,11 +2501,22 @@
     // Always refresh the per-line selection outlines first.
     renderContOutlines();
 
+    if (MODE === 'contU') {
+      // 밑줄이어서 ALWAYS shows the inline gray label below the line, on
+      // PC and mobile alike — that's the mode's whole point. The sidebar
+      // (when visible on PC) is left empty so it doesn't duplicate what's
+      // already pinned under the text.
+      if (useSidebar()) clearSidebar();
+      const phraseCtx = getContextSentence(Array.from(CONT_SELECTED)[0]);
+      let ko = '';
+      try { ko = await Translate.translate(phrase, phraseCtx); } catch (e) {}
+      if (selectionToPhrase() !== phrase) return;      // selection changed mid-fetch
+      renderContTranslation(ko);
+      return;
+    }
+
     if (useSidebar()) {
-      // Desktop: sidebar is the single translation surface for every mode.
-      // We also strip any leftover inline gray label so transitions between
-      // mobile (where contU paints inline) and a resized desktop layout
-      // don't leave stale text behind.
+      // Desktop, single / cont: sidebar is the translation surface.
       showInSidebar(phrase);
       document.querySelectorAll('.cont-trans').forEach(el => el.remove());
       return;
@@ -2466,15 +2530,6 @@
       showInContBar(phrase);
       return;
     }
-
-    // Mobile contU only — needs the translated string for the inline gray
-    // label. Pass the sentence containing the first selected word as context
-    // so the translator disambiguates within the right surroundings.
-    const phraseCtx = getContextSentence(Array.from(CONT_SELECTED)[0]);
-    let ko = '';
-    try { ko = await Translate.translate(phrase, phraseCtx); } catch (e) {}
-    if (selectionToPhrase() !== phrase) return;        // selection changed mid-fetch
-    renderContTranslation(ko);
   }
 
   // Compute the on-screen position of the selection's last visual line and
