@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1">
 <title>레슨 · English</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
@@ -18,16 +18,19 @@
             <img src="images/back.jpg" alt="뒤로" onerror="this.style.display='none';this.parentNode.textContent='‹';">
           </a>
           <h1 id="lesson-title">불러오는 중...</h1>
+          <button class="title-heart" id="bookmark-btn" aria-pressed="false" title="이 레슨을 찜한 레슨에 추가/제거">
+            <span class="title-heart-ico">♡</span>
+          </button>
           <img class="lesson-thumb-img" id="lesson-thumb-img" alt="" hidden>
         </div>
 
         <div class="lesson-head">
           <div class="head-spacer"></div>
           <div class="head-tools">
-            <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
-            <button class="toggle-btn dict" id="gpt-toggle-btn"  title="더 좋은 번역 (gpt-4o-mini, 클릭 시 그 단어만 GPT로)">✨</button>
+            <button class="toggle-btn dict" id="gpt-toggle-btn" title="더 좋은 번역 (gpt-4o-mini, 클릭 시 그 단어만 GPT로)">✨</button>
+            <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">A−</button>
+            <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">A+</button>
             <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
-            <button class="toggle-btn"      id="bookmark-btn"    title="이 레슨을 찜한 레슨으로 추가/제거">찜</button>
           </div>
         </div>
 
@@ -82,16 +85,16 @@
        button on the right. Pressing play swaps in the playbar below. -->
   <div class="lesson-bar" id="lesson-bar">
     <button class="lb-play" id="lb-play" aria-label="재생 시작">▶</button>
-    <!-- Cont-mode middle controls: ← extends/shrinks left (or right depending
-         on the eye toggle), then the eye toggle, then →. Hidden in single /
-         contU modes — the bar then leaves the center empty. -->
-    <div class="lb-cont-controls" id="lb-cont-controls" hidden>
+    <!-- Mobile center group: ← [mode-cycle] →. The arrows step the cont-mode
+         selection (and stay visible in 하나씩 / 밑줄이어서 too — see
+         tryAnchorKey for the per-mode behaviour). The middle button cycles
+         the reading mode (하나씩 → 이어서 → 이어서밑줄). On phones this is the
+         only mode toggle; the top mode pill is hidden via CSS. -->
+    <div class="lb-cont-controls" id="lb-cont-controls">
       <button class="lb-arrow" id="lb-arrow-left"  aria-label="←">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>
       </button>
-      <button class="lb-eye" id="lb-eye" aria-label="방향 전환">
-        <img id="lb-eye-img" src="images/eye-left.svg" alt="">
-      </button>
+      <button class="toggle-btn lb-mode" id="lb-mode-toggle" title="읽기 모드 전환">하나씩</button>
       <button class="lb-arrow" id="lb-arrow-right" aria-label="→">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
       </button>
@@ -129,12 +132,6 @@
       </button>
       <div class="ls-section-label">단계</div>
       <div class="level-bar" id="ls-level"></div>
-
-      <div class="ls-section-label">키보드 화살표 방향</div>
-      <div class="ls-anchor-toggle" id="ls-anchor-toggle" role="group" aria-label="화살표 키 방향">
-        <button class="lat-btn" data-anchor="right" title="→ 키로 왼쪽부터 줄이기 / ← 키로 왼쪽으로 늘리기">→</button>
-        <button class="lat-btn" data-anchor="left"  title="→ 키로 오른쪽으로 늘리기 / ← 키로 오른쪽부터 줄이기">←</button>
-      </div>
     </div>
   </aside>
   <!-- Floating toggle so the user can re-open the sidebar after closing it,
@@ -204,13 +201,27 @@
   //   cont    — 이어서       (popup card too, but selection accumulates within a sentence)
   //   contU   — 이어서(밑줄) — inline gray translation under the line; bigger KR font
   let MODE = ({ single: 'single', cont: 'cont', contU: 'contU' })[prefs.mode] || 'single';
-  // Arrow-key behaviour for the running cont selection (PC sidebar only):
-  //   'right' (icon →) = anchor on the right; ← extends LEFT, → shrinks left
-  //   'left'  (icon ←) = anchor on the left;  → extends RIGHT, ← shrinks right
-  let ANCHOR_MODE = (prefs.anchor === 'left' || prefs.anchor === 'right') ? prefs.anchor : 'right';
+  // Arrow-key direction tracking for the running cont selection. There is
+  // NO sticky anchor toggle anymore — instead we remember which side the
+  // user last extended so the OPPOSITE arrow shrinks that side. Empty +
+  // → → first word and lock the right side; empty + ← → last word and
+  // lock the left side. Cleared whenever the selection empties out.
+  let _lastGrow = null;             // 'right' | 'left' | null
   function savePrefs() {
-    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE, anchor: ANCHOR_MODE })); }
+    try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE })); }
     catch (e) {}
+  }
+  // Selection-cursor predicate: skip "완전히 아는 단어" (state 5) and
+  // "무시" words (state -1) so the arrow keys land on something the user
+  // is actually still learning.
+  function isSelectable(el) {
+    if (!el || !el.classList) return false;
+    if (!el.classList.contains('w') || el.classList.contains('punct')) return false;
+    const w = (el.dataset.word || '').toLowerCase();
+    const v = WORD_STATES[w];
+    const st = v && v.state;
+    if (st === 5 || st === -1) return false;
+    return true;
   }
   function modeLabel(m) {
     return m === 'contU' ? '<u>이어서</u>'
@@ -283,6 +294,9 @@
       document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
       return;
     }
+    // Streak ticks up the first time the user actually opens a lesson page
+    // each day (mere visits to the home page don't count).
+    try { DB.recordLessonVisit && DB.recordLessonVisit(); } catch (e) {}
     WORD_STATES = await DB.loadWordStates();
 
     document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
@@ -356,34 +370,27 @@
     }
   }
 
-  // ---- mobile bottom-bar cont controls (← [eye] →) ----
+  // ---- mobile bottom-bar center group ([←][mode-toggle][→]) ----
   function applyMobileContBar() {
-    // The bottom page slider was removed; the only thing we toggle here is
-    // the cont-mode controls (← eye →). They show on phones whenever the
-    // user is in 이어서 mode. (PC keeps using the sidebar's anchor toggle.)
+    // The center group is always present on phones now (no eye toggle), so
+    // we only need to keep the mode label in sync.
     const ctrlEl = document.getElementById('lb-cont-controls');
     if (!ctrlEl) return;
-    ctrlEl.hidden = !((MODE === 'cont') && isMobileViewport());
-    refreshMobileEyeUI();
+    ctrlEl.hidden = !isMobileViewport();
+    refreshAllModeBtns();
   }
   function setupMobileContBar() {
-    const eye   = document.getElementById('lb-eye');
-    const left  = document.getElementById('lb-arrow-left');
-    const right = document.getElementById('lb-arrow-right');
-    if (eye)   eye.addEventListener('click', () => {
-      // Eye toggle: flip the anchor side AND clear the running selection
-      // so the user starts fresh with the new direction.
-      ANCHOR_MODE = (ANCHOR_MODE === 'right') ? 'left' : 'right';
-      clearContSelection();
-      if (useSidebar()) clearSidebar();
-      else              hidePopup();
-      savePrefs();
-      refreshMobileEyeUI();
-      refreshAnchorToggleUI();
-    });
+    const left   = document.getElementById('lb-arrow-left');
+    const right  = document.getElementById('lb-arrow-right');
+    const modeBtn = document.getElementById('lb-mode-toggle');
     // Tapping ←/→ on mobile triggers the same logic as the PC arrow keys.
     if (left)  left.addEventListener('click',  () => tryAnchorKey('left'));
     if (right) right.addEventListener('click', () => tryAnchorKey('right'));
+    // The center button cycles modes — same effect as the top mode pill.
+    if (modeBtn) modeBtn.addEventListener('click', () => {
+      MODE = nextMode(MODE);
+      refreshAllModeBtns(); savePrefs(); onModeChanged();
+    });
   }
 
   function setupSidebar() {
@@ -399,31 +406,8 @@
       const span = add.querySelector('span');
       if (span) span.textContent = '추가됨 ✓';
     });
-
-    // Anchor-mode pill toggle (→ ←). Click flips the active side; arrow keys
-    // in cont mode then extend/shrink the running selection accordingly.
-    const anchorWrap = document.getElementById('ls-anchor-toggle');
-    if (anchorWrap) {
-      anchorWrap.querySelectorAll('[data-anchor]').forEach(b => {
-        b.onclick = () => {
-          ANCHOR_MODE = b.dataset.anchor;
-          // Same as the mobile eye toggle: flipping the anchor clears the
-          // running selection so the user starts fresh with the new side.
-          clearContSelection();
-          if (useSidebar()) clearSidebar();
-          else              hidePopup();
-          savePrefs();
-          refreshAnchorToggleUI();
-          refreshMobileEyeUI();
-        };
-      });
-      refreshAnchorToggleUI();
-    }
-  }
-  function refreshAnchorToggleUI() {
-    document.querySelectorAll('#ls-anchor-toggle [data-anchor]').forEach(b => {
-      b.classList.toggle('active', b.dataset.anchor === ANCHOR_MODE);
-    });
+    // (Anchor-direction pill removed — the arrow keys now use _lastGrow
+    // tracking and don't need a sticky direction toggle.)
   }
 
   // ============== motivation feedback (per-tap rewards) ==============
@@ -538,26 +522,42 @@
   // Returns true when this keypress was used for selection; the caller
   // should then NOT also trigger page navigation.
   // Works on both PC (keyboard) and mobile (← / → tap buttons in lesson-bar).
+  //
+  // SIMPLIFIED MODEL (no anchor toggle):
+  //   • Empty + → → select FIRST eligible word; _lastGrow = 'right'.
+  //   • Empty + ← → select LAST eligible word;  _lastGrow = 'left'.
+  //   • Same direction as _lastGrow → grow that side by one eligible word.
+  //   • Opposite direction → shrink the last-grown side (drop that end).
+  //   • Selection becomes empty → _lastGrow resets; next press re-initialises.
+  // "Eligible" means non-punct AND not state-5 (완전히 아는 단어) /
+  // state-(-1) (무시) — those are skipped during stepping.
   function tryAnchorKey(direction /* 'left' | 'right' */) {
     if (MODE !== 'cont') return false;
 
-    // Empty selection — first arrow press starts a new selection at the
-    // OPPOSITE end of the first sentence. eye-left → last word, eye-right
-    // → first word. After this initial pick, normal anchor logic takes over
-    // (no fallback walking past sentence boundaries).
+    const root = document.getElementById('lesson-text');
+    if (!root) return false;
+
+    // Empty selection: initialise at the appropriate end of the first
+    // visible sentence, skipping unselectable words.
     if (!CONT_SELECTED.size) {
-      const root = document.getElementById('lesson-text');
-      if (!root) return false;
       const firstWord = root.querySelector('.w:not(.punct)');
       if (!firstWord) return false;
       const sentence = getSentenceWordsOf(firstWord);
       if (!sentence.length) return false;
-      const target = (ANCHOR_MODE === 'right')
-        ? sentence[sentence.length - 1]   // eye-left → start at LAST word
-        : sentence[0];                    // eye-right → start at FIRST word
+
+      let target = null;
+      if (direction === 'right') {
+        for (const w of sentence)              { if (isSelectable(w)) { target = w; break; } }
+      } else {
+        for (let i = sentence.length - 1; i >= 0; i--) {
+          if (isSelectable(sentence[i])) { target = sentence[i]; break; }
+        }
+      }
+      if (!target) return false;
       CONT_SELECTED.add(target);
       target.classList.add('cont-sel');
       TTS.speak(target.dataset.word);
+      _lastGrow = direction;
       refreshContTranslation();
       return true;
     }
@@ -570,50 +570,43 @@
     const ri = sentence.indexOf(rightmost);
     if (li < 0 || ri < 0) return false;
 
-    // Once the user has at least one word selected, the keys behave as the
-    // straightforward anchor logic (NO walking past the sentence boundary):
-    // eye-left → ← extends left / → shrinks left.
-    // eye-right → → extends right / ← shrinks right.
+    // Default the grow side to the direction of this keypress when nothing
+    // is tracked yet (e.g. user clicked a word with the mouse, then started
+    // arrowing). The current key is the most natural grow side.
+    if (!_lastGrow) _lastGrow = direction;
+
     let changed = false;
-    if (ANCHOR_MODE === 'right') {
-      // Eye-LEFT: anchor on the right; manipulate the LEFT edge.
-      if (direction === 'right') {
-        // → key: drop the leftmost word. If we just emptied the selection,
-        // tear down any visible card / outline.
-        CONT_SELECTED.delete(leftmost);
-        leftmost.classList.remove('cont-sel');
-        if (CONT_SELECTED.size === 0) {
-          document.querySelectorAll('.cont-trans').forEach(el => el.remove());
-          document.querySelectorAll('.cont-outline').forEach(el => el.remove());
-          if (useSidebar()) clearSidebar();
-          else              hidePopup();
-          return true;
+    if (direction === _lastGrow) {
+      // EXTEND the last-grown side by the next eligible word in the sentence.
+      if (_lastGrow === 'right') {
+        for (let i = ri + 1; i < sentence.length; i++) {
+          const cand = sentence[i];
+          if (isSelectable(cand) && !CONT_SELECTED.has(cand)) {
+            CONT_SELECTED.add(cand); cand.classList.add('cont-sel');
+            changed = true; break;
+          }
         }
-        changed = true;
       } else {
-        // ← key: extend leftward by one word, if there is one.
-        const prev = sentence[li - 1];
-        if (prev && !CONT_SELECTED.has(prev)) {
-          CONT_SELECTED.add(prev); prev.classList.add('cont-sel');
-          changed = true;
+        for (let i = li - 1; i >= 0; i--) {
+          const cand = sentence[i];
+          if (isSelectable(cand) && !CONT_SELECTED.has(cand)) {
+            CONT_SELECTED.add(cand); cand.classList.add('cont-sel');
+            changed = true; break;
+          }
         }
       }
     } else {
-      // Eye-RIGHT: anchor on the left; manipulate the RIGHT edge.
-      if (direction === 'right') {
-        const next = sentence[ri + 1];
-        if (next && !CONT_SELECTED.has(next)) {
-          CONT_SELECTED.add(next); next.classList.add('cont-sel');
-          changed = true;
-        }
-      } else {
-        CONT_SELECTED.delete(rightmost);
-        rightmost.classList.remove('cont-sel');
+      // SHRINK the last-grown side (drop its visible end).
+      const drop = _lastGrow === 'right' ? rightmost : leftmost;
+      if (drop) {
+        CONT_SELECTED.delete(drop);
+        drop.classList.remove('cont-sel');
         if (CONT_SELECTED.size === 0) {
           document.querySelectorAll('.cont-trans').forEach(el => el.remove());
           document.querySelectorAll('.cont-outline').forEach(el => el.remove());
           if (useSidebar()) clearSidebar();
           else              hidePopup();
+          _lastGrow = null;
           return true;
         }
         changed = true;
@@ -621,7 +614,7 @@
     }
     if (changed) refreshContTranslation();
     else         renderContOutlines();
-    // We always "claim" the keystroke so the page doesn't slide while the
+    // Always "claim" the keystroke so the page doesn't slide while the
     // user is curating their selection (PC arrow keys / mobile tap buttons).
     return true;
   }
@@ -1404,66 +1397,114 @@
     });
   }
   function setupToggles() {
-    // All four toggles are single-button "flip" controls — the label of the
-    // button is the CURRENT setting and clicking flips to the other option.
-    // (User-facing visual: pale sky-blue background, never black.)
+    // Each control in .head-tools is a single-button "flip" / cycle toggle.
+    // (Visual: pale sky-blue pill, never black.)
 
     // Mode toggle: cycles 하나씩 → 이어서 → 이어서(밑줄) → 하나씩.
+    // Same cycle is mirrored by the mode button placed in the middle of the
+    // mobile lesson-bar (see refreshAllModeBtns).
     const modeBtn = document.getElementById('mode-toggle-btn');
-    function refreshMode() { modeBtn.innerHTML = modeLabel(MODE); }
-    modeBtn.addEventListener('click', () => {
-      MODE = nextMode(MODE);
-      refreshMode(); savePrefs(); onModeChanged();
-    });
-    refreshMode();
-
-    // Translator toggle (DL ↔ G). Selected engine is the primary; the other
-    // remains an automatic fallback inside Translate.translate().
-    const txBtn = document.getElementById('tx-toggle-btn');
-    function refreshTx() {
-      const cur = (window.Translate && Translate.getEngine && Translate.getEngine()) || 'deepl';
-      txBtn.textContent = cur === 'deepl' ? 'DL' : 'G';
+    if (modeBtn) {
+      modeBtn.addEventListener('click', () => {
+        MODE = nextMode(MODE);
+        refreshAllModeBtns(); savePrefs(); onModeChanged();
+      });
     }
-    txBtn.addEventListener('click', () => {
-      const cur = Translate.getEngine();
-      Translate.setEngine(cur === 'deepl' ? 'google' : 'deepl');
-      refreshTx();
-    });
-    refreshTx();
+    refreshAllModeBtns();
+
+    // (DL ↔ G translator toggle removed — DeepL is the default and Google is
+    // a silent code-side fallback inside Translate.translate().)
 
     // ✨ "Better translation" toggle: when on, every word click is routed
     // through GPT-4o-mini (with the surrounding sentence as context) for the
     // highest-quality nuance. When off, we use DeepL (also with context) —
     // free, fast, very good for ~90% of cases.
     const gptBtn = document.getElementById('gpt-toggle-btn');
-    function refreshGpt() {
-      const on = (window.Translate && Translate.getUseGPT && Translate.getUseGPT()) || false;
-      gptBtn.classList.toggle('gpt-on', on);
-    }
-    gptBtn.addEventListener('click', () => {
-      const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
-      Translate.setUseGPT(!cur);
+    if (gptBtn) {
+      function refreshGpt() {
+        const on = (window.Translate && Translate.getUseGPT && Translate.getUseGPT()) || false;
+        gptBtn.classList.toggle('gpt-on', on);
+      }
+      gptBtn.addEventListener('click', () => {
+        const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
+        Translate.setUseGPT(!cur);
+        refreshGpt();
+      });
       refreshGpt();
-    });
-    refreshGpt();
+    }
+
+    // A+ / A− font-size buttons. Adjust the lesson-text font-size live, and
+    // persist in localStorage so the choice survives reloads.
+    const FONT_KEY = 'eng.v1.lessonFontPx';
+    function readFontPx() {
+      const n = parseFloat(localStorage.getItem(FONT_KEY) || '');
+      return (Number.isFinite(n) && n >= 12 && n <= 40) ? n : null;
+    }
+    function applyFontPx(px) {
+      try { localStorage.setItem(FONT_KEY, String(px)); } catch (e) {}
+      document.querySelectorAll('.lesson-text').forEach(el => {
+        el.style.fontSize = px + 'px';
+      });
+      // Recompute pagination since line-height changed.
+      if (LESSON) {
+        requestAnimationFrame(() => {
+          PAGES = paginateByHeight(LESSON.body || '');
+          computePageCharCounts();
+          if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
+          if (pageIdx < 0) pageIdx = 0;
+          renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
+          bindWordInteractions(document.getElementById('lesson-text'));
+          buildSentenceMap(document.getElementById('lesson-text'));
+          updateProgress();
+        });
+      }
+    }
+    // Apply the persisted size on init (if any).
+    const persisted = readFontPx();
+    if (persisted) {
+      document.querySelectorAll('.lesson-text').forEach(el => {
+        el.style.fontSize = persisted + 'px';
+      });
+    }
+    function bumpFont(delta) {
+      const cur = readFontPx() ||
+                  parseFloat(getComputedStyle(document.querySelector('.lesson-text')).fontSize) || 18;
+      const next = Math.max(12, Math.min(40, Math.round(cur + delta)));
+      applyFontPx(next);
+    }
+    const fontUpBtn   = document.getElementById('font-up-btn');
+    const fontDownBtn = document.getElementById('font-down-btn');
+    if (fontUpBtn)   fontUpBtn.addEventListener('click',   () => bumpFont(+2));
+    if (fontDownBtn) fontDownBtn.addEventListener('click', () => bumpFont(-2));
 
     // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
-    // Bookmark toggle (찜). Pink when on. Stays "찜" text either way; only
-    // the colour communicates state.
+    // Bookmark toggle (♡ / ♥). The button now lives in the title row to the
+    // right of the lesson title; tap flips a heart icon between hollow gray
+    // (default) and filled red (bookmarked).
     const bmBtn = document.getElementById('bookmark-btn');
-    bmBtn.addEventListener('click', async () => {
-      if (!LESSON) return;
-      const next = !LESSON.bookmarked;
-      LESSON.bookmarked = next;
-      refreshBookmarkBtn();
-      try { await DB.setBookmark(LESSON.id, next); }
-      catch (e) {
-        console.error('bookmark toggle failed', e);
-        // Roll back the visual state on failure.
-        LESSON.bookmarked = !next;
+    if (bmBtn) {
+      bmBtn.addEventListener('click', async () => {
+        if (!LESSON) return;
+        const next = !LESSON.bookmarked;
+        LESSON.bookmarked = next;
         refreshBookmarkBtn();
-      }
+        try { await DB.setBookmark(LESSON.id, next); }
+        catch (e) {
+          console.error('bookmark toggle failed', e);
+          // Roll back the visual state on failure.
+          LESSON.bookmarked = !next;
+          refreshBookmarkBtn();
+        }
+      });
+    }
+  }
+
+  // Mode buttons live in two places (top head-tools + mobile lesson-bar
+  // center). Keep them in sync.
+  function refreshAllModeBtns() {
+    document.querySelectorAll('#mode-toggle-btn, #lb-mode-toggle').forEach(b => {
+      b.innerHTML = modeLabel(MODE);
     });
   }
 
@@ -1472,7 +1513,9 @@
     if (!b) return;
     const on = !!(LESSON && LESSON.bookmarked);
     b.classList.toggle('bookmarked', on);
-    b.textContent = on ? '찜♥' : '찜';
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    const ico = b.querySelector('.title-heart-ico');
+    if (ico) ico.textContent = on ? '♥' : '♡';
   }
   function onModeChanged() {
     // Clean up state from the previous mode.
@@ -1676,6 +1719,7 @@
     document.querySelectorAll('.cont-trans').forEach(el => el.remove());
     document.querySelectorAll('.cont-outline').forEach(el => el.remove());
     CONT_SELECTED.clear();
+    _lastGrow = null;
   }
 
   // Draw one rectangle per visual LINE that the current selection spans.
@@ -1899,19 +1943,6 @@
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
     if (e.key === 'Escape') hidePopup();
 
-    // Spacebar in 이어서 mode flips the anchor side (←/→ toggle). We only
-    // grab it when the user is actually using the cont selection — that way
-    // it doesn't conflict with the popup-card "Space → Corpus" shortcut.
-    if (e.code === 'Space' && MODE === 'cont' && CONT_SELECTED.size > 0
-        && (useSidebar() || isMobileViewport())) {
-      e.preventDefault();
-      ANCHOR_MODE = (ANCHOR_MODE === 'right') ? 'left' : 'right';
-      savePrefs();
-      refreshAnchorToggleUI();
-      refreshMobileEyeUI();
-      return;
-    }
-
     // ',' / '.' navigate pages on PC. We use these instead of ←/→ so that
     // arrow keys are reserved for the cont-mode selection grower/shrinker.
     if (e.key === ',' || e.key === '<') { e.preventDefault(); goPage(-1); return; }
@@ -1926,11 +1957,6 @@
   });
   function isMobileViewport() {
     return window.matchMedia('(max-width: 1023px)').matches;
-  }
-  function refreshMobileEyeUI() {
-    const img = document.getElementById('lb-eye-img');
-    if (!img) return;
-    img.src = (ANCHOR_MODE === 'right') ? 'images/eye-left.svg' : 'images/eye-right.svg';
   }
 
   let resizeT = null;
@@ -2132,6 +2158,9 @@
       showPlusOne(w);                  // floating "+1" near the word
       recordCombo();                   // rolling 5-second click streak badge
       maybeBonus();                    // ~1/30 surprise reward toast
+      // ===== NZD piggy bank: 1¢ per 3 unique-in-a-row word clicks =====
+      // Capped at $2/day inside DB.recordMoneyClick.
+      try { DB.recordMoneyClick && DB.recordMoneyClick(word); } catch (e) {}
 
       // Always advance the learning state on a real click.
       const upd = await DB.clickWord(word);

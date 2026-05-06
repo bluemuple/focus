@@ -26,6 +26,30 @@
 
     <section class="section section-tight">
       <h2>계속 학습하기</h2>
+
+      <!-- Status row: three pill buttons summarising the user's progress.
+           Tap each one to open a detail modal. Numbers are filled in JS. -->
+      <div class="status-row" id="status-row">
+        <button class="status-btn" id="status-streak" type="button"
+                title="연속 학습일 — 달력 보기">
+          <span class="status-ico">🔥</span>
+          <span class="status-num" id="status-streak-num">0</span>
+          <span class="status-label">연속 학습일</span>
+        </button>
+        <button class="status-btn" id="status-money" type="button"
+                title="모은 돈 — 지출 기록">
+          <span class="status-ico">💰</span>
+          <span class="status-num" id="status-money-num">$0.00</span>
+          <span class="status-label">NZD 모은 돈</span>
+        </button>
+        <button class="status-btn" id="status-mastered" type="button"
+                title="완전히 아는 단어 모음">
+          <span class="status-ico">✓</span>
+          <span class="status-num" id="status-mastered-num">0</span>
+          <span class="status-label">마스터한 단어</span>
+        </button>
+      </div>
+
       <div class="tabrow" id="lesson-tabs">
         <a href="#" class="active" data-filter="all">모든 레슨</a>
         <a href="#" data-filter="bookmarked">찜한 레슨</a>
@@ -100,15 +124,217 @@
     grid.innerHTML = '<div class="muted">불러오는 중...</div>';
     ALL_LESSONS = await DB.listLessons();
     setupTabs();
+    setupStatusRow();
     paintGrid();
     // Word Master + Word Story sections (after we have word states loaded).
     await renderMasterAndStories();
+  }
+
+  // ===== Status row (streak / money / mastered) =====
+  function refreshStatusNumbers(states) {
+    const s = (DB.getStreak && DB.getStreak()) || { count: 0 };
+    const sNum = document.getElementById('status-streak-num');
+    if (sNum) sNum.textContent = String(s.count || 0);
+
+    const totalC = (DB.getTotalCents && DB.getTotalCents()) || 0;
+    const dollars = (totalC / 100).toFixed(2);
+    const mNum = document.getElementById('status-money-num');
+    if (mNum) mNum.textContent = '$' + dollars;
+
+    let masteredCount = 0;
+    if (states) {
+      for (const v of Object.values(states)) {
+        if (v && v.state === 5) masteredCount++;
+      }
+    }
+    const wNum = document.getElementById('status-mastered-num');
+    if (wNum) wNum.textContent = String(masteredCount);
+  }
+  function setupStatusRow() {
+    const sb = document.getElementById('status-streak');
+    const mb = document.getElementById('status-money');
+    const wb = document.getElementById('status-mastered');
+    if (sb) sb.onclick = openStreakModal;
+    if (mb) mb.onclick = openMoneyModal;
+    if (wb) wb.onclick = openMasteredModal;
+  }
+
+  // ---- modal scaffolding ----
+  function openModal(innerHTML, opts) {
+    opts = opts || {};
+    const overlay = document.createElement('div');
+    overlay.className = 'status-overlay';
+    overlay.innerHTML = `
+      <div class="status-card">
+        <button class="sc-close" aria-label="닫기">×</button>
+        ${innerHTML}
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay || e.target.closest('.sc-close')) close();
+    });
+    if (opts.onMount) opts.onMount(overlay, close);
+    return overlay;
+  }
+
+  // ---- streak detail (calendar of recorded days) ----
+  function openStreakModal() {
+    const s = DB.getStreak();
+    const set = new Set(s.days || []);
+    const today = new Date();
+    // 6-week sliding window ending today.
+    const weeks = [];
+    const startOffset = today.getDay();   // 0=Sun..6=Sat
+    const start = new Date(today);
+    start.setDate(start.getDate() - startOffset - 35);
+    let cursor = new Date(start);
+    for (let w = 0; w < 6; w++) {
+      const row = [];
+      for (let d = 0; d < 7; d++) {
+        const ymd = cursor.getFullYear() + '-'
+          + String(cursor.getMonth() + 1).padStart(2, '0') + '-'
+          + String(cursor.getDate()).padStart(2, '0');
+        row.push({
+          ymd,
+          day: cursor.getDate(),
+          isToday: ymd === ymdOf(today),
+          done: set.has(ymd),
+          inFuture: cursor > today,
+        });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      weeks.push(row);
+    }
+    const html = `
+      <h3>🔥 연속 학습일</h3>
+      <div class="streak-big">${s.count || 0}<span class="su">일</span></div>
+      <div class="streak-cap">최근 6주 — 학습한 날에 표시</div>
+      <div class="streak-cal">
+        <div class="cal-row cal-head">
+          ${['일','월','화','수','목','금','토'].map(d => `<span>${d}</span>`).join('')}
+        </div>
+        ${weeks.map(row => `
+          <div class="cal-row">
+            ${row.map(c => `
+              <span class="cal-cell ${c.done?'done':''} ${c.isToday?'today':''} ${c.inFuture?'future':''}">${c.day}</span>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    `;
+    openModal(html);
+  }
+  function ymdOf(d) {
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+  }
+
+  // ---- money detail (weekly bar chart + expense list + add-expense flow) ----
+  function openMoneyModal() {
+    function render(card) {
+      const total = DB.getTotalCents();
+      const today = DB.getTodayCents();
+      const week = DB.getDailyHistory(7);
+      const expenses = DB.listExpenses();
+      const maxCent = Math.max(10, ...week.map(d => d.cents));
+      card.innerHTML = `
+        <button class="sc-close" aria-label="닫기">×</button>
+        <h3>💰 NZD 모은 돈</h3>
+        <div class="money-totals">
+          <div class="mt-big">$${(total/100).toFixed(2)}</div>
+          <div class="mt-sub">오늘 ${today}¢ · 단어 클릭으로 모은 돈</div>
+        </div>
+        <div class="money-week">
+          ${week.map(d => `
+            <div class="mw-col" title="${d.date}: ${d.cents}¢">
+              <div class="mw-bar" style="height:${Math.round(d.cents / maxCent * 60)}px"></div>
+              <div class="mw-lbl">${d.date.slice(5)}</div>
+              <div class="mw-c">${d.cents}¢</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="money-row">
+          <button class="btn primary" id="exp-add-btn">＋ 지출 기록</button>
+          <span class="muted">사용한 돈을 빼면 합계가 줄어요</span>
+        </div>
+        <div class="money-exp-list">
+          ${expenses.length ? '' : '<div class="muted">아직 기록된 지출이 없어요.</div>'}
+          ${expenses.map(e => `
+            <div class="me-row">
+              <span class="me-date">${escapeHtml(e.date)}</span>
+              <span class="me-note">${escapeHtml(e.note || '지출')}</span>
+              <span class="me-cents">−$${(e.cents/100).toFixed(2)}</span>
+            </div>
+          `).join('')}
+        </div>
+        <div class="money-add" id="exp-add-form" hidden>
+          <input class="ma-cents" id="exp-cents" type="number" min="1" step="1" placeholder="센트 (예: 50)">
+          <input class="ma-note"  id="exp-note"  type="text" maxlength="40" placeholder="메모 (선택)">
+          <button class="btn primary" id="exp-save-btn">저장</button>
+        </div>
+      `;
+      const addBtn = card.querySelector('#exp-add-btn');
+      const form   = card.querySelector('#exp-add-form');
+      const save   = card.querySelector('#exp-save-btn');
+      const cents  = card.querySelector('#exp-cents');
+      const note   = card.querySelector('#exp-note');
+      addBtn.onclick = () => { form.hidden = false; cents.focus(); };
+      save.onclick = () => {
+        const c = parseInt(cents.value, 10);
+        if (!c || c <= 0) { cents.focus(); return; }
+        DB.addExpense(c, note.value);
+        // Re-render the card with updated totals.
+        render(card);
+        // And refresh the home button number.
+        DB.loadWordStates().then(refreshStatusNumbers);
+      };
+    }
+    openModal('', { onMount: (overlay) => {
+      const card = overlay.querySelector('.status-card');
+      render(card);
+      // Re-attach close click handler since we replaced innerHTML.
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay || e.target.closest('.sc-close')) overlay.remove();
+      });
+    }});
+  }
+
+  // ---- mastered word list ----
+  async function openMasteredModal() {
+    const states = await DB.loadWordStates();
+    const list = (DB.listMasteredWords && DB.listMasteredWords(states)) || [];
+    const html = `
+      <h3>✓ 완전히 아는 단어 <span class="hsub">${list.length}</span></h3>
+      ${list.length ? `
+        <div class="mw-list">
+          ${list.map(e => `
+            <button class="mw-pill" data-w="${escapeAttr(e.word)}">
+              <span class="mw-en">${escapeHtml(e.word)}</span>
+            </button>
+          `).join('')}
+        </div>
+      ` : `
+        <p class="muted">아직 완전히 아는 단어가 없어요. 레슨에서 단어를 ✓ 로 표시하면 여기에 모입니다.</p>
+      `}
+    `;
+    openModal(html, { onMount: (overlay) => {
+      overlay.querySelectorAll('.mw-pill').forEach(b => {
+        b.onclick = () => {
+          const w = b.getAttribute('data-w');
+          if (window.TTS && TTS.speak) TTS.speak(w);
+        };
+      });
+    }});
   }
 
   async function renderMasterAndStories() {
     const states = await DB.loadWordStates();
     // Auto-generate any stories the user has earned since last visit.
     await maybeGenerateStories(states);
+    refreshStatusNumbers(states);
     paintWordMaster(states);
     paintWordStories(states);
   }

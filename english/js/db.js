@@ -333,6 +333,105 @@
     ls.set('stories', listStories().filter(s => s.id !== id));
   }
 
+  // ---------- streak (연속 학습일) ----------
+  // Counts a "day" the user has done a lesson (we call recordLessonVisit
+  // when the lesson page loads). The streak resets if they skip a day.
+  function _ymd(d) {
+    d = d || new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0')
+      + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function _yesterday() {
+    return _ymd(new Date(Date.now() - 86400000));
+  }
+  function getStreak() {
+    return ls.get('streak', { lastDay: '', count: 0, days: [] }) || { lastDay: '', count: 0, days: [] };
+  }
+  function recordLessonVisit() {
+    const today = _ymd();
+    const s = getStreak();
+    if (s.lastDay === today) return s;            // already counted today
+    if (s.lastDay === _yesterday()) s.count = (s.count || 0) + 1;
+    else                            s.count = 1;
+    s.lastDay = today;
+    s.days = Array.from(new Set([...(s.days || []), today]));
+    ls.set('streak', s);
+    return s;
+  }
+
+  // ---------- money (NZD earned per word click) ----------
+  // Rule: every 3 *unique-in-a-row* clicks earns 1 cent. Daily cap = 200 c.
+  // Same word clicked twice in a row → counts as one. Pattern A→B→A → 3.
+  function _moneyData() {
+    return ls.get('money', {
+      daily:    {},   // { 'YYYY-MM-DD': cents earned that day (max 200) }
+      expenses: [],   // [{ date, cents, note }]
+      runCount: 0,    // 0..2; on each unique click ++; at 3 → +1c then reset
+      lastWord: '',   // dedupes consecutive same-word clicks
+    }) || {};
+  }
+  function recordMoneyClick(word) {
+    word = (word || '').toLowerCase();
+    const d = _moneyData();
+    if (!word) return d;
+    if (word === d.lastWord) return d;            // same word twice → skip
+    d.lastWord = word;
+    d.runCount = (d.runCount || 0) + 1;
+    if (d.runCount >= 3) {
+      d.runCount = 0;
+      const t = _ymd();
+      d.daily[t] = Math.min(200, (d.daily[t] || 0) + 1);
+    }
+    ls.set('money', d);
+    return d;
+  }
+  function getTodayCents() {
+    const d = _moneyData();
+    return d.daily[_ymd()] || 0;
+  }
+  function getTotalCents() {
+    const d = _moneyData();
+    let total = 0;
+    for (const v of Object.values(d.daily || {})) total += v;
+    for (const e of (d.expenses || [])) total -= (e.cents || 0);
+    return total;
+  }
+  function getDailyHistory(days) {
+    days = days || 7;
+    const d = _moneyData();
+    const out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const dt = new Date(Date.now() - i * 86400000);
+      const key = _ymd(dt);
+      out.push({ date: key, cents: d.daily[key] || 0 });
+    }
+    return out;
+  }
+  function listExpenses() {
+    return (_moneyData().expenses || []).slice();
+  }
+  function addExpense(cents, note) {
+    cents = Math.max(0, Math.floor(Number(cents) || 0));
+    if (!cents) return null;
+    const d = _moneyData();
+    d.expenses = d.expenses || [];
+    const e = { date: _ymd(), cents, note: (note || '').trim() };
+    d.expenses.unshift(e);
+    ls.set('money', d);
+    return e;
+  }
+
+  // ---------- mastered words (state 5) ----------
+  // Returns words with state===5 sorted by their `last` timestamp newest first.
+  function listMasteredWords(wordStates) {
+    const arr = [];
+    for (const [w, v] of Object.entries(wordStates || {})) {
+      if (v && v.state === 5) arr.push({ word: w, last: v.last || '' });
+    }
+    arr.sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+    return arr;
+  }
+
   // ---------- spaced-repetition state (SM-2 lite) ----------
   // Per word: { ef: ease factor, interval: days, due: ms timestamp }.
   // Stored locally (the quiz/practice flows are device-private for now).
@@ -392,6 +491,10 @@
     getReview, rateReview, dueWordsForPractice,
     countMastered, thresholdForNthStory,
     listStories, addStory, deleteStory,
+    getStreak, recordLessonVisit,
+    recordMoneyClick, getTodayCents, getTotalCents,
+    getDailyHistory, listExpenses, addExpense,
+    listMasteredWords,
     useCloud,
   };
 })();
