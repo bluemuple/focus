@@ -184,7 +184,17 @@
     <div class="progress" id="prog"><i id="prog-fill"></i></div>
     <span class="time" id="time-tot">0:00</span>
     <button class="pb-btn" id="speed-btn" title="재생 속도">1×</button>
+    <button class="pb-btn pb-voice" id="voice-btn" title="목소리 선택">F</button>
     <button class="pb-btn pb-close" id="pb-close" aria-label="플레이바 닫기">×</button>
+  </div>
+
+  <!-- Voice picker popup. Anchored above the playbar, shows the available
+       Neural2 voices. Tap an item → save preference (TTS module reads it
+       from localStorage on every speak() call) → close menu and play a
+       short sample so the user hears the change. -->
+  <div class="voice-menu" id="voice-menu" hidden>
+    <div class="vm-head">목소리 선택 <span class="vm-sub">Neural2</span></div>
+    <ul class="vm-list" id="vm-list"></ul>
   </div>
 </div>
 
@@ -365,6 +375,7 @@
     prefetchPage();              // background DeepL batch — fills the cache
     updateProgress();
     setupAudio();
+    setupVoicePicker();
     setupPopupDrag();
     setupToggles();
     setupKeyboardShortcuts();
@@ -3088,6 +3099,85 @@
     if (e.target.closest('.lesson-progress')) return;
     hidePopup();
   });
+
+  // ============== voice picker (playbar) ==============
+  // Lists every Neural2 voice TTS.listVoices() reports, persists the user's
+  // pick via TTS.setVoice (which writes to localStorage), and plays a short
+  // sample so they immediately hear the change. The button label cycles to
+  // the active voice's letter (e.g. "F", "D", "I").
+  function setupVoicePicker() {
+    const btn  = document.getElementById('voice-btn');
+    const menu = document.getElementById('voice-menu');
+    const list = document.getElementById('vm-list');
+    if (!btn || !menu || !list) return;
+
+    function refreshButtonLabel() {
+      const cur = TTS.getVoice();
+      const meta = (TTS.listVoices() || []).find(v => v.id === cur);
+      btn.textContent = meta ? meta.label : 'F';
+    }
+    refreshButtonLabel();
+
+    function buildList() {
+      list.innerHTML = '';
+      const cur = TTS.getVoice();
+      for (const v of TTS.listVoices()) {
+        const li = document.createElement('li');
+        li.innerHTML = `
+          <button class="vm-item${v.id === cur ? ' active' : ''}" data-voice="${v.id}">
+            <span class="vm-letter">${v.label}</span>
+            <span class="vm-meta">
+              <span class="vm-gender">${v.gender}</span>
+              <span class="vm-note">${v.note}</span>
+            </span>
+            <span class="vm-check">${v.id === cur ? '✓' : ''}</span>
+          </button>
+        `;
+        list.appendChild(li);
+      }
+      list.querySelectorAll('.vm-item').forEach(b => {
+        b.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = b.dataset.voice;
+          if (!id) return;
+          TTS.setVoice(id);
+          refreshButtonLabel();
+          buildList();             // refresh active checkmark
+          hideMenu();
+          // Small audible sample so the user hears the new voice right away.
+          TTS.speak('Hello, this is your new voice.');
+        });
+      });
+    }
+
+    function openMenu() {
+      buildList();
+      menu.hidden = false;
+      requestAnimationFrame(() => menu.classList.add('show'));
+      // Close on outside tap / Esc / scroll.
+      setTimeout(() => {
+        document.addEventListener('click', onOutside, { once: true });
+        document.addEventListener('keydown', onKey);
+      }, 0);
+    }
+    function hideMenu() {
+      menu.classList.remove('show');
+      menu.hidden = true;
+      document.removeEventListener('click', onOutside);
+      document.removeEventListener('keydown', onKey);
+    }
+    function onOutside(e) {
+      if (menu.contains(e.target) || btn.contains(e.target)) return;
+      hideMenu();
+    }
+    function onKey(e) { if (e.key === 'Escape') hideMenu(); }
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (menu.hidden) openMenu();
+      else             hideMenu();
+    });
+  }
 
   // ============== audio playback ==============
   let audioEl = null;

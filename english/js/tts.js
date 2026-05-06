@@ -1,8 +1,10 @@
-// Text-to-speech — Cloud-only.
+// Text-to-speech — Cloud-only, Google Neural2 voices.
 //
 // We only call Google Cloud TTS via the Supabase Edge Function (`tts`) — Web
-// Speech is intentionally NOT used. There's no engine toggle for the user;
-// every speak() call goes through Cloud and any failure logs a warning.
+// Speech is intentionally NOT used. The default voice is `en-US-Neural2-F`
+// (warm female); the user can pick any voice from VOICES below via the
+// playbar menu. Whatever they pick is persisted in localStorage and applied
+// to every speak() call (word taps, sentence playback, etc.).
 //
 // Audio cache: Cloud responses are cached as Blob URLs in memory keyed by
 // (voice + text). Same word clicked again replays from memory instantly.
@@ -11,6 +13,33 @@
 // "play() interrupted by pause()" race when sentences hand off quickly.
 
 (() => {
+  // The set surfaced in the playbar's voice picker. All Neural2 — Google's
+  // current best en-US tier. Mix of female / male and timbres so users have
+  // a meaningful choice without overwhelming the menu.
+  const VOICES = [
+    { id: 'en-US-Neural2-F', label: 'F',  gender: '여자', note: '활발한 여성 (기본)' },
+    { id: 'en-US-Neural2-C', label: 'C',  gender: '여자', note: '차분한 여성' },
+    { id: 'en-US-Neural2-H', label: 'H',  gender: '여자', note: '밝은 여성' },
+    { id: 'en-US-Neural2-D', label: 'D',  gender: '남자', note: '저음의 남성' },
+    { id: 'en-US-Neural2-I', label: 'I',  gender: '남자', note: '밝은 남성' },
+    { id: 'en-US-Neural2-J', label: 'J',  gender: '남자', note: '편안한 남성' },
+  ];
+  const DEFAULT_VOICE = 'en-US-Neural2-F';
+  const VOICE_KEY = 'eng.v1.ttsVoice';
+
+  function listVoices() { return VOICES.slice(); }
+  function getVoice() {
+    try {
+      const v = localStorage.getItem(VOICE_KEY);
+      if (v && VOICES.some(o => o.id === v)) return v;
+    } catch (e) {}
+    return DEFAULT_VOICE;
+  }
+  function setVoice(v) {
+    if (!v || !VOICES.some(o => o.id === v)) return;
+    try { localStorage.setItem(VOICE_KEY, v); } catch (e) {}
+  }
+
   const audioCache = new Map();   // voice + '|' + text  →  objectURL
 
   let cloudAudio = null;
@@ -68,7 +97,9 @@
     if (!text) return;
     stop();
 
-    const voice = opts.voice || 'en-US-Neural2-F';
+    // Use the explicit `opts.voice` if the caller asked for one; otherwise
+    // fall back to the user's saved preference (or the default Neural2 voice).
+    const voice = opts.voice || getVoice();
     const rate  = opts.rate  ?? 1.0;
     const ck    = voice + '|' + text;
 
@@ -118,5 +149,5 @@
     return !!(currentAudio && !currentAudio.paused && !currentAudio.ended);
   }
 
-  window.TTS = { speak, stop, isSpeaking };
+  window.TTS = { speak, stop, isSpeaking, listVoices, getVoice, setVoice };
 })();
