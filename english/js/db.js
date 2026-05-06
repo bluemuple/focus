@@ -390,34 +390,55 @@
   }
 
   // ---------- cross-device user_state sync ----------
-  // Small key/value store (Supabase table `user_state`) used to keep
-  // device-private prefs (money, streak) consistent across PC + mobile.
-  // Strategy is intentionally simple: the client always reads / writes
-  // the WHOLE blob for a given key; conflicts are last-writer-wins.
+  // Stores small per-user JSON blobs (money, streak, …) in the AUTH user's
+  // `user_metadata` JSONB column. This requires zero schema setup — every
+  // signed-in Supabase user has a metadata field by default — so PC and
+  // mobile sync immediately on signin without any SQL migration.
   //
-  // Apply supabase-sql/user_state.sql once before this works.
+  // Conflict model is intentionally simple: full-blob last-writer-wins.
+  // Both devices push the entire blob on every mutation; the latest call
+  // overrides the previous.
+  //
+  // Keys are namespaced with "eng_" so we don't collide with any metadata
+  // a parent app (or future feature) writes to the same field.
+  function _mdKey(key) { return 'eng_' + key; }
+
   async function _fetchUserState(key) {
     if (!(await useCloud())) return undefined;
-    const u = await currentUser();
-    const { data, error } = await sb.from('user_state')
-      .select('value').eq('user_id', u.id).eq('key', key).maybeSingle();
-    if (error) {
-      // Table missing / RLS misconfigured — log once, fall back to local.
-      console.warn('[user_state] fetch ' + key, error.message || error);
+    try {
+      // Force a fresh read so we see updates pushed from a sibling device.
+      // `auth.getUser()` round-trips to Supabase to confirm the session +
+      // returns the latest user_metadata. This is the lightest sync we have.
+      const { data, error } = await sb.auth.getUser();
+      if (error || !data || !data.user) {
+        console.warn('[user_state] fetch ' + key, (error && error.message) || 'no user');
+        return undefined;
+      }
+      _user = data.user;
+      const md = data.user.user_metadata || {};
+      const v = md[_mdKey(key)];
+      return (v === undefined) ? null : v;
+    } catch (e) {
+      console.warn('[user_state] fetch ' + key, e);
       return undefined;
     }
-    return data ? data.value : null;          // null means "no row yet"
   }
   async function _pushUserState(key, value) {
     if (!(await useCloud())) return;
-    const u = await currentUser();
-    const row = {
-      user_id: u.id, key,
-      value, updated_at: new Date().toISOString(),
-    };
-    const { error } = await sb.from('user_state')
-      .upsert(row, { onConflict: 'user_id,key' });
-    if (error) console.warn('[user_state] push ' + key, error.message || error);
+    try {
+      const u = await currentUser();
+      // Merge — never wipe other entries that might be in user_metadata.
+      const md = Object.assign({}, (u && u.user_metadata) || {});
+      md[_mdKey(key)] = value;
+      const { data, error } = await sb.auth.updateUser({ data: md });
+      if (error) {
+        console.warn('[user_state] push ' + key, error.message || error);
+      } else if (data && data.user) {
+        _user = data.user;
+      }
+    } catch (e) {
+      console.warn('[user_state] push ' + key, e);
+    }
   }
   // Pull every synced key down once at app start. Local copy is replaced
   // when the cloud has a value — that's how the user's mobile picks up
