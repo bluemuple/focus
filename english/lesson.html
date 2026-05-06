@@ -250,6 +250,34 @@
     try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE })); }
     catch (e) {}
   }
+  // Common English abbreviations whose trailing period is NOT a sentence
+  // break. We check the WORD immediately before a "." punct token against
+  // this set — if it matches, sentence segmentation skips the period.
+  // (Google's TTS engine pronounces "Mr." / "Dr." correctly on its own;
+  // the only thing we need to fix client-side is the sentence map so
+  // the playback doesn't audibly pause mid-name.)
+  const SENTENCE_ABBR = new Set([
+    'mr', 'mrs', 'ms', 'dr', 'jr', 'sr', 'st', 'mt', 'prof',
+    'co', 'inc', 'ltd', 'corp', 'etc', 'vs', 'fig', 'no',
+    'ave', 'rd', 'blvd', 'dept',
+    'a.m', 'p.m',
+  ]);
+  // Returns true when this `.punct` token is a real sentence-ending mark
+  // (not just a period inside an abbreviation like "Mr."). `prevWordEl`
+  // is the most recent NON-punct .w element seen during the walk.
+  function isSentenceBreakPunct(punctEl, prevWordEl) {
+    if (!punctEl || !punctEl.classList || !punctEl.classList.contains('punct')) return false;
+    const txt = punctEl.textContent || '';
+    if (!/[.!?]/.test(txt)) return false;
+    // ! and ? always end a sentence; periods need an abbreviation check.
+    if (/[!?]/.test(txt)) return true;
+    if (prevWordEl) {
+      const prev = (prevWordEl.dataset && prevWordEl.dataset.word) || prevWordEl.textContent || '';
+      if (SENTENCE_ABBR.has(prev.toLowerCase())) return false;
+    }
+    return true;
+  }
+
   // Selection-cursor predicate. "무시" (state -1) words are ALWAYS skipped.
   // "완전히 아는 단어" (state 5) is skipped only when opts.skipMastered is
   // true — that's how 하나씩 mode keeps the cursor on words still being
@@ -562,13 +590,17 @@
     const sIdx = getSentenceIdxOf(refWord);
     const result = [];
     let cur = 0;
+    let prevWord = null;
     for (const el of p.children) {
       if (cur === sIdx
           && el.classList && el.classList.contains('w')
           && !el.classList.contains('punct')) {
         result.push(el);
       }
-      if (el.classList && el.classList.contains('punct') && /[.!?]/.test(el.textContent)) cur++;
+      if (el.classList && el.classList.contains('w') && !el.classList.contains('punct')) {
+        prevWord = el;
+      }
+      if (isSentenceBreakPunct(el, prevWord)) cur++;
       if (cur > sIdx) break;
     }
     return result;
@@ -1745,10 +1777,17 @@
     SENTENCE_MAP = [];
     if (!root) return;
     let curr = { text: '', words: [] };
+    let prevWord = null;
     for (const el of root.querySelectorAll('.w')) {
       curr.text += el.textContent;
       curr.words.push(el);
-      if (el.classList.contains('punct') && /[.!?]/.test(el.textContent)) {
+      if (!el.classList.contains('punct')) {
+        prevWord = el;
+        continue;
+      }
+      // It's a punct token. Only break if it's a real sentence-ending mark
+      // and not a period inside an abbreviation like "Mr." / "Dr.".
+      if (isSentenceBreakPunct(el, prevWord)) {
         if (curr.text.trim()) SENTENCE_MAP.push(curr);
         curr = { text: '', words: [] };
       }
@@ -2439,12 +2478,18 @@
   function getSentenceIdxOf(wEl) {
     // Walk forward through siblings within the same paragraph, counting
     // sentence-ending punctuation. Words before the first ./!/? are sentence 0.
+    // Periods that belong to abbreviations like "Mr." / "Dr." are skipped
+    // via isSentenceBreakPunct (they don't bump idx).
     if (!wEl) return -1;
     const p = wEl.parentElement; if (!p) return -1;
     let idx = 0;
+    let prevWord = null;
     for (const el of p.children) {
       if (el === wEl) return idx;
-      if (el.classList && el.classList.contains('punct') && /[.!?]/.test(el.textContent)) idx++;
+      if (el.classList && el.classList.contains('w') && !el.classList.contains('punct')) {
+        prevWord = el;
+      }
+      if (isSentenceBreakPunct(el, prevWord)) idx++;
     }
     return idx;
   }
@@ -2578,7 +2623,9 @@
     const trans = document.createElement('div');
     trans.className = 'cont-trans';
     trans.textContent = ko;
-    trans.style.top  = (lastRect.bottom - ltRect.top + 1) + 'px';
+    // Sit 3px below the line so descenders (g, p, y…) don't kiss the
+    // gray Korean caption — was 1px before, now 2px lower per spec.
+    trans.style.top  = (lastRect.bottom - ltRect.top + 3) + 'px';
     trans.style.left = (leftRect.left   - ltRect.left)    + 'px';
     lt.appendChild(trans);
   }
@@ -2599,9 +2646,13 @@
     const allInPara = Array.from(para.children);
     const sentenceWords = [];
     let cur = 0;
+    let prevWord = null;
     for (const el of allInPara) {
       if (cur === sIdx && el.classList && el.classList.contains('w')) sentenceWords.push(el);
-      if (el.classList && el.classList.contains('punct') && /[.!?]/.test(el.textContent)) cur++;
+      if (el.classList && el.classList.contains('w') && !el.classList.contains('punct')) {
+        prevWord = el;
+      }
+      if (isSentenceBreakPunct(el, prevWord)) cur++;
       if (cur > sIdx) break;
     }
     if (!sentenceWords.length) return false;
@@ -3096,6 +3147,12 @@
     if (POP.contains(e.target)) return;
     if (e.target.closest('.lesson-text')) return;
     if (e.target.closest('.playbar')) return;
+    // Mobile bottom controls — taps on ←/→/mode/play here MUST NOT dismiss
+    // the word popup (otherwise tapping → in 하나씩 mode opens the popup
+    // for the next word and then this handler immediately hides it again,
+    // wiping .active so the next tap restarts from the first word).
+    if (e.target.closest('.lesson-bar')) return;
+    if (e.target.closest('.cont-bar'))   return;
     if (e.target.closest('.lesson-progress')) return;
     hidePopup();
   });

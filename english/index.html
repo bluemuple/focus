@@ -58,17 +58,29 @@
     </section>
 
     <!-- Word Master: every word the user has graduated to level 5
-         (완전히 아는 단어). A small grid that grows as the user masters more. -->
-    <section class="section">
-      <h2>워드 마스터 <span class="hsub" id="wm-count">0</span></h2>
-      <div id="wm-grid" class="wm-grid"></div>
+         (완전히 아는 단어). Collapsed by default — tap the header button
+         to expand. The "(N)" count is always visible on the button. -->
+    <section class="section section-collapse">
+      <button class="sect-toggle" id="wm-toggle" type="button" aria-expanded="false" aria-controls="wm-body">
+        <span class="sect-title">워드 마스터 <span class="sect-count" id="wm-count">(0)</span></span>
+        <span class="sect-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="sect-body" id="wm-body" hidden>
+        <div id="wm-grid" class="wm-grid"></div>
+      </div>
     </section>
 
     <!-- Word Stories: tiny lessons auto-generated whenever the user crosses
-         a mastered-word threshold (10 → 10 → … → 25). Bar list view. -->
-    <section class="section">
-      <h2>단어 스토리 <span class="hsub" id="ws-progress"></span></h2>
-      <div id="ws-list" class="ws-list"></div>
+         a mastered-word threshold. Same collapsible pattern as 워드 마스터. -->
+    <section class="section section-collapse">
+      <button class="sect-toggle" id="ws-toggle" type="button" aria-expanded="false" aria-controls="ws-body">
+        <span class="sect-title">단어 스토리 <span class="sect-count" id="ws-count">(0)</span></span>
+        <span class="sect-meta" id="ws-progress"></span>
+        <span class="sect-caret" aria-hidden="true">▾</span>
+      </button>
+      <div class="sect-body" id="ws-body" hidden>
+        <div id="ws-list" class="ws-list"></div>
+      </div>
     </section>
 
   </main>
@@ -342,6 +354,27 @@
     refreshStatusNumbers(states);
     paintWordMaster(states);
     paintWordStories(states);
+    setupCollapsibleSections();
+  }
+
+  // Wires the click-to-expand behaviour for 워드 마스터 and 단어 스토리.
+  // Called every renderHome() but the listeners are idempotent (we re-bind
+  // via .onclick = … which replaces any previous handler).
+  function setupCollapsibleSections() {
+    const pairs = [
+      { btn: 'wm-toggle', body: 'wm-body' },
+      { btn: 'ws-toggle', body: 'ws-body' },
+    ];
+    for (const p of pairs) {
+      const btn  = document.getElementById(p.btn);
+      const body = document.getElementById(p.body);
+      if (!btn || !body) continue;
+      btn.onclick = () => {
+        const open = body.hidden;
+        body.hidden = !open;
+        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      };
+    }
   }
 
   // ===== 워드 마스터 — every word at state 5. =====
@@ -352,7 +385,9 @@
       .filter(([_, v]) => v && v.state === 5)
       .map(([w]) => w)
       .sort();
-    count.textContent = mastered.length ? `(${mastered.length})` : '';
+    // Always show the parenthesised count — even (0) — so the button
+     // header makes its purpose clear when the section is collapsed.
+    count.textContent = `(${mastered.length})`;
     if (!mastered.length) {
       grid.innerHTML = `<div class="empty">
         <p>아직 완전히 아는 단어가 없어요.<br>레슨에서 단어를 ✓ 로 표시하면 여기에 모입니다.</p>
@@ -461,13 +496,17 @@
   }
 
   function paintWordStories(states) {
-    const list = document.getElementById('ws-list');
+    const list     = document.getElementById('ws-list');
+    const count    = document.getElementById('ws-count');
     const progress = document.getElementById('ws-progress');
-    const stories = DB.listStories();
+    const stories  = DB.listStories();
     const masteredCount = DB.countMastered(states);
     const nextThreshold = DB.thresholdForNthStory(stories.length + 1);
     const remaining = Math.max(0, nextThreshold - masteredCount);
-    progress.textContent = `(${stories.length})  다음 스토리까지 ${remaining}개`;
+    // Count goes into the toggle button next to the title; the "다음
+    // 스토리까지 N개" hint sits inline as a small subtitle.
+    if (count)    count.textContent    = `(${stories.length})`;
+    if (progress) progress.textContent = `다음 스토리까지 ${remaining}개`;
 
     if (!stories.length) {
       list.innerHTML = `<div class="empty">

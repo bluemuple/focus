@@ -13,16 +13,19 @@
 // "play() interrupted by pause()" race when sentences hand off quickly.
 
 (() => {
-  // The set surfaced in the playbar's voice picker. All Neural2 — Google's
-  // current best en-US tier. Mix of female / male and timbres so users have
-  // a meaningful choice without overwhelming the menu.
+  // Voices surfaced in the playbar's voice picker. Mix of accents so the
+  // user can pick one that matches their target dialect (US / UK / NZ).
+  // The "label" is what appears on the picker button — short letters /
+  // accent badges so the row stays compact on mobile.
   const VOICES = [
-    { id: 'en-US-Neural2-F', label: 'F',  gender: '여자', note: '활발한 여성 (기본)' },
-    { id: 'en-US-Neural2-C', label: 'C',  gender: '여자', note: '차분한 여성' },
-    { id: 'en-US-Neural2-H', label: 'H',  gender: '여자', note: '밝은 여성' },
-    { id: 'en-US-Neural2-D', label: 'D',  gender: '남자', note: '저음의 남성' },
-    { id: 'en-US-Neural2-I', label: 'I',  gender: '남자', note: '밝은 남성' },
-    { id: 'en-US-Neural2-J', label: 'J',  gender: '남자', note: '편안한 남성' },
+    { id: 'en-US-Neural2-F',     label: 'US',  gender: '여자', note: 'US 여성 — 활발한 톤 (기본)' },
+    { id: 'en-US-Neural2-H',     label: 'US+', gender: '여자', note: 'US 여성 — 밝은 톤' },
+    { id: 'en-US-Neural2-J',     label: 'US♂', gender: '남자', note: 'US 남성 — 편안한 톤' },
+    // UK + NZ go through Google's matching Neural2 voice IDs. UK Neural2-A
+    // is a clear British female; NZ Neural2 voices preserve Kiwi vowels.
+    { id: 'en-GB-Neural2-A',     label: 'UK',  gender: '여자', note: 'UK 영국 여성 — 밝은 톤' },
+    { id: 'en-AU-Neural2-A',     label: 'NZ',  gender: '여자', note: 'NZ/AU 여성' },
+    { id: 'en-AU-Neural2-B',     label: 'NZ♂', gender: '남자', note: 'NZ/AU 남성' },
   ];
   const DEFAULT_VOICE = 'en-US-Neural2-F';
   const VOICE_KEY = 'eng.v1.ttsVoice';
