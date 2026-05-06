@@ -113,7 +113,7 @@
     </button>
     <div class="ls-empty" id="ls-empty">
       <div class="ls-empty-ico">↩</div>
-      이어서 모드에서<br>단어를 선택하면<br>여기에 표시됩니다.
+      단어를 선택하면<br>여기에 표시됩니다.
     </div>
     <div class="ls-card" id="ls-card" hidden>
       <div class="ls-card-head">
@@ -211,16 +211,20 @@
     try { localStorage.setItem(PREF_KEY, JSON.stringify({ mode: MODE })); }
     catch (e) {}
   }
-  // Selection-cursor predicate: skip "완전히 아는 단어" (state 5) and
-  // "무시" words (state -1) so the arrow keys land on something the user
-  // is actually still learning.
-  function isSelectable(el) {
+  // Selection-cursor predicate. "무시" (state -1) words are ALWAYS skipped.
+  // "완전히 아는 단어" (state 5) is skipped only when opts.skipMastered is
+  // true — that's how 하나씩 mode keeps the cursor on words still being
+  // learned. 이어서 / 이어서밑줄 modes pass no opts so multi-word selections
+  // can still include mastered words (they're part of the natural phrase).
+  function isSelectable(el, opts) {
+    opts = opts || {};
     if (!el || !el.classList) return false;
     if (!el.classList.contains('w') || el.classList.contains('punct')) return false;
     const w = (el.dataset.word || '').toLowerCase();
     const v = WORD_STATES[w];
     const st = v && v.state;
-    if (st === 5 || st === -1) return false;
+    if (st === -1) return false;
+    if (opts.skipMastered && st === 5) return false;
     return true;
   }
   function modeLabel(m) {
@@ -340,12 +344,17 @@
     applyMobileContBar();
   }
 
-  // ============== PC sidebar (이어서 mode only) ==============
-  let SIDEBAR_OPEN = true;          // user pref within cont mode
+  // ============== PC sidebar ==============
+  // The sidebar is the primary translation surface on desktop and is shown
+  // in ALL three modes (하나씩 / 이어서 / 이어서밑줄). The user can dismiss
+  // it with the close button; a small toggle then lets them re-open it.
+  let SIDEBAR_OPEN = true;          // user pref — persists across modes
   let SIDEBAR_PHRASE = null;        // { text, ko } currently displayed (for the add button)
 
   function useSidebar() {
-    return MODE === 'cont' && window.matchMedia('(min-width: 1024px)').matches;
+    // PC-wide condition. Mode no longer gates this — every mode uses the
+    // sidebar on screens ≥ 1024 px.
+    return window.matchMedia('(min-width: 1024px)').matches;
   }
 
   function applySidebarVisibility() {
@@ -521,10 +530,11 @@
   }
   // ===== single-mode arrow stepping =====
   // In 하나씩 mode the ←/→ keys (and mobile ←/→ buttons) move a SINGLE-word
-  // cursor across the page, popping up the word card on each step. The
-  // cursor can cross sentence boundaries; state-5 ("완전히 아는") and
-  // state-(-1) ("무시") words are skipped so the user keeps reading words
-  // that are still being learned.
+  // cursor across the page. On PC the sidebar updates with the new word;
+  // on mobile the popup card pops up next to the word. The cursor can
+  // cross sentence boundaries; state-5 ("완전히 아는") and state-(-1)
+  // ("무시") words are skipped so the user keeps reading words that are
+  // still being learned.
   function trySingleStep(direction /* 'left' | 'right' */) {
     if (MODE !== 'single') return false;
     const root = document.getElementById('lesson-text');
@@ -533,28 +543,35 @@
     const all = Array.from(root.querySelectorAll('.w:not(.punct)'));
     if (!all.length) return false;
 
+    const skip = { skipMastered: true };
     // Cursor = the .active word under the popup, or null when no popup.
     const cursor = root.querySelector('.w.active');
     let target = null;
     if (!cursor || !root.contains(cursor)) {
       target = direction === 'right'
-        ? all.find(isSelectable)
-        : [...all].reverse().find(isSelectable);
+        ? all.find(w => isSelectable(w, skip))
+        : [...all].reverse().find(w => isSelectable(w, skip));
     } else {
       const i = all.indexOf(cursor);
       const step = direction === 'right' ? 1 : -1;
       for (let j = i + step; j >= 0 && j < all.length; j += step) {
-        if (isSelectable(all[j])) { target = all[j]; break; }
+        if (isSelectable(all[j], skip)) { target = all[j]; break; }
       }
     }
     if (!target) return false;
 
-    // Move .active to the new cursor and pop the card. We do NOT bump the
-    // word's state on arrow stepping — same convention as cont-mode arrows.
+    // Move .active to the new cursor and surface the card. On PC the sidebar
+    // is the translation surface; on mobile we use the popup. We do NOT bump
+    // the word's state on arrow stepping — same convention as cont-mode
+    // arrows.
     root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
     target.classList.add('active');
     const word = target.dataset.word;
-    showWord(word, { isFirstClick: false }, target);   // showWord itself plays TTS
+    if (useSidebar()) {
+      showInSidebar(word);                              // sidebar speaks too
+    } else {
+      showWord(word, { isFirstClick: false }, target);  // showWord plays TTS
+    }
     return true;
   }
 
@@ -647,8 +664,10 @@
         if (CONT_SELECTED.size === 0) {
           document.querySelectorAll('.cont-trans').forEach(el => el.remove());
           document.querySelectorAll('.cont-outline').forEach(el => el.remove());
-          if (useSidebar()) clearSidebar();
-          else              hidePopup();
+          // PC: sidebar is the surface for every mode. Mobile cont uses
+          // the popup; mobile contU has no overlay to close.
+          if (useSidebar())          clearSidebar();
+          else if (MODE === 'cont')  hidePopup();
           _lastGrow = null;
           return true;
         }
@@ -684,7 +703,7 @@
     if (!entries.length) {
       host.innerHTML = `
         <div class="ls-empty-ico">↩</div>
-        이어서 모드에서<br>단어를 선택하면<br>여기에 표시됩니다.
+        단어를 선택하면<br>여기에 표시됩니다.
       `;
       return;
     }
@@ -2201,10 +2220,11 @@
         // popup card. In 하나씩 mode there's nothing to clear here.
         if ((MODE === 'cont' || MODE === 'contU') && CONT_SELECTED.size > 0) {
           clearContSelection();
-          if (MODE === 'cont') {
-            if (useSidebar()) clearSidebar();
-            else              hidePopup();
-          }
+          // PC: sidebar is shared across all modes, so always reset it.
+          // Mobile cont: close the popup. Mobile contU: nothing to close
+          // (the inline label was already removed by clearContSelection).
+          if (useSidebar())            clearSidebar();
+          else if (MODE === 'cont')    hidePopup();
         }
         return;
       }
@@ -2230,12 +2250,15 @@
 
       if (MODE === 'cont' || MODE === 'contU') {
         // Both 이어서 modes share the same selection rules. Routing to the
-        // popup vs the inline gray label happens inside refreshContTranslation.
+        // sidebar / popup / inline label happens inside refreshContTranslation.
         await handleContClick(w, word);
       } else {
+        // 하나씩 mode: mark the new cursor and surface the word's card.
+        // PC uses the persistent sidebar; mobile uses the popup card.
         root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
         w.classList.add('active');
-        showWord(word, upd, w);
+        if (useSidebar()) showInSidebar(word);
+        else              showWord(word, upd, w);
       }
     });
   }
@@ -2296,10 +2319,8 @@
       if (CONT_SELECTED.size === 0) {
         document.querySelectorAll('.cont-trans').forEach(el => el.remove());
         document.querySelectorAll('.cont-outline').forEach(el => el.remove());
-        if (MODE === 'cont') {
-          if (useSidebar()) clearSidebar();
-          else              hidePopup();
-        }
+        if (useSidebar())          clearSidebar();
+        else if (MODE === 'cont')  hidePopup();
         return;
       }
       await refreshContTranslation();
@@ -2317,9 +2338,9 @@
   }
 
   // Shared updater. Routes the result to:
-  //   • PC sidebar      — when MODE='cont' AND viewport ≥ 1024 px
-  //   • popup card      — when MODE='cont' on mobile
-  //   • inline gray     — when MODE='contU'
+  //   • PC sidebar      — any mode on viewport ≥ 1024 px
+  //   • popup card      — MODE='cont' on mobile
+  //   • inline gray     — MODE='contU' on mobile
   async function refreshContTranslation(anchorEl) {
     const phrase = selectionToPhrase();
     if (!phrase) return;
@@ -2327,9 +2348,13 @@
     // Always refresh the per-line selection outlines first.
     renderContOutlines();
 
-    if (MODE === 'cont' && useSidebar()) {
-      // Sidebar populates its own translation/senses asynchronously.
+    if (useSidebar()) {
+      // Desktop: sidebar is the single translation surface for every mode.
+      // We also strip any leftover inline gray label so transitions between
+      // mobile (where contU paints inline) and a resized desktop layout
+      // don't leave stale text behind.
       showInSidebar(phrase);
+      document.querySelectorAll('.cont-trans').forEach(el => el.remove());
       return;
     }
 
@@ -2346,9 +2371,9 @@
       return;
     }
 
-    // contU only — needs the translated string for the inline gray label.
-    // Pass the sentence containing the first selected word as context so
-    // the translator disambiguates within the right surroundings.
+    // Mobile contU only — needs the translated string for the inline gray
+    // label. Pass the sentence containing the first selected word as context
+    // so the translator disambiguates within the right surroundings.
     const phraseCtx = getContextSentence(Array.from(CONT_SELECTED)[0]);
     let ko = '';
     try { ko = await Translate.translate(phrase, phraseCtx); } catch (e) {}
