@@ -519,6 +519,45 @@
     }
     return result;
   }
+  // ===== single-mode arrow stepping =====
+  // In 하나씩 mode the ←/→ keys (and mobile ←/→ buttons) move a SINGLE-word
+  // cursor across the page, popping up the word card on each step. The
+  // cursor can cross sentence boundaries; state-5 ("완전히 아는") and
+  // state-(-1) ("무시") words are skipped so the user keeps reading words
+  // that are still being learned.
+  function trySingleStep(direction /* 'left' | 'right' */) {
+    if (MODE !== 'single') return false;
+    const root = document.getElementById('lesson-text');
+    if (!root) return false;
+
+    const all = Array.from(root.querySelectorAll('.w:not(.punct)'));
+    if (!all.length) return false;
+
+    // Cursor = the .active word under the popup, or null when no popup.
+    const cursor = root.querySelector('.w.active');
+    let target = null;
+    if (!cursor || !root.contains(cursor)) {
+      target = direction === 'right'
+        ? all.find(isSelectable)
+        : [...all].reverse().find(isSelectable);
+    } else {
+      const i = all.indexOf(cursor);
+      const step = direction === 'right' ? 1 : -1;
+      for (let j = i + step; j >= 0 && j < all.length; j += step) {
+        if (isSelectable(all[j])) { target = all[j]; break; }
+      }
+    }
+    if (!target) return false;
+
+    // Move .active to the new cursor and pop the card. We do NOT bump the
+    // word's state on arrow stepping — same convention as cont-mode arrows.
+    root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+    target.classList.add('active');
+    const word = target.dataset.word;
+    showWord(word, { isFirstClick: false }, target);   // showWord itself plays TTS
+    return true;
+  }
+
   // Returns true when this keypress was used for selection; the caller
   // should then NOT also trigger page navigation.
   // Works on both PC (keyboard) and mobile (← / → tap buttons in lesson-bar).
@@ -531,8 +570,12 @@
   //   • Selection becomes empty → _lastGrow resets; next press re-initialises.
   // "Eligible" means non-punct AND not state-5 (완전히 아는 단어) /
   // state-(-1) (무시) — those are skipped during stepping.
+  //
+  // 하나씩 mode is handled by trySingleStep (one-word cursor); 이어서 and
+  // 이어서(밑줄) both use the multi-word selection flow below.
   function tryAnchorKey(direction /* 'left' | 'right' */) {
-    if (MODE !== 'cont') return false;
+    if (MODE === 'single')                       return trySingleStep(direction);
+    if (MODE !== 'cont' && MODE !== 'contU')     return false;
 
     const root = document.getElementById('lesson-text');
     if (!root) return false;
@@ -1941,7 +1984,23 @@
   if (nextBtn) nextBtn.addEventListener('click', () => goPage(+1));
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
-    if (e.key === 'Escape') hidePopup();
+
+    // Esc clears whatever's selected and closes the popup / sidebar:
+    //   • 이어서 / 이어서밑줄 — drops the running multi-word selection
+    //   • 하나씩            — drops the .active cursor under the popup
+    if (e.key === 'Escape') {
+      if (CONT_SELECTED.size > 0) {
+        clearContSelection();
+        if (useSidebar()) clearSidebar();
+        else              hidePopup();
+      } else {
+        const root = document.getElementById('lesson-text');
+        if (root) root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+        hidePopup();
+      }
+      e.preventDefault();
+      return;
+    }
 
     // ',' / '.' navigate pages on PC. We use these instead of ←/→ so that
     // arrow keys are reserved for the cont-mode selection grower/shrinker.
@@ -2274,23 +2333,27 @@
       return;
     }
 
-    // Pass the sentence the phrase came from as context so the translator
-    // disambiguates within the right surroundings.
+    if (MODE === 'cont') {
+      // Mobile cont: render the popup IMMEDIATELY (showWord paints "번역
+      // 중..." and starts its own translate call). Previously we awaited a
+      // first translate here just to throw away the result — that doubled
+      // the wait time on mobile compared to PC's sidebar path. Now the
+      // popup appears on the next frame and updates as soon as Translate
+      // resolves the phrase.
+      const wEl = anchorEl || Array.from(CONT_SELECTED).pop();
+      showWord(phrase, { isFirstClick: false }, wEl);     // not awaited
+      placePopBySentence();
+      return;
+    }
+
+    // contU only — needs the translated string for the inline gray label.
+    // Pass the sentence containing the first selected word as context so
+    // the translator disambiguates within the right surroundings.
     const phraseCtx = getContextSentence(Array.from(CONT_SELECTED)[0]);
     let ko = '';
     try { ko = await Translate.translate(phrase, phraseCtx); } catch (e) {}
     if (selectionToPhrase() !== phrase) return;        // selection changed mid-fetch
-
-    if (MODE === 'cont') {
-      // Mobile cont: show the popup card, anchored to the WHOLE sentence
-      // (not just the last clicked word) so every word stays clickable.
-      const wEl = anchorEl || Array.from(CONT_SELECTED).pop();
-      await showWord(phrase, { isFirstClick: false }, wEl);
-      placePopBySentence();
-    } else {
-      // contU: inline gray label below the line.
-      renderContTranslation(ko);
-    }
+    renderContTranslation(ko);
   }
 
   // Compute the on-screen position of the selection's last visual line and
