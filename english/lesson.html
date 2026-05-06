@@ -25,6 +25,7 @@
           <div class="head-spacer"></div>
           <div class="head-tools">
             <button class="toggle-btn dict" id="tx-toggle-btn"   title="번역기 전환 (DeepL ↔ Google)">DL</button>
+            <button class="toggle-btn dict" id="gpt-toggle-btn"  title="더 좋은 번역 (gpt-4o-mini, 클릭 시 그 단어만 GPT로)">✨</button>
             <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
             <button class="toggle-btn"      id="bookmark-btn"    title="이 레슨을 찜한 레슨으로 추가/제거">찜</button>
           </div>
@@ -310,6 +311,7 @@
     renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
     bindWordInteractions(document.getElementById('lesson-text'));
     buildSentenceMap(document.getElementById('lesson-text'));
+    prefetchPage();              // background DeepL batch — fills the cache
     updateProgress();
     setupAudio();
     setupPopupDrag();
@@ -460,10 +462,10 @@
     setTimeout(() => div.remove(), 900);
   }
 
-  // 3) Bottom-right unified bubble. Shows "잘했어요" on every word click;
-  //    once the rolling click count crosses 3 it switches to "🔥 콤보 ×N";
-  //    at every multiple of 10 (10, 20, 30, ...) it pops a bigger
-  //    celebratory variant for an extra dopamine hit.
+  // 3) Bottom-right combo bubble. Stays silent for the first two clicks,
+  //    then shows "🔥 콤보 ×N" once the rolling count crosses 3. At every
+  //    multiple of 10 (10, 20, 30, …) it pops a bigger celebratory variant
+  //    for an extra dopamine hit.
   let _comboTimes = [];
   let _comboBubble = null;
   let _comboFadeT = null;
@@ -472,8 +474,7 @@
     _comboTimes = _comboTimes.filter(t => now - t < 8000);
     _comboTimes.push(now);
     const n = _comboTimes.length;
-    if (n >= 3)  showBubble('🔥 콤보 ×' + n, n % 10 === 0 ? 'milestone' : 'combo');
-    else         showBubble('잘했어요', 'praise');
+    if (n >= 3) showBubble('🔥 콤보 ×' + n, n % 10 === 0 ? 'milestone' : 'combo');
   }
   function showBubble(text, kind) {
     if (!_comboBubble) {
@@ -481,13 +482,13 @@
       _comboBubble.className = 'streak-bubble';
       document.body.appendChild(_comboBubble);
     }
-    _comboBubble.classList.remove('praise', 'combo', 'milestone');
+    _comboBubble.classList.remove('combo', 'milestone');
     _comboBubble.classList.add(kind);
     _comboBubble.textContent = text;
     _comboBubble.classList.add('show');
     clearTimeout(_comboFadeT);
-    // Praise fades quickly; combos linger; milestones linger longer.
-    const dur = kind === 'milestone' ? 3500 : kind === 'combo' ? 2200 : 1200;
+    // Combos linger; milestones linger longer.
+    const dur = kind === 'milestone' ? 3500 : 2200;
     _comboFadeT = setTimeout(() => {
       _comboBubble && _comboBubble.classList.remove('show');
     }, dur);
@@ -1430,6 +1431,22 @@
     });
     refreshTx();
 
+    // ✨ "Better translation" toggle: when on, every word click is routed
+    // through GPT-4o-mini (with the surrounding sentence as context) for the
+    // highest-quality nuance. When off, we use DeepL (also with context) —
+    // free, fast, very good for ~90% of cases.
+    const gptBtn = document.getElementById('gpt-toggle-btn');
+    function refreshGpt() {
+      const on = (window.Translate && Translate.getUseGPT && Translate.getUseGPT()) || false;
+      gptBtn.classList.toggle('gpt-on', on);
+    }
+    gptBtn.addEventListener('click', () => {
+      const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
+      Translate.setUseGPT(!cur);
+      refreshGpt();
+    });
+    refreshGpt();
+
     // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
     // Bookmark toggle (찜). Pink when on. Stays "찜" text either way; only
@@ -1494,6 +1511,49 @@
     }
     if (curr.text.trim()) SENTENCE_MAP.push(curr);
   }
+  // For a clicked word, find the text of the sentence it belongs to so we
+  // can pass it as `context` to the translator.
+  function getContextSentence(wEl) {
+    if (!wEl || !SENTENCE_MAP || !SENTENCE_MAP.length) return '';
+    for (const s of SENTENCE_MAP) {
+      if (s.words && s.words.indexOf(wEl) !== -1) return (s.text || '').trim();
+    }
+    return '';
+  }
+
+  // ============== page pre-translation ==============
+  // After a page is rendered (and its SENTENCE_MAP is built), kick off a
+  // background batch that translates every word on the page through DeepL
+  // — one network call per sentence, all words batched together. By the
+  // time the user actually clicks a word, its Korean is already in the
+  // local cache and the popup fills instantly.
+  let _prefetchToken = 0;
+  async function prefetchPage() {
+    const myToken = ++_prefetchToken;
+    if (!SENTENCE_MAP || !SENTENCE_MAP.length) return;
+    if (!window.Translate || !Translate.translateBatch) return;
+    for (const s of SENTENCE_MAP) {
+      // Bail early if a newer prefetch / page-change started.
+      if (myToken !== _prefetchToken) return;
+      const ctx = (s.text || '').trim();
+      if (!ctx) continue;
+      // Unique non-punct words in this sentence.
+      const words = [];
+      const seen = new Set();
+      for (const w of (s.words || [])) {
+        if (w.classList.contains('punct')) continue;
+        const t = (w.dataset.word || w.textContent || '').trim();
+        const k = t.toLowerCase();
+        if (!t || seen.has(k)) continue;
+        seen.add(k);
+        words.push(t);
+      }
+      if (!words.length) continue;
+      try { await Translate.translateBatch(words, ctx); }
+      catch (e) { /* prefetch is best-effort; silent on failure */ }
+    }
+  }
+
   function setCurrentSentence(idx) {
     CURRENT_SENTENCE = idx;
     document.querySelectorAll('.w.reading').forEach(el => el.classList.remove('reading'));
@@ -1565,6 +1625,7 @@
         pageIdx += direction;
         updateProgress();
         buildSentenceMap(peekRoot);
+        prefetchPage();          // warm cache for the new page in background
         setCurrentSentence(-1);
         animating = false;
       }, 230);
@@ -1822,6 +1883,7 @@
       newRoot.classList.remove('slide-anim');
       updateProgress();
       buildSentenceMap(newRoot);
+      prefetchPage();
       setCurrentSentence(-1);
       animating = false;
     }, 300);
@@ -1888,6 +1950,7 @@
         renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
         bindWordInteractions(document.getElementById('lesson-text'));
         buildSentenceMap(document.getElementById('lesson-text'));
+        prefetchPage();
         setCurrentSentence(-1);
         updateProgress();
       });
@@ -2182,8 +2245,11 @@
       return;
     }
 
+    // Pass the sentence the phrase came from as context so the translator
+    // disambiguates within the right surroundings.
+    const phraseCtx = getContextSentence(Array.from(CONT_SELECTED)[0]);
     let ko = '';
-    try { ko = await Translate.translate(phrase); } catch (e) {}
+    try { ko = await Translate.translate(phrase, phraseCtx); } catch (e) {}
     if (selectionToPhrase() !== phrase) return;        // selection changed mid-fetch
 
     if (MODE === 'cont') {
@@ -2676,9 +2742,12 @@
 
     placePopBelowAnchor(anchorEl);
 
-    // Primary translation (DeepL by default).
+    // Primary translation. Pass the surrounding sentence as `context` so
+    // DeepL (or GPT, when ✨ is on) can disambiguate homonyms and choose
+    // the right shade of meaning for THIS occurrence.
+    const ctx = getContextSentence(anchorEl);
     try {
-      const ko = await Translate.translate(word);
+      const ko = await Translate.translate(word, ctx);
       document.getElementById('wp-trans').innerHTML = `<span class="ko">${escapeHtml(ko)}</span>`;
     } catch (err) {
       document.getElementById('wp-trans').innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';

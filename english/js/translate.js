@@ -1,33 +1,34 @@
 // Translation: English → Korean.
 //
-// Engines (in order of quality, first available wins):
-//   • DeepL  — via Supabase Edge Function `translate` (key in Secrets).
-//              Highest quality; default. Requires SUPABASE_CONFIG + DEEPL_KEY.
-//   • Google — public gtx endpoint. No key, decent quality.
-//   • MyMemory — crowd-sourced. Last-resort fallback only.
+// Engines (in order of how each call is routed):
+//   • DeepL  — via Supabase Edge Function `translate`. Default.
+//              Now supports a `context` field (the surrounding sentence)
+//              so the same word in different sentences gets the right
+//              meaning, AND batched calls so a whole page can be
+//              pre-translated in one round trip.
+//   • GPT    — via Supabase Edge Function `translate-gpt`. Used when the
+//              user enables the ✨ toggle. Sends the word + sentence
+//              context to gpt-4o-mini for the highest-quality nuance.
+//   • Google — public gtx endpoint. Local fallback when DeepL fails.
+//   • MyMemory — last-resort fallback only.
 //
-// The user can switch the *primary* engine via Translate.setEngine('deepl' |
-// 'google' | 'mymemory'). When the chosen engine fails, the others are tried
-// in order before giving up.
-//
-// Static dictionary on top: common pronouns / function words have universally
-// correct translations hard-coded so we never see "your" → "내" etc.
-//
-// Cached in localStorage. Cache keys are namespaced by engine so switching
-// engines doesn't serve stale results from a different translator.
+// Cache key is namespaced by engine AND a short hash of the context, so
+// the same word can have different cached translations in different
+// sentences without overwriting one another.
 
 (() => {
-  // v3 — bumped because we now key cache entries by engine.
-  const CACHE_KEY = 'eng.v3.tx';
+  // v4 — cache keys now include a context hash. Drop earlier versions.
+  const CACHE_KEY  = 'eng.v4.tx';
   const ENGINE_KEY = 'eng.v3.engine';
+  const GPT_KEY    = 'eng.v1.useGPT';
 
   const memCache = {};
   try {
     const raw = localStorage.getItem(CACHE_KEY);
     if (raw) Object.assign(memCache, JSON.parse(raw));
-    // Drop stale older caches.
     localStorage.removeItem('eng.v1.tx');
     localStorage.removeItem('eng.v2.tx');
+    localStorage.removeItem('eng.v3.tx');
   } catch (e) {}
 
   function persist() {
@@ -47,8 +48,26 @@
   }
   function getEngine() { return ENGINE; }
 
-  function cacheKey(text) {
-    return ENGINE + ':' + text.trim().toLowerCase();
+  // ✨ toggle — when on, every click goes through GPT instead of DeepL.
+  let USE_GPT = false;
+  try { USE_GPT = localStorage.getItem(GPT_KEY) === '1'; } catch (e) {}
+  function setUseGPT(on) {
+    USE_GPT = !!on;
+    try { localStorage.setItem(GPT_KEY, USE_GPT ? '1' : '0'); } catch (e) {}
+  }
+  function getUseGPT() { return USE_GPT; }
+
+  // ---------- short context-aware cache key ----------
+  function hashCtx(ctx) {
+    if (!ctx) return '';
+    let h = 5381;
+    for (let i = 0; i < ctx.length; i++) {
+      h = ((h << 5) + h + ctx.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h).toString(36);
+  }
+  function cacheKey(text, ctx, engineName) {
+    return (engineName || ENGINE) + ':' + text.trim().toLowerCase() + ':' + hashCtx(ctx);
   }
 
   // ---------- known-tricky common words: hard-coded overrides ----------
@@ -67,19 +86,26 @@
     'not':'아니다','no':'아니오','yes':'예',
   };
 
-  // ---------- DeepL (via Supabase Edge Function) ----------
-  async function viaDeepL(text) {
+  // ---------- Edge Function helpers ----------
+  function supabaseUrl(path) {
     const cfg = window.SUPABASE_CONFIG;
     if (!cfg || !cfg.url || !cfg.anon) throw new Error('Supabase not configured');
-    const url = cfg.url.replace(/\/+$/, '') + '/functions/v1/translate';
-    const r = await fetch(url, {
-      method: 'POST',
+    return {
+      url: cfg.url.replace(/\/+$/, '') + path,
       headers: {
         'Content-Type':  'application/json',
         'Authorization': 'Bearer ' + cfg.anon,
         'apikey':        cfg.anon,
       },
-      body: JSON.stringify({ text, source: 'EN', target: 'KO' }),
+    };
+  }
+
+  // ---------- DeepL (single, with optional context) ----------
+  async function viaDeepL(text, context) {
+    const { url, headers } = supabaseUrl('/functions/v1/translate');
+    const r = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({ text, source: 'EN', target: 'KO', context: context || undefined }),
     });
     if (!r.ok) throw new Error('DeepL proxy ' + r.status);
     const j = await r.json();
@@ -89,8 +115,37 @@
     return out;
   }
 
-  // ---------- Google Translate (gtx, public) ----------
-  async function viaGoogle(text) {
+  // ---------- DeepL batched (used by page prefetch) ----------
+  async function viaDeepLBatch(texts, context) {
+    const { url, headers } = supabaseUrl('/functions/v1/translate');
+    const r = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({ texts, source: 'EN', target: 'KO', context: context || undefined }),
+    });
+    if (!r.ok) throw new Error('DeepL proxy ' + r.status);
+    const j = await r.json();
+    if (j && j.error) throw new Error('DeepL: ' + j.error);
+    const arr = (j && (j.translations || (j.translation ? [j.translation] : []))) || [];
+    return arr.map(s => String(s || '').trim());
+  }
+
+  // ---------- GPT (single, with context) ----------
+  async function viaGPT(text, context) {
+    const { url, headers } = supabaseUrl('/functions/v1/translate-gpt');
+    const r = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({ text, context: context || '', target: 'KO' }),
+    });
+    if (!r.ok) throw new Error('GPT proxy ' + r.status);
+    const j = await r.json();
+    if (j && j.error) throw new Error('GPT: ' + j.error);
+    const out = j && j.translation && String(j.translation).trim();
+    if (!out) throw new Error('GPT empty');
+    return out;
+  }
+
+  // ---------- Google (public gtx) ----------
+  async function viaGoogle(text /* context unused */) {
     const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q='
               + encodeURIComponent(text);
     const r = await fetch(url);
@@ -114,46 +169,109 @@
     return String(best).trim();
   }
 
-  const ENGINES = { deepl: viaDeepL, google: viaGoogle, mymemory: viaMyMemory };
-
-  async function translate(text) {
+  // ---------- public single-translate ----------
+  // translate(text, context?): returns Korean translation.
+  //   • If ✨ (USE_GPT) is on, prefer GPT with the given context.
+  //   • Otherwise prefer DeepL (with context), falling through Google
+  //     and MyMemory on failure.
+  async function translate(text, context) {
     text = (text || '').trim();
     if (!text) return '';
 
-    // Engine-namespaced cache.
-    const ck = cacheKey(text);
+    // Static dictionary first for known-tricky single words (no context needed).
+    const lower = text.toLowerCase();
+    if (STATIC[lower]) return STATIC[lower];
+
+    // Cache lookup — namespaced by engine + context hash.
+    const engineName = USE_GPT ? 'gpt' : ENGINE;
+    const ck = cacheKey(text, context, engineName);
     if (memCache[ck]) return memCache[ck];
 
-    // Static dictionary takes precedence for known-tricky single words.
-    const lower = text.toLowerCase();
-    if (STATIC[lower]) {
-      memCache[ck] = STATIC[lower]; persist();
-      return STATIC[lower];
-    }
-
-    // Try the user's chosen engine first, then the others as fallbacks.
-    const tried = new Set();
-    const order = [ENGINE, 'deepl', 'google', 'mymemory'].filter(e => {
-      if (tried.has(e)) return false;
-      tried.add(e); return true;
-    });
-
+    let out = '';
     let lastErr = null;
-    for (const name of order) {
-      const fn = ENGINES[name];
-      if (!fn) continue;
-      try {
-        const out = await fn(text);
-        if (out) {
-          memCache[ck] = out; persist();
-          return out;
-        }
-      } catch (e) {
+
+    if (USE_GPT) {
+      try { out = await viaGPT(text, context); }
+      catch (e) {
         lastErr = e;
-        console.warn('[translate] ' + name + ' failed:', e && e.message || e);
+        // GPT failed (no key, network, etc.) — fall back to DeepL with context.
+        try { out = await viaDeepL(text, context); }
+        catch (e2) { lastErr = e2; }
+      }
+    } else {
+      // Default order: DeepL → Google → MyMemory.
+      const order = [ENGINE, 'deepl', 'google', 'mymemory']
+        .filter((v, i, a) => a.indexOf(v) === i);
+      for (const name of order) {
+        const fn = name === 'deepl'    ? () => viaDeepL(text, context)
+                 : name === 'google'   ? () => viaGoogle(text)
+                 : name === 'mymemory' ? () => viaMyMemory(text)
+                 : null;
+        if (!fn) continue;
+        try {
+          const r = await fn();
+          if (r) { out = r; break; }
+        } catch (e) {
+          lastErr = e;
+          console.warn('[translate] ' + name + ' failed:', e && e.message || e);
+        }
       }
     }
-    throw lastErr || new Error('all translation engines failed');
+
+    if (!out) throw lastErr || new Error('all translation engines failed');
+    memCache[ck] = out;
+    persist();
+    return out;
+  }
+
+  // ---------- public batch-translate (for page prefetch) ----------
+  // translateBatch(texts, context?): translates an array in ONE round trip
+  // when possible. Returns array of translations in the same order.
+  // Cache hits are served locally; misses go to DeepL in a single call.
+  async function translateBatch(texts, context) {
+    texts = (texts || []).map(t => (t || '').trim()).filter(Boolean);
+    if (!texts.length) return [];
+
+    const engineName = USE_GPT ? 'gpt' : ENGINE;
+    const out = new Array(texts.length);
+    const missIdx = [];
+    const missTexts = [];
+    for (let i = 0; i < texts.length; i++) {
+      const t = texts[i];
+      const lower = t.toLowerCase();
+      if (STATIC[lower]) { out[i] = STATIC[lower]; continue; }
+      const ck = cacheKey(t, context, engineName);
+      if (memCache[ck]) { out[i] = memCache[ck]; continue; }
+      missIdx.push(i);
+      missTexts.push(t);
+    }
+    if (!missTexts.length) return out;
+
+    // Prefetch always uses DeepL batch (GPT batching is more expensive and
+    // we'd rather only spend GPT tokens on explicit ✨ clicks).
+    let translations = [];
+    try {
+      translations = await viaDeepLBatch(missTexts, context);
+    } catch (e) {
+      console.warn('[translateBatch] DeepL failed, falling back per-item:', e && e.message || e);
+      // Fallback: serial Google calls (slower but salvages the batch).
+      for (const t of missTexts) {
+        try { translations.push(await viaGoogle(t)); }
+        catch (er) { translations.push(''); }
+      }
+    }
+    // Stuff the misses back into the result array + cache them.
+    for (let k = 0; k < missIdx.length; k++) {
+      const i = missIdx[k];
+      const tr = translations[k] || '';
+      out[i] = tr;
+      if (tr) {
+        const ck = cacheKey(missTexts[k], context, 'deepl');
+        memCache[ck] = tr;
+      }
+    }
+    persist();
+    return out;
   }
 
   function clearCache() {
@@ -161,13 +279,7 @@
     persist();
   }
 
-  // Bilingual-dictionary lookup via Google's gtx endpoint with dt=bd. Returns
-  // multiple senses grouped by part-of-speech (noun / verb / adj / etc.) for
-  // a single word — exactly what the user wants to display when a word has
-  // several meanings. Returns an empty array if there's only one sense.
-  // Cached per-word in localStorage.
-  // v2: parser was fixed to handle both shapes of Google's dt=bd response.
-  // Drop v1 so previously-cached garbage like "지/으/나" gets re-fetched.
+  // ---------- bilingual-dictionary multi-meaning lookup (unchanged) ----------
   const SENSE_KEY = 'eng.v2.senses';
   const senseCache = {};
   try {
@@ -181,11 +293,9 @@
   async function lookupSenses(word) {
     word = (word || '').trim();
     if (!word) return [];
-    // Only single words have meaningful bilingual dictionary entries.
     if (/\s/.test(word)) return [];
     const key = word.toLowerCase();
     if (senseCache[key]) return senseCache[key];
-
     try {
       const url = 'https://translate.googleapis.com/translate_a/single' +
                   '?client=gtx&sl=en&tl=ko&dt=bd&q=' + encodeURIComponent(word);
@@ -201,23 +311,12 @@
         const items = entry[1] || [];
         if (!Array.isArray(items)) continue;
         for (const item of items) {
-          // Google's response shape varies between queries. Sometimes each
-          // item is `[korean, [back-translations], score, isVerbatim]`, other
-          // times it's just the Korean string. Reading `item[0]` blindly on
-          // a string yields a single character (the bug behind "지/으/나"
-          // garbage senses on words like "Trump"). Handle both forms.
           let ko = '';
-          if (typeof item === 'string') {
-            ko = item;
-          } else if (Array.isArray(item) && typeof item[0] === 'string') {
-            ko = item[0];
-          }
+          if (typeof item === 'string') ko = item;
+          else if (Array.isArray(item) && typeof item[0] === 'string') ko = item[0];
           ko = (ko || '').trim();
           if (!ko) continue;
-          // Skip suspicious one-character results unless they're recognisable
-          // Korean syllables that ARE legitimate words (그, 나, 너, 등 etc.).
           if (ko.length === 1 && !/^[가-힣]$/.test(ko)) continue;
-          // Dedupe across pos groups.
           const k = pos + '|' + ko;
           if (seen.has(k)) continue;
           seen.add(k);
@@ -230,5 +329,9 @@
     } catch (e) { return []; }
   }
 
-  window.Translate = { translate, clearCache, setEngine, getEngine, lookupSenses };
+  window.Translate = {
+    translate, translateBatch, clearCache,
+    setEngine, getEngine, lookupSenses,
+    setUseGPT, getUseGPT,
+  };
 })();
