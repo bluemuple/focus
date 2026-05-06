@@ -2104,16 +2104,24 @@
   function sizeLessonMain() {
     const main = document.getElementById('lesson-main');
     if (!main) return;
+    // Publish the live visual-viewport height as a CSS var so the body
+    // lock (in styles.css) follows the URL-bar / keyboard transitions
+    // exactly. Then reset main's prior height so topY reflects the
+    // natural layout position before we re-measure.
+    const liveVh = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty('--app-vh', liveVh + 'px');
+    main.style.height = '';
     const topY = main.getBoundingClientRect().top;
     // Whichever of lesson-bar / playbar is visible owns the bottom strip.
     const lb = document.getElementById('lesson-bar');
     const pb = document.getElementById('playbar');
     const bottomEl = (pb && !pb.hidden) ? pb : lb;
     const bottomH = (bottomEl && !bottomEl.hidden) ? bottomEl.offsetHeight : 0;
-    // Tightened from 16px to 6px so the visible gray strip below the white
-    // card is minimised (mobile focus). Also avoids unnecessary scroll.
+    // Use the same live visual-viewport height we published above so the
+    // lesson box never grows past the actual visible area (which would
+    // push the title row off-screen above the URL bar).
     const bottomGap = 6;
-    const h = Math.max(280, window.innerHeight - topY - bottomH - bottomGap);
+    const h = Math.max(240, liveVh - topY - bottomH - bottomGap);
     main.style.height = h + 'px';
   }
 
@@ -2461,7 +2469,7 @@
   }
 
   let resizeT = null;
-  window.addEventListener('resize', () => {
+  function onViewportChange() {
     clearTimeout(resizeT);
     resizeT = setTimeout(() => {
       sizeLessonMain();
@@ -2483,7 +2491,16 @@
         updateProgress();
       });
     }, 200);
-  });
+  }
+  window.addEventListener('resize', onViewportChange);
+  // visualViewport fires resize/scroll when iOS shows/hides the URL bar
+  // or the on-screen keyboard appears — the regular window.resize event
+  // is unreliable for that. Subscribing here keeps the lesson card
+  // exactly the size of the visible area.
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', onViewportChange);
+    window.visualViewport.addEventListener('scroll', onViewportChange);
+  }
 
   // ============== word click + drag-select + page swipe ==============
   function bindWordInteractions(root) {
