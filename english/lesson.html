@@ -146,6 +146,21 @@
     <div class="practice-stage" id="practice-stage" role="dialog" aria-label="연습"></div>
   </div>
 
+  <!-- Mobile cont-mode sticky translation panel. Replaces the popup card
+       on phones for 이어서 mode: appears the moment the first word is
+       selected, slides up above the lesson-bar, and stays put while the
+       user adjusts the selection. Far faster (no anchor math, no waiting
+       on translate before showing) and uses full screen width. -->
+  <div class="cont-bar" id="cont-bar" hidden>
+    <div class="cb-top">
+      <span class="cb-phrase" id="cb-phrase">—</span>
+      <button class="cb-speak" id="cb-speak" aria-label="발음 듣기" title="발음 듣기">🔊</button>
+      <button class="cb-add"   id="cb-add"   aria-label="구문에 추가" title="구문에 추가">＋</button>
+      <button class="cb-close" id="cb-close" aria-label="닫기"        title="닫기">×</button>
+    </div>
+    <div class="cb-trans" id="cb-trans"><span class="tx-loading">번역 중...</span></div>
+  </div>
+
   <!-- Audio playback bar (hidden until the play button on the lesson bar
        is pressed). The X on the right hides this bar and brings back the
        lesson bar. -->
@@ -298,6 +313,10 @@
       document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
       return;
     }
+    // Pull synced state (money, streak) from Supabase BEFORE we tick the
+    // streak — so today's count rides on top of the latest known value
+    // from any device, not the stale local copy.
+    try { await DB.bootstrapUserState(); } catch (e) {}
     // Streak ticks up the first time the user actually opens a lesson page
     // each day (mere visits to the home page don't count).
     try { DB.recordLessonVisit && DB.recordLessonVisit(); } catch (e) {}
@@ -340,6 +359,7 @@
     setupCloseXButton();
     setupSidebar();
     setupMobileContBar();
+    setupContBar();
     applySidebarVisibility();
     applyMobileContBar();
   }
@@ -665,9 +685,9 @@
           document.querySelectorAll('.cont-trans').forEach(el => el.remove());
           document.querySelectorAll('.cont-outline').forEach(el => el.remove());
           // PC: sidebar is the surface for every mode. Mobile cont uses
-          // the popup; mobile contU has no overlay to close.
+          // the cont-bar (sticky bottom panel); contU has no overlay.
           if (useSidebar())          clearSidebar();
-          else if (MODE === 'cont')  hidePopup();
+          else if (MODE === 'cont')  hideContBar();
           _lastGrow = null;
           return true;
         }
@@ -693,6 +713,73 @@
       renderSidebarWordList(empty);
     }
     SIDEBAR_PHRASE = null;
+  }
+
+  // ---- mobile cont sticky bottom bar ----
+  // The popup-anchor approach was too slow on phones (had to compute the
+  // sentence rectangle, await two translate calls, etc.). The cont-bar
+  // sits at a fixed location above the lesson-bar so we can render it the
+  // moment the user selects a word; the translation streams in.
+  let CONT_BAR_PHRASE = null;       // { text, ko } currently shown
+  function setupContBar() {
+    const speak = document.getElementById('cb-speak');
+    const add   = document.getElementById('cb-add');
+    const close = document.getElementById('cb-close');
+    if (speak) speak.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (CONT_BAR_PHRASE) TTS.speak(CONT_BAR_PHRASE.text);
+    });
+    if (add) add.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!CONT_BAR_PHRASE || !CONT_BAR_PHRASE.text) return;
+      try { DB.addPhrase(CONT_BAR_PHRASE.text, CONT_BAR_PHRASE.ko || '', lessonId); } catch (er) {}
+      add.classList.add('added');
+      add.textContent = '✓';
+      setTimeout(() => { add.classList.remove('added'); add.textContent = '＋'; }, 1400);
+    });
+    if (close) close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      clearContSelection();
+      hideContBar();
+    });
+  }
+  function showInContBar(phrase) {
+    const bar     = document.getElementById('cont-bar');
+    const phEl    = document.getElementById('cb-phrase');
+    const transEl = document.getElementById('cb-trans');
+    if (!bar || !phEl || !transEl) return;
+
+    // Render the phrase immediately so the user sees feedback on the
+    // very next frame — no awaiting, no measurement.
+    phEl.textContent = phrase;
+    transEl.innerHTML = '<span class="tx-loading">번역 중...</span>';
+    bar.hidden = false;
+    requestAnimationFrame(() => bar.classList.add('show'));
+    CONT_BAR_PHRASE = { text: phrase, ko: '' };
+
+    // Speak right away (matches the sidebar / popup paths).
+    TTS.speak(phrase);
+
+    // Translation streams in. Pass the surrounding sentence as context so
+    // homonyms are disambiguated.
+    const ctxAnchor = Array.from(CONT_SELECTED)[0];
+    const ctx = ctxAnchor ? getContextSentence(ctxAnchor) : '';
+    Translate.translate(phrase, ctx).then(ko => {
+      // Selection may have changed mid-fetch — only update if still ours.
+      if (selectionToPhrase() !== phrase) return;
+      CONT_BAR_PHRASE = { text: phrase, ko };
+      transEl.innerHTML = `<span class="ko">${escapeHtml(ko)}</span>`;
+    }).catch(() => {
+      if (selectionToPhrase() !== phrase) return;
+      transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
+    });
+  }
+  function hideContBar() {
+    const bar = document.getElementById('cont-bar');
+    if (!bar) return;
+    bar.classList.remove('show');
+    bar.hidden = true;
+    CONT_BAR_PHRASE = null;
   }
 
   function renderSidebarWordList(host) {
@@ -1582,6 +1669,7 @@
   function onModeChanged() {
     // Clean up state from the previous mode.
     hidePopup();
+    hideContBar();
     clearContSelection();
     clearSidebar();
     applyModeClass();
@@ -2010,11 +2098,13 @@
     if (e.key === 'Escape') {
       if (CONT_SELECTED.size > 0) {
         clearContSelection();
-        if (useSidebar()) clearSidebar();
-        else              hidePopup();
+        if (useSidebar())          clearSidebar();
+        else if (MODE === 'cont')  hideContBar();
+        else                       hidePopup();
       } else {
         const root = document.getElementById('lesson-text');
         if (root) root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+        hideContBar();
         hidePopup();
       }
       e.preventDefault();
@@ -2221,10 +2311,10 @@
         if ((MODE === 'cont' || MODE === 'contU') && CONT_SELECTED.size > 0) {
           clearContSelection();
           // PC: sidebar is shared across all modes, so always reset it.
-          // Mobile cont: close the popup. Mobile contU: nothing to close
-          // (the inline label was already removed by clearContSelection).
+          // Mobile cont: close the bottom translation bar. Mobile contU:
+          // nothing to close (clearContSelection already removed inline).
           if (useSidebar())            clearSidebar();
-          else if (MODE === 'cont')    hidePopup();
+          else if (MODE === 'cont')    hideContBar();
         }
         return;
       }
@@ -2320,7 +2410,7 @@
         document.querySelectorAll('.cont-trans').forEach(el => el.remove());
         document.querySelectorAll('.cont-outline').forEach(el => el.remove());
         if (useSidebar())          clearSidebar();
-        else if (MODE === 'cont')  hidePopup();
+        else if (MODE === 'cont')  hideContBar();
         return;
       }
       await refreshContTranslation();
@@ -2359,15 +2449,11 @@
     }
 
     if (MODE === 'cont') {
-      // Mobile cont: render the popup IMMEDIATELY (showWord paints "번역
-      // 중..." and starts its own translate call). Previously we awaited a
-      // first translate here just to throw away the result — that doubled
-      // the wait time on mobile compared to PC's sidebar path. Now the
-      // popup appears on the next frame and updates as soon as Translate
-      // resolves the phrase.
-      const wEl = anchorEl || Array.from(CONT_SELECTED).pop();
-      showWord(phrase, { isFirstClick: false }, wEl);     // not awaited
-      placePopBySentence();
+      // Mobile cont: use the sticky bottom panel. It's pinned above the
+      // lesson-bar so we can render it instantly — no anchor positioning
+      // and no awaiting translate before showing — and it has the full
+      // screen width for the translation.
+      showInContBar(phrase);
       return;
     }
 

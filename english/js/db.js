@@ -168,6 +168,26 @@
     ls.set('lessons', ls.get('lessons', []).filter(x => x.id !== id));
   }
 
+  // Rename: just updates the title field. Used by the gallery card's
+  // kebab "수정" entry to do a quick inline rename without a full
+  // re-import flow.
+  async function renameLesson(id, newTitle) {
+    newTitle = (newTitle || '').trim();
+    if (!newTitle) return false;
+    if (await useCloud()) {
+      const { error } = await sb.from('lessons')
+        .update({ title: newTitle }).eq('id', id);
+      if (error) { console.error(error); return false; }
+      return true;
+    }
+    const list = ls.get('lessons', []);
+    const i = list.findIndex(x => x.id === id);
+    if (i < 0) return false;
+    list[i].title = newTitle;
+    ls.set('lessons', list);
+    return true;
+  }
+
   // ---------- WORD STATES ----------
   // State semantics (user-controlled, LingQ-style):
   //   -1 = ignored ("무시")                — no highlight
@@ -333,6 +353,56 @@
     ls.set('stories', listStories().filter(s => s.id !== id));
   }
 
+  // ---------- cross-device user_state sync ----------
+  // Small key/value store (Supabase table `user_state`) used to keep
+  // device-private prefs (money, streak) consistent across PC + mobile.
+  // Strategy is intentionally simple: the client always reads / writes
+  // the WHOLE blob for a given key; conflicts are last-writer-wins.
+  //
+  // Apply supabase-sql/user_state.sql once before this works.
+  async function _fetchUserState(key) {
+    if (!(await useCloud())) return undefined;
+    const u = await currentUser();
+    const { data, error } = await sb.from('user_state')
+      .select('value').eq('user_id', u.id).eq('key', key).maybeSingle();
+    if (error) {
+      // Table missing / RLS misconfigured — log once, fall back to local.
+      console.warn('[user_state] fetch ' + key, error.message || error);
+      return undefined;
+    }
+    return data ? data.value : null;          // null means "no row yet"
+  }
+  async function _pushUserState(key, value) {
+    if (!(await useCloud())) return;
+    const u = await currentUser();
+    const row = {
+      user_id: u.id, key,
+      value, updated_at: new Date().toISOString(),
+    };
+    const { error } = await sb.from('user_state')
+      .upsert(row, { onConflict: 'user_id,key' });
+    if (error) console.warn('[user_state] push ' + key, error.message || error);
+  }
+  // Pull every synced key down once at app start. Local copy is replaced
+  // when the cloud has a value — that's how the user's mobile picks up
+  // money earned on PC. After this call, every mutation pushes back up.
+  let _bootstrapped = false;
+  async function bootstrapUserState() {
+    if (_bootstrapped) return;
+    _bootstrapped = true;
+    if (!(await useCloud())) return;
+    try {
+      const [money, streak] = await Promise.all([
+        _fetchUserState('money'),
+        _fetchUserState('streak'),
+      ]);
+      if (money)  ls.set('money',  money);
+      if (streak) ls.set('streak', streak);
+    } catch (e) {
+      console.warn('[user_state] bootstrap', e);
+    }
+  }
+
   // ---------- streak (연속 학습일) ----------
   // Counts a "day" the user has done a lesson (we call recordLessonVisit
   // when the lesson page loads). The streak resets if they skip a day.
@@ -356,6 +426,7 @@
     s.lastDay = today;
     s.days = Array.from(new Set([...(s.days || []), today]));
     ls.set('streak', s);
+    _pushUserState('streak', s);                  // fire-and-forget cloud sync
     return s;
   }
 
@@ -377,12 +448,18 @@
     if (word === d.lastWord) return d;            // same word twice → skip
     d.lastWord = word;
     d.runCount = (d.runCount || 0) + 1;
+    let earnedCent = false;
     if (d.runCount >= 3) {
       d.runCount = 0;
       const t = _ymd();
       d.daily[t] = Math.min(200, (d.daily[t] || 0) + 1);
+      earnedCent = true;
     }
     ls.set('money', d);
+    // Push every 3rd click (when a cent actually lands) — that's the only
+    // change other devices need to see. Skipping the in-between increments
+    // avoids hammering Supabase on every word click.
+    if (earnedCent) _pushUserState('money', d);
     return d;
   }
   function getTodayCents() {
@@ -418,6 +495,7 @@
     const e = { date: _ymd(), cents, note: (note || '').trim() };
     d.expenses.unshift(e);
     ls.set('money', d);
+    _pushUserState('money', d);                   // sync expense to cloud
     return e;
   }
 
@@ -484,7 +562,7 @@
     haveSupabase,
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
-    listLessons, getLesson, addLesson, deleteLesson, setBookmark,
+    listLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson,
     loadWordStates, clickWord, setWordState,
     getHearted, setHearted, isHearted,
     listPhrases, addPhrase, deletePhrase,
@@ -495,6 +573,7 @@
     recordMoneyClick, getTodayCents, getTotalCents,
     getDailyHistory, listExpenses, addExpense,
     listMasteredWords,
+    bootstrapUserState,
     useCloud,
   };
 })();

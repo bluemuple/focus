@@ -123,6 +123,10 @@
     const grid = document.getElementById('lessons-grid');
     grid.parentElement.querySelectorAll('.empty').forEach(el => el.remove());
     grid.innerHTML = '<div class="muted">불러오는 중...</div>';
+    // Pull money + streak down from Supabase so a freshly-opened mobile
+    // tab sees the cents earned on PC (and vice-versa). No-op when the
+    // user is in try mode or signed out.
+    try { await DB.bootstrapUserState(); } catch (e) {}
     ALL_LESSONS = await DB.listLessons();
     setupTabs();
     setupStatusRow();
@@ -554,6 +558,11 @@
   }
 
   function makeCard(l) {
+    // Wrapper is a div so the kebab menu can sit OUTSIDE the link's click
+    // target — stops kebab taps from also navigating to the lesson page.
+    const wrap = document.createElement('div');
+    wrap.className = 'card-wrap';
+
     const a = document.createElement('a');
     a.className = 'card';
     a.href = 'lesson.html?id=' + encodeURIComponent(l.id);
@@ -563,9 +572,15 @@
     const thumbStyle = hasThumb
       ? `style="background-image:url('${escapeAttr(l.thumbnail_url)}');background-size:cover;background-position:center;"`
       : '';
+    // Two badges, both shown when present: every lesson has text, and
+    // audio lessons stack a 🎧 오디오 badge on top of the 텍스트 one.
+    const audioBadge = l.audio_url ? '<span class="badge audio">🎧 오디오</span>' : '';
     a.innerHTML = `
       <div class="thumb" ${thumbStyle}>
-        <span class="badge">${l.audio_url ? '🎧 오디오' : '📄 텍스트'}</span>
+        <span class="badges">
+          <span class="badge">📄 텍스트</span>
+          ${audioBadge}
+        </span>
         ${hasThumb ? '' : `<span>${escapeHtml(initials)}</span>`}
         ${l.bookmarked ? '<span class="bm-flag" title="찜한 레슨">♥</span>' : ''}
       </div>
@@ -578,7 +593,80 @@
         </div>
       </div>
     `;
-    return a;
+
+    // Kebab (⋮) button at the bottom-right of the card. Clicks here open a
+    // small popover with 수정 / 삭제. Stop propagation so the card's link
+    // doesn't fire.
+    const kebab = document.createElement('button');
+    kebab.className = 'card-kebab';
+    kebab.type = 'button';
+    kebab.setAttribute('aria-label', '레슨 옵션');
+    kebab.innerHTML = '<span aria-hidden="true">⋮</span>';
+    kebab.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openCardMenu(kebab, l);
+    });
+
+    wrap.appendChild(a);
+    wrap.appendChild(kebab);
+    return wrap;
+  }
+
+  // ---- card kebab menu ----
+  // Single global menu element; we move it next to whichever kebab opened it.
+  function openCardMenu(anchorEl, lesson) {
+    closeCardMenu();   // close any previous one
+    const menu = document.createElement('div');
+    menu.className = 'card-menu';
+    menu.innerHTML = `
+      <button class="cm-item" data-act="rename">✎ 수정</button>
+      <button class="cm-item danger" data-act="delete">🗑 삭제</button>
+    `;
+    document.body.appendChild(menu);
+
+    // Position below the kebab, right-aligned.
+    const r = anchorEl.getBoundingClientRect();
+    menu.style.top  = (r.bottom + window.scrollY + 6) + 'px';
+    menu.style.left = (r.right  + window.scrollX - menu.offsetWidth) + 'px';
+    // After paint, snap right edge to align with kebab right edge.
+    requestAnimationFrame(() => {
+      menu.style.left = (r.right + window.scrollX - menu.getBoundingClientRect().width) + 'px';
+    });
+
+    menu.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.cm-item');
+      if (!btn) return;
+      e.stopPropagation();
+      const act = btn.dataset.act;
+      closeCardMenu();
+      if (act === 'rename') {
+        const next = (window.prompt('레슨 제목 수정', lesson.title || '') || '').trim();
+        if (!next || next === lesson.title) return;
+        const ok = await DB.renameLesson(lesson.id, next);
+        if (ok) await renderHome();
+        else alert('수정에 실패했어요. 잠시 뒤 다시 시도해 주세요.');
+      } else if (act === 'delete') {
+        if (!window.confirm(`"${lesson.title || '이 레슨'}"을 삭제할까요?`)) return;
+        await DB.deleteLesson(lesson.id);
+        await renderHome();
+      }
+    });
+
+    // Close on outside click / Esc / scroll.
+    setTimeout(() => {  // defer so the click that opened us doesn't immediately close
+      document.addEventListener('click',    closeCardMenu, { once: true });
+      document.addEventListener('keydown',  onCardMenuKey);
+      window.addEventListener('scroll',     closeCardMenu, { once: true, passive: true });
+      window.addEventListener('resize',     closeCardMenu, { once: true });
+    }, 0);
+  }
+  function closeCardMenu() {
+    document.querySelectorAll('.card-menu').forEach(m => m.remove());
+    document.removeEventListener('keydown', onCardMenuKey);
+  }
+  function onCardMenuKey(e) {
+    if (e.key === 'Escape') closeCardMenu();
   }
   function escapeAttr(s){ return (s||'').replace(/"/g, '&quot;'); }
   function escapeHtml(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[c])); }
