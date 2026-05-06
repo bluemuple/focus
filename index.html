@@ -741,6 +741,32 @@
   /* Account sync buttons — Cloud→Device / Device→Cloud.
      PC: words. "Device" green so users instantly see which side is theirs.
      Phone: emojis (☁️ / 📱) for compactness. */
+  /* Daily backups list — appears under "Signed in as ..." when 2+ versions
+     exist. Each row is a clickable button that opens the restore confirm. */
+  .versions-list { margin: 6px 0 12px; }
+  .versions-list.hidden { display: none; }
+  .versions-list .versions-head {
+    font-size: .75rem; font-weight: 700; color: #6b7280;
+    text-transform: uppercase; letter-spacing: .05em;
+    margin-bottom: 4px;
+  }
+  .versions-list .versions-rows {
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .versions-list .version-row {
+    display: grid; grid-template-columns: 1fr auto auto;
+    gap: 8px; align-items: center;
+    background: #f9fafb; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px;
+    font: inherit; font-size: .8rem; cursor: pointer;
+    text-align: left;
+    transition: background .12s ease;
+  }
+  .versions-list .version-row:hover { background: #eef4ff; border-color: #c7d8ff; }
+  .versions-list .v-when  { font-weight: 600; color: #111827; }
+  .versions-list .v-money { color: #065f46; font-weight: 600; }
+  .versions-list .v-mana  { color: #6b7280; font-size: .75rem; }
+
   /* Account panel — PC: all four buttons on a single horizontal line.
      Phone: stacks as two rows (Sign out + Manual / two sync buttons), with
      each button stretched to fill its row so they're easy to tap. */
@@ -1485,7 +1511,11 @@
   .focus-cell.q2 { background: var(--q2); }
   .focus-cell.q3 { background: var(--q3); }
   .focus-cell.q4 { background: var(--q4); }
-  .focus-cell h4 { font-size: .75rem; opacity: .7; text-transform: uppercase; }
+  .focus-cell h4 {
+    font-size: .75rem; opacity: .7; text-transform: uppercase;
+    /* Pulled up so the title sits closer to the top edge of the cell. */
+    margin: -10px 0 4px;
+  }
   .focus-cell .tasks { display: flex; flex-direction: column; gap: 4px; flex: 1; }
   .focus-cell .task-row .task-text { cursor: pointer; }
   .focus-cell .task-row {
@@ -1552,12 +1582,24 @@
   .focus-cell .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; cursor: pointer; }
   .focus-cell .task-row .drag-handle { cursor: grab; color: #9ca3af; padding: 0 2px; user-select: none; }
   .focus-cell .add-task {
-    margin-top: 6px; background: rgba(255,255,255,.6);
+    /* Sits between the cell title and the first task. Slim margin so the
+       cell doesn't grow vertically. */
+    margin: 0 0 6px; background: rgba(255,255,255,.6);
     border: 1px dashed rgba(0,0,0,.18);
     padding: 5px 8px; border-radius: 6px; color: #4b5563;
     font-size: .8rem; cursor: pointer; width: 100%;
   }
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
+  /* The button morphs into this input while typing — same dashed pill so
+     the visual transition is in place, not jumpy. */
+  .focus-cell .add-task-input {
+    background: #fff; color: #111827;
+    border: 1px solid #2563eb;
+    box-shadow: 0 0 0 2px rgba(37,99,235,.15);
+    text-align: left; font: inherit;
+    outline: none;
+  }
+  .focus-cell .add-task-input::placeholder { color: #9ca3af; }
   /* Inline task-input row — shown briefly while the user types a fresh task
      name. No popup; commit on Enter / blur, cancel on × / Escape. */
   .focus-cell .task-row.task-row-input {
@@ -2534,6 +2576,9 @@
       <div id="auth-logged-in" class="auth-section hidden">
         <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
         <p class="help">Tasks, gauge, statistics — everything syncs automatically. If it doesn't sync, use the buttons below.</p>
+        <!-- Daily backup list (auto-created at 3 AM, up to 4 kept). Only
+             shown when 2+ versions exist. -->
+        <div id="versions-list" class="versions-list hidden"></div>
         <div class="account-rows">
           <div class="row-flex account-row-1">
             <button class="btn" id="auth-signout">Sign out</button>
@@ -3228,6 +3273,11 @@ const defaultState = () => ({
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
   events: [],
+  // Up to 4 daily backups of the full state. Each: { id, savedAt, money,
+  // manaScore, label, snapshot: {tasks, watchLog, money, mana, ext, …} }.
+  // Created automatically at 3 AM and trimmed to the latest 4. Click any
+  // entry in the Account panel to restore.
+  versions: [],
   scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
   // ----- Money system (replaces "Internal" score on the focus page) -----
   // money: total balance (USD, can go negative). $200 starting balance.
@@ -3404,6 +3454,7 @@ function migrateState() {
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (!Array.isArray(state.events))   state.events   = [];
+  if (!Array.isArray(state.versions)) state.versions = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
   if (!['focus','stats'].includes(state.currentPage)) state.currentPage = 'focus';
@@ -3625,6 +3676,7 @@ function updateAuthUI(user) {
     setGuestMode(false);
     _currentAuthUserId = user.id;
     _currentAuthEmail = user.email || null;
+    if (typeof renderVersionsList === 'function') renderVersionsList();
   } else {
     if (inEl) inEl.classList.add('hidden');
     // Show the login modal unless the user has chosen "Try it" guest mode.
@@ -3727,11 +3779,41 @@ function markSettingsChanged() {
 // propagates the empty state to every other device via polling.
 let _initialPullDone = false;
 
+/* Heuristic — does the LOCAL state look "suspiciously empty", as if it just
+   bootstrapped from defaults and hasn't picked up the user's real data yet?
+   If so we refuse to push so an unsigned-in / fresh-cache device cannot
+   overwrite a non-empty cloud row with a blank one. */
+function localStateLooksEmpty() {
+  try {
+    const noTasks = !['q1','q2','q3','q4'].some(q =>
+      Array.isArray(state.tasks && state.tasks[q]) &&
+      state.tasks[q].some(t => t && t.text && t.text.trim())
+    );
+    const emptyWatch = !Array.isArray(state.watchLog)  || state.watchLog.length  === 0;
+    const emptyMoney = !Array.isArray(state.moneyLog)  || state.moneyLog.length  === 0;
+    const emptyScore = !Array.isArray(state.scoreLog)  || state.scoreLog.length  === 0;
+    const noEvents   = !Array.isArray(state.events)    || state.events.length    === 0;
+    const moneyDefault = (state.money == null) || +state.money === 200;
+    return noTasks && emptyWatch && emptyMoney && emptyScore && noEvents && moneyDefault;
+  } catch (_) { return false; }
+}
+
 async function pushSettingsToCloud() {
   if (!_initialPullDone) {
     // Will be re-flushed by flushPendingPushes() once the gate opens.
     if (typeof logSyncEvent === 'function') {
       logSyncEvent({ direction: 'push', ok: false, error: 'blocked: initial pull not done yet' });
+    }
+    return false;
+  }
+  // Defensive: if local state still looks like a fresh-default after the
+  // pull gate has lifted (e.g. the pull silently returned empty because
+  // the user has no row yet, OR network was bad), don't let that empty
+  // state overwrite cloud. The user's real data, if it exists on the
+  // cloud, is preserved until something meaningful is added locally.
+  if (_wasFreshClient && localStateLooksEmpty()) {
+    if (typeof logSyncEvent === 'function') {
+      logSyncEvent({ direction: 'push', ok: false, error: 'blocked: local state looks empty (fresh client guard)' });
     }
     return false;
   }
@@ -3785,6 +3867,7 @@ async function pushSettingsToCloud() {
         last3amResetDate:        state.last3amResetDate || '',
         scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
         events:                  Array.isArray(state.events)   ? state.events.slice(-500)    : [],
+        versions:                Array.isArray(state.versions) ? state.versions.slice(-4)    : [],
         motivationalCurrent:     state.motivationalCurrent || null,
         // ---- Money system (synced) ----
         money:                   +state.money || 0,
@@ -4009,6 +4092,7 @@ function applyRemoteSettings(remote) {
     if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
     if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
     if (Array.isArray(ss.events))   state.events   = ss.events;
+    if (Array.isArray(ss.versions)) state.versions = ss.versions.slice(-4);
     if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
     // Money system — money/log/factors/sleep markers
     if (typeof ss.money === 'number') state.money = ss.money;
@@ -4082,6 +4166,7 @@ function renderEverythingFromState() {
   if (typeof renderMoneyCard    === 'function') renderMoneyCard();
   if (typeof renderMoneyFactors === 'function') renderMoneyFactors();
   if (typeof renderImDoing      === 'function') renderImDoing();
+  if (typeof renderVersionsList === 'function') renderVersionsList();
 }
 
 /* ---- Realtime-ish polling ----
@@ -5777,7 +5862,10 @@ function renderFocusMatrix() {
   order.forEach(q => {
     const cell = document.createElement('div');
     cell.className = 'focus-cell ' + q;
-    cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div>`;
+    // Cell layout: <h4>Title</h4>  <button>+ add task</button>  <div.tasks/>
+    // The add-task button sits BETWEEN the title and the task list so the
+    // creation entry point is always at the top of the cell.
+    cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ add task</button><div class="tasks"></div>`;
     const tasksDiv = cell.querySelector('.tasks');
     state.tasks[q].forEach((t, i) => {
       // Empty (newly-created) tasks render an inline input bar instead of a
@@ -5814,8 +5902,26 @@ function renderFocusMatrix() {
           commit();
         });
         inp.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') { e.preventDefault(); committed = true; inp.blur(); commit(); }
-          else if (e.key === 'Escape') { inp.value = ''; committed = true; inp.blur(); commit(); }
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            const wasNonEmpty = (inp.value || '').trim().length > 0;
+            committed = true;
+            commit();
+            // Chain another empty task input on top so the user can keep
+            // typing the next item without picking up the mouse. Only when
+            // they actually entered something — Enter on an empty input
+            // still removes the placeholder (handled by commit()).
+            if (wasNonEmpty) {
+              createNewTask(q);
+              saveState(); markSettingsChanged(); pushSettingsToCloud();
+              renderFocusMatrix();
+              const cellEl = document.querySelector(`.focus-cell.${q}`);
+              const nextInput = cellEl ? cellEl.querySelector('.task-text-input') : null;
+              if (nextInput) { try { nextInput.focus(); } catch (_) {} }
+            }
+          } else if (e.key === 'Escape') {
+            inp.value = ''; committed = true; commit();
+          }
         });
         cancel.addEventListener('mousedown', (e) => {
           // mousedown so it fires BEFORE blur (and before commit clears the
@@ -5911,24 +6017,62 @@ function renderFocusMatrix() {
       }
       tasksDiv.appendChild(row);
     });
-    // Always-visible "+ add task" button at the bottom of each cell
-    const addBtn = document.createElement('button');
-    addBtn.className = 'add-task';
-    addBtn.dataset.q = q;
-    addBtn.textContent = '+ add task';
-    addBtn.onclick = () => {
-      createNewTask(q);
-      saveState(); markSettingsChanged(); pushSettingsToCloud();
-      // The new (empty) task renders inline as an input bar at the TOP of
-      // the cell. Focus must be called SYNCHRONOUSLY here — iOS Safari
-      // only opens the keyboard when focus() runs inside the same user-
-      // gesture tick, not from a setTimeout callback.
-      renderFocusMatrix();
-      const cellEl = document.querySelector(`.focus-cell.${q}`);
-      const firstInput = cellEl ? cellEl.querySelector('.task-text-input') : null;
-      if (firstInput) { try { firstInput.focus(); } catch (_) {} }
-    };
-    cell.appendChild(addBtn);
+    // Wire the always-visible "+ add task" button. Click → the button itself
+    // morphs into an inline <input> in place (no throwaway empty state task,
+    // no popup). Enter / blur commits and inserts the new task at the top
+    // of the cell. Escape cancels without saving. The button comes back
+    // after every commit.
+    const addBtn = cell.querySelector('button.add-task');
+    if (addBtn) {
+      addBtn.onclick = () => {
+        // Build a sibling input that replaces the button while typing.
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'add-task add-task-input';
+        input.placeholder = 'Type task name and press Enter';
+        input.setAttribute('maxlength', '200');
+        addBtn.parentNode.replaceChild(input, addBtn);
+        try { input.focus(); } catch (_) {}
+        let committed = false;
+        function commit(saveIt) {
+          if (committed) return;
+          committed = true;
+          const v = (input.value || '').trim();
+          if (saveIt && v) {
+            const bid = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
+            // Insert at top — bump activeTimer's idx if it pointed into this q.
+            const at = state.activeTimer;
+            if (at && at.type === 'pomodoro' && at.q === q && typeof at.idx === 'number') {
+              at.idx = at.idx + 1;
+            }
+            state.tasks[q].unshift({
+              text: v.slice(0, 200),
+              done: false, elapsedMs: 0, segments: [],
+              bid: bid, addLogged: false
+            });
+            // Fire the +$ reward + activity log entry on first non-empty text.
+            if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
+            saveState();
+            markSettingsChanged(); pushSettingsToCloud();
+          }
+          renderFocusMatrix();
+        }
+        input.addEventListener('blur', () => commit(true));
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            commit(true);
+            // For continuous entry: re-open the input on top so the user can
+            // type the next task without picking up the mouse.
+            const cellEl = document.querySelector(`.focus-cell.${q}`);
+            const reAddBtn = cellEl ? cellEl.querySelector('button.add-task') : null;
+            if (reAddBtn) reAddBtn.click();
+          } else if (e.key === 'Escape') {
+            commit(false);
+          }
+        });
+      };
+    }
     root.appendChild(cell);
   });
 }
@@ -9546,6 +9690,9 @@ function maybe3amReset() {
   if (state.last3amResetDate === today) return;
   if (now.getHours() < 3) return;     // not yet past 3 AM today
   state.last3amResetDate = today;
+  // Take a daily backup BEFORE we strip done tasks. The version captures
+  // yesterday's complete state so the user can restore it if needed.
+  if (typeof pushDailyVersion === 'function') pushDailyVersion();
   ['q1','q2','q3','q4'].forEach(q => {
     state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
   });
@@ -9555,6 +9702,108 @@ function maybe3amReset() {
   if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
   if (typeof updateCountdowns === 'function') updateCountdowns();
   if (typeof drawGauge === 'function') drawGauge();
+  if (typeof renderVersionsList === 'function') renderVersionsList();
+}
+
+/* ===== Daily versioned backup =====
+   `state.versions` keeps up to 4 recent snapshots of the full state. Used
+   to recover from accidental data loss (e.g. the cross-device race that
+   wipes local state). Auto-created at 3 AM via maybe3amReset; can also be
+   restored from the Account panel. */
+function snapshotKeyFields() {
+  // The fields we actually capture in a backup. Excludes versions itself
+  // (avoids exponential blow-up across multiple days) and auth/sync
+  // metadata that should NOT be replaced on restore.
+  const keep = [
+    'tasks', 'watchLog', 'timeSegments', 'moneyLog', 'money',
+    'moneyChangeFactors', 'sleepClickedDate', 'lastNoSleepCheckedDate',
+    'scoreLog', 'ext', 'int', 'mana', 'events',
+    'motivationalLines', 'motivationalCurrent',
+    'deadline', 'deadlineDate', 'bedtime', 'bedtimeDate',
+    'startDate', 'startTime',
+    'pomodoroSessionsInCycle', 'activeTimer', 'sessionStartMs',
+    'taskQuadrantRates'
+  ];
+  const out = {};
+  keep.forEach(k => { if (k in state) out[k] = state[k]; });
+  // Cap watchLog inside the snapshot at 500 entries to bound size (~75 KB).
+  if (Array.isArray(out.watchLog) && out.watchLog.length > 500) {
+    out.watchLog = out.watchLog.slice(-500);
+  }
+  // Deep clone via JSON so future mutations to live state don't affect the
+  // saved version.
+  try { return JSON.parse(JSON.stringify(out)); } catch (_) { return null; }
+}
+
+function pushDailyVersion(label) {
+  if (!Array.isArray(state.versions)) state.versions = [];
+  const snap = snapshotKeyFields();
+  if (!snap) return;
+  const v = {
+    id: 'v_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+    savedAt: Date.now(),
+    label: label || 'Daily 3 AM auto-backup',
+    money: +state.money || 0,
+    manaScore: +(state.ext && state.ext.slider) || 0,
+    snapshot: snap
+  };
+  state.versions.push(v);
+  // Keep only the 4 most recent.
+  if (state.versions.length > 4) state.versions = state.versions.slice(-4);
+}
+
+async function restoreVersion(id) {
+  const v = (state.versions || []).find(x => x.id === id);
+  if (!v || !v.snapshot) return;
+  const when  = new Date(v.savedAt).toLocaleString();
+  const money = '$' + (+v.money || 0).toFixed(2);
+  const mana  = (v.manaScore > 0 ? '+' : '') + (+v.manaScore || 0) + ' mana';
+  const ok = await customConfirm(
+    'Restore version',
+    `Restore to ${when}\n${money} · ${mana}\n\nThis replaces all your current data with the backup. Continue?`,
+    { yesLabel: 'Restore', noLabel: 'Cancel' }
+  );
+  if (!ok) return;
+  // Apply the snapshot, preserving versions itself + auth-related state.
+  Object.keys(v.snapshot).forEach(k => { state[k] = v.snapshot[k]; });
+  saveState();
+  markSettingsChanged();
+  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+    clearTimeout(_settingsPushTimer); _settingsPushTimer = null;
+  }
+  pushSettingsToCloud();
+  // Re-render every part of the page.
+  if (typeof renderEverythingFromState === 'function') renderEverythingFromState();
+  if (typeof renderVersionsList === 'function') renderVersionsList();
+}
+
+/* Render the "Backups" list inside the Account panel — only shown when 2+
+   versions exist (so users with a single fresh-install backup don't see a
+   confusing 1-row list). */
+function renderVersionsList() {
+  const el = document.getElementById('versions-list');
+  if (!el) return;
+  const list = (state.versions || []).slice().sort((a, b) => (b.savedAt||0) - (a.savedAt||0));
+  if (list.length < 2) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  el.innerHTML = `
+    <div class="versions-head">Backups</div>
+    <div class="versions-rows">
+      ${list.map(v => {
+        const when = new Date(v.savedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })
+                    + ' ' + new Date(v.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const moneyStr = '$' + (+v.money || 0).toFixed(2);
+        const manaStr  = (v.manaScore > 0 ? '+' : '') + (+v.manaScore || 0);
+        return `<button class="version-row" data-id="${escapeHTML(v.id)}" type="button" title="Restore this backup">
+          <span class="v-when">${escapeHTML(when)}</span>
+          <span class="v-money">${escapeHTML(moneyStr)}</span>
+          <span class="v-mana">${escapeHTML(manaStr)} mana</span>
+        </button>`;
+      }).join('')}
+    </div>`;
+  el.querySelectorAll('.version-row').forEach(btn => {
+    btn.onclick = () => restoreVersion(btn.dataset.id);
+  });
 }
 
 /* Clear all "Time Start & Goals" fields — invoked by the Sleep button. */
