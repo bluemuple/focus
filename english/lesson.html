@@ -20,7 +20,11 @@
           <div class="lh-left">
             <div class="lesson-title-row">
               <a class="back-btn" href="index.html" aria-label="뒤로">
-                <img src="images/back.jpg" alt="뒤로" onerror="this.style.display='none';this.parentNode.textContent='‹';">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                     stroke="currentColor" stroke-width="2.4"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <polyline points="15 6 9 12 15 18"/>
+                </svg>
               </a>
               <h1 id="lesson-title">불러오는 중...</h1>
               <button class="title-heart" id="bookmark-btn" aria-pressed="false" title="이 레슨을 찜한 레슨에 추가/제거">
@@ -31,8 +35,6 @@
             <div class="lesson-head">
               <div class="head-tools">
                 <button class="toggle-btn dict" id="gpt-toggle-btn" title="더 좋은 번역 (gpt-4o-mini, 클릭 시 그 단어만 GPT로)">✨</button>
-                <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">A−</button>
-                <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">A+</button>
                 <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
               </div>
             </div>
@@ -1665,49 +1667,20 @@
       refreshGpt();
     }
 
-    // A+ / A− font-size buttons. Adjust the lesson-text font-size live, and
-    // persist in localStorage so the choice survives reloads.
-    const FONT_KEY = 'eng.v1.lessonFontPx';
-    function readFontPx() {
-      const n = parseFloat(localStorage.getItem(FONT_KEY) || '');
-      return (Number.isFinite(n) && n >= 12 && n <= 40) ? n : null;
-    }
-    function applyFontPx(px) {
-      try { localStorage.setItem(FONT_KEY, String(px)); } catch (e) {}
-      document.querySelectorAll('.lesson-text').forEach(el => {
-        el.style.fontSize = px + 'px';
-      });
-      // Recompute pagination since line-height changed.
-      if (LESSON) {
-        requestAnimationFrame(() => {
-          PAGES = paginateByHeight(LESSON.body || '');
-          computePageCharCounts();
-          if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
-          if (pageIdx < 0) pageIdx = 0;
-          renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
-          bindWordInteractions(document.getElementById('lesson-text'));
-          buildSentenceMap(document.getElementById('lesson-text'));
-          updateProgress();
-        });
+    // Lesson font size + line-height — controlled from the home page's
+    // settings modal (⚙ 환경 설정 → 저장). Here we APPLY whatever is
+    // persisted so the live lesson body matches the user's preference.
+    // Pagination already reads the same keys when measuring.
+    const persistedPx = parseFloat(localStorage.getItem('eng.v1.lessonFontPx')   || '');
+    const persistedLH = parseFloat(localStorage.getItem('eng.v1.lessonLineHeight') || '');
+    document.querySelectorAll('.lesson-text').forEach(el => {
+      if (Number.isFinite(persistedPx) && persistedPx >= 12 && persistedPx <= 40) {
+        el.style.fontSize = persistedPx + 'px';
       }
-    }
-    // Apply the persisted size on init (if any).
-    const persisted = readFontPx();
-    if (persisted) {
-      document.querySelectorAll('.lesson-text').forEach(el => {
-        el.style.fontSize = persisted + 'px';
-      });
-    }
-    function bumpFont(delta) {
-      const cur = readFontPx() ||
-                  parseFloat(getComputedStyle(document.querySelector('.lesson-text')).fontSize) || 18;
-      const next = Math.max(12, Math.min(40, Math.round(cur + delta)));
-      applyFontPx(next);
-    }
-    const fontUpBtn   = document.getElementById('font-up-btn');
-    const fontDownBtn = document.getElementById('font-down-btn');
-    if (fontUpBtn)   fontUpBtn.addEventListener('click',   () => bumpFont(+2));
-    if (fontDownBtn) fontDownBtn.addEventListener('click', () => bumpFont(-2));
+      if (Number.isFinite(persistedLH) && persistedLH >= 1.2 && persistedLH <= 3.6) {
+        el.style.lineHeight = String(persistedLH);
+      }
+    });
 
     // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
@@ -2026,21 +1999,87 @@
     main.style.height = h + 'px';
   }
 
+  // Splits one paragraph into sentences, respecting the abbreviation set
+  // (so "Mr. Smith said hi." stays as ONE sentence). Returns the sentences
+  // in their original order — joining them with single spaces reproduces
+  // the original paragraph (modulo collapsed whitespace). Used by the
+  // sentence-level paginator below.
+  function splitIntoSentences(text) {
+    if (!text) return [];
+    const out = [];
+    let buf = '';
+    let i = 0;
+    while (i < text.length) {
+      const ch = text[i];
+      buf += ch;
+      if (/[.!?]/.test(ch)) {
+        const next = text[i + 1];
+        const atEnd = !next;
+        const followedByWS = /\s/.test(next || '');
+        if (atEnd || followedByWS) {
+          // Look behind in `buf` (without the trailing punct) for the last
+          // word — if it's an abbreviation like "Mr" / "Dr" / "etc", the
+          // period is NOT a sentence boundary and we just keep buffering.
+          const head = buf.slice(0, -1);
+          const m = head.match(/\b([\p{L}]+)$/u);
+          const lastWord = m ? m[1].toLowerCase() : '';
+          if (!SENTENCE_ABBR.has(lastWord)) {
+            // End of sentence — gobble following whitespace and flush.
+            i++;
+            while (i < text.length && /\s/.test(text[i])) { buf += text[i]; i++; }
+            const trimmed = buf.trim();
+            if (trimmed) out.push(trimmed);
+            buf = '';
+            continue;
+          }
+        }
+      }
+      i++;
+    }
+    const tail = buf.trim();
+    if (tail) out.push(tail);
+    return out;
+  }
+
+  // Sentence-level pagination. Each "atom" is a sentence (or a whole
+  // paragraph that has no sentence terminator). We pack atoms into pages
+  // until adding one would exceed the visible height, then start a new
+  // page. On the rendered side, consecutive atoms from the SAME source
+  // paragraph are stitched back into one <p> so paragraph spacing stays
+  // intact — but a single long paragraph can now split across pages,
+  // which means each page is filled tightly to the bottom and a font-size
+  // bump never causes the last lines to disappear.
   function paginateByHeight(body) {
     const paragraphs = body.split(/\n{2,}|\r\n{2,}/).map(p => p.trim()).filter(Boolean);
     if (!paragraphs.length) return [['']];
     const wrap = document.getElementById('lesson-text-wrap');
-    // Bigger safety margin so the last paragraph never gets clipped by
-    // descenders / line-height rounding. PC has a slightly taller font so
-    // it needs more.
     const safety = window.matchMedia('(min-width: 1024px)').matches ? 24 : 12;
     const maxH = wrap.clientHeight - safety;
     if (maxH <= 0) return [paragraphs];
 
+    // Build atom list (sentence + which source paragraph it belongs to).
+    const atoms = [];
+    paragraphs.forEach((p, paraIdx) => {
+      const sentences = splitIntoSentences(p);
+      if (!sentences.length) atoms.push({ paraIdx, text: p });
+      else for (const s of sentences) atoms.push({ paraIdx, text: s });
+    });
+
+    // Hidden mirror to measure each atom's rendered height with the
+    // current font-size / mode-specific line-height.
     const mirror = document.createElement('div');
     mirror.className = 'lesson-text';
-    if (MODE === 'cont')  mirror.classList.add('mode-cont');   // measure with the same spacing as the live page
+    if (MODE === 'cont')  mirror.classList.add('mode-cont');
     if (MODE === 'contU') mirror.classList.add('mode-contU');
+    // Match the live font-size + line-height (settings ⚙ 저장 writes both).
+    const persistedPx = parseFloat(localStorage.getItem('eng.v1.lessonFontPx')   || '');
+    const persistedLH = parseFloat(localStorage.getItem('eng.v1.lessonLineHeight') || '');
+    if (Number.isFinite(persistedPx) && persistedPx >= 12 && persistedPx <= 40) {
+      mirror.style.fontSize = persistedPx + 'px';
+    }
+    if (Number.isFinite(persistedLH) && persistedLH >= 1.2 && persistedLH <= 3.6) {
+      mirror.style.lineHeight = String(persistedLH);
+    }
     mirror.style.position = 'absolute';
     mirror.style.visibility = 'hidden';
     mirror.style.pointerEvents = 'none';
@@ -2051,28 +2090,48 @@
     mirror.style.overflow = 'visible';
     document.body.appendChild(mirror);
 
-    const paraEls = [];
-    for (const text of paragraphs) {
-      const pEl = renderParagraph(text);
+    // Render each atom as its OWN paragraph (so we can measure each one
+    // independently). The rendered output groups them back into source
+    // paragraphs.
+    const atomEls = [];
+    for (const a of atoms) {
+      const pEl = renderParagraph(a.text);
       mirror.appendChild(pEl);
-      paraEls.push({ text, el: pEl });
+      atomEls.push(pEl);
     }
     void mirror.offsetHeight;
 
-    const pages = [];
+    // Pack atoms into pages.
+    const atomPages = [];
     let curr = [];
-    let pageStartTop = paraEls[0].el.offsetTop;
-    for (const info of paraEls) {
-      const localBottom = (info.el.offsetTop - pageStartTop) + info.el.offsetHeight;
+    let pageStartTop = atomEls.length ? atomEls[0].offsetTop : 0;
+    for (let i = 0; i < atoms.length; i++) {
+      const localBottom = (atomEls[i].offsetTop - pageStartTop) + atomEls[i].offsetHeight;
       if (curr.length && localBottom > maxH) {
-        pages.push(curr);
+        atomPages.push(curr);
         curr = [];
-        pageStartTop = info.el.offsetTop;
+        pageStartTop = atomEls[i].offsetTop;
       }
-      curr.push(info.text);
+      curr.push(atoms[i]);
     }
-    if (curr.length) pages.push(curr);
+    if (curr.length) atomPages.push(curr);
     mirror.remove();
+
+    // Convert atom pages → paragraph-string pages: join consecutive atoms
+    // with the same paraIdx into one <p>'s worth of text.
+    const pages = atomPages.map(pageAtoms => {
+      const grouped = [];
+      let cur = null;
+      for (const a of pageAtoms) {
+        if (cur && cur.paraIdx === a.paraIdx) cur.text += ' ' + a.text;
+        else {
+          if (cur) grouped.push(cur.text);
+          cur = { paraIdx: a.paraIdx, text: a.text };
+        }
+      }
+      if (cur) grouped.push(cur.text);
+      return grouped;
+    });
     return pages.length ? pages : [paragraphs];
   }
 
@@ -2191,6 +2250,10 @@
       buildSentenceMap(newRoot);
       prefetchPage();
       setCurrentSentence(-1);
+      // Slider follows the page so 2/N puts the thumb roughly at the
+      // matching position. For audio_url this also seeks the recording to
+      // the page start (only when paused), so press-play resumes here.
+      syncSliderToCurrentPage();
       animating = false;
     }, 300);
   }
@@ -3245,6 +3308,79 @@
   let speed = 1;
   const speeds = [0.75, 1, 1.25, 1.5];
 
+  // Slider geometry — shared between audio_url and TTS playback. Both are
+  // expressed as a 0..1 "read position" measured in characters across the
+  // whole lesson body. The bottom progress fill mirrors that fraction so
+  // the slider points to the right spot regardless of which page you're on.
+  function pageStartCharsAt(pi) {
+    let cum = 0;
+    for (let i = 0; i < pi && i < PAGE_CHARS.length; i++) cum += PAGE_CHARS[i] || 0;
+    return cum;
+  }
+  function pageStartFraction(pi) {
+    if (!TOTAL_CHARS) return 0;
+    return Math.max(0, Math.min(1, pageStartCharsAt(pi) / TOTAL_CHARS));
+  }
+  function pageForFraction(frac) {
+    if (!TOTAL_CHARS || !PAGE_CHARS.length) return 0;
+    const target = frac * TOTAL_CHARS;
+    let cum = 0;
+    for (let i = 0; i < PAGE_CHARS.length; i++) {
+      const w = PAGE_CHARS[i] || 0;
+      if (cum + w > target) return i;
+      cum += w;
+    }
+    return PAGE_CHARS.length - 1;
+  }
+  function setSliderFraction(frac) {
+    frac = Math.max(0, Math.min(1, frac));
+    const fill = document.getElementById('prog-fill');
+    if (fill) fill.style.width = (frac * 100) + '%';
+  }
+  // Called whenever the user navigates manually (swipe / arrow / button)
+  // so the slider visually jumps to the start of the new page. For the
+  // audio_url path we also seek the audio so pressing play continues from
+  // here — but only when paused, to not stomp over active playback.
+  function syncSliderToCurrentPage() {
+    setSliderFraction(pageStartFraction(pageIdx));
+    const cur = document.getElementById('time-cur');
+    if (audioEl && audioEl.duration) {
+      if (audioEl.paused) {
+        const t = pageStartFraction(pageIdx) * audioEl.duration;
+        try { audioEl.currentTime = t; } catch (e) {}
+        if (cur) cur.textContent = fmtTime(t);
+      }
+    }
+  }
+  function fmtTime(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    const m = Math.floor(s/60);
+    const r = s % 60;
+    return `${m}:${r.toString().padStart(2,'0')}`;
+  }
+  // Jump straight to a target page without the horizontal slide animation
+  // (used by slider drag where multi-page jumps would otherwise queue many
+  // 300 ms slides). For ±1 navigation we still go through goPage so swipe
+  // / arrow gestures keep their animation.
+  function jumpToPage(targetIdx) {
+    if (animating) return;
+    if (targetIdx < 0) targetIdx = 0;
+    if (targetIdx >= PAGES.length) targetIdx = PAGES.length - 1;
+    if (targetIdx === pageIdx) return;
+    hidePopup();
+    clearContSelection();
+    pageIdx = targetIdx;
+    const root = document.getElementById('lesson-text');
+    if (!root) return;
+    renderInto(root, PAGES[pageIdx] || []);
+    bindWordInteractions(root);
+    buildSentenceMap(root);
+    setCurrentSentence(-1);
+    prefetchPage();
+    updateProgress();
+    syncSliderToCurrentPage();
+  }
+
   function setupAudio() {
     const playBtn = document.getElementById('play-btn');
     const speedBtn = document.getElementById('speed-btn');
@@ -3253,12 +3389,7 @@
     const tot = document.getElementById('time-tot');
     const prog = document.getElementById('prog');
 
-    function fmt(s) {
-      s = Math.max(0, Math.floor(s || 0));
-      const m = Math.floor(s/60);
-      const r = s % 60;
-      return `${m}:${r.toString().padStart(2,'0')}`;
-    }
+    function fmt(s) { return fmtTime(s); }
 
     if (LESSON && LESSON.audio_url) {
       audioEl = new Audio(LESSON.audio_url);
@@ -3316,27 +3447,50 @@
         if (audioEl.paused) audioEl.play();
         else                audioEl.pause();
       });
-      prog.addEventListener('click', (e) => {
-        const r = prog.getBoundingClientRect();
-        const pct = (e.clientX - r.left) / r.width;
-        if (audioEl.duration) audioEl.currentTime = pct * audioEl.duration;
+      // Slider drag (audio): live-preview while dragging, seek on release.
+      attachSliderDrag(prog, fill, {
+        onDrag(frac) { setSliderFraction(frac); },
+        onCommit(frac) {
+          if (audioEl.duration) audioEl.currentTime = frac * audioEl.duration;
+          // timeupdate handler picks up the new time + flips pages if needed.
+        },
       });
       speedBtn.addEventListener('click', () => {
         const i = (speeds.indexOf(speed) + 1) % speeds.length;
         speed = speeds[i]; speedBtn.textContent = speed + '×';
         audioEl.playbackRate = speed;
       });
+      // Initial slider position — if the user has previously navigated to a
+      // page (via swipe/arrow) BEFORE the audio metadata loaded, sync once
+      // metadata is available so duration is known.
+      audioEl.addEventListener('loadedmetadata', () => syncSliderToCurrentPage());
     } else {
       const text = (LESSON.body || '').trim();
       function estimateDuration() { return Math.max(2, text.length / (14 * speed)); }
       ttsDuration = estimateDuration();
       tot.textContent = fmt(ttsDuration);
+      // Slider position when not actively playing — reflects the page the
+      // user is reading, not the elapsed-since-startTTS time.
+      syncSliderToCurrentPage();
       function tick() {
         if (!ttsPlaying) return;
+        // While playing, anchor the slider on character offset (page +
+        // sentence) rather than wallclock — so it stays aligned with where
+        // we actually ARE in the lesson body.
+        const cum = pageStartCharsAt(pageIdx);
+        let sentChars = 0;
+        if (CURRENT_SENTENCE >= 0 && SENTENCE_MAP.length) {
+          for (let i = 0; i < Math.min(CURRENT_SENTENCE, SENTENCE_MAP.length); i++) {
+            sentChars += SENTENCE_MAP[i].text.length;
+          }
+        }
+        const charsDone = cum + sentChars;
+        const frac = TOTAL_CHARS ? (charsDone / TOTAL_CHARS) : 0;
+        setSliderFraction(frac);
+        // Time text mirrors the elapsed estimate (the duration is a rough
+        // estimate anyway, so we keep it).
         const elapsed = (Date.now() - ttsStartTime) / 1000;
         cur.textContent = fmt(Math.min(elapsed, ttsDuration));
-        const pct = Math.min(100, (elapsed / ttsDuration) * 100);
-        fill.style.width = pct + '%';
         if (elapsed < ttsDuration) ttsTimer = setTimeout(tick, 250);
       }
       // Sentence-by-sentence TTS so we can underline the current line as it
@@ -3400,7 +3554,61 @@
         if (ttsPlaying) { stopTTS(); startTTS(); }
         else { ttsDuration = estimateDuration(); tot.textContent = fmt(ttsDuration); }
       });
+      // Slider drag (TTS): live-preview while dragging, jump to the matching
+      // page on release. We don't auto-start playback — the user can press
+      // ▶ if they want to listen from the new spot.
+      attachSliderDrag(prog, fill, {
+        onDrag(frac) { setSliderFraction(frac); },
+        onCommit(frac) {
+          const target = pageForFraction(frac);
+          if (target !== pageIdx) {
+            // If TTS is mid-playback, stop it first so the new page starts
+            // cleanly when the user presses play again.
+            if (ttsPlaying) stopTTS();
+            jumpToPage(target);   // also calls syncSliderToCurrentPage()
+          } else {
+            // Same page — just snap the visual back to the page start.
+            syncSliderToCurrentPage();
+          }
+        },
+      });
     }
+  }
+
+  // Shared pointer-event slider drag handler. Works for mouse, touch, and
+  // stylus on every modern browser. Calls onDrag() on every move (for the
+  // live visual preview) and onCommit() once on release.
+  function attachSliderDrag(prog, fill, hooks) {
+    if (!prog) return;
+    let dragging = false;
+    function fracFrom(e) {
+      const r = prog.getBoundingClientRect();
+      const x = (e.clientX !== undefined)
+        ? e.clientX
+        : (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
+      return Math.max(0, Math.min(1, (x - r.left) / r.width));
+    }
+    prog.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      dragging = true;
+      try { prog.setPointerCapture(e.pointerId); } catch (_) {}
+      const f = fracFrom(e);
+      if (hooks.onDrag) hooks.onDrag(f);
+    });
+    prog.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const f = fracFrom(e);
+      if (hooks.onDrag) hooks.onDrag(f);
+    });
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      try { prog.releasePointerCapture(e.pointerId); } catch (_) {}
+      const f = fracFrom(e);
+      if (hooks.onCommit) hooks.onCommit(f);
+    }
+    prog.addEventListener('pointerup',     endDrag);
+    prog.addEventListener('pointercancel', endDrag);
   }
 })();
 </script>

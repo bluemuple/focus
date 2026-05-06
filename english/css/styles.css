@@ -446,16 +446,34 @@ a { color: inherit; }
 .card .progress { height: 4px; background: #f1f3f5; border-radius: 999px; overflow: hidden; margin-top: 8px;}
 .card .progress > i { display: block; height: 100%; background: var(--accent); }
 
-/* tabs under section title (Lessons / Imported / All) */
+/* tabs under section title (모든 레슨 / 찜한 레슨 / 워드 마스터 / 단어 스토리) */
 .tabrow {
   display: flex; gap: 18px; margin: -6px 0 14px; font-size: 14px;
   border-bottom: 1px solid var(--line); padding-bottom: 8px;
+  flex-wrap: wrap;                /* let extra tabs wrap to second row on phones */
 }
 .tabrow a {
   text-decoration: none; color: var(--muted); font-weight: 700; padding-bottom: 8px;
   margin-bottom: -9px; border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 .tabrow a.active { color: var(--ink); border-bottom-color: var(--ink); }
+.tabrow .tab-count {
+  margin-left: 3px;
+  font-size: 12px; font-weight: 700; color: var(--muted);
+}
+.tabrow a.active .tab-count { color: var(--ink); }
+@media (max-width: 480px) {
+  .tabrow { gap: 14px; font-size: 13px; }
+  .tabrow .tab-count { font-size: 11px; }
+}
+
+/* "다음 스토리까지 N개" hint that sits above the bar list when the
+   단어 스토리 tab is active. */
+.ws-progress-line {
+  font-size: 12px; font-weight: 600;
+  margin: -4px 0 10px;
+}
 
 /* ============== empty state ============== */
 .empty {
@@ -597,8 +615,10 @@ body.cont-bar-open .lesson-main {
   display: grid; place-items: center;
   font-weight: 800; font-size: 18px;
   color: #fff;
-  background: rgba(0, 0, 0, 0.32);   /* slight darken for legibility */
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+  /* Lighter scrim so the underlying thumbnail still shows through;
+     a stronger text-shadow keeps the digits crisp regardless. */
+  background: rgba(0, 0, 0, 0.18);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7), 0 0 6px rgba(0, 0, 0, 0.4);
   pointer-events: none;
   letter-spacing: 0.5px;
 }
@@ -634,11 +654,14 @@ body.cont-bar-open .lesson-main {
   background: #fff; border: 1px solid var(--line);
   text-decoration: none; color: var(--ink);
   font-size: 18px; flex-shrink: 0;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .05s;
 }
-.lesson-title-row .back-btn:hover { background: #f1f3f5; }
-.lesson-title-row .back-btn img {
-  width: 22px; height: 22px; object-fit: contain;
-}
+.lesson-title-row .back-btn:hover  { background: #f1f3f5; border-color: #cbd1d9; }
+.lesson-title-row .back-btn:active { background: #e5e8ec; transform: translateY(1px); }
+.lesson-title-row .back-btn svg { display: block; }
+/* Legacy <img> rule kept for any cached HTML; new markup uses inline SVG. */
+.lesson-title-row .back-btn img { width: 22px; height: 22px; object-fit: contain; }
 
 /* The lesson page no longer renders the global topbar — the back button +
    title row above the body takes its place. Hide topbar JUST on this page. */
@@ -867,10 +890,12 @@ body.cont-bar-open .lesson-main {
 /* ===== 이어서 (cont) mode =====
    Pops a card next to the selection (mobile) or fills the right sidebar
    (PC). Line spacing stays IDENTICAL to 하나씩.
-   Selected words go BOLD; the actual outline is rendered separately as
-   one or more <div class="cont-outline"> boxes (one per visual line). */
+   Selected words are framed by <div class="cont-outline"> boxes (one per
+   visual line) — they stay at the SAME weight as the surrounding text so
+   the line-height never reflows when a word is added/removed. */
 .lesson-text.mode-cont .w.cont-sel {
-  font-weight: 800;
+  /* font-weight intentionally NOT bolded — outline already conveys the
+     selection state and bolding caused subtle line-shifts. */
 }
 
 /* "이어서(밑줄)" mode (contU): inline gray Korean translation rendered in
@@ -879,7 +904,7 @@ body.cont-bar-open .lesson-main {
 .lesson-text.mode-contU { line-height: 2.7; }
 .lesson-text.mode-contU .para { margin-bottom: 18px; }
 .lesson-text.mode-contU .w.cont-sel {
-  font-weight: 800;
+  /* No bold — same reason as cont mode above. */
 }
 .lesson-text.mode-contU .cont-trans {
   font-size: 14px;
@@ -1905,10 +1930,42 @@ body.cont-bar-open .lesson-main {
   font-size: 13px;
 }
 .playbar .progress {
-  flex: 1; height: 6px; background: #eef0f3; border-radius: 999px;
-  overflow: hidden; cursor: pointer;
+  flex: 1; height: 28px;            /* generous tap area for drag */
+  background: transparent;
+  position: relative;
+  cursor: pointer;
+  touch-action: none;               /* let pointer events drive the drag, not native scroll */
+  display: flex; align-items: center;
 }
-.playbar .progress > i { display: block; height: 100%; background: var(--accent); width: 0; }
+/* Visible track */
+.playbar .progress::before {
+  content: '';
+  position: absolute; left: 0; right: 0;
+  top: 50%; transform: translateY(-50%);
+  height: 6px;
+  background: #eef0f3;
+  border-radius: 999px;
+  pointer-events: none;
+}
+.playbar .progress > i {
+  position: absolute; left: 0; top: 50%;
+  transform: translateY(-50%);
+  height: 6px; width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  pointer-events: none;
+}
+/* Thumb at the leading edge of the fill — hand-grabbable on touch. */
+.playbar .progress > i::after {
+  content: '';
+  position: absolute; right: -6px; top: 50%;
+  transform: translateY(-50%);
+  width: 14px; height: 14px;
+  border-radius: 999px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.18);
+}
 .playbar .time { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
 /* Narrow phones: tighten gaps + drop the second time so the voice +
@@ -2195,6 +2252,97 @@ body.cont-bar-open .lesson-main {
   font-size: 13px;
   min-width: 0;
 }
+
+/* ----- settings modal ----- */
+.settings-overlay .settings-card { max-width: 480px; }
+.settings-card .set-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.settings-card .set-block:first-of-type {
+  border-top: 0; padding-top: 0;
+}
+.settings-card .set-block h4 {
+  margin: 0 0 12px;
+  font-size: 14px; font-weight: 800;
+  color: var(--ink);
+}
+
+/* Stepper row: label + [-] [value] [+] aligned to the right. */
+.settings-card .set-row {
+  display: flex; align-items: center;
+  margin-bottom: 10px;
+}
+.settings-card .set-label {
+  flex: 1;
+  font-size: 14px; font-weight: 700; color: var(--ink);
+}
+.settings-card .set-stepper {
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
+.settings-card .set-stepper .btn {
+  width: 44px; height: 36px;
+  font-size: 16px; font-weight: 800;
+  font-family: 'Times New Roman', serif;
+  letter-spacing: -0.5px;
+  padding: 0;
+}
+.settings-card .set-stepper-val {
+  font-size: 15px; font-weight: 800; color: var(--ink);
+  min-width: 56px; text-align: center;
+}
+
+/* Live preview text — mirrors the lesson page styling so the user can
+   see exactly what their font / line-height choice will look like. */
+.settings-card .set-preview-label {
+  margin-top: 14px;
+  font-size: 11px; font-weight: 800;
+  text-transform: uppercase; letter-spacing: 0.6px;
+  color: var(--muted);
+}
+.settings-card .set-preview {
+  margin-top: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfc;
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 2.4;
+  max-height: 220px; overflow-y: auto;
+  transition: font-size .12s ease, line-height .12s ease;
+}
+.settings-card .set-preview .para { margin: 0; }
+
+/* Save / cancel row — primary on the right (Korean reading order). */
+.settings-card .set-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 14px;
+}
+.settings-card .set-actions .btn {
+  padding: 9px 16px; font-weight: 700;
+}
+.settings-card .set-actions .btn.primary {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.settings-card .set-actions .btn.primary:hover {
+  background: #2a3447;
+}
+
+.settings-card .set-hint { font-size: 12px; margin-top: 8px; }
+.settings-card .set-resets {
+  display: flex; flex-direction: column; gap: 8px;
+}
+.settings-card .btn.danger {
+  background: #fff;
+  border: 1px solid #f0b9b9;
+  color: #b91c1c;
+  font-weight: 700;
+}
+.settings-card .btn.danger:hover { background: #fef1f1; }
+.settings-card .btn.block { width: 100%; padding: 12px 14px; }
 
 /* ----- mastered word list ----- */
 .mw-list {

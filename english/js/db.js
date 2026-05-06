@@ -566,6 +566,30 @@
     return e;
   }
 
+  // ---------- resets (settings modal) ----------
+  // Each reset blanks both the local cache AND the cloud copy so the same
+  // user signed in on another device sees the cleared state on next sync.
+  async function resetWordStates() {
+    if (await useCloud()) {
+      try {
+        const u = await currentUser();
+        const { error } = await sb.from('word_states').delete().eq('user_id', u.id);
+        if (error) console.warn('[reset] word_states', error.message || error);
+      } catch (e) { console.warn('[reset] word_states', e); }
+    }
+    ls.set('word_states', {});
+  }
+  async function resetStreak() {
+    const blank = { lastDay: '', count: 0, days: [] };
+    ls.set('streak', blank);
+    try { await _pushUserState('streak', blank); } catch (e) {}
+  }
+  async function resetMoney() {
+    const blank = { daily: {}, expenses: [], runCount: 0, lastWord: '' };
+    ls.set('money', blank);
+    try { await _pushUserState('money', blank); } catch (e) {}
+  }
+
   // ---------- mastered words (state 5) ----------
   // Returns words with state===5 sorted by their `last` timestamp newest first.
   function listMasteredWords(wordStates) {
@@ -641,6 +665,7 @@
     getDailyHistory, listExpenses, addExpense,
     listMasteredWords,
     bootstrapUserState,
+    resetWordStates, resetStreak, resetMoney,
     useCloud,
   };
 })();

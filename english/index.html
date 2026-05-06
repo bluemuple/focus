@@ -50,35 +50,26 @@
         </button>
       </div>
 
+      <!-- 4 tabs share the same row. The first two filter the lesson
+           cards grid (모든/찜한); the last two switch the panel below to
+           a different content type (워드 마스터 chip grid / 단어 스토리
+           bar list). The "(N)" count beside the title is always shown so
+           the user can see how many items are inside. -->
       <div class="tabrow" id="lesson-tabs">
         <a href="#" class="active" data-filter="all">모든 레슨</a>
         <a href="#" data-filter="bookmarked">찜한 레슨</a>
+        <a href="#" data-filter="wm">워드 마스터 <span class="tab-count" id="wm-tab-count">(0)</span></a>
+        <a href="#" data-filter="ws">단어 스토리 <span class="tab-count" id="ws-tab-count">(0)</span></a>
       </div>
-      <div id="lessons-grid" class="cards"></div>
-    </section>
 
-    <!-- Word Master: every word the user has graduated to level 5
-         (완전히 아는 단어). Collapsed by default — tap the header button
-         to expand. The "(N)" count is always visible on the button. -->
-    <section class="section section-collapse">
-      <button class="sect-toggle" id="wm-toggle" type="button" aria-expanded="false" aria-controls="wm-body">
-        <span class="sect-title">워드 마스터 <span class="sect-count" id="wm-count">(0)</span></span>
-        <span class="sect-caret" aria-hidden="true">▾</span>
-      </button>
-      <div class="sect-body" id="wm-body" hidden>
+      <!-- Three swappable panels — only one is visible at a time, chosen
+           by the active tab above. -->
+      <div id="lessons-grid" class="cards"></div>
+      <div id="wm-section" hidden>
         <div id="wm-grid" class="wm-grid"></div>
       </div>
-    </section>
-
-    <!-- Word Stories: tiny lessons auto-generated whenever the user crosses
-         a mastered-word threshold. Same collapsible pattern as 워드 마스터. -->
-    <section class="section section-collapse">
-      <button class="sect-toggle" id="ws-toggle" type="button" aria-expanded="false" aria-controls="ws-body">
-        <span class="sect-title">단어 스토리 <span class="sect-count" id="ws-count">(0)</span></span>
-        <span class="sect-meta" id="ws-progress"></span>
-        <span class="sect-caret" aria-hidden="true">▾</span>
-      </button>
-      <div class="sect-body" id="ws-body" hidden>
+      <div id="ws-section" hidden>
+        <div class="ws-progress-line muted" id="ws-progress"></div>
         <div id="ws-list" class="ws-list"></div>
       </div>
     </section>
@@ -125,11 +116,166 @@
       so.textContent = '로그아웃';
     }
     so.onclick = () => Auth.signOutAndReload();
+
+    // Tapping the account chip opens the settings panel.
+    if (chip) {
+      chip.style.cursor = 'pointer';
+      chip.onclick = (e) => {
+        // Don't open settings when the user is actually clicking the
+        // sign-out button that lives next to the chip.
+        if (e.target === so || (so && so.contains(e.target))) return;
+        openSettingsModal();
+      };
+    }
+  }
+
+  // ===== Settings modal =====
+  // Lives on the home page only; opened by tapping the account chip.
+  //   • 레슨 글자 크기 (font-size) and 행간 (line-height) pickers with a
+  //     LIVE preview paragraph below — the preview re-renders as the user
+  //     clicks +/-. Changes only persist when 저장 is tapped.
+  //   • Three 초기화 buttons that wipe word colours / streak / money
+  //     locally AND in the cloud.
+  const FONT_KEY = 'eng.v1.lessonFontPx';
+  const LH_KEY   = 'eng.v1.lessonLineHeight';
+  const FONT_DEFAULT = 18;
+  const LH_DEFAULT   = 2.4;
+  function getLessonFontPx() {
+    const n = parseFloat(localStorage.getItem(FONT_KEY) || '');
+    return (Number.isFinite(n) && n >= 12 && n <= 40) ? n : FONT_DEFAULT;
+  }
+  function getLessonLineHeight() {
+    const n = parseFloat(localStorage.getItem(LH_KEY) || '');
+    return (Number.isFinite(n) && n >= 1.2 && n <= 3.6) ? n : LH_DEFAULT;
+  }
+
+  function openSettingsModal() {
+    // Pending values — user's edits stay LOCAL to the modal until 저장.
+    let pendFont = getLessonFontPx();
+    let pendLH   = getLessonLineHeight();
+
+    const overlay = document.createElement('div');
+    overlay.className = 'status-overlay settings-overlay';
+    overlay.innerHTML = `
+      <div class="status-card settings-card">
+        <button class="sc-close" aria-label="닫기">×</button>
+        <h3>⚙ 환경 설정</h3>
+
+        <section class="set-block">
+          <h4>레슨 페이지</h4>
+
+          <div class="set-row">
+            <span class="set-label">글자 크기</span>
+            <div class="set-stepper">
+              <button class="btn" id="set-font-down" type="button">A−</button>
+              <span class="set-stepper-val" id="set-font-val">18px</span>
+              <button class="btn" id="set-font-up"   type="button">A+</button>
+            </div>
+          </div>
+
+          <div class="set-row">
+            <span class="set-label">행간</span>
+            <div class="set-stepper">
+              <button class="btn" id="set-lh-down" type="button">−</button>
+              <span class="set-stepper-val" id="set-lh-val">2.4</span>
+              <button class="btn" id="set-lh-up"   type="button">+</button>
+            </div>
+          </div>
+
+          <div class="set-preview-label">미리보기</div>
+          <div class="set-preview" id="set-preview"><p class="para">
+            The morning sun rose over the hills. She opened her notebook and began to write. Every word felt important now — a small step toward something she could not yet name.
+          </p></div>
+
+          <div class="set-actions">
+            <button class="btn"           id="set-cancel" type="button">취소</button>
+            <button class="btn primary"   id="set-save"   type="button">저장</button>
+          </div>
+        </section>
+
+        <section class="set-block">
+          <h4>초기화</h4>
+          <div class="set-resets">
+            <button class="btn danger block" id="reset-words"  type="button">🎨 단어 색깔 초기화</button>
+            <button class="btn danger block" id="reset-streak" type="button">🔥 연속 학습일 초기화</button>
+            <button class="btn danger block" id="reset-money"  type="button">💰 NZD 모은 돈 초기화</button>
+          </div>
+          <p class="muted set-hint">초기화는 되돌릴 수 없습니다. 클라우드에 동기화된 데이터도 함께 지워집니다.</p>
+        </section>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    function close() {
+      overlay.remove();
+      document.removeEventListener('keydown', onKey);
+    }
+    function onKey(e) { if (e.key === 'Escape') close(); }
+    document.addEventListener('keydown', onKey);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('.sc-close')) close();
+    });
+
+    // ----- font / line-height steppers + live preview -----
+    const fontVal = overlay.querySelector('#set-font-val');
+    const lhVal   = overlay.querySelector('#set-lh-val');
+    const preview = overlay.querySelector('#set-preview');
+    function applyPreview() {
+      fontVal.textContent = pendFont + 'px';
+      lhVal.textContent   = pendLH.toFixed(1);
+      preview.style.fontSize   = pendFont + 'px';
+      preview.style.lineHeight = String(pendLH);
+    }
+    applyPreview();
+    function bumpFont(d) {
+      pendFont = Math.max(12, Math.min(40, pendFont + d));
+      applyPreview();
+    }
+    function bumpLH(d) {
+      // Steps of 0.2 keep the value readable (1.6, 1.8, 2.0, …).
+      pendLH = Math.max(1.4, Math.min(3.4, Math.round((pendLH + d) * 10) / 10));
+      applyPreview();
+    }
+    overlay.querySelector('#set-font-down').onclick = () => bumpFont(-2);
+    overlay.querySelector('#set-font-up'  ).onclick = () => bumpFont(+2);
+    overlay.querySelector('#set-lh-down'  ).onclick = () => bumpLH(-0.2);
+    overlay.querySelector('#set-lh-up'    ).onclick = () => bumpLH(+0.2);
+
+    overlay.querySelector('#set-cancel').onclick = close;
+    overlay.querySelector('#set-save').onclick = () => {
+      try {
+        localStorage.setItem(FONT_KEY, String(pendFont));
+        localStorage.setItem(LH_KEY,   String(pendLH));
+      } catch (e) {}
+      close();
+    };
+
+    // ----- reset buttons -----
+    overlay.querySelector('#reset-words').onclick = async () => {
+      if (!confirm('모든 단어의 색깔(학습 단계)을 초기화할까요? 되돌릴 수 없어요.')) return;
+      await DB.resetWordStates();
+      await renderMasterAndStories();
+      alert('단어 색깔이 초기화됐어요.');
+    };
+    overlay.querySelector('#reset-streak').onclick = async () => {
+      if (!confirm('연속 학습일 기록을 초기화할까요?')) return;
+      await DB.resetStreak();
+      const states = await DB.loadWordStates();
+      refreshStatusNumbers(states);
+      alert('연속 학습일이 초기화됐어요.');
+    };
+    overlay.querySelector('#reset-money').onclick = async () => {
+      if (!confirm('NZD 모은 돈을 초기화할까요? 모든 적립과 지출 기록이 삭제됩니다.')) return;
+      await DB.resetMoney();
+      const states = await DB.loadWordStates();
+      refreshStatusNumbers(states);
+      alert('모은 돈이 초기화됐어요.');
+    };
   }
 
   // ---- home content ----
   let ALL_LESSONS = [];
-  let CURRENT_FILTER = 'all';   // 'all' | 'bookmarked'
+  let CURRENT_FILTER = 'all';   // 'all' | 'bookmarked' | 'wm' | 'ws'
 
   async function renderHome() {
     const grid = document.getElementById('lessons-grid');
@@ -354,40 +500,18 @@
     refreshStatusNumbers(states);
     paintWordMaster(states);
     paintWordStories(states);
-    setupCollapsibleSections();
-  }
-
-  // Wires the click-to-expand behaviour for 워드 마스터 and 단어 스토리.
-  // Called every renderHome() but the listeners are idempotent (we re-bind
-  // via .onclick = … which replaces any previous handler).
-  function setupCollapsibleSections() {
-    const pairs = [
-      { btn: 'wm-toggle', body: 'wm-body' },
-      { btn: 'ws-toggle', body: 'ws-body' },
-    ];
-    for (const p of pairs) {
-      const btn  = document.getElementById(p.btn);
-      const body = document.getElementById(p.body);
-      if (!btn || !body) continue;
-      btn.onclick = () => {
-        const open = body.hidden;
-        body.hidden = !open;
-        btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-      };
-    }
   }
 
   // ===== 워드 마스터 — every word at state 5. =====
   function paintWordMaster(states) {
     const grid = document.getElementById('wm-grid');
-    const count = document.getElementById('wm-count');
+    const count = document.getElementById('wm-tab-count');
     const mastered = Object.entries(states || {})
       .filter(([_, v]) => v && v.state === 5)
       .map(([w]) => w)
       .sort();
-    // Always show the parenthesised count — even (0) — so the button
-     // header makes its purpose clear when the section is collapsed.
-    count.textContent = `(${mastered.length})`;
+    // Always show the parenthesised count — even (0) — on the tab pill.
+    if (count) count.textContent = `(${mastered.length})`;
     if (!mastered.length) {
       grid.innerHTML = `<div class="empty">
         <p>아직 완전히 아는 단어가 없어요.<br>레슨에서 단어를 ✓ 로 표시하면 여기에 모입니다.</p>
@@ -497,14 +621,14 @@
 
   function paintWordStories(states) {
     const list     = document.getElementById('ws-list');
-    const count    = document.getElementById('ws-count');
+    const count    = document.getElementById('ws-tab-count');
     const progress = document.getElementById('ws-progress');
     const stories  = DB.listStories();
     const masteredCount = DB.countMastered(states);
     const nextThreshold = DB.thresholdForNthStory(stories.length + 1);
     const remaining = Math.max(0, nextThreshold - masteredCount);
-    // Count goes into the toggle button next to the title; the "다음
-    // 스토리까지 N개" hint sits inline as a small subtitle.
+    // Count goes into the tab pill next to the title; the "다음 스토리까지
+    // N개" hint sits as a small subtitle above the bar list.
     if (count)    count.textContent    = `(${stories.length})`;
     if (progress) progress.textContent = `다음 스토리까지 ${remaining}개`;
 
@@ -564,9 +688,32 @@
     });
   }
 
+  // Renders the panel that matches CURRENT_FILTER. Lesson grid + WM grid +
+  // WS list are siblings in the DOM; we just toggle [hidden] so switching
+  // tabs is instant (the grids are kept up-to-date by paintWordMaster /
+  // paintWordStories on every renderHome).
   function paintGrid() {
-    const grid = document.getElementById('lessons-grid');
+    const grid   = document.getElementById('lessons-grid');
+    const wmSec  = document.getElementById('wm-section');
+    const wsSec  = document.getElementById('ws-section');
+    // Always clear any previous "empty state" before deciding what to show.
     grid.parentElement.querySelectorAll('.empty').forEach(el => el.remove());
+
+    if (CURRENT_FILTER === 'wm') {
+      grid.hidden  = true;
+      wmSec.hidden = false;
+      wsSec.hidden = true;
+      return;
+    }
+    if (CURRENT_FILTER === 'ws') {
+      grid.hidden  = true;
+      wmSec.hidden = true;
+      wsSec.hidden = false;
+      return;
+    }
+    grid.hidden  = false;
+    wmSec.hidden = true;
+    wsSec.hidden = true;
     grid.innerHTML = '';
 
     let lessons = ALL_LESSONS;
