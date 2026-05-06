@@ -171,5 +171,13 @@
     location.href = 'index.html';
   }
 
-  window.Auth = { gate, signOutAndReload, isAuthed };
+  // Forcibly opens the sign-in / sign-up modal regardless of try-mode or
+  // existing session. Used when the user taps the "게스트 / 체험 모드"
+  // chip on the home page — they want to upgrade from try-mode to a real
+  // account, so we always show the form even though isAuthed() is true.
+  function showModal(onAuthed) {
+    renderModal(onAuthed || (() => location.reload()));
+  }
+
+  window.Auth = { gate, signOutAndReload, isAuthed, showModal };
 })();

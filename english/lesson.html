@@ -186,20 +186,31 @@
        sentence 0; ⏮ jumps to the start of the previous sentence; ⏭ to
        the start of the next sentence (stops on the very last sentence
        but keeps the page visible). All four sentence-step buttons use
-       PNG icons from the images/ folder. -->
+       inline SVG icons that inherit currentColor — they scale crisply at
+       any button size without bringing in PNG aspect-ratio surprises. -->
   <div class="playbar" id="playbar" hidden>
     <button class="pb-btn pb-play" id="play-btn" aria-label="재생/일시정지" title="재생/일시정지">
-      <img src="images/play.png" alt="재생">
+      <svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <polygon points="6 4 20 12 6 20"/>
+      </svg>
     </button>
     <button class="pb-btn" id="pb-stop" aria-label="정지" title="정지 (처음으로)">
-      <img src="images/stop.png" alt="정지">
+      <svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="5" y="5" width="14" height="14" rx="1.2"/>
+      </svg>
     </button>
     <button class="pb-btn" id="pb-prev" aria-label="이전 문장" title="이전 문장">
-      <img src="images/previous.png" alt="이전 문장">
+      <svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="5" y="5" width="2.4" height="14"/>
+        <polygon points="20 5 8 12 20 19"/>
+      </svg>
     </button>
     <span class="pb-counter" id="pb-counter" aria-label="문장 위치">— / —</span>
     <button class="pb-btn" id="pb-next" aria-label="다음 문장" title="다음 문장">
-      <img src="images/next.png" alt="다음 문장">
+      <svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <polygon points="4 5 16 12 4 19"/>
+        <rect x="16.6" y="5" width="2.4" height="14"/>
+      </svg>
     </button>
     <span class="pb-spacer"></span>
     <button class="pb-btn"          id="speed-btn" title="재생 속도">1×</button>
@@ -1689,6 +1700,19 @@
       el.classList.toggle('mode-single', MODE === 'single');
     });
   }
+
+  // Stamps the user's saved font-size + line-height onto a fresh
+  // .lesson-text element. Called whenever a new live element is created
+  // (swipe peek + page-slide newRoot) so the user's preference survives
+  // page transitions. Without this, swiping to the next page reverts the
+  // text to the CSS default.
+  function applyTextStyleVars(el) {
+    if (!el) return;
+    const px = parseFloat(localStorage.getItem('eng.v1.lessonFontPx')   || '');
+    const lh = parseFloat(localStorage.getItem('eng.v1.lessonLineHeight') || '');
+    if (Number.isFinite(px) && px >= 12 && px <= 40)   el.style.fontSize   = px + 'px';
+    if (Number.isFinite(lh) && lh >= 1.2 && lh <= 3.6) el.style.lineHeight = String(lh);
+  }
   function setupToggles() {
     // Each control in .head-tools is a single-button "flip" / cycle toggle.
     // (Visual: pale sky-blue pill, never black.)
@@ -1927,6 +1951,7 @@
     peekRoot.className = 'lesson-text';
     if (MODE === 'cont')  peekRoot.classList.add('mode-cont');
     if (MODE === 'contU') peekRoot.classList.add('mode-contU');
+    applyTextStyleVars(peekRoot);         // keep user's font / line-height during swipe
     renderInto(peekRoot, PAGES[pageIdx + direction] || []);
 
     const width = currentRoot.offsetWidth;
@@ -2286,12 +2311,14 @@
 
     // Overlay "current/total" on the thumbnail when the lesson spans
     // multiple pages. The thumb is also force-shown for paginated lessons
-    // even if the user hasn't uploaded an image — the page indicator is
-    // useful enough on its own to warrant a gray placeholder box.
+    // even if the user hasn't uploaded an image. In that case the box
+    // becomes transparent (no gray placeholder, no dark scrim) and the
+    // page text renders in plain black — see the .no-thumb CSS below.
     const tp    = document.getElementById('thumb-pages');
     const thumb = document.getElementById('lesson-thumb-img');
     const hasThumbImg = !!(LESSON && LESSON.thumbnail_url);
     if (tp && thumb) {
+      thumb.classList.toggle('no-thumb', !hasThumbImg);
       if (total > 1) {
         tp.textContent = cur + ' / ' + total;
         tp.hidden = false;
@@ -2323,6 +2350,7 @@
     if (MODE === 'cont')  newRoot.classList.add('mode-cont');
     if (MODE === 'contU') newRoot.classList.add('mode-contU');
     newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
+    applyTextStyleVars(newRoot);          // keep user's font / line-height
     pageIdx = next;
     renderInto(newRoot, PAGES[pageIdx] || []);
     wrap.appendChild(newRoot);
@@ -3475,14 +3503,23 @@
     const nextBtn  = document.getElementById('pb-next');
     const stopBtn  = document.getElementById('pb-stop');
 
-    // The play button toggles between play.png (paused state) and a unicode
-    // ⏸ glyph (playing state). We don't have a pause.png so the glyph is
-    // styled in CSS to match the icon's visual weight.
+    // Toggles the play button between a ▶ (paused state) and ⏸ (playing
+    // state) inline SVG. Both share the same .pb-icon size so the button
+    // never resizes between states.
     function setPlayBtnIcon(isPlaying) {
       if (!playBtn) return;
-      playBtn.innerHTML = isPlaying
-        ? '<span class="pb-pause-glyph" aria-hidden="true">⏸</span>'
-        : '<img src="images/play.png" alt="재생">';
+      if (isPlaying) {
+        playBtn.innerHTML =
+          '<svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+          '<rect x="6" y="4" width="4" height="16" rx="1"/>' +
+          '<rect x="14" y="4" width="4" height="16" rx="1"/>' +
+          '</svg>';
+      } else {
+        playBtn.innerHTML =
+          '<svg class="pb-icon" viewBox="0 0 24 24" aria-hidden="true">' +
+          '<polygon points="6 4 20 12 6 20"/>' +
+          '</svg>';
+      }
     }
 
     // ----- audio_url branch (recorded audio file) -----
