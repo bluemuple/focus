@@ -180,21 +180,29 @@
   </div>
 
   <!-- Audio playback bar (hidden until the play button on the lesson bar
-       is pressed). Sentence-step interface:
-         [⏮ prev sentence][⏹ stop+reset][▶/⏸][3 / 12 counter][⏭ next sentence]
-       Plus speed / voice / × on the right.
+       is pressed). Sentence-step interface, ordered:
+         [▶/⏸ play][⏹ stop][⏮ prev][3 / 12 counter][⏭ next][1× speed][F voice][× close]
        Pressing ▶ resumes from where we paused; ⏹ resets to page 0
        sentence 0; ⏮ jumps to the start of the previous sentence; ⏭ to
        the start of the next sentence (stops on the very last sentence
-       but keeps the page visible). -->
+       but keeps the page visible). All four sentence-step buttons use
+       PNG icons from the images/ folder. -->
   <div class="playbar" id="playbar" hidden>
-    <button class="pb-btn"   id="pb-prev"    aria-label="이전 문장" title="이전 문장">⏮</button>
-    <button class="pb-btn"   id="pb-stop"    aria-label="정지"     title="정지 (처음으로)">⏹</button>
-    <button class="pb-btn pb-play" id="play-btn" aria-label="재생/일시정지">▶</button>
+    <button class="pb-btn pb-play" id="play-btn" aria-label="재생/일시정지" title="재생/일시정지">
+      <img src="images/play.png" alt="재생">
+    </button>
+    <button class="pb-btn" id="pb-stop" aria-label="정지" title="정지 (처음으로)">
+      <img src="images/stop.png" alt="정지">
+    </button>
+    <button class="pb-btn" id="pb-prev" aria-label="이전 문장" title="이전 문장">
+      <img src="images/previous.png" alt="이전 문장">
+    </button>
     <span class="pb-counter" id="pb-counter" aria-label="문장 위치">— / —</span>
-    <button class="pb-btn"   id="pb-next"    aria-label="다음 문장" title="다음 문장">⏭</button>
+    <button class="pb-btn" id="pb-next" aria-label="다음 문장" title="다음 문장">
+      <img src="images/next.png" alt="다음 문장">
+    </button>
     <span class="pb-spacer"></span>
-    <button class="pb-btn"        id="speed-btn" title="재생 속도">1×</button>
+    <button class="pb-btn"          id="speed-btn" title="재생 속도">1×</button>
     <button class="pb-btn pb-voice" id="voice-btn" title="목소리 선택">F</button>
     <button class="pb-btn pb-close" id="pb-close" aria-label="플레이바 닫기">×</button>
   </div>
@@ -2353,6 +2361,42 @@
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
 
+    // ===== Playbar shortcuts (highest priority when playbar is visible) =====
+    //   Space        → play / pause toggle
+    //   ←            → previous sentence (re-reads from start)
+    //   →            → next sentence (stops on the last one)
+    //   Esc          → close the playbar (returns to the lesson-bar)
+    // We DON'T intercept when the popup card is up — the card has its own
+    // Space / Enter / Esc shortcuts that should win.
+    const playbar = document.getElementById('playbar');
+    const popVisible = (typeof POP !== 'undefined') && POP && !POP.hidden;
+    if (playbar && !playbar.hidden && !popVisible) {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const pb = document.getElementById('play-btn');
+        if (pb) pb.click();
+        return;
+      }
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const pv = document.getElementById('pb-prev');
+        if (pv) pv.click();
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const nx = document.getElementById('pb-next');
+        if (nx) nx.click();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        const cl = document.getElementById('pb-close');
+        if (cl) cl.click();
+        return;
+      }
+    }
+
     // Esc clears whatever's selected and closes the popup / sidebar:
     //   • 이어서 / 이어서밑줄 — drops the running multi-word selection
     //   • 하나씩            — drops the .active cursor under the popup
@@ -3431,6 +3475,16 @@
     const nextBtn  = document.getElementById('pb-next');
     const stopBtn  = document.getElementById('pb-stop');
 
+    // The play button toggles between play.png (paused state) and a unicode
+    // ⏸ glyph (playing state). We don't have a pause.png so the glyph is
+    // styled in CSS to match the icon's visual weight.
+    function setPlayBtnIcon(isPlaying) {
+      if (!playBtn) return;
+      playBtn.innerHTML = isPlaying
+        ? '<span class="pb-pause-glyph" aria-hidden="true">⏸</span>'
+        : '<img src="images/play.png" alt="재생">';
+    }
+
     // ----- audio_url branch (recorded audio file) -----
     if (LESSON && LESSON.audio_url) {
       audioEl = new Audio(LESSON.audio_url);
@@ -3465,10 +3519,10 @@
         }
       });
       audioEl.addEventListener('ended', () => {
-        playBtn.textContent = '▶';
+        setPlayBtnIcon(false);
       });
-      audioEl.addEventListener('pause', () => { playBtn.textContent = '▶'; });
-      audioEl.addEventListener('play',  () => { playBtn.textContent = '⏸'; });
+      audioEl.addEventListener('pause', () => { setPlayBtnIcon(false); });
+      audioEl.addEventListener('play',  () => { setPlayBtnIcon(true); });
       playBtn.addEventListener('click', () => {
         if (audioEl.paused) audioEl.play();
         else                audioEl.pause();
@@ -3486,7 +3540,7 @@
       async function startTTSFromCurrent() {
         if (ttsPlaying) return;
         ttsPlaying = true;
-        playBtn.textContent = '⏸';
+        setPlayBtnIcon(true);
         // If we're cold-starting (no current sentence), begin at sentence 0.
         if (CURRENT_SENTENCE < 0) setCurrentSentence(0);
 
@@ -3514,12 +3568,12 @@
           });
         }
         ttsPlaying = false;
-        playBtn.textContent = '▶';
+        setPlayBtnIcon(false);
       }
       function pauseTTS() {
         ttsPlaying = false;
         TTS.stop();
-        playBtn.textContent = '▶';
+        setPlayBtnIcon(false);
       }
       playBtn.addEventListener('click', () => {
         if (ttsPlaying) pauseTTS();
@@ -3555,7 +3609,7 @@
     // Stops whatever's currently making sound. Used before seeking so the
     // old sentence doesn't keep speaking after we jumped to a new spot.
     function stopAnyPlayback() {
-      if (ttsPlaying) { ttsPlaying = false; TTS.stop(); playBtn.textContent = '▶'; }
+      if (ttsPlaying) { ttsPlaying = false; TTS.stop(); setPlayBtnIcon(false); }
       if (audioEl && !audioEl.paused) { try { audioEl.pause(); } catch (e) {} }
     }
     // Common path for ⏮ / ⏭ : move + start playback from the new sentence.
@@ -3593,7 +3647,7 @@
       }
       jumpToPage(0);
       setCurrentSentence(-1);
-      playBtn.textContent = '▶';
+      setPlayBtnIcon(false);
       updateSentenceCounter();
     });
 
