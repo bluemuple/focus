@@ -1320,15 +1320,22 @@
       }).catch(() => {});
     }
 
-    // Rich GPT word info — mnemonic, examples, collocations, ko meaning.
+    // Rich GPT word info — mnemonic, examples, collocations.
+    // No sentence passed → cache key is just the word, so the SAME word
+    // re-clicked (or seen in another sentence) is an instant cache hit.
+    // Contextual Korean meaning still comes from Translate.translate
+    // above (which uses sentence properly).
     if (Translate.getWordInfo) {
-      Translate.getWordInfo(word, sentence).then(info => {
+      Translate.getWordInfo(word).then(info => {
         if (_sheetWord !== word) return;
         if (!info) {
           if (mnemEl) mnemEl.innerHTML = '<span class="muted">암기 팁을 불러오지 못했어요.</span>';
           return;
         }
-        if (info.ko && meaningEl) meaningEl.textContent = info.ko;
+        // Don't override meaningEl from info.ko — Translate.translate
+        // above already filled it with the CONTEXT-aware meaning. info.ko
+        // (with no sentence passed) would be the generic most-common
+        // sense, which is potentially less accurate for this sentence.
         // Mnemonic is OPTIONAL now (GPT omits when no good strategy fits).
         if (info.mnemonic && info.mnemonic.text) {
           renderMnemonic(mnemEl, info.mnemonic);
@@ -1522,9 +1529,12 @@
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     }
 
-    // Rich GPT info — single words only. Falls back gracefully on null.
+    // Rich GPT info — single words only. Cache key is just the word
+    // (we pass NO sentence) so cross-sentence reuse is automatic. The
+    // contextual Korean meaning above (Translate.translate with sentence)
+    // is the source of truth for transEl. Falls back gracefully on null.
     if (!isPhrase && Translate.getWordInfo) {
-      Translate.getWordInfo(text, sentence).then(info => {
+      Translate.getWordInfo(text).then(info => {
         if (!info) return;
         // User may have moved on — bail if the displayed word changed.
         const cur = document.getElementById('ls-word');
@@ -1538,7 +1548,9 @@
           tag.textContent = info.pos;
           posTags.appendChild(tag);
         }
-        if (info.ko && transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(info.ko) + '</span>';
+        // Don't override transEl — Translate.translate already filled it
+        // with the contextual meaning. info.ko (no sentence) would be
+        // generic.
         if (info.mnemonic && info.mnemonic.text) {
           renderMnemonic(mnEl, info.mnemonic);
           if (mnBlock) mnBlock.hidden = false;
@@ -2452,13 +2464,14 @@
   function prefetchWordInfo(token) {
     if (!window.Translate || !Translate.getWordInfo) return;
     if (!SENTENCE_MAP || !SENTENCE_MAP.length) return;
-    const PREFETCH_CAP = 30;
+    const PREFETCH_CAP = 25;
     const MAX_CONCURRENT = 3;
     const seen = new Set();
     const queue = [];
+    // Dedupe by WORD only (no sentence). The same word in 5 sentences is
+    // fetched once — its dictionary data is identical regardless of
+    // context. Big cache-hit win on pages with repeated words.
     for (const s of SENTENCE_MAP) {
-      const sentenceText = (s.text || '').trim();
-      if (!sentenceText) continue;
       for (const wEl of (s.words || [])) {
         if (!wEl || !wEl.classList || !wEl.classList.contains('w')) continue;
         if (wEl.classList.contains('punct')) continue;
@@ -2466,13 +2479,12 @@
         if (!word || word.length < 3) continue;       // skip "to", "I", "a"
         const v = WORD_STATES[word];
         const st = v && v.state;
-        // Skip mastered (5), ignored (-1), and "배운 단어" (4) — user is
+        // Skip mastered (5), ignored (-1), and "배운 단어" (4) — user
         // unlikely to re-click these.
         if (st === 5 || st === -1 || st === 4) continue;
-        const key = word + '|' + sentenceText;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        queue.push({ word, sentence: sentenceText });
+        if (seen.has(word)) continue;
+        seen.add(word);
+        queue.push(word);
         if (queue.length >= PREFETCH_CAP) break;
       }
       if (queue.length >= PREFETCH_CAP) break;
@@ -2483,9 +2495,9 @@
       // Page changed? abort remaining work.
       if (token !== _prefetchToken) return;
       while (active < MAX_CONCURRENT && queue.length > 0) {
-        const job = queue.shift();
+        const word = queue.shift();
         active++;
-        Translate.getWordInfo(job.word, job.sentence).catch(() => {}).finally(() => {
+        Translate.getWordInfo(word).catch(() => {}).finally(() => {
           active--;
           // Yield to the browser between calls so we never starve clicks.
           if (typeof requestIdleCallback === 'function') requestIdleCallback(drain);
@@ -3294,12 +3306,36 @@
       // Capped at $2/day inside DB.recordMoneyClick.
       try { DB.recordMoneyClick && DB.recordMoneyClick(word); } catch (e) {}
 
-      // Always advance the learning state on a real click.
-      const upd = await DB.clickWord(word);
-      WORD_STATES[word.toLowerCase()] = { state: upd.state, last: upd.last };
+      // Predict the new state from the local cache so we can recolour the
+      // word + open the sheet IMMEDIATELY, then reconcile in the background
+      // when DB.clickWord finally returns from Supabase. Without this, the
+      // sheet had to wait for two Supabase round-trips (~300 ms) before
+      // it could even appear.
+      const lower = word.toLowerCase();
+      const prevState = (WORD_STATES[lower] && WORD_STATES[lower].state);
+      let predicted;
+      if (prevState === undefined || prevState === null) predicted = 0;
+      else if (prevState === 0)                          predicted = 1;
+      else                                                predicted = prevState;
+      WORD_STATES[lower] = { state: predicted, last: '' };
       ['s1','s2','s3','s4','s5','sx'].forEach(c => w.classList.remove(c));
-      const cls = classFor(upd.state);
-      if (cls) w.classList.add(cls);
+      const predictedCls = classFor(predicted);
+      if (predictedCls) w.classList.add(predictedCls);
+
+      // Fire the actual state bump in the background — reconcile the
+      // colour + WORD_STATES if our prediction was wrong (rare).
+      const wDataElems = root;
+      DB.clickWord(word).then((upd) => {
+        if (!upd) return;
+        WORD_STATES[lower] = { state: upd.state, last: upd.last };
+        if (upd.state !== predicted) {
+          const escW = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(lower) : lower;
+          (wDataElems || document).querySelectorAll('[data-word="' + escW + '"]').forEach(el => {
+            ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
+            const cls = classFor(upd.state); if (cls) el.classList.add(cls);
+          });
+        }
+      }).catch(() => {});
 
       if (MODE === 'cont' || MODE === 'contU') {
         // Both 이어서 modes share the same selection rules. Routing to the
