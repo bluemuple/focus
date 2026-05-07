@@ -37,10 +37,12 @@ Deno.serve(async (req) => {
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
 
     // Compact system prompt — same schema, less noise = faster TTFT.
+    // Mnemonic field intentionally dropped: chunk-gpt + the chunk-tx
+    // panel give the user better context than forced one-liner mnemonics.
+    // Removing it shaves ~80 tokens of output and ~60-100 ms TTFT.
     const sys = [
       "Bilingual English→Korean dictionary for Korean learners. JSON only.",
       "PLAIN TEXT — never use markdown (no **bold**, no *italic*, no `code`).",
-      "If you need to emphasise a fragment, put it in the `highlights` array.",
       "",
       "Keys:",
       "- lemma (string), ipa (slashes included), level (A1-C2), pos.",
@@ -48,21 +50,6 @@ Deno.serve(async (req) => {
       "- senses: 3-5 frequency-sorted [{pos, ko, example}].",
       "- collocations: 4 frequent [{phrase: includes lemma, ko}].",
       "- examples: 2 fresh [{en, ko}].",
-      "- mnemonic: OPTIONAL — only include if ONE of these THREE strategies",
-      "  produces a USEFUL tip; OMIT the field entirely otherwise (don't",
-      "  pad with weak generalities like \"순간을 기억하자, 소중한 순간!\"):",
-      "    1) Etymology breakdown — only when the word has a CLEAR morpheme",
-      "       structure (per-/pre-/sub- + Latin/Greek root). Skip simple",
-      "       Anglo-Saxon words like \"name\", \"moment\", \"go\".",
-      "    2) Antonym pair — only when a clear, useful antonym exists",
-      "       (e.g. persuade ↔ dissuade, ascend ↔ descend).",
-      "    3) Korean sound association — only when the English pronunciation",
-      "       genuinely maps to a Korean phrase that hints the meaning",
-      "       (e.g. gloomy → \"구름이 끼어 우울\"). Don't force it for",
-      "       words that don't naturally map.",
-      "  text: under 60 chars, plain text. highlights: substrings inside",
-      "  text to colour-emphasise (etymology fragments or sound-mapped",
-      "  parts only; not Korean particles like \"이\", \"가\", \"의\").",
       "",
       "If sentence given, also:",
       "- phraseChunk: {text, indices: [start, end]} = syntactic group containing",
@@ -86,9 +73,9 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.4,
-        // Trimmed from 900 → 600 — typical responses fit in 400-500 tokens
-        // and a smaller cap lets the API stop generating sooner = faster.
-        max_tokens: 600,
+        // 450 caps the response just above what the trimmed schema needs
+        // (no mnemonic) — smaller cap = API stops sooner = faster.
+        max_tokens: 450,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: sys },

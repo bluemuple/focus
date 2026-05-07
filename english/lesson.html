@@ -228,17 +228,20 @@
     <div class="ws-panel" id="ws-panel-co" data-panel="co" hidden>
       <ul class="ws-list ws-collocs" id="ws-collocs"></ul>
     </div>
+  </div>
 
-    <!-- Level / heart popover — appears when ●level is tapped -->
-    <div class="ws-level-pop" id="ws-level-pop" hidden>
-      <button class="ws-lvl ws-lvl-trash" data-state="-1" aria-label="무시">🗑</button>
-      <button class="ws-lvl" data-state="1" style="background:var(--word-1)">1</button>
-      <button class="ws-lvl" data-state="2" style="background:var(--word-2)">2</button>
-      <button class="ws-lvl" data-state="3" style="background:var(--word-3)">3</button>
-      <button class="ws-lvl" data-state="4" style="background:var(--word-4)">4</button>
-      <button class="ws-lvl ws-lvl-check" data-state="5" aria-label="완전히 아는 단어">✓</button>
-      <button class="ws-lvl ws-lvl-heart" id="ws-heart" aria-label="단어 퀴즈에 추가">♡</button>
-    </div>
+  <!-- Level / heart popover — sibling of the sheet, NOT a child. The
+       sheet has `overflow-y: auto` for long content; if the popover
+       lived inside, its `bottom:100%` position would be clipped by the
+       sheet's overflow box. Positioned via JS each time it shows. -->
+  <div class="ws-level-pop" id="ws-level-pop" hidden>
+    <button class="ws-lvl ws-lvl-trash" data-state="-1" aria-label="무시">🗑</button>
+    <button class="ws-lvl" data-state="1" style="background:var(--word-1)">1</button>
+    <button class="ws-lvl" data-state="2" style="background:var(--word-2)">2</button>
+    <button class="ws-lvl" data-state="3" style="background:var(--word-3)">3</button>
+    <button class="ws-lvl" data-state="4" style="background:var(--word-4)">4</button>
+    <button class="ws-lvl ws-lvl-check" data-state="5" aria-label="완전히 아는 단어">✓</button>
+    <button class="ws-lvl ws-lvl-heart" id="ws-heart" aria-label="단어 퀴즈에 추가">♡</button>
   </div>
 
   <!-- Mobile cont-mode sticky translation panel. Replaces the popup card
@@ -928,6 +931,9 @@
       renderSidebarWordList(empty);
     }
     SIDEBAR_PHRASE = null;
+    // Drop the focus glow + chunk highlight on the body too — sidebar
+    // empty state means no active selection.
+    clearWordFocus();
   }
 
   // ---- mobile cont sticky bottom bar ----
@@ -1255,10 +1261,40 @@
       }
     }
     refreshLevelTab();
+    function positionLevelPop() {
+      if (!lp || !levelTab) return;
+      // Anchor above the level-tab button with 6px breathing room.
+      const r = levelTab.getBoundingClientRect();
+      // We use bottom + right (anchor-bottom-right corner of the popover
+      // roughly above the right edge of the tab) so different tab widths
+      // don't shift the popover horizontally.
+      lp.style.bottom = Math.max(0, window.innerHeight - r.top + 6) + 'px';
+      lp.style.right  = Math.max(0, window.innerWidth  - r.right) + 'px';
+    }
     if (levelTab) levelTab.onclick = (e) => {
       e.stopPropagation();
-      if (lp) lp.hidden = !lp.hidden;
+      if (!lp) return;
+      if (lp.hidden) {
+        lp.hidden = false;
+        positionLevelPop();
+        // Close on outside tap. Defer 1 frame so this click doesn't close it.
+        setTimeout(() => {
+          document.addEventListener('click', closeLevelPopOnOutside, { once: true });
+        }, 0);
+      } else {
+        lp.hidden = true;
+      }
     };
+    function closeLevelPopOnOutside(ev) {
+      if (!lp) return;
+      if (lp.hidden) return;
+      if (lp.contains(ev.target)) {
+        // Re-arm for next outside click
+        document.addEventListener('click', closeLevelPopOnOutside, { once: true });
+        return;
+      }
+      lp.hidden = true;
+    }
 
     // Heart inside level popover
     const heartBtn = document.getElementById('ws-heart');
@@ -1559,6 +1595,16 @@
     if (exUl) exUl.innerHTML = '';
     if (coUl) coUl.innerHTML = '';
     SIDEBAR_PHRASE = { text, ko: '' };
+
+    // Apply the same focus glow + chunk highlight on the body that mobile
+    // gets — the user sees which word the sidebar is about, AND the
+    // surrounding syntactic group lights up. anchorEl is required for
+    // chunk lookup; we still render the sidebar even without it.
+    if (anchorEl && !isPhrase) {
+      applyWordFocus(anchorEl);
+    } else {
+      clearWordFocus();
+    }
 
     // Fast contextual translation
     try {
