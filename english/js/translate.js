@@ -71,7 +71,12 @@
   }
 
   // ---------- known-tricky common words: hard-coded overrides ----------
+  // Short function words and prepositions where the external translators
+  // sometimes echo the English back (DeepL on tokens like "over" / "a"
+  // without rich context). Returning a Korean entry here bypasses both
+  // the network call AND the echo-back failure mode.
   const STATIC = {
+    // Pronouns
     'i':'나는','me':'나를','my':'나의','mine':'나의 것','myself':'나 자신',
     'we':'우리','us':'우리를','our':'우리의','ours':'우리의 것',
     'you':'당신','your':'당신의','yours':'당신의 것','yourself':'당신 자신',
@@ -80,10 +85,35 @@
     'it':'그것','its':'그것의',
     'they':'그들','them':'그들을','their':'그들의','theirs':'그들의 것',
     'this':'이것','that':'저것 / ~라는 것','these':'이것들','those':'저것들',
+    // Articles & determiners
     'a':'하나의','an':'하나의','the':'그',
+    'some':'몇몇의','any':'어떤','every':'모든','each':'각각의',
+    'all':'모든','many':'많은','much':'많은','few':'적은','little':'적은',
+    'more':'더 많은','most':'대부분','other':'다른','another':'또 다른',
+    // Conjunctions
     'and':'그리고','or':'또는','but':'하지만','so':'그래서','if':'만약',
+    'because':'~때문에','although':'~비록','while':'~하는 동안','when':'~할 때',
+    'as':'~로서 / ~할 때','than':'~보다',
+    // Be / aux verbs
     'is':'~이다','am':'~이다','are':'~이다','was':'~였다','were':'~였다','be':'~이다',
+    'been':'~이었다','being':'~인 / 존재',
+    'do':'~하다','does':'~하다','did':'~했다','done':'~한',
+    'have':'~가지다','has':'~가지다','had':'~가졌다','having':'~가지고',
+    'will':'~할 것이다','would':'~할 것이다','can':'~할 수 있다','could':'~할 수 있었다',
+    'shall':'~할 것이다','should':'~해야 한다','may':'~일지도 모른다','might':'~일지도 모른다',
+    'must':'~해야 한다',
+    // Negation / yes-no
     'not':'아니다','no':'아니오','yes':'예',
+    // Prepositions (the most common echo-back culprits)
+    'of':'~의','to':'~에게 / ~로','for':'~을 위해','in':'~안에','on':'~위에',
+    'at':'~에서','by':'~에 의해','with':'~와 함께','from':'~로부터','about':'~에 대해',
+    'into':'~안으로','onto':'~위로','out':'밖으로','off':'~떨어진',
+    'over':'~위에 / 너머 / 끝나다','under':'~아래에','above':'~위에','below':'~아래에',
+    'between':'~사이에','among':'~사이에','through':'~을 통해','across':'~을 가로질러',
+    'along':'~을 따라','around':'~주위에','toward':'~쪽으로','towards':'~쪽으로',
+    'against':'~에 대항하여','during':'~동안','before':'~이전에','after':'~이후에',
+    'until':'~까지','since':'~이래로','within':'~안에','without':'~없이',
+    'up':'위로','down':'아래로','near':'~가까이',
   };
 
   // ---------- Edge Function helpers ----------
@@ -190,13 +220,29 @@
     let out = '';
     let lastErr = null;
 
+    // Sanity check: a Korean translation MUST contain at least one Hangul
+    // character. External translators occasionally echo the English back
+    // when the input is a single short token like "over" / "a" / "to" —
+    // we treat those responses as failures and try the next engine.
+    const isUsefulKo = (s) => {
+      if (!s) return false;
+      const trimmed = String(s).trim();
+      if (!trimmed) return false;
+      if (!/[가-힣]/.test(trimmed)) return false;
+      return true;
+    };
+
     if (USE_GPT) {
-      try { out = await viaGPT(text, context); }
-      catch (e) {
-        lastErr = e;
-        // GPT failed (no key, network, etc.) — fall back to DeepL with context.
-        try { out = await viaDeepL(text, context); }
-        catch (e2) { lastErr = e2; }
+      try {
+        const r = await viaGPT(text, context);
+        if (isUsefulKo(r)) out = r;
+      } catch (e) { lastErr = e; }
+      if (!out) {
+        // GPT failed (no key, network, echo-back) — fall back to DeepL.
+        try {
+          const r = await viaDeepL(text, context);
+          if (isUsefulKo(r)) out = r;
+        } catch (e2) { lastErr = e2; }
       }
     } else {
       // Default order: DeepL → Google → MyMemory.
@@ -210,7 +256,7 @@
         if (!fn) continue;
         try {
           const r = await fn();
-          if (r) { out = r; break; }
+          if (isUsefulKo(r)) { out = r; break; }
         } catch (e) {
           lastErr = e;
           console.warn('[translate] ' + name + ' failed:', e && e.message || e);
@@ -334,9 +380,14 @@
   // needs to render. Cached by (word + sentence-hash) so the same word
   // in the same sentence is fetched only once across reloads.
   const wiCache = {};                          // L1: in-memory
-  const WI_LS = 'eng.v3.wordInfo';
+  // v4 — invalidates v3 cache so refreshed entries pick up the new
+  // collocations rule (phrase always uses LEMMA form, not inflected).
+  const WI_LS = 'eng.v4.wordInfo';
   let wiLs = {};
-  try { wiLs = JSON.parse(localStorage.getItem(WI_LS) || '{}') || {}; } catch (e) { wiLs = {}; }
+  try {
+    wiLs = JSON.parse(localStorage.getItem(WI_LS) || '{}') || {};
+    localStorage.removeItem('eng.v3.wordInfo');
+  } catch (e) { wiLs = {}; }
   function persistWi() { try { localStorage.setItem(WI_LS, JSON.stringify(wiLs)); } catch (e) {} }
   function _hashStr(s) {
     let h = 0;
@@ -379,9 +430,14 @@
   // chunks for every sentence on the current page in the background; by
   // the time the user clicks a word, its chunk highlight is in cache.
   const chunkCache = {};
-  const CHUNK_LS = 'eng.v1.chunks';
+  // v2 — invalidates pre-6-word chunks cached under v1 (the chunk-gpt
+  // prompt's hard limit dropped from 7 → 6 words).
+  const CHUNK_LS = 'eng.v2.chunks';
   let chunkLs = {};
-  try { chunkLs = JSON.parse(localStorage.getItem(CHUNK_LS) || '{}') || {}; } catch (e) { chunkLs = {}; }
+  try {
+    chunkLs = JSON.parse(localStorage.getItem(CHUNK_LS) || '{}') || {};
+    localStorage.removeItem('eng.v1.chunks');   // drop stale 7-word chunks
+  } catch (e) { chunkLs = {}; }
   function persistChunks() { try { localStorage.setItem(CHUNK_LS, JSON.stringify(chunkLs)); } catch (e) {} }
 
   async function getChunks(sentence) {

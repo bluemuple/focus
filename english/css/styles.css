@@ -986,6 +986,25 @@ body:has(.lesson-page) {
 .lesson-text.mode-contU .cont-trans {
   font-size: 14px;
   font-weight: 600;
+  /* 밑줄이어서 mode prioritises READABILITY over compactness — when the
+     user has selected enough words that the Korean translation would
+     overflow one line, let it wrap to 2-3 lines instead of truncating
+     with an ellipsis or escaping sideways past the lesson box. The
+     line-height: 2.7 + 18px paragraph margin in this mode gives plenty
+     of vertical room before the next sentence's words. */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  line-height: 1.4;
+  /* Pinning the right edge guarantees the Korean wraps inside the lesson
+     box's bounds. JS still sets `left` to the leftmost selected-word
+     position; with both edges fixed, the width is auto-computed and the
+     Korean wraps to multiple lines instead of overflowing past the right
+     padding (which used to trigger the ellipsis truncation). */
+  right: 4px;
+  max-width: none;
 }
 
 /* One rectangle per visual line of the running selection. JS recomputes
@@ -2555,6 +2574,24 @@ body:has(.lesson-page) {
 .word-sheet.show { transform: translateY(0); }
 .word-sheet[hidden] { display: none; }
 
+/* Ephemeral mode label that appears in the bottom-right of whichever gray
+   box is visible (chunk panel / examples / collocations) when the user
+   taps ✨ / 예 / 연. JS sets the textContent and toggles `.show`; CSS
+   handles the fade-in/out. Auto-fades after 3 s — see showSheetToast(). */
+.ws-toast {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  font-size: 10px;
+  color: #9ca3af;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity .22s ease;
+  z-index: 6;
+  letter-spacing: 0.2px;
+}
+.ws-toast.show { opacity: 1; }
+
 /* First action row — speaker · contextual meaning · 예 / 연 / level / × */
 .word-sheet .ws-row {
   display: flex; align-items: center; gap: 8px;
@@ -2789,19 +2826,30 @@ body:has(.lesson-page) {
   padding: 0 3px;
   transition: box-shadow .18s ease, background .18s ease;
 }
-/* The surrounding syntactic chunk — much lighter than the focused word's
-   primary glow so the user's eye still anchors on the clicked word. We
-   drop the hard outline ring to a thin tint and dial the soft halo to a
-   wash, ~half the intensity it had before. */
+/* The surrounding syntactic chunk — same continuous-underline style as
+   the playback `.reading` highlight, but in amber/orange-yellow (matching
+   the focused word's outline color) so it's clearly distinct from the
+   green TTS-playback line. No outer glow — the underline alone is
+   plenty to convey the meaning unit. */
 .lesson-text .w.focused-chunk {
-  position: relative;
-  z-index: 35;
-  box-shadow:
-    0 0 0 1.5px rgba(245, 158, 11, 0.18),
-    0 0 10px 3px rgba(245, 158, 11, 0.08);
-  border-radius: 6px;
-  padding: 0 2px;
-  transition: box-shadow .18s ease;
+  text-decoration: underline;
+  text-decoration-color: rgba(245, 158, 11, 0.9);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 7px;
+  /* Drop the prior box-shadow / background ring entirely. */
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  padding: 0;
+  transition: text-decoration-color .18s ease;
+}
+/* Continuous underline through the spaces / punctuation that sit between
+   chunk words, matching how `.reading` flows continuously. */
+.lesson-text .w.punct.focused-chunk {
+  text-decoration: underline;
+  text-decoration-color: rgba(245, 158, 11, 0.9);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 7px;
 }
 
 /* While the word sheet is open we DON'T shift the entire lesson card

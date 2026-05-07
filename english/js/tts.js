@@ -165,10 +165,24 @@
     // failure, which we silently catch as benign at the bottom of this fn.
     audio.onended = null;
     audio.onerror = null;
+    audio.onplaying = null;
     try { audio.pause(); } catch (e) {}
     audio.src = url;
     pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
     audio.onended = () => firePending();
+    // `onplay` callers want to know when audio AUDIBLY starts (so they can
+    // align UI like a sentence underline with the speech). `playing` fires
+    // as soon as the audio is actually producing sound — strictly after any
+    // network/decode delay — which is what we want, vs. `play` which fires
+    // earlier (right after .play() is called, before sound starts).
+    if (typeof opts.onplay === 'function') {
+      let fired = false;
+      audio.onplaying = () => {
+        if (fired) return;
+        fired = true;
+        try { opts.onplay(); } catch (e) {}
+      };
+    }
     currentAudio = audio;
 
     try {

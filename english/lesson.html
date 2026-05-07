@@ -228,6 +228,12 @@
     <div class="ws-panel" id="ws-panel-co" data-panel="co" hidden>
       <ul class="ws-list ws-collocs" id="ws-collocs"></ul>
     </div>
+
+    <!-- Ephemeral label that appears in the bottom-right of whichever
+         gray box is visible when the user taps ✨ / 예 / 연. Tells them
+         which feature they just enabled. Auto-fades after 3s. JS owns
+         the textContent + .show class. -->
+    <span class="ws-toast" id="ws-toast" aria-hidden="true"></span>
   </div>
 
   <!-- Level / heart popover — sibling of the sheet, NOT a child. The
@@ -1090,14 +1096,45 @@
   // Renders the chunk that contains the focused word — the English chunk
   // text (with the focused word in pink) above its Korean translation.
   // Replaces the old mnemonic block: more useful info, less waffle.
-  function renderChunkTx(host, chunkText, chunkKo, lemma, wordKo) {
+  function renderChunkTx(host, chunkText, chunkKo, lemma /*, wordKo (deprecated) */) {
     if (!host) return;
     if (!chunkText) { host.innerHTML = ''; return; }
+    // Stash the chunk Korean + lemma on the host so the click handler
+    // below can re-render with pink highlight on demand without re-fetching.
+    host.dataset.chunkKo = chunkKo || '';
+    host.dataset.lemma   = lemma || '';
+    // DEFAULT: no pink Korean — the user wants the chunk Korean to load
+    // as fast as possible, without waiting for the per-word translate
+    // call needed for substring matching. Pink Korean activates ONLY
+    // when the user taps the pink English lemma in the chunk.
     host.innerHTML =
       '<div class="ck-en">' + highlightLemma(chunkText, lemma || '') + '</div>' +
       (chunkKo
-        ? '<div class="ck-ko">' + highlightKoSubstring(chunkKo, wordKo) + '</div>'
+        ? '<div class="ck-ko">' + escapeHtml(chunkKo) + '</div>'
         : '<div class="ck-ko"><span class="tx-loading">번역 중...</span></div>');
+    // Tap-to-highlight: when the user taps the pink English lemma, find
+    // its contextual Korean meaning (already on screen in the row above)
+    // and pink-highlight the matching substring inside ck-ko. Skips if
+    // the meaning isn't unique inside the chunk Korean — see
+    // highlightKoSubstring(). Mobile uses #ws-meaning, PC uses #ls-trans .ko.
+    host.querySelectorAll('.ck-en .hl-lemma').forEach(el => {
+      el.style.cursor = 'pointer';
+      el.onclick = (ev) => {
+        ev.stopPropagation();
+        const koEl = host.querySelector('.ck-ko');
+        const ko = host.dataset.chunkKo || '';
+        if (!koEl || !ko) return;
+        let wordKo = '';
+        if (host.closest('.word-sheet')) {
+          const m = document.getElementById('ws-meaning');
+          wordKo = m ? m.textContent.trim() : '';
+        } else if (host.closest('.lesson-sidebar')) {
+          const m = document.querySelector('#ls-trans .ko');
+          wordKo = m ? m.textContent.trim() : '';
+        }
+        koEl.innerHTML = highlightKoSubstring(ko, wordKo);
+      };
+    });
   }
   // Pink-highlight the Korean span inside `chunkKo` that corresponds to the
   // selected English word. Uses the word's contextual Korean (from
@@ -1228,11 +1265,24 @@
     // applying the new one (otherwise consecutive arrow steps stack glows).
     if (_focusedChunkEls) for (const el of _focusedChunkEls) el.classList.remove('focused-chunk');
     const set = [];
-    for (let i = span.start; i <= span.end; i++) {
-      const el = sentenceWords[i];
-      if (el && el !== wEl) {
-        el.classList.add('focused-chunk');
-        set.push(el);
+    // Walk siblings from the chunk's first word to its last in DOM order,
+    // marking EVERY .w element along the way (including punctuation
+    // tokens) so the underline reads as one continuous line — matches
+    // how `.w.reading` flows during TTS playback.
+    const firstEl = sentenceWords[span.start];
+    const lastEl  = sentenceWords[span.end];
+    if (firstEl && lastEl) {
+      let cur = firstEl;
+      let safety = 200;
+      while (cur && safety-- > 0) {
+        if (cur.nodeType === 1
+            && cur.classList && cur.classList.contains('w')
+            && cur !== wEl) {
+          cur.classList.add('focused-chunk');
+          set.push(cur);
+        }
+        if (cur === lastEl) break;
+        cur = cur.nextElementSibling;
       }
     }
     _focusedChunkEls = set;
@@ -1403,6 +1453,7 @@
       const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
       Translate.setUseGPT(!cur);
       refreshGptTab();
+      showSheetToast('AI 번역');
       // Re-translate the current word with the new engine, in place.
       if (meaningEl) meaningEl.textContent = '…';
       Translate.translate(word, sentence).then(ko => {
@@ -1522,6 +1573,9 @@
           panel.hidden = false;
           btn.classList.add('active');
           if (mn) mn.hidden = true;        // hide chunk box while panel open
+          // Ephemeral mode label in the bottom-right of the now-visible
+          // panel, telling the user which feature they activated.
+          showSheetToast(id === 'ex' ? '예문' : id === 'co' ? '연어' : '');
         } else {
           if (mn) mn.hidden = false;       // restore chunk box on close
         }
@@ -1539,18 +1593,17 @@
     // signal. The TTS module no-ops if the user has muted globally.
     try { TTS.speak(word); } catch (_) {}
 
-    // Fast contextual translation. We hold the promise so the chunk panel
-    // can pink-highlight the matching Korean substring once BOTH the
-    // word's Korean and the chunk's Korean are resolved.
-    const wordKoPromise = Translate.translate(word, sentence).then(ko => {
-      if (_sheetWord !== word) return ko || '';
+    // Fast contextual translation — fills the row's Korean meaning. Runs
+    // independently from chunk translation so neither blocks the other.
+    Translate.translate(word, sentence).then(ko => {
+      if (_sheetWord !== word) return;
       if (meaningEl) meaningEl.textContent = ko || '—';
-      return ko || '';
-    }).catch(() => '');
+    }).catch(() => {});
 
     // Chunk = words around the clicked word that form one syntactic unit.
-    // We highlight them on the page AND show the chunk's Korean meaning
-    // in the sheet (replacing the old mnemonic). Cached per sentence.
+    // Renders chunk text immediately, then chunk Korean as soon as it
+    // resolves — no waiting on the word translation. Pink Korean
+    // highlight is now opt-in (user taps the pink lemma in the chunk).
     if (Translate.getChunks) {
       Translate.getChunks(sentence).then(chunks => {
         if (_sheetWord !== word) return;
@@ -1558,14 +1611,10 @@
         const c = findChunkForWord(anchorEl, chunks);
         if (!c) return;
         applyChunkHighlight(anchorEl, c);
-        // Render the chunk text immediately, fetch its Korean in parallel.
         renderChunkTx(mnemEl, c.text, '', word);
-        Promise.all([
-          Translate.translate(c.text, sentence),
-          wordKoPromise,
-        ]).then(([chunkKo, wordKo]) => {
+        Translate.translate(c.text, sentence).then(chunkKo => {
           if (_sheetWord !== word) return;
-          renderChunkTx(mnemEl, c.text, chunkKo, word, wordKo);
+          renderChunkTx(mnemEl, c.text, chunkKo, word);
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -1587,12 +1636,9 @@
           applyChunkHighlight(anchorEl, info.phraseChunk);
           if (mnemEl && !mnemEl.querySelector('.ck-en')) {
             renderChunkTx(mnemEl, info.phraseChunk.text, '', word);
-            Promise.all([
-              Translate.translate(info.phraseChunk.text, sentence),
-              wordKoPromise,
-            ]).then(([chunkKo, wordKo]) => {
+            Translate.translate(info.phraseChunk.text, sentence).then(chunkKo => {
               if (_sheetWord !== word) return;
-              renderChunkTx(mnemEl, info.phraseChunk.text, chunkKo, word, wordKo);
+              renderChunkTx(mnemEl, info.phraseChunk.text, chunkKo, word);
             }).catch(() => {});
           }
         }
@@ -1600,11 +1646,34 @@
       }).catch(() => {});
     }
   }
+  // Ephemeral mode label in the bottom-right of the visible gray box on
+  // the word-sheet (chunk panel / examples / collocations). Tells the
+  // user which feature they just activated by tapping ✨ / 예 / 연.
+  // Auto-fades after 3 seconds. Re-tapping a button retriggers the timer
+  // by clearing the existing one — the label never overlaps itself.
+  let _wsToastTimer = null;
+  function showSheetToast(label) {
+    const toast = document.getElementById('ws-toast');
+    if (!toast) return;
+    if (!label) { toast.classList.remove('show'); toast.textContent = ''; return; }
+    toast.textContent = label;
+    toast.classList.add('show');
+    if (_wsToastTimer) clearTimeout(_wsToastTimer);
+    _wsToastTimer = setTimeout(() => {
+      toast.classList.remove('show');
+      _wsToastTimer = null;
+    }, 3000);
+  }
+
   function hideWordSheet() {
     const sheet = document.getElementById('word-sheet');
     if (sheet) { sheet.classList.remove('show'); sheet.hidden = true; }
     const lp = document.getElementById('ws-level-pop');
     if (lp) lp.hidden = true;
+    // Clear any in-flight toast so the next sheet open starts clean.
+    const toast = document.getElementById('ws-toast');
+    if (toast) toast.classList.remove('show');
+    if (_wsToastTimer) { clearTimeout(_wsToastTimer); _wsToastTimer = null; }
     document.body.classList.remove('word-focus-open');
     document.documentElement.style.removeProperty('--word-focus-shift');
     // Reset any per-word text shift back to normal. Use an EXPLICIT
@@ -1798,17 +1867,18 @@
       clearWordFocus();
     }
 
-    // Fast contextual translation. Resolved value is also handed to the
-    // chunk panel so its Korean rendering can pink-highlight the substring
-    // matching the selected word's contextual meaning.
-    let textKo = '';
-    try {
-      textKo = await Translate.translate(text, sentence) || '';
-      SIDEBAR_PHRASE = { text, ko: textKo };
-      if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(textKo) + '</span>';
-    } catch (err) {
+    // Fast contextual translation — fills the sidebar's Korean meaning.
+    // Runs independently from chunk translation so chunk Korean can paint
+    // as soon as it returns; pink Korean highlight is now opt-in (user
+    // taps the pink lemma in the chunk panel to trigger it).
+    Translate.translate(text, sentence).then(ko => {
+      const cur = document.getElementById('ls-word');
+      if (!cur || cur.textContent !== text) return;
+      SIDEBAR_PHRASE = { text, ko };
+      if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
+    }).catch(() => {
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
-    }
+    });
 
     // Chunk highlight + translation — single words only. Pulls the cached
     // chunk for this sentence and shows the chunk text + Korean in the
@@ -1820,15 +1890,12 @@
         if (!cur || cur.textContent !== text) return;
         const c = findChunkForWord(anchorEl, chunks);
         if (!c) return;
-        // Glow the surrounding syntactic chunk on the body too — the
-        // sidebar's "구문 풀이" panel mirrors this visual on the left
-        // text so the user sees which words form the unit.
         applyChunkHighlight(anchorEl, c);
         if (mnBlock) mnBlock.hidden = false;
         renderChunkTx(mnEl, c.text, '', text);
         Translate.translate(c.text, sentence).then(ko => {
           if (cur.textContent !== text) return;
-          renderChunkTx(mnEl, c.text, ko, text, textKo);
+          renderChunkTx(mnEl, c.text, ko, text);
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -3206,9 +3273,13 @@
     p.className = 'para';
     const lines = par.split(/\n/);
     lines.forEach((line, li) => {
-      const tokens = line.match(/([\p{L}][\p{L}\p{M}'’-]*)|([^\p{L}]+)/gu) || [];
+      // Token regex now treats DIGITS as word characters too — so "5",
+      // "2026", "5G", "3rd" each become a single selectable .w. The
+      // arrow-key cursor and 이어서 selection will land on numbers like
+      // any other word. Punct group is the inverse (non-letter+non-digit).
+      const tokens = line.match(/([\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*)|([^\p{L}\p{N}]+)/gu) || [];
       for (const tk of tokens) {
-        if (/^[\p{L}]/u.test(tk)) {
+        if (/^[\p{L}\p{N}]/u.test(tk)) {
           const span = document.createElement('span');
           span.className = 'w';
           span.dataset.word = tk;
@@ -4532,6 +4603,12 @@
   let ttsTimer = null;
   let speed = 1;
   const speeds = [0.75, 1, 1.25, 1.5];
+  // Generation token — bumped by stopAnyPlayback() so any in-flight loop
+  // bails on its next iteration and any pending onplay callback skips
+  // its setCurrentSentence() update. Prevents the race where prev/next
+  // clicks compute their target from a CURRENT_SENTENCE that the
+  // background loop has been silently advancing.
+  let _playToken = 0;
 
   // Slider geometry — shared between audio_url and TTS playback. Both are
   // expressed as a 0..1 "read position" measured in characters across the
@@ -4644,13 +4721,16 @@
       // sentences forward across pages until ttsPlaying flips to false.
       async function startTTSFromCurrent() {
         if (ttsPlaying) return;
+        // Claim a fresh generation token. Any prior loop carrying an older
+        // token will bail on its next iteration / onplay callback.
+        const myToken = ++_playToken;
         ttsPlaying = true;
         setPlayBtnIcon(true);
         // If we're cold-starting (no current sentence), begin at sentence 0.
         if (CURRENT_SENTENCE < 0) setCurrentSentence(0);
 
         let startLocal = Math.max(0, CURRENT_SENTENCE);
-        while (ttsPlaying) {
+        while (ttsPlaying && myToken === _playToken) {
           buildSentenceMap(document.getElementById('lesson-text'));
           const list = SENTENCE_MAP.length
             ? SENTENCE_MAP.map(s => s.text)
@@ -4665,8 +4745,7 @@
             TTS.prefetch(list[startLocal], { rate: ttsRate });
           }
           for (let i = startLocal; i < list.length; i++) {
-            if (!ttsPlaying) break;
-            if (SENTENCE_MAP.length) setCurrentSentence(i);
+            if (!ttsPlaying || myToken !== _playToken) break;
             // Pre-warm the NEXT sentence in parallel with the CURRENT one
             // playing. The Edge Function call (~200-500ms) overlaps with
             // the current audio's playback time, so by the time `onended`
@@ -4685,12 +4764,31 @@
                 .split(/(?<=[.!?])\s+/)[0] || '';
               if (firstNext.trim()) TTS.prefetch(firstNext.trim(), { rate: ttsRate });
             }
+            // Sync the sentence underline to when audio AUDIBLY starts —
+            // not when speak() is invoked. Otherwise on a cache miss /
+            // cold start the underline jumps to sentence i while sentence
+            // i-1's audio is still trailing or while we're awaiting a
+            // network fetch (200-500ms) — that's the visible mismatch the
+            // user reported. `onplay` fires from the audio element's
+            // `playing` event, strictly after the buffer is decoded and
+            // sound is actually being produced.
             await new Promise(resolve => {
-              TTS.speak(list[i], { rate: ttsRate, onend: resolve });
+              TTS.speak(list[i], {
+                rate: ttsRate,
+                onplay: () => {
+                  // Token check: a stopAnyPlayback() between speak() and
+                  // onplay() must not silently advance CURRENT_SENTENCE
+                  // — otherwise the next prev/next click computes its
+                  // target from a position the user never saw.
+                  if (!ttsPlaying || myToken !== _playToken) return;
+                  if (SENTENCE_MAP.length) setCurrentSentence(i);
+                },
+                onend: resolve,
+              });
             });
           }
           startLocal = 0;
-          if (!ttsPlaying) break;
+          if (!ttsPlaying || myToken !== _playToken) break;
           if (pageIdx >= PAGES.length - 1) break;
           await new Promise(resolve => {
             goPage(+1);
@@ -4705,6 +4803,8 @@
         setPlayBtnIcon(false);
       }
       function pauseTTS() {
+        // Bump the token so any in-flight loop bails on next iteration.
+        _playToken++;
         ttsPlaying = false;
         TTS.stop();
         setPlayBtnIcon(false);
@@ -4742,7 +4842,11 @@
     }
     // Stops whatever's currently making sound. Used before seeking so the
     // old sentence doesn't keep speaking after we jumped to a new spot.
+    // Bumping `_playToken` invalidates any in-flight loop AND any pending
+    // onplay callback, so a stale loop can't sneak a setCurrentSentence()
+    // call between stop and the next prev/next jump.
     function stopAnyPlayback() {
+      _playToken++;
       if (ttsPlaying) { ttsPlaying = false; TTS.stop(); setPlayBtnIcon(false); }
       if (audioEl && !audioEl.paused) { try { audioEl.pause(); } catch (e) {} }
     }
@@ -4758,29 +4862,22 @@
       }
     }
 
-    // ⏮ Previous sentence / ⏭ Next sentence — now NAVIGATE only (no
-    // auto-restart of playback). Auto-restart caused two bugs:
-    //   (a) jumpAndPlay() restarted the TTS loop, which kept advancing
-    //       CURRENT_SENTENCE asynchronously. A user tapping prev twice
-    //       in quick succession saw the second click compute prev based
-    //       on a CURRENT_SENTENCE that the loop had already moved
-    //       forward → "11 → 10 → 19" jumps.
-    //   (b) On a page change the loop's "speak finished" event would
-    //       race with the next click's stopAnyPlayback().
-    // Plain navigation: snapshot global index, stop any in-flight audio,
-    // move the cursor. The user taps ▶ if they want playback.
+    // ⏮ Previous / ⏭ Next sentence — navigate AND auto-play from the new
+    // sentence. The "11 → 10 → 19" race that broke this previously is now
+    // fixed by the generation-token in stopAnyPlayback(): any pending
+    // onplay callback from the prior loop bails on token mismatch, so it
+    // can't silently advance CURRENT_SENTENCE between clicks.
     if (prevBtn) prevBtn.addEventListener('click', () => {
       const cur = globalSentenceIdx();
-      stopAnyPlayback();
-      gotoGlobalSentence(Math.max(0, cur - 1));
-      updateSentenceCounter();
+      jumpAndPlay(Math.max(0, cur - 1));
     });
     if (nextBtn) nextBtn.addEventListener('click', () => {
       const cur = globalSentenceIdx();
-      stopAnyPlayback();
-      if (cur >= TOTAL_SENTENCES - 1) return;
-      gotoGlobalSentence(cur + 1);
-      updateSentenceCounter();
+      if (cur >= TOTAL_SENTENCES - 1) {
+        stopAnyPlayback();
+        return;
+      }
+      jumpAndPlay(cur + 1);
     });
     // ⏹ Stop & reset to the very beginning (page 0, sentence 0).
     if (stopBtn) stopBtn.addEventListener('click', () => {
