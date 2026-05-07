@@ -373,9 +373,51 @@
     }
   }
 
+  // ---------- syntactic chunks per sentence (chunk-gpt) ----------
+  // One small GPT call per sentence; cached by sentence-hash so all words
+  // in the same sentence share the result. The lesson page prefetches
+  // chunks for every sentence on the current page in the background; by
+  // the time the user clicks a word, its chunk highlight is in cache.
+  const chunkCache = {};
+  const CHUNK_LS = 'eng.v1.chunks';
+  let chunkLs = {};
+  try { chunkLs = JSON.parse(localStorage.getItem(CHUNK_LS) || '{}') || {}; } catch (e) { chunkLs = {}; }
+  function persistChunks() { try { localStorage.setItem(CHUNK_LS, JSON.stringify(chunkLs)); } catch (e) {} }
+
+  async function getChunks(sentence) {
+    sentence = (sentence || '').trim();
+    if (!sentence || sentence.length < 5) return null;
+    const key = _hashStr(sentence);
+    if (chunkCache[key]) return chunkCache[key];
+    if (chunkLs[key])    { chunkCache[key] = chunkLs[key]; return chunkLs[key]; }
+    try {
+      const { url, headers } = supabaseUrl('/functions/v1/chunk-gpt');
+      const r = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify({ sentence }),
+      });
+      if (!r.ok) {
+        let detail = '';
+        try { detail = (await r.text()).slice(0, 200); } catch (e) {}
+        throw new Error('chunk-gpt ' + r.status + (detail ? ' ' + detail : ''));
+      }
+      const data = await r.json();
+      if (!data || data.error || !Array.isArray(data.chunks)) {
+        throw new Error('chunk-gpt: ' + (data && data.error || 'bad shape'));
+      }
+      chunkCache[key] = data.chunks;
+      chunkLs[key] = data.chunks;
+      persistChunks();
+      return data.chunks;
+    } catch (e) {
+      console.warn('[chunk-gpt]', e && e.message || e);
+      return null;
+    }
+  }
+
   window.Translate = {
     translate, translateBatch, clearCache,
-    setEngine, getEngine, lookupSenses, getWordInfo,
+    setEngine, getEngine, lookupSenses, getWordInfo, getChunks,
     setUseGPT, getUseGPT,
   };
 })();

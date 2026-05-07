@@ -1136,6 +1136,9 @@
     const start = Math.max(0, chunk.indices[0] | 0);
     const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
     if (end < start) return;
+    // Clear any previous chunk highlight from a prior word click before
+    // applying the new one (otherwise consecutive arrow steps stack glows).
+    if (_focusedChunkEls) for (const el of _focusedChunkEls) el.classList.remove('focused-chunk');
     const set = [];
     for (let i = start; i <= end; i++) {
       const el = sentenceWords[i];
@@ -1145,6 +1148,22 @@
       }
     }
     _focusedChunkEls = set;
+  }
+  // Find which chunk an anchor word belongs to, given the chunks array
+  // returned by chunk-gpt. Word index = position among non-punct words
+  // in the sentence (matches chunk-gpt's whitespace+ignore-punct rule).
+  function findChunkForWord(wEl, chunks) {
+    if (!wEl || !Array.isArray(chunks) || !chunks.length) return null;
+    const sentenceWords = getSentenceWordsOf(wEl);
+    const idx = sentenceWords.indexOf(wEl);
+    if (idx < 0) return null;
+    for (const c of chunks) {
+      if (!c || !Array.isArray(c.indices)) continue;
+      const a = c.indices[0] | 0;
+      const b = (c.indices[1] !== undefined ? c.indices[1] : a) | 0;
+      if (idx >= a && idx <= b) return c;
+    }
+    return null;
   }
 
   // ===========================================================
@@ -1289,7 +1308,19 @@
       if (meaningEl) meaningEl.textContent = ko || '—';
     }).catch(() => {});
 
-    // Rich GPT word info
+    // Chunk highlight — fired in parallel with getWordInfo. chunk-gpt is
+    // smaller + cached per sentence, so this usually resolves first AND
+    // is shared across all words in this sentence.
+    if (Translate.getChunks) {
+      Translate.getChunks(sentence).then(chunks => {
+        if (_sheetWord !== word) return;
+        if (!chunks) return;
+        const c = findChunkForWord(anchorEl, chunks);
+        if (c) applyChunkHighlight(anchorEl, c);
+      }).catch(() => {});
+    }
+
+    // Rich GPT word info — mnemonic, examples, collocations, ko meaning.
     if (Translate.getWordInfo) {
       Translate.getWordInfo(word, sentence).then(info => {
         if (_sheetWord !== word) return;
@@ -1298,10 +1329,17 @@
           return;
         }
         if (info.ko && meaningEl) meaningEl.textContent = info.ko;
-        renderMnemonic(mnemEl, info.mnemonic);
+        // Mnemonic is OPTIONAL now (GPT omits when no good strategy fits).
+        if (info.mnemonic && info.mnemonic.text) {
+          renderMnemonic(mnemEl, info.mnemonic);
+        } else if (mnemEl) {
+          mnemEl.innerHTML = '<span class="muted">이 단어는 별도 암기 팁 없이 익혀볼게요.</span>';
+        }
         renderExamples(exUl, info.examples, info.lemma || word);
         renderCollocations(coUl, info.collocations, info.lemma || word);
-        if (info.phraseChunk) applyChunkHighlight(anchorEl, info.phraseChunk);
+        // Fallback chunk highlight if chunk-gpt cache missed AND word-info
+        // returned a phraseChunk. Most common path is chunk-gpt above.
+        if (!_focusedChunkEls && info.phraseChunk) applyChunkHighlight(anchorEl, info.phraseChunk);
         requestAnimationFrame(applyWordSheetShift);
       }).catch(() => {
         if (mnemEl) mnemEl.innerHTML = '<span class="muted">암기 팁을 불러오지 못했어요.</span>';
@@ -2365,6 +2403,44 @@
     // is what makes the mnemonic / examples / collocations panel appear
     // INSTANTLY when the user finally taps a word — no GPT round-trip.
     prefetchWordInfo(myToken);
+    // Also pre-compute syntactic chunks per sentence so the chunk-glow
+    // (wider outline on neighbouring words) appears instantly on tap.
+    prefetchChunks(myToken);
+  }
+
+  // ---- prefetch syntactic chunks per sentence ----
+  // chunk-gpt is small + fast; one call per sentence is enough since all
+  // words in that sentence share the same chunks. Heavily cached by
+  // sentence-hash in localStorage.
+  function prefetchChunks(token) {
+    if (!window.Translate || !Translate.getChunks) return;
+    if (!SENTENCE_MAP || !SENTENCE_MAP.length) return;
+    const queue = [];
+    const seen = new Set();
+    for (const s of SENTENCE_MAP) {
+      const text = (s.text || '').trim();
+      if (!text || text.length < 5) continue;
+      if (seen.has(text)) continue;
+      seen.add(text);
+      queue.push(text);
+    }
+    if (!queue.length) return;
+    let active = 0;
+    const MAX = 3;
+    function drain() {
+      if (token !== _prefetchToken) return;
+      while (active < MAX && queue.length > 0) {
+        const sentence = queue.shift();
+        active++;
+        Translate.getChunks(sentence).catch(() => {}).finally(() => {
+          active--;
+          if (typeof requestIdleCallback === 'function') requestIdleCallback(drain);
+          else setTimeout(drain, 30);
+        });
+      }
+    }
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(drain, { timeout: 1000 });
+    else setTimeout(drain, 250);
   }
 
   // ---- prefetch GPT word-info in the background ----
