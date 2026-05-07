@@ -329,9 +329,53 @@
     } catch (e) { return []; }
   }
 
+  // ---------- rich GPT word-info (senses + collocations + examples + mnemonic + chunk) ----------
+  // Single GPT call returns everything the sidebar / mobile word sheet
+  // needs to render. Cached by (word + sentence-hash) so the same word
+  // in the same sentence is fetched only once across reloads.
+  const wiCache = {};                          // L1: in-memory
+  const WI_LS = 'eng.v3.wordInfo';
+  let wiLs = {};
+  try { wiLs = JSON.parse(localStorage.getItem(WI_LS) || '{}') || {}; } catch (e) { wiLs = {}; }
+  function persistWi() { try { localStorage.setItem(WI_LS, JSON.stringify(wiLs)); } catch (e) {} }
+  function _hashStr(s) {
+    let h = 0;
+    s = s || '';
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return h.toString(36);
+  }
+  async function getWordInfo(word, sentence) {
+    word = (word || '').trim();
+    if (!word) return null;
+    const key = word.toLowerCase() + '|' + (sentence ? _hashStr(sentence) : '');
+    if (wiCache[key]) return wiCache[key];
+    if (wiLs[key])    { wiCache[key] = wiLs[key]; return wiLs[key]; }
+    try {
+      const { url, headers } = supabaseUrl('/functions/v1/word-info-gpt');
+      const r = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify({ word, sentence: sentence || '' }),
+      });
+      if (!r.ok) {
+        let detail = '';
+        try { detail = (await r.text()).slice(0, 200); } catch (e) {}
+        throw new Error('word-info ' + r.status + (detail ? ' ' + detail : ''));
+      }
+      const data = await r.json();
+      if (!data || data.error) throw new Error('word-info: ' + (data && data.error));
+      wiCache[key] = data;
+      wiLs[key] = data;
+      persistWi();
+      return data;
+    } catch (e) {
+      console.warn('[word-info]', e && e.message || e);
+      return null;
+    }
+  }
+
   window.Translate = {
     translate, translateBatch, clearCache,
-    setEngine, getEngine, lookupSenses,
+    setEngine, getEngine, lookupSenses, getWordInfo,
     setUseGPT, getUseGPT,
   };
 })();

@@ -2476,6 +2476,335 @@ body:has(.lesson-page) {
 @media (min-width: 1024px) { .cont-bar { display: none !important; } }
 
 /* =============================================================
+   Mobile word sheet (하나씩 mode)
+   Compact bottom panel with action pills + mnemonic + collapsible
+   panels for examples / collocations. No headword (the body word
+   glows instead — saves vertical space).
+   ============================================================= */
+.word-sheet {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 64px;                       /* sit on top of the lesson-bar */
+  z-index: 50;
+  background: #fff;
+  border-top: 1px solid var(--line);
+  box-shadow: 0 -8px 24px rgba(15, 20, 28, 0.10);
+  padding: 12px 14px 14px;
+  transform: translateY(110%);
+  transition: transform .22s cubic-bezier(.22,.6,.36,1);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.word-sheet.show { transform: translateY(0); }
+.word-sheet[hidden] { display: none; }
+
+/* First action row — speaker · contextual meaning · 예 / 연 / level / × */
+.word-sheet .ws-row {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px;
+}
+.word-sheet .ws-icon {
+  width: 36px; height: 36px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  display: grid; place-items: center;
+  cursor: pointer;
+  font-size: 16px; line-height: 1;
+  flex-shrink: 0;
+  transition: background .12s, transform .05s;
+}
+.word-sheet .ws-icon:hover  { background: #f1f3f5; }
+.word-sheet .ws-icon:active { transform: translateY(1px); }
+.word-sheet .ws-close { font-size: 20px; color: var(--muted); }
+.word-sheet .ws-meaning {
+  flex: 1; min-width: 0;
+  font-weight: 800; font-size: 16px;
+  color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 0 4px;
+}
+.word-sheet .ws-tab {
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font-weight: 800; font-size: 13px;
+  display: grid; place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .12s, color .12s, border-color .12s, transform .05s;
+}
+.word-sheet .ws-tab:hover  { background: #f1f3f5; }
+.word-sheet .ws-tab:active { transform: translateY(1px); }
+.word-sheet .ws-tab.active {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+/* Level circle — color follows the word's state class. */
+.word-sheet .ws-level-tab.s1 { background: var(--word-1); }
+.word-sheet .ws-level-tab.s2 { background: var(--word-2); }
+.word-sheet .ws-level-tab.s3 { background: var(--word-3); }
+.word-sheet .ws-level-tab.s4 { background: var(--word-4); }
+
+/* Mnemonic — visible by default. Highlights are pink. */
+.word-sheet .ws-mnemonic {
+  font-size: 14px; line-height: 1.55;
+  color: var(--ink);
+  padding: 8px 10px;
+  background: #fafbfc;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.word-sheet .ws-mnemonic .hl,
+.lesson-sidebar .ls-mnemonic .hl {
+  color: #ec4899;                     /* soft pink emphasis */
+  font-weight: 800;
+}
+.word-sheet .ws-mnemonic .tx-loading,
+.word-sheet .ws-mnemonic .muted { color: var(--muted); font-weight: 600; font-size: 13px; }
+
+/* Panels under the action row (examples / collocations) */
+.word-sheet .ws-panel {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #fafbfc;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+.word-sheet .ws-panel[hidden] { display: none; }
+.word-sheet .ws-list {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.word-sheet .ws-examples li {
+  font-size: 14px; line-height: 1.45;
+  color: var(--ink);
+}
+.word-sheet .ws-collocs li {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 14px; line-height: 1.45;
+}
+
+/* [한글] reveal toggle inside example list */
+.ex-en { color: var(--ink); }
+.ex-ko-toggle {
+  display: inline-block;
+  margin-left: 4px;
+  background: transparent; border: 0;
+  font-size: 11px; font-weight: 700; color: #1a73e8;
+  cursor: pointer; padding: 0 2px;
+}
+.ex-ko-toggle.open { color: #6c757d; }
+.ex-ko {
+  margin-top: 2px;
+  font-size: 12px; color: var(--muted);
+  font-weight: 600;
+}
+.ex-ko[hidden] { display: none; }
+
+/* Collocation row */
+.co-en { color: var(--ink); font-weight: 700; }
+.co-ko { font-size: 13px; }
+
+/* Lemma highlight inside examples / collocations — soft pink (matches mnemonic) */
+.hl-lemma {
+  color: #ec4899;
+  font-weight: 800;
+}
+
+/* Level popover that floats above the level circle */
+.word-sheet .ws-level-pop {
+  position: absolute;
+  right: 14px; bottom: 100%;
+  margin-bottom: 6px;
+  display: flex; gap: 6px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 8px 24px rgba(15,20,28,0.18);
+}
+.word-sheet .ws-level-pop[hidden] { display: none; }
+.word-sheet .ws-lvl {
+  width: 32px; height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-weight: 800; font-size: 13px;
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+.word-sheet .ws-lvl:hover { transform: translateY(-1px); }
+.word-sheet .ws-lvl-trash { color: #6b7280; }
+.word-sheet .ws-lvl-check { background: transparent; color: #15803d; font-size: 16px; }
+.word-sheet .ws-lvl-heart { color: #e0245e; font-size: 14px; }
+.word-sheet .ws-lvl-heart.on { background: #ffe2eb; }
+
+/* PC: word-sheet hidden — sidebar carries the rich card */
+@media (min-width: 1024px) { .word-sheet { display: none !important; } }
+
+/* =============================================================
+   Word focus visual (mobile single-mode)
+   The tapped word gets an amber outer glow; the surrounding
+   syntactic chunk gets a wider, lighter glow. Everything else
+   on the page is dimmed via a fixed overlay.
+   ============================================================= */
+body.word-focus-open::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: rgba(15, 20, 28, 0.45);
+  backdrop-filter: blur(1.5px);
+  -webkit-backdrop-filter: blur(1.5px);
+  z-index: 30;
+  pointer-events: none;
+  animation: word-focus-fade .18s ease-out;
+}
+@keyframes word-focus-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* The clicked word — primary glow */
+.lesson-text .w.focused {
+  position: relative;
+  z-index: 40;
+  background: rgba(245, 158, 11, 0.18);
+  box-shadow:
+    0 0 0 2px rgba(245, 158, 11, 0.95),
+    0 0 14px 4px rgba(245, 158, 11, 0.45);
+  border-radius: 5px;
+  padding: 0 3px;
+  transition: box-shadow .18s ease, background .18s ease;
+}
+/* The surrounding syntactic chunk — wider, lighter glow (2px more spread) */
+.lesson-text .w.focused-chunk {
+  position: relative;
+  z-index: 35;
+  box-shadow:
+    0 0 0 4px rgba(245, 158, 11, 0.32),
+    0 0 18px 6px rgba(245, 158, 11, 0.14);
+  border-radius: 6px;
+  padding: 0 2px;
+  transition: box-shadow .18s ease;
+}
+
+/* Lift the lesson card up while word sheet is open — same trick as
+   cont-bar-open. Title/header slides off-screen above; full text body
+   becomes readable above the bottom sheet. */
+body.word-focus-open .lesson-main {
+  transform: translateY(var(--word-focus-shift, -120px));
+}
+@media (min-width: 1024px) {
+  body.word-focus-open .lesson-main { transform: none; }
+}
+
+/* =============================================================
+   PC sidebar — new rich layout (IPA, level tag, mnemonic, examples,
+   collocations) layered on top of the existing card structure.
+   ============================================================= */
+.lesson-sidebar .ls-meta-row {
+  display: flex; align-items: center; gap: 8px;
+  margin: 4px 0 12px;
+  font-size: 12px;
+}
+.lesson-sidebar .ls-ipa {
+  font-family: 'Times New Roman', serif;
+  font-style: italic;
+  color: var(--muted);
+}
+.lesson-sidebar .ls-pos-tag {
+  background: #f1f3f5;
+  color: var(--ink);
+  font-weight: 700;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.lesson-sidebar .ls-level-tag {
+  background: #fff8d6;
+  color: #6b4f00;
+  font-weight: 800;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #f5b800;
+  margin-left: auto;
+}
+.lesson-sidebar .ls-section {
+  margin-top: 14px;
+}
+.lesson-sidebar .ls-mnemonic-block { margin-top: 14px; }
+.lesson-sidebar .ls-mnemonic {
+  font-size: 14px; line-height: 1.55;
+  color: var(--ink);
+  padding: 10px 12px;
+  background: #fffaf3;
+  border: 1px solid #ffe0a8;
+  border-radius: 8px;
+  margin-top: 4px;
+}
+.lesson-sidebar .ls-collapse {
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.lesson-sidebar .ls-collapse[hidden] { display: none; }
+.lesson-sidebar .ls-collapse > summary {
+  list-style: none;
+  cursor: pointer;
+  font-size: 12px; font-weight: 800;
+  color: var(--muted);
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  padding: 4px 0;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.lesson-sidebar .ls-collapse > summary::-webkit-details-marker { display: none; }
+.lesson-sidebar .ls-collapse > summary::after {
+  content: '▾';
+  font-size: 11px;
+  transition: transform .18s ease;
+  color: var(--muted);
+}
+.lesson-sidebar .ls-collapse[open] > summary::after { transform: rotate(180deg); }
+.lesson-sidebar .ls-count {
+  margin-left: 6px;
+  font-weight: 700; color: var(--muted);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.lesson-sidebar .ls-senses {
+  list-style: none; margin: 6px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.lesson-sidebar .ls-senses li { font-size: 14px; line-height: 1.45; }
+.lesson-sidebar .ls-sense-ko { font-weight: 700; color: var(--ink); }
+.lesson-sidebar .ls-sense-pos {
+  margin-left: 4px;
+  font-size: 11px; color: var(--muted); font-weight: 600;
+  background: #f1f3f5; padding: 1px 6px; border-radius: 999px;
+}
+.lesson-sidebar .ls-sense-ex {
+  margin-top: 2px;
+  font-size: 12px; color: var(--muted); font-weight: 500;
+}
+
+.lesson-sidebar .ls-examples {
+  list-style: none; margin: 6px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.lesson-sidebar .ls-examples li { font-size: 14px; line-height: 1.45; }
+
+.lesson-sidebar .ls-collocs {
+  list-style: none; margin: 6px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.lesson-sidebar .ls-collocs li {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-size: 14px; line-height: 1.4;
+}
+
+/* =============================================================
    Playbar voice picker
    The button sits between speed and close on the playbar; tapping
    pops a small menu UPWARD listing each Neural2 voice. Persists in
