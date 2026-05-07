@@ -1054,14 +1054,37 @@
   // Renders the chunk that contains the focused word — the English chunk
   // text (with the focused word in pink) above its Korean translation.
   // Replaces the old mnemonic block: more useful info, less waffle.
-  function renderChunkTx(host, chunkText, chunkKo, lemma) {
+  function renderChunkTx(host, chunkText, chunkKo, lemma, wordKo) {
     if (!host) return;
     if (!chunkText) { host.innerHTML = ''; return; }
     host.innerHTML =
       '<div class="ck-en">' + highlightLemma(chunkText, lemma || '') + '</div>' +
       (chunkKo
-        ? '<div class="ck-ko">' + escapeHtml(chunkKo) + '</div>'
+        ? '<div class="ck-ko">' + highlightKoSubstring(chunkKo, wordKo) + '</div>'
         : '<div class="ck-ko"><span class="tx-loading">번역 중...</span></div>');
+  }
+  // Pink-highlight the Korean span inside `chunkKo` that corresponds to the
+  // selected English word. Uses the word's contextual Korean (from
+  // Translate.translate) as the search key. Skips highlighting when the
+  // mapping is ambiguous (no match, multiple matches, or the key is too
+  // short to be meaningful) — per user spec: "if the mapping is unclear,
+  // don't highlight."
+  function highlightKoSubstring(chunkKo, wordKo) {
+    const safeKo = escapeHtml(chunkKo || '');
+    if (!chunkKo || !wordKo) return safeKo;
+    // Strip surrounding noise (quotes, parens, ~, dashes) from wordKo so
+    // a meaning like "(부사) 이래로" still matches "이래로" in the chunk.
+    const clean = String(wordKo)
+      .replace(/^[\s"'(,~\-·]+|[\s"'),~\-·]+$/g, '')
+      .trim();
+    if (clean.length < 2) return safeKo;          // ambiguous if too short
+    const first = chunkKo.indexOf(clean);
+    if (first < 0) return safeKo;                 // no match
+    if (chunkKo.indexOf(clean, first + 1) >= 0)   // multiple matches
+      return safeKo;
+    return escapeHtml(chunkKo.slice(0, first)) +
+           '<span class="ck-ko-hl">' + escapeHtml(clean) + '</span>' +
+           escapeHtml(chunkKo.slice(first + clean.length));
   }
   function renderExamples(ul, examples, lemma) {
     if (!ul) return;
@@ -1132,17 +1155,31 @@
     _focusedWordEl = wEl;
   }
   function applyChunkHighlight(wEl, chunk) {
-    if (!wEl || !chunk || !Array.isArray(chunk.indices)) return;
+    if (!wEl || !chunk) return;
     const sentenceWords = getSentenceWordsOf(wEl);
     if (!sentenceWords.length) return;
-    const start = Math.max(0, chunk.indices[0] | 0);
-    const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
-    if (end < start) return;
+
+    // PRIMARY: text-based matching. GPT's `indices` field has been observed
+    // to drift by one (off-by-one when a hyphenated/punctuation-adjacent
+    // token is counted differently), which makes the body glow extend one
+    // word past the chunk's actual boundary. Walking sentenceWords looking
+    // for an exact match against chunk.text's word sequence is robust.
+    let span = chunk.text ? findChunkSpanByText(sentenceWords, chunk.text) : null;
+
+    // FALLBACK: indices, when the text didn't match (e.g. GPT returned a
+    // paraphrase rather than the literal sentence substring).
+    if (!span && Array.isArray(chunk.indices)) {
+      const start = Math.max(0, chunk.indices[0] | 0);
+      const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
+      if (end >= start) span = { start, end };
+    }
+    if (!span) return;
+
     // Clear any previous chunk highlight from a prior word click before
     // applying the new one (otherwise consecutive arrow steps stack glows).
     if (_focusedChunkEls) for (const el of _focusedChunkEls) el.classList.remove('focused-chunk');
     const set = [];
-    for (let i = start; i <= end; i++) {
+    for (let i = span.start; i <= span.end; i++) {
       const el = sentenceWords[i];
       if (el && el !== wEl) {
         el.classList.add('focused-chunk');
@@ -1150,6 +1187,33 @@
       }
     }
     _focusedChunkEls = set;
+  }
+
+  // Match chunk.text against the sentence's non-punct words, returning
+  // {start, end} (inclusive). Tries to find a contiguous slice whose
+  // normalized words equal chunk.text's normalized words. Ignores case,
+  // punctuation, and surrounding whitespace.
+  function findChunkSpanByText(sentenceWords, chunkText) {
+    if (!chunkText) return null;
+    const norm = (s) => String(s || '')
+      .toLowerCase()
+      .replace(/[“”‘’".,!?;:()\[\]—–]/g, '')
+      .trim();
+    const target = chunkText
+      .split(/\s+/)
+      .map(norm)
+      .filter(Boolean);
+    if (!target.length) return null;
+    for (let i = 0; i + target.length <= sentenceWords.length; i++) {
+      let ok = true;
+      for (let j = 0; j < target.length; j++) {
+        const el = sentenceWords[i + j];
+        const w = norm((el && el.dataset && el.dataset.word) || (el && el.textContent) || '');
+        if (w !== target[j]) { ok = false; break; }
+      }
+      if (ok) return { start: i, end: i + target.length - 1 };
+    }
+    return null;
   }
   // Find which chunk an anchor word belongs to, given the chunks array
   // returned by chunk-gpt. Word index = position among non-punct words
@@ -1356,11 +1420,20 @@
     const closeBtn = document.getElementById('ws-close');
     if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); hideWordSheet(); };
 
-    // Fast contextual translation
-    Translate.translate(word, sentence).then(ko => {
-      if (_sheetWord !== word) return;
+    // Auto-speak the selected word every time the sheet opens. Mobile
+    // 하나씩 mode treats word selection as a "show me this word" cue, and
+    // hearing it together with seeing the meaning is the strongest learning
+    // signal. The TTS module no-ops if the user has muted globally.
+    try { TTS.speak(word); } catch (_) {}
+
+    // Fast contextual translation. We hold the promise so the chunk panel
+    // can pink-highlight the matching Korean substring once BOTH the
+    // word's Korean and the chunk's Korean are resolved.
+    const wordKoPromise = Translate.translate(word, sentence).then(ko => {
+      if (_sheetWord !== word) return ko || '';
       if (meaningEl) meaningEl.textContent = ko || '—';
-    }).catch(() => {});
+      return ko || '';
+    }).catch(() => '');
 
     // Chunk = words around the clicked word that form one syntactic unit.
     // We highlight them on the page AND show the chunk's Korean meaning
@@ -1374,9 +1447,12 @@
         applyChunkHighlight(anchorEl, c);
         // Render the chunk text immediately, fetch its Korean in parallel.
         renderChunkTx(mnemEl, c.text, '', word);
-        Translate.translate(c.text, sentence).then(ko => {
+        Promise.all([
+          Translate.translate(c.text, sentence),
+          wordKoPromise,
+        ]).then(([chunkKo, wordKo]) => {
           if (_sheetWord !== word) return;
-          renderChunkTx(mnemEl, c.text, ko, word);
+          renderChunkTx(mnemEl, c.text, chunkKo, word, wordKo);
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -1398,9 +1474,12 @@
           applyChunkHighlight(anchorEl, info.phraseChunk);
           if (mnemEl && !mnemEl.querySelector('.ck-en')) {
             renderChunkTx(mnemEl, info.phraseChunk.text, '', word);
-            Translate.translate(info.phraseChunk.text, sentence).then(ko => {
+            Promise.all([
+              Translate.translate(info.phraseChunk.text, sentence),
+              wordKoPromise,
+            ]).then(([chunkKo, wordKo]) => {
               if (_sheetWord !== word) return;
-              renderChunkTx(mnemEl, info.phraseChunk.text, ko, word);
+              renderChunkTx(mnemEl, info.phraseChunk.text, chunkKo, word, wordKo);
             }).catch(() => {});
           }
         }
@@ -1606,11 +1685,14 @@
       clearWordFocus();
     }
 
-    // Fast contextual translation
+    // Fast contextual translation. Resolved value is also handed to the
+    // chunk panel so its Korean rendering can pink-highlight the substring
+    // matching the selected word's contextual meaning.
+    let textKo = '';
     try {
-      const ko = await Translate.translate(text, sentence);
-      SIDEBAR_PHRASE = { text, ko };
-      if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
+      textKo = await Translate.translate(text, sentence) || '';
+      SIDEBAR_PHRASE = { text, ko: textKo };
+      if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(textKo) + '</span>';
     } catch (err) {
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     }
@@ -1629,7 +1711,7 @@
         renderChunkTx(mnEl, c.text, '', text);
         Translate.translate(c.text, sentence).then(ko => {
           if (cur.textContent !== text) return;
-          renderChunkTx(mnEl, c.text, ko, text);
+          renderChunkTx(mnEl, c.text, ko, text, textKo);
         }).catch(() => {});
       }).catch(() => {});
     }
