@@ -207,6 +207,9 @@
     <div class="ws-row">
       <button class="ws-icon ws-speak" id="ws-speak" aria-label="발음 듣기" title="발음 듣기">🔊</button>
       <span class="ws-meaning" id="ws-meaning">—</span>
+      <!-- ✨ AI translation toggle — copy of the head-tools button so users
+           can switch to GPT translation right from the bottom sheet. -->
+      <button class="ws-tab ws-gpt-tab" id="ws-gpt-tab" aria-label="GPT 번역" title="더 좋은 번역 (GPT)">✨</button>
       <button class="ws-tab" id="ws-tab-ex" data-panel="ex" aria-label="예시문" title="예시문">예</button>
       <button class="ws-tab" id="ws-tab-co" data-panel="co" aria-label="연어"   title="자주 함께 쓰는 말">연</button>
       <button class="ws-tab ws-level-tab" id="ws-level-tab" aria-label="단계"   title="단어 단계">·</button>
@@ -1210,6 +1213,29 @@
     const sp = document.getElementById('ws-speak');
     if (sp) sp.onclick = (e) => { e.stopPropagation(); TTS.speak(word); };
 
+    // ✨ GPT-translation toggle — same setting as the head-tools ✨ pill,
+    // but reachable from the sheet without closing it. State syncs both ways.
+    const gptTab = document.getElementById('ws-gpt-tab');
+    function refreshGptTab() {
+      const on = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
+      if (gptTab) gptTab.classList.toggle('gpt-on', on);
+      const head = document.getElementById('gpt-toggle-btn');
+      if (head) head.classList.toggle('gpt-on', on);
+    }
+    refreshGptTab();
+    if (gptTab) gptTab.onclick = (e) => {
+      e.stopPropagation();
+      const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
+      Translate.setUseGPT(!cur);
+      refreshGptTab();
+      // Re-translate the current word with the new engine, in place.
+      if (meaningEl) meaningEl.textContent = '…';
+      Translate.translate(word, sentence).then(ko => {
+        if (_sheetWord !== word) return;
+        if (meaningEl) meaningEl.textContent = ko || '—';
+      }).catch(() => {});
+    };
+
     // Level circle: shows current state, taps toggle popover
     const levelTab = document.getElementById('ws-level-tab');
     const lower    = (word || '').toLowerCase();
@@ -1353,9 +1379,27 @@
     if (lp) lp.hidden = true;
     document.body.classList.remove('word-focus-open');
     document.documentElement.style.removeProperty('--word-focus-shift');
-    // Reset any per-word text shift back to normal.
+    // Reset any per-word text shift back to normal. Use an EXPLICIT
+    // translateY(0) so the browser actually animates from the current
+    // shifted position back to 0 — setting transform to '' (or 'none')
+    // sometimes snaps without animating, leaving the text stuck partway.
+    // After the transition completes, clear the inline transition prop.
     const lt = document.getElementById('lesson-text');
-    if (lt) lt.style.transform = '';
+    if (lt && lt.style.transform && lt.style.transform !== 'translateY(0px)') {
+      lt.style.transition = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+      lt.style.transform  = 'translateY(0px)';
+      setTimeout(() => {
+        if (lt) {
+          // Drop both inline props once the animation has played out so
+          // future renders don't inherit stale values.
+          lt.style.transform = '';
+          lt.style.transition = '';
+        }
+      }, 260);
+    } else if (lt) {
+      lt.style.transform = '';
+      lt.style.transition = '';
+    }
     clearWordFocus();
     _sheetWord = null;
   }
