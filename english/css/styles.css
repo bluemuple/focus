@@ -1119,23 +1119,30 @@ body:has(.lesson-page) {
   body.sidebar-open .lesson-main { margin-right: 0; }
 }
 
-/* ===== practice overlay & shared card frame ===== */
+/* ===== practice overlay & shared card frame =====
+   Two visual modes share this overlay:
+     1. Menu state — small popup card snapped above the practice button.
+        Backdrop is dimmed (no blur) per practice.jpeg.
+     2. Active practice (words / sentences / quiz) — content fills the
+        whole screen (no centered max-width card). */
 .practice-overlay {
   position: fixed; inset: 0; z-index: 250;
-  background: rgba(20,30,50,0.45);
-  backdrop-filter: blur(4px);
-  display: grid; place-items: center;
-  padding: 16px;
+  background: rgba(20,25,40,0.55);
+  /* No blur — user wants a clean dim, not a frosted backdrop. */
 }
 .practice-overlay[hidden] { display: none; }
+.practice-stage { position: absolute; inset: 0; }
 
+/* Shared frame for word / sentence practice. Like .quiz-screen above,
+   this now fills the viewport — full-screen vertically AND horizontally. */
 .practice-card, .practice-menu {
-  background: #fff; border-radius: 18px;
-  width: 100%; max-width: 460px;
+  background: #fff; border-radius: 0;
+  width: 100vw; height: 100vh;
+  max-width: none;
   padding: 24px 22px 22px;
-  box-shadow: var(--shadow-lg);
-  position: relative;
-  max-height: calc(100vh - 32px);
+  box-shadow: none;
+  position: absolute; inset: 0;
+  max-height: 100vh;
   overflow-y: auto;
 }
 .practice-card .pm-close,
@@ -1264,15 +1271,19 @@ body:has(.lesson-page) {
 .sp-feedback .sp-bad { color: #b03a3a; font-weight: 700; margin-bottom: 8px; }
 .sp-feedback .btn { margin: 0 4px; }
 
-/* ===== Quiz (LingQ-style reference) ===== */
+/* ===== Quiz (LingQ-style reference) =====
+   Full-screen card — fills the viewport vertically and horizontally so
+   the user has plenty of room for the audio prompt + 4 large options.
+   Choice option width is constrained to 84vw (centered) per spec. */
 .practice-overlay .quiz-screen {
   background: #fff;
-  width: 100%; max-width: 480px;
-  border-radius: 18px;
-  box-shadow: var(--shadow-lg);
-  padding: 18px 20px 22px;
-  position: relative;
-  max-height: calc(100vh - 32px);
+  width: 100vw; height: 100vh;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 18px 20px 28px;
+  position: absolute; inset: 0;
+  max-height: 100vh;
   overflow-y: auto;
 }
 .quiz-header {
@@ -1344,7 +1355,14 @@ body:has(.lesson-page) {
   color: #6b7280; font-size: 14px;
   margin: 12px 4px 14px;
 }
-.qz-options { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.qz-options {
+  display: grid; grid-template-columns: 1fr; gap: 10px;
+  /* Choice options span 84% of viewport width, centered — matches the
+   spec for the full-screen quiz layout. */
+  width: 84vw;
+  max-width: 84vw;
+  margin: 0 auto;
+}
 .qz-option {
   text-align: left;
   border: 1.5px solid var(--line);
@@ -1439,19 +1457,27 @@ body:has(.lesson-page) {
 
 /* ===== Practice menu (anchored bottom-right card) =====
    Matches practice.jpeg: dim full-screen with a small white card snapped
-   to the lower-right, listing icon + label + (count) per item. */
-.menu-screen { padding-bottom: 32px; }
-.menu-screen .quiz-header { padding-bottom: 12px; }
-.practice-anchor {
+   directly above the practice button (lesson-bar's right end), listing
+   icon + label + (count) per item. */
+.practice-anchor.menu-anchor {
+  position: fixed;
+  right: 12px;
+  /* Sits just above the lesson-bar (~64px tall) with a small gap. */
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 76px);
+  display: block;
+  margin: 0;
+}
+/* Non-menu uses (kept for backwards compat — should be empty now). */
+.practice-anchor:not(.menu-anchor) {
   display: flex; justify-content: flex-end;
   margin-top: 30px;
 }
 .practice-card-anchored {
-  width: 240px;
+  width: 260px;
   background: #fff;
   border-radius: 14px;
   border: 1px solid var(--line);
-  box-shadow: 0 12px 30px rgba(0,0,0,0.12);
+  box-shadow: 0 18px 40px rgba(0,0,0,0.18);
   padding: 8px;
   display: flex; flex-direction: column; gap: 2px;
 }
@@ -1506,20 +1532,11 @@ body:has(.lesson-page) {
   font-size: 16px; color: #1f2937; padding: 4px 0 8px;
 }
 .lesson-sidebar .ls-trans .ko { font-weight: 700; }
-.lesson-sidebar .ls-senses {
-  list-style: none; margin: 0; padding: 0;
-}
-.lesson-sidebar .ls-senses li {
-  padding: 8px 6px;
-  border-bottom: 1px solid var(--line);
-  display: flex; align-items: baseline; gap: 8px;
-  font-size: 14px; color: #1f2937;
-}
-.lesson-sidebar .ls-senses li:last-child { border-bottom: none; }
-.lesson-sidebar .ls-sense-ko { flex: 1; min-width: 0; }
-.lesson-sidebar .ls-sense-pos {
-  font-size: 11px; color: var(--muted); font-style: italic;
-}
+/* Popular Meanings — see the canonical block ~line 2870 below. The earlier
+   flex-row layout caused Korean text to wrap one character per line when the
+   example was long (Korean has no word boundaries to break on, so a narrow
+   `flex: 1` cell collapses each char onto its own row). The block below uses
+   display: block + word-break: keep-all to keep meanings on one line. */
 
 .lesson-sidebar .level-bar { margin-top: 4px; }
 
@@ -2869,26 +2886,38 @@ body.word-focus-open .lesson-text {
 
 .lesson-sidebar .ls-senses {
   list-style: none; margin: 6px 0 0; padding: 0;
-  display: flex; flex-direction: column; gap: 4px;
+  display: flex; flex-direction: column; gap: 8px;
 }
-/* One sense = one row, all inline. ko bold, then small gray POS, then
-   muted italic example. No more chip-style POS pill (was visually heavy
-   and forced the ko text to feel "kicked left"). */
+/* Two-row layout per sense:
+     line 1 — Korean meaning (bold, prominent)
+     line 2 — small POS · italic example (muted)
+   Korean text gets `word-break: keep-all` so a narrow column never wraps
+   a single Korean syllable to its own line. */
 .lesson-sidebar .ls-senses li {
-  font-size: 14px; line-height: 1.55;
-  padding: 3px 0;
+  display: block;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px; line-height: 1.5;
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
+.lesson-sidebar .ls-senses li:last-child { border-bottom: none; }
 .lesson-sidebar .ls-sense-ko {
+  display: block;
   font-weight: 700; color: var(--ink);
+  font-size: 15px; line-height: 1.45;
+  margin-bottom: 2px;
 }
 .lesson-sidebar .ls-sense-pos {
+  display: inline;
   font-size: 11px; color: var(--muted); font-weight: 600;
-  margin: 0 4px;
   text-transform: lowercase;
+  margin-right: 6px;
 }
 .lesson-sidebar .ls-sense-ex {
+  display: inline;
   color: var(--muted); font-size: 13px;
-  font-style: italic;
+  font-style: italic; line-height: 1.5;
 }
 
 .lesson-sidebar .ls-examples {
