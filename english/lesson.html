@@ -149,8 +149,10 @@
       <div class="ls-trans" id="ls-trans"><span class="tx-loading">번역 중...</span></div>
 
       <!-- 💡 Mnemonic — default visible; highlight spans coloured pink -->
+      <!-- "구문 풀이" — the chunk that contains the clicked word, plus
+           its Korean translation. Re-uses the .ls-mnemonic styling. -->
       <div class="ls-section ls-mnemonic-block" id="ls-mnemonic-block" hidden>
-        <div class="ls-section-label">💡 암기 팁</div>
+        <div class="ls-section-label">📖 구문 풀이</div>
         <div class="ls-mnemonic" id="ls-mnemonic"></div>
       </div>
 
@@ -798,7 +800,7 @@
     const word = target.dataset.word;
     const sentence = getContextSentence(target);
     if (useSidebar()) {
-      showInSidebar(word, sentence);
+      showInSidebar(word, sentence, target);
     } else {
       showInWordSheet(word, sentence, target);
     }
@@ -1040,29 +1042,17 @@
     out += escapeHtml(text.slice(last));
     return out;
   }
-  // Renders the Korean mnemonic with its highlight substrings wrapped in
-  // <span class="hl"> for pink emphasis. Strips any leftover markdown
-  // that slipped through (the prompt forbids ** but defence-in-depth).
-  function renderMnemonic(host, mnemonic) {
+  // Renders the chunk that contains the focused word — the English chunk
+  // text (with the focused word in pink) above its Korean translation.
+  // Replaces the old mnemonic block: more useful info, less waffle.
+  function renderChunkTx(host, chunkText, chunkKo, lemma) {
     if (!host) return;
-    if (!mnemonic || !mnemonic.text) {
-      host.innerHTML = '';
-      return;
-    }
-    let text = String(mnemonic.text);
-    // Strip "**...**" markdown — keep the inner text plain.
-    text = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
-    const highlights = (mnemonic.highlights || []).filter(s => s && text.includes(s));
-    if (!highlights.length) {
-      host.textContent = text;
-      return;
-    }
-    let html = escapeHtml(text);
-    for (const h of highlights) {
-      const escH = escapeHtml(h);
-      html = html.split(escH).join('<span class="hl">' + escH + '</span>');
-    }
-    host.innerHTML = html;
+    if (!chunkText) { host.innerHTML = ''; return; }
+    host.innerHTML =
+      '<div class="ck-en">' + highlightLemma(chunkText, lemma || '') + '</div>' +
+      (chunkKo
+        ? '<div class="ck-ko">' + escapeHtml(chunkKo) + '</div>'
+        : '<div class="ck-ko"><span class="tx-loading">번역 중...</span></div>');
   }
   function renderExamples(ul, examples, lemma) {
     if (!ul) return;
@@ -1196,12 +1186,11 @@
     const exUl      = document.getElementById('ws-examples');
     const coUl      = document.getElementById('ws-collocs');
     if (meaningEl) meaningEl.textContent = '…';
-    // Skeleton animation while GPT response is in flight — 3 short pulsing
-    // bars so the panel feels alive instead of frozen-blank.
+    // Skeleton placeholder for the chunk-translation panel + lists below.
     if (mnemEl) mnemEl.innerHTML =
-      '<div class="ws-skel"><span class="skel-line w70"></span>' +
-      '<span class="skel-line w90"></span>' +
-      '<span class="skel-line w55"></span></div>';
+      '<div class="ws-skel">' +
+      '<span class="skel-line w70"></span>' +
+      '<span class="skel-line w90"></span></div>';
     if (exUl) exUl.innerHTML =
       '<li><span class="skel-line w90"></span></li>' +
       '<li><span class="skel-line w70"></span></li>';
@@ -1311,49 +1300,50 @@
       if (meaningEl) meaningEl.textContent = ko || '—';
     }).catch(() => {});
 
-    // Chunk highlight — fired in parallel with getWordInfo. chunk-gpt is
-    // smaller + cached per sentence, so this usually resolves first AND
-    // is shared across all words in this sentence.
+    // Chunk = words around the clicked word that form one syntactic unit.
+    // We highlight them on the page AND show the chunk's Korean meaning
+    // in the sheet (replacing the old mnemonic). Cached per sentence.
     if (Translate.getChunks) {
       Translate.getChunks(sentence).then(chunks => {
         if (_sheetWord !== word) return;
         if (!chunks) return;
         const c = findChunkForWord(anchorEl, chunks);
-        if (c) applyChunkHighlight(anchorEl, c);
+        if (!c) return;
+        applyChunkHighlight(anchorEl, c);
+        // Render the chunk text immediately, fetch its Korean in parallel.
+        renderChunkTx(mnemEl, c.text, '', word);
+        Translate.translate(c.text, sentence).then(ko => {
+          if (_sheetWord !== word) return;
+          renderChunkTx(mnemEl, c.text, ko, word);
+        }).catch(() => {});
       }).catch(() => {});
     }
 
-    // Rich GPT word info — mnemonic, examples, collocations.
+    // Rich GPT word info — examples + collocations (mnemonic dropped per
+    // user request: chunk meaning is more useful than generic mnemonics).
     // No sentence passed → cache key is just the word, so the SAME word
     // re-clicked (or seen in another sentence) is an instant cache hit.
-    // Contextual Korean meaning still comes from Translate.translate
-    // above (which uses sentence properly).
     if (Translate.getWordInfo) {
       Translate.getWordInfo(word).then(info => {
         if (_sheetWord !== word) return;
-        if (!info) {
-          if (mnemEl) mnemEl.innerHTML = '<span class="muted">암기 팁을 불러오지 못했어요.</span>';
-          return;
-        }
+        if (!info) return;
         // Don't override meaningEl from info.ko — Translate.translate
-        // above already filled it with the CONTEXT-aware meaning. info.ko
-        // (with no sentence passed) would be the generic most-common
-        // sense, which is potentially less accurate for this sentence.
-        // Mnemonic is OPTIONAL now (GPT omits when no good strategy fits).
-        if (info.mnemonic && info.mnemonic.text) {
-          renderMnemonic(mnemEl, info.mnemonic);
-        } else if (mnemEl) {
-          mnemEl.innerHTML = '<span class="muted">이 단어는 별도 암기 팁 없이 익혀볼게요.</span>';
-        }
+        // above already filled it with the CONTEXT-aware meaning.
         renderExamples(exUl, info.examples, info.lemma || word);
         renderCollocations(coUl, info.collocations, info.lemma || word);
-        // Fallback chunk highlight if chunk-gpt cache missed AND word-info
-        // returned a phraseChunk. Most common path is chunk-gpt above.
-        if (!_focusedChunkEls && info.phraseChunk) applyChunkHighlight(anchorEl, info.phraseChunk);
+        // Fallback chunk highlight if chunk-gpt cache missed.
+        if (!_focusedChunkEls && info.phraseChunk) {
+          applyChunkHighlight(anchorEl, info.phraseChunk);
+          if (mnemEl && !mnemEl.querySelector('.ck-en')) {
+            renderChunkTx(mnemEl, info.phraseChunk.text, '', word);
+            Translate.translate(info.phraseChunk.text, sentence).then(ko => {
+              if (_sheetWord !== word) return;
+              renderChunkTx(mnemEl, info.phraseChunk.text, ko, word);
+            }).catch(() => {});
+          }
+        }
         requestAnimationFrame(applyWordSheetShift);
-      }).catch(() => {
-        if (mnemEl) mnemEl.innerHTML = '<span class="muted">암기 팁을 불러오지 못했어요.</span>';
-      });
+      }).catch(() => {});
     }
   }
   function hideWordSheet() {
@@ -1374,31 +1364,34 @@
     // Per-word text shift is handled by ensureWordVisibleAboveSheet.
     document.documentElement.style.removeProperty('--word-focus-shift');
   }
-  // Move the lesson-text content up by JUST ENOUGH so the focused word is
-  // visible above the bottom sheet. Title row + tools row stay in place.
-  // No shift if the word is already visible above the sheet.
+  // Stable shift: only triggered when the user picks a word in the
+  // BOTTOM 3 LINES of the page. Once shifted, the text stays put for
+  // every subsequent word click in this sheet session — no more up-down
+  // jitter. Reset when the sheet closes or the user navigates pages.
   function ensureWordVisibleAboveSheet(wEl) {
     const lt = document.getElementById('lesson-text');
     if (!lt) return;
     const sheet = document.getElementById('word-sheet');
-    if (!sheet || sheet.hidden || !wEl) {
-      lt.style.transform = '';
-      return;
+    if (!sheet || sheet.hidden || !wEl) return;
+    const wrap = document.getElementById('lesson-text-wrap');
+    if (!wrap) return;
+
+    // If we already shifted in this sheet session, keep it. The user
+    // explicitly asked for fewer up-down moves — stability over precision.
+    if (lt.style.transform) return;
+
+    const lineHeight = parseFloat(getComputedStyle(lt).lineHeight) || 40;
+    const SHIFT_THRESHOLD_LINES = 3;
+    const wrapBottom = wrap.getBoundingClientRect().bottom;
+    const wRect      = wEl.getBoundingClientRect();
+    const distFromBottom = wrapBottom - wRect.bottom;
+    if (distFromBottom < lineHeight * SHIFT_THRESHOLD_LINES) {
+      // Shift by ~4 lines worth so the bottom 3 lines plus a buffer
+      // sit comfortably above the sheet. Generous on purpose.
+      const shift = Math.ceil(lineHeight * (SHIFT_THRESHOLD_LINES + 1) + 16);
+      lt.style.transform = 'translateY(-' + shift + 'px)';
+      lt.style.transition = 'transform .2s cubic-bezier(.22,.6,.36,1)';
     }
-    // Reset transform first so we measure the word's natural position.
-    lt.style.transform = '';
-    requestAnimationFrame(() => {
-      const sheetTop = sheet.getBoundingClientRect().top;
-      const wRect    = wEl.getBoundingClientRect();
-      // Need 16px of breathing room between word's bottom and sheet's top.
-      const overlap = wRect.bottom + 16 - sheetTop;
-      if (overlap > 0) {
-        lt.style.transform = 'translateY(-' + Math.ceil(overlap) + 'px)';
-        lt.style.transition = 'transform .18s ease';
-      } else {
-        lt.style.transform = '';
-      }
-    });
   }
 
   function renderSidebarWordList(host) {
@@ -1451,7 +1444,7 @@
     });
   }
 
-  async function showInSidebar(text, sentence) {
+  async function showInSidebar(text, sentence, anchorEl) {
     const card  = document.getElementById('ls-card');
     const empty = document.getElementById('ls-empty');
     if (!card || !empty) return;
@@ -1532,6 +1525,25 @@
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     }
 
+    // Chunk highlight + translation — single words only. Pulls the cached
+    // chunk for this sentence and shows the chunk text + Korean in the
+    // mnemonic slot (which now serves as the "구문 풀이" panel).
+    if (!isPhrase && anchorEl && Translate.getChunks) {
+      Translate.getChunks(sentence).then(chunks => {
+        if (!chunks) return;
+        const cur = document.getElementById('ls-word');
+        if (!cur || cur.textContent !== text) return;
+        const c = findChunkForWord(anchorEl, chunks);
+        if (!c) return;
+        if (mnBlock) mnBlock.hidden = false;
+        renderChunkTx(mnEl, c.text, '', text);
+        Translate.translate(c.text, sentence).then(ko => {
+          if (cur.textContent !== text) return;
+          renderChunkTx(mnEl, c.text, ko, text);
+        }).catch(() => {});
+      }).catch(() => {});
+    }
+
     // Rich GPT info — single words only. Cache key is just the word
     // (we pass NO sentence) so cross-sentence reuse is automatic. The
     // contextual Korean meaning above (Translate.translate with sentence)
@@ -1553,11 +1565,8 @@
         }
         // Don't override transEl — Translate.translate already filled it
         // with the contextual meaning. info.ko (no sentence) would be
-        // generic.
-        if (info.mnemonic && info.mnemonic.text) {
-          renderMnemonic(mnEl, info.mnemonic);
-          if (mnBlock) mnBlock.hidden = false;
-        }
+        // generic. (Mnemonic dropped per user request — chunk translation
+        // is rendered in the same slot below from chunk-gpt.)
         // All three sections OPEN by default — user wants to see everything
         // without an extra tap. Closed only if they explicitly collapse.
         if (info.senses && info.senses.length) {
@@ -3359,7 +3368,7 @@
         w.classList.add('active');
         const sentence = getContextSentence(w);
         if (useSidebar()) {
-          showInSidebar(word, sentence);
+          showInSidebar(word, sentence, w);
         } else {
           showInWordSheet(word, sentence, w);
         }
@@ -4169,6 +4178,7 @@
     pageIdx = targetIdx;
     const root = document.getElementById('lesson-text');
     if (!root) return;
+    root.style.transform = '';   // reset any word-sheet shift on page jump
     renderInto(root, PAGES[pageIdx] || []);
     bindWordInteractions(root);
     buildSentenceMap(root);
