@@ -95,6 +95,35 @@
     return URL.createObjectURL(blob);
   }
 
+  // Cache key includes rate — Google Cloud TTS bakes the rate INTO the audio
+  // (it's not a client-side playbackRate), so the same text at 0.9× and 1.5×
+  // are different audio buffers. Using `voice|text` alone meant changing
+  // speed mid-session would replay the stale cached audio at the old speed.
+  function cacheKey(voice, rate, text) {
+    return voice + '|' + (rate || 1) + '|' + text;
+  }
+
+  // Pre-warm the cache for `text` without playing it. Called by the
+  // sentence-playback loop to fetch the NEXT sentence's audio while the
+  // current one is still playing — by the time speak() runs for the next
+  // sentence it's a memory hit, eliminating the ~200-500ms Edge Function
+  // round-trip that used to gap each period.
+  async function prefetch(text, opts = {}) {
+    text = (text || '').toString().trim();
+    if (!text) return;
+    const voice = opts.voice || getVoice();
+    const rate  = opts.rate  ?? 1.0;
+    const ck    = cacheKey(voice, rate, text);
+    if (audioCache.has(ck)) return;
+    try {
+      const url = await fetchCloudAudio(text, voice, rate);
+      audioCache.set(ck, url);
+    } catch (_) {
+      // Silent — if prefetch fails, normal speak() will retry and surface
+      // the error there.
+    }
+  }
+
   async function speak(text, opts = {}) {
     text = (text || '').toString().trim();
     if (!text) return;
@@ -104,7 +133,7 @@
     // fall back to the user's saved preference (or the default Neural2 voice).
     const voice = opts.voice || getVoice();
     const rate  = opts.rate  ?? 1.0;
-    const ck    = voice + '|' + text;
+    const ck    = cacheKey(voice, rate, text);
 
     let url = audioCache.get(ck);
     if (!url) {
@@ -152,5 +181,5 @@
     return !!(currentAudio && !currentAudio.paused && !currentAudio.ended);
   }
 
-  window.TTS = { speak, stop, isSpeaking, listVoices, getVoice, setVoice };
+  window.TTS = { speak, stop, isSpeaking, listVoices, getVoice, setVoice, prefetch };
 })();

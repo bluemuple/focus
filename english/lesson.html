@@ -4462,11 +4462,37 @@
             ? SENTENCE_MAP.map(s => s.text)
             : [text];
 
+          // Prefetch the FIRST sentence too — when starting cold (no current
+          // sentence and nothing in cache), the very first speak() would
+          // otherwise pay the full Edge Function round-trip. This kicks off
+          // the fetch immediately so it overlaps with the audio element setup.
+          const ttsRate = 0.9 * speed;
+          if (TTS.prefetch && list.length > startLocal) {
+            TTS.prefetch(list[startLocal], { rate: ttsRate });
+          }
           for (let i = startLocal; i < list.length; i++) {
             if (!ttsPlaying) break;
             if (SENTENCE_MAP.length) setCurrentSentence(i);
+            // Pre-warm the NEXT sentence in parallel with the CURRENT one
+            // playing. The Edge Function call (~200-500ms) overlaps with
+            // the current audio's playback time, so by the time `onended`
+            // fires for sentence i, sentence i+1 is already a memory hit
+            // and starts within a few ms — closing the gap the user noticed.
+            if (TTS.prefetch && i + 1 < list.length) {
+              TTS.prefetch(list[i + 1], { rate: ttsRate });
+            }
+            // When the LAST sentence of this page is about to play, prefetch
+            // the FIRST sentence of the NEXT page so the cross-page handoff
+            // is just the slide-animation pause, not slide + cold fetch.
+            if (TTS.prefetch && i === list.length - 1
+                && pageIdx + 1 < PAGES.length) {
+              const nextPara = (PAGES[pageIdx + 1] || [])[0] || '';
+              const firstNext = String(nextPara)
+                .split(/(?<=[.!?])\s+/)[0] || '';
+              if (firstNext.trim()) TTS.prefetch(firstNext.trim(), { rate: ttsRate });
+            }
             await new Promise(resolve => {
-              TTS.speak(list[i], { rate: 0.9 * speed, onend: resolve });
+              TTS.speak(list[i], { rate: ttsRate, onend: resolve });
             });
           }
           startLocal = 0;
@@ -4475,7 +4501,10 @@
           await new Promise(resolve => {
             goPage(+1);
             // Wait for the slide animation + DOM swap before continuing.
-            setTimeout(resolve, 340);
+            // Trimmed from 340ms — the slide animation runs .26s; an extra
+            // ~20ms buffer is plenty for the DOM swap to complete. The
+            // remaining 80ms was dead silence the user heard between pages.
+            setTimeout(resolve, 280);
           });
         }
         ttsPlaying = false;
