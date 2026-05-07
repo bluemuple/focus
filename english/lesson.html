@@ -764,7 +764,11 @@
     const all = Array.from(root.querySelectorAll('.w:not(.punct)'));
     if (!all.length) return false;
 
-    const skip = { skipMastered: true };
+    // Relaxed: only skip "ignored" (state -1). Mastered words (state 5) are
+    // still walkable so the cursor moves to the IMMEDIATE neighbor instead
+    // of jumping over a long run of mastered words to a far one. (Prior
+    // behaviour was confusing — pressing → would land 7 words away.)
+    const skip = { skipMastered: false };
     // Cursor = the .active word under the popup, or null when no popup.
     const cursor = root.querySelector('.w.active');
     let target = null;
@@ -1034,14 +1038,17 @@
     return out;
   }
   // Renders the Korean mnemonic with its highlight substrings wrapped in
-  // <span class="hl"> for pink emphasis.
+  // <span class="hl"> for pink emphasis. Strips any leftover markdown
+  // that slipped through (the prompt forbids ** but defence-in-depth).
   function renderMnemonic(host, mnemonic) {
     if (!host) return;
     if (!mnemonic || !mnemonic.text) {
       host.innerHTML = '';
       return;
     }
-    const text = mnemonic.text;
+    let text = String(mnemonic.text);
+    // Strip "**...**" markdown — keep the inner text plain.
+    text = text.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1');
     const highlights = (mnemonic.highlights || []).filter(s => s && text.includes(s));
     if (!highlights.length) {
       host.textContent = text;
@@ -1094,10 +1101,11 @@
     const list = (senses || []).slice(0, 6);
     for (const s of list) {
       const li = document.createElement('li');
-      li.innerHTML =
-        '<span class="ls-sense-ko">' + escapeHtml(s.ko || '') + '</span>' +
-        (s.pos ? ' <span class="ls-sense-pos">' + escapeHtml(s.pos) + '</span>' : '') +
-        (s.example ? '<div class="ls-sense-ex">' + escapeHtml(s.example) + '</div>' : '');
+      // ko · pos · example — all inline so each sense fits in 1-2 lines.
+      let html = '<span class="ls-sense-ko">' + escapeHtml(s.ko || '') + '</span>';
+      if (s.pos)     html += '<span class="ls-sense-pos">' + escapeHtml(s.pos) + '</span>';
+      if (s.example) html += '<span class="ls-sense-ex">' + escapeHtml(s.example) + '</span>';
+      li.innerHTML = html;
       ul.appendChild(li);
     }
   }
@@ -1147,13 +1155,19 @@
     const sheet = document.getElementById('word-sheet');
     if (!sheet) return;
     _sheetWord = word;
+    // Order matters: applyWordFocus() internally calls clearWordFocus()
+    // which REMOVES body.word-focus-open. So we must add the body class
+    // AFTER applyWordFocus, otherwise the dim overlay never appears on
+    // the second arrow press (the class would be added then immediately
+    // wiped by clearWordFocus inside applyWordFocus).
+    applyWordFocus(anchorEl);
+    document.body.classList.add('word-focus-open');
     sheet.hidden = false;
     requestAnimationFrame(() => {
       sheet.classList.add('show');
       applyWordSheetShift();
+      ensureWordVisibleAboveSheet(anchorEl);
     });
-    document.body.classList.add('word-focus-open');
-    applyWordFocus(anchorEl);
 
     const meaningEl = document.getElementById('ws-meaning');
     const mnemEl    = document.getElementById('ws-mnemonic');
@@ -1301,17 +1315,42 @@
     if (lp) lp.hidden = true;
     document.body.classList.remove('word-focus-open');
     document.documentElement.style.removeProperty('--word-focus-shift');
+    // Reset any per-word text shift back to normal.
+    const lt = document.getElementById('lesson-text');
+    if (lt) lt.style.transform = '';
     clearWordFocus();
     _sheetWord = null;
   }
   function applyWordSheetShift() {
+    // No longer shifts the entire lesson-main (that hid the title row).
+    // Per-word text shift is handled by ensureWordVisibleAboveSheet.
+    document.documentElement.style.removeProperty('--word-focus-shift');
+  }
+  // Move the lesson-text content up by JUST ENOUGH so the focused word is
+  // visible above the bottom sheet. Title row + tools row stay in place.
+  // No shift if the word is already visible above the sheet.
+  function ensureWordVisibleAboveSheet(wEl) {
+    const lt = document.getElementById('lesson-text');
+    if (!lt) return;
     const sheet = document.getElementById('word-sheet');
-    if (!sheet || sheet.hidden) {
-      document.documentElement.style.removeProperty('--word-focus-shift');
+    if (!sheet || sheet.hidden || !wEl) {
+      lt.style.transform = '';
       return;
     }
-    const h = sheet.offsetHeight || 200;
-    document.documentElement.style.setProperty('--word-focus-shift', '-' + (h + 8) + 'px');
+    // Reset transform first so we measure the word's natural position.
+    lt.style.transform = '';
+    requestAnimationFrame(() => {
+      const sheetTop = sheet.getBoundingClientRect().top;
+      const wRect    = wEl.getBoundingClientRect();
+      // Need 16px of breathing room between word's bottom and sheet's top.
+      const overlap = wRect.bottom + 16 - sheetTop;
+      if (overlap > 0) {
+        lt.style.transform = 'translateY(-' + Math.ceil(overlap) + 'px)';
+        lt.style.transition = 'transform .18s ease';
+      } else {
+        lt.style.transform = '';
+      }
+    });
   }
 
   function renderSidebarWordList(host) {
@@ -1466,23 +1505,25 @@
           renderMnemonic(mnEl, info.mnemonic);
           if (mnBlock) mnBlock.hidden = false;
         }
+        // All three sections OPEN by default — user wants to see everything
+        // without an extra tap. Closed only if they explicitly collapse.
         if (info.senses && info.senses.length) {
           renderSenseList(sUl, info.senses);
           const cnt = document.getElementById('ls-senses-count');
           if (cnt) cnt.textContent = '(' + info.senses.length + ')';
-          if (sBlock) sBlock.hidden = false;
+          if (sBlock) { sBlock.hidden = false; sBlock.open = true; }
         }
         if (info.examples && info.examples.length) {
           renderExamples(exUl, info.examples, info.lemma || text);
           const cnt = document.getElementById('ls-examples-count');
           if (cnt) cnt.textContent = '(' + info.examples.length + ')';
-          if (exBlock) exBlock.hidden = false;
+          if (exBlock) { exBlock.hidden = false; exBlock.open = true; }
         }
         if (info.collocations && info.collocations.length) {
           renderCollocations(coUl, info.collocations, info.lemma || text);
           const cnt = document.getElementById('ls-collocs-count');
           if (cnt) cnt.textContent = '(' + info.collocations.length + ')';
-          if (coBlock) coBlock.hidden = false;
+          if (coBlock) { coBlock.hidden = false; coBlock.open = true; }
         }
       }).catch(() => {});
     }
@@ -2918,6 +2959,44 @@
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const dir = e.key === 'ArrowLeft' ? 'left' : 'right';
       if (tryAnchorKey(dir)) { e.preventDefault(); return; }
+    }
+
+    // Level shortcuts (PC sidebar only). When the sidebar is showing a
+    // single word, the user can press 0/1/2/3/4/V to set its state:
+    //   0  → 무시 (-1)        v / V → 완전히 아는 (5)
+    //   1  → 1   2 → 2   3 → 3   4 → 4
+    if (useSidebar()) {
+      const card = document.getElementById('ls-card');
+      const wEl = document.getElementById('ls-word');
+      const word = wEl && wEl.textContent;
+      if (card && !card.hidden && word && !/\s/.test(word)) {
+        let st = null;
+        if      (e.key === '0') st = -1;
+        else if (e.key === '1') st = 1;
+        else if (e.key === '2') st = 2;
+        else if (e.key === '3') st = 3;
+        else if (e.key === '4') st = 4;
+        else if (e.key === 'v' || e.key === 'V') st = 5;
+        if (st !== null) {
+          e.preventDefault();
+          const lower = word.toLowerCase();
+          DB.setWordState(word, st);
+          WORD_STATES[lower] = { state: st, last: '' };
+          // Recolor every instance of this word on the page.
+          const root = document.getElementById('lesson-text');
+          if (root) {
+            const escW = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(lower) : lower;
+            root.querySelectorAll('[data-word="' + escW + '"]').forEach(el => {
+              ['s1','s2','s3','s4','s5','sx'].forEach(c => el.classList.remove(c));
+              const cls = classFor(st); if (cls) el.classList.add(cls);
+            });
+          }
+          // Refresh the sidebar's level bar so the active circle moves.
+          const levelHost = document.getElementById('ls-level');
+          if (levelHost) mountLevelBar(levelHost, word);
+          return;
+        }
+      }
     }
   });
   function isMobileViewport() {
