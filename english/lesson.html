@@ -443,6 +443,11 @@
   let CURRENT_WORD = null;
   let CURRENT_WORD_EL = null;
   let animating = false;
+  // After a 하나씩 / 이어서 cross-page step, set to 'right' or 'left' so the
+  // post-slide hook lands the cursor on the correct edge word of the new
+  // page (first when walking → into a new page, last when walking ←).
+  let _pendingSingleEdgeSelect = null;
+  let _pendingContEdgeSelect = null;
 
   // Finger-follow page swipe state. While the user is dragging horizontally
   // we live-translate the current page AND the next/prev page; on release
@@ -791,7 +796,24 @@
         if (isSelectable(all[j], skip)) { target = all[j]; break; }
       }
     }
-    if (!target) return false;
+
+    // No selectable word in this direction on the current page? Step to the
+    // next/previous page and select the first/last selectable word there.
+    // This is what the user expects when sitting on the last word of a page
+    // and pressing → — the cursor advances onto the next page rather than
+    // standing still.
+    if (!target) {
+      const delta = direction === 'right' ? +1 : -1;
+      const targetPage = pageIdx + delta;
+      if (targetPage < 0 || targetPage >= PAGES.length) return false;
+      // Defer one tick: the page slide has its own DOM swap; running the
+      // word selection inside that animation would be raced. We trigger the
+      // page change now and rely on the post-slide hook (below) to land the
+      // cursor on the appropriate edge word once the new page is in place.
+      _pendingSingleEdgeSelect = direction;
+      goPage(delta);
+      return true;
+    }
 
     // Move .active to the new cursor and surface the card. On PC the sidebar
     // is the translation surface; on mobile we use the new word sheet. We
@@ -874,6 +896,7 @@
     if (!_lastGrow) _lastGrow = direction;
 
     let changed = false;
+    let crossedPage = false;
     if (direction === _lastGrow) {
       // EXTEND the last-grown side by the next eligible word in the sentence.
       if (_lastGrow === 'right') {
@@ -884,6 +907,14 @@
             changed = true; break;
           }
         }
+        // Hit the right edge of the sentence on this page → step to the
+        // next page and seed the selection with its first selectable word
+        // so the user can keep extending across the page boundary.
+        if (!changed && ri >= sentence.length - 1 && pageIdx + 1 < PAGES.length) {
+          _pendingContEdgeSelect = 'right';
+          goPage(+1);
+          crossedPage = true;
+        }
       } else {
         for (let i = li - 1; i >= 0; i--) {
           const cand = sentence[i];
@@ -891,6 +922,11 @@
             CONT_SELECTED.add(cand); cand.classList.add('cont-sel');
             changed = true; break;
           }
+        }
+        if (!changed && li <= 0 && pageIdx > 0) {
+          _pendingContEdgeSelect = 'left';
+          goPage(-1);
+          crossedPage = true;
         }
       }
     } else {
@@ -913,7 +949,7 @@
       }
     }
     if (changed) refreshContTranslation();
-    else         renderContOutlines();
+    else if (!crossedPage) renderContOutlines();
     // Always "claim" the keystroke so the page doesn't slide while the
     // user is curating their selection (PC arrow keys / mobile tap buttons).
     return true;
@@ -1158,13 +1194,18 @@
     if (!wEl || !chunk) return;
     const sentenceWords = getSentenceWordsOf(wEl);
     if (!sentenceWords.length) return;
+    const wIdx = sentenceWords.indexOf(wEl);
 
     // PRIMARY: text-based matching. GPT's `indices` field has been observed
     // to drift by one (off-by-one when a hyphenated/punctuation-adjacent
     // token is counted differently), which makes the body glow extend one
     // word past the chunk's actual boundary. Walking sentenceWords looking
     // for an exact match against chunk.text's word sequence is robust.
-    let span = chunk.text ? findChunkSpanByText(sentenceWords, chunk.text) : null;
+    // Pass `wIdx` so the matcher prefers the occurrence containing the
+    // clicked word — fixes a bug where a duplicate phrase elsewhere in
+    // the sentence (or GPT's text not actually overlapping wEl) caused
+    // every word before the clicked one to glow.
+    let span = chunk.text ? findChunkSpanByText(sentenceWords, chunk.text, wIdx) : null;
 
     // FALLBACK: indices, when the text didn't match (e.g. GPT returned a
     // paraphrase rather than the literal sentence substring).
@@ -1174,6 +1215,14 @@
       if (end >= start) span = { start, end };
     }
     if (!span) return;
+
+    // Sanity gate: the span MUST contain the clicked word's index. If GPT
+    // gave us a chunk whose resolved span doesn't cover this word, we'd
+    // otherwise glow a region unrelated to the click — typically every
+    // word from the sentence start to (but not including) the clicked
+    // word. Refuse to highlight in that case; it's better to show no
+    // chunk than the wrong chunk.
+    if (wIdx >= 0 && (wIdx < span.start || wIdx > span.end)) return;
 
     // Clear any previous chunk highlight from a prior word click before
     // applying the new one (otherwise consecutive arrow steps stack glows).
@@ -1193,7 +1242,11 @@
   // {start, end} (inclusive). Tries to find a contiguous slice whose
   // normalized words equal chunk.text's normalized words. Ignores case,
   // punctuation, and surrounding whitespace.
-  function findChunkSpanByText(sentenceWords, chunkText) {
+  //
+  // `preferIdx` (optional) — if set, prefer a match that CONTAINS this
+  // index. Useful when the same chunk text appears multiple times in the
+  // sentence and we want the occurrence around the clicked word.
+  function findChunkSpanByText(sentenceWords, chunkText, preferIdx) {
     if (!chunkText) return null;
     const norm = (s) => String(s || '')
       .toLowerCase()
@@ -1204,25 +1257,75 @@
       .map(norm)
       .filter(Boolean);
     if (!target.length) return null;
-    for (let i = 0; i + target.length <= sentenceWords.length; i++) {
+    const sentNorms = sentenceWords.map(el =>
+      norm((el && el.dataset && el.dataset.word) || (el && el.textContent) || ''));
+
+    // PASS 1: exact full match. Walk every starting position; if multiple
+    // matches exist (duplicate phrase), prefer the one containing preferIdx.
+    let firstFull = null;
+    for (let i = 0; i + target.length <= sentNorms.length; i++) {
       let ok = true;
       for (let j = 0; j < target.length; j++) {
-        const el = sentenceWords[i + j];
-        const w = norm((el && el.dataset && el.dataset.word) || (el && el.textContent) || '');
-        if (w !== target[j]) { ok = false; break; }
+        if (sentNorms[i + j] !== target[j]) { ok = false; break; }
       }
-      if (ok) return { start: i, end: i + target.length - 1 };
+      if (ok) {
+        const span = { start: i, end: i + target.length - 1 };
+        if (preferIdx == null) return span;
+        if (preferIdx >= span.start && preferIdx <= span.end) return span;
+        if (!firstFull) firstFull = span;
+      }
     }
+    if (firstFull) return firstFull;
+
+    // PASS 2: partial match. Used when the chunk straddles a page boundary —
+    // chunk-gpt was given the cross-page sentence, so it returns chunks
+    // whose words may extend past either edge of the current page. Find the
+    // longest contiguous sub-match of target within sentNorms; require ≥2
+    // words to avoid spurious 1-word matches that would just glow a random
+    // function word. Prefer the sub-match containing preferIdx.
+    let best = null;
+    for (let i = 0; i < sentNorms.length; i++) {
+      for (let j = 0; j < target.length; j++) {
+        if (sentNorms[i] !== target[j]) continue;
+        let len = 1;
+        while (i + len < sentNorms.length && j + len < target.length
+               && sentNorms[i + len] === target[j + len]) {
+          len++;
+        }
+        if (len < 2) continue;
+        const containsPref = preferIdx != null
+          && preferIdx >= i && preferIdx <= i + len - 1;
+        if (!best
+            || (containsPref && !best.containsPref)
+            || (containsPref === best.containsPref && len > best.len)) {
+          best = { start: i, end: i + len - 1, len, containsPref };
+        }
+      }
+    }
+    if (best) return { start: best.start, end: best.end };
     return null;
   }
   // Find which chunk an anchor word belongs to, given the chunks array
-  // returned by chunk-gpt. Word index = position among non-punct words
-  // in the sentence (matches chunk-gpt's whitespace+ignore-punct rule).
+  // returned by chunk-gpt.
+  //
+  // Cross-page note: chunk-gpt is fed the FULL logical sentence (current
+  // page + adjacent-page tails) so its `indices` reference positions
+  // INSIDE that joined string, not positions inside the current page's
+  // visible words. Indices-based lookup would therefore drift. We use
+  // text matching first (resilient to page-edge cuts) and fall back to
+  // indices only when the chunk text isn't found.
   function findChunkForWord(wEl, chunks) {
     if (!wEl || !Array.isArray(chunks) || !chunks.length) return null;
     const sentenceWords = getSentenceWordsOf(wEl);
     const idx = sentenceWords.indexOf(wEl);
     if (idx < 0) return null;
+    // PRIMARY: text-based.
+    for (const c of chunks) {
+      if (!c || !c.text) continue;
+      const span = findChunkSpanByText(sentenceWords, c.text, idx);
+      if (span && idx >= span.start && idx <= span.end) return c;
+    }
+    // FALLBACK: indices.
     for (const c of chunks) {
       if (!c || !Array.isArray(c.indices)) continue;
       const a = c.indices[0] | 0;
@@ -1275,6 +1378,8 @@
     const coPan = document.getElementById('ws-panel-co');
     if (exPan) exPan.hidden = true;
     if (coPan) coPan.hidden = true;
+    // Re-show the chunk panel — a previous tab-open may have hidden it.
+    if (mnemEl) mnemEl.hidden = false;
     document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
     const lp = document.getElementById('ws-level-pop');
     if (lp) lp.hidden = true;
@@ -1399,7 +1504,11 @@
       });
     }
 
-    // Tab toggles for examples / collocations (mutually exclusive)
+    // Tab toggles for examples / collocations (mutually exclusive). When a
+    // panel is open we ALSO hide the chunk-translation box (구문 풀이) — the
+    // panel takes that visual real estate so the user can read examples /
+    // collocations without the chunk box stealing space and attention.
+    // Closing the panel restores the chunk box.
     document.querySelectorAll('.ws-tab[data-panel]').forEach(btn => {
       btn.onclick = (e) => {
         e.stopPropagation();
@@ -1408,9 +1517,13 @@
         const wasOpen = panel && !panel.hidden;
         document.querySelectorAll('.ws-panel').forEach(p => { p.hidden = true; });
         document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
+        const mn = document.getElementById('ws-mnemonic');
         if (!wasOpen && panel) {
           panel.hidden = false;
           btn.classList.add('active');
+          if (mn) mn.hidden = true;        // hide chunk box while panel open
+        } else {
+          if (mn) mn.hidden = false;       // restore chunk box on close
         }
         requestAnimationFrame(applyWordSheetShift);
       };
@@ -1707,6 +1820,10 @@
         if (!cur || cur.textContent !== text) return;
         const c = findChunkForWord(anchorEl, chunks);
         if (!c) return;
+        // Glow the surrounding syntactic chunk on the body too — the
+        // sidebar's "구문 풀이" panel mirrors this visual on the left
+        // text so the user sees which words form the unit.
+        applyChunkHighlight(anchorEl, c);
         if (mnBlock) mnBlock.hidden = false;
         renderChunkTx(mnEl, c.text, '', text);
         Translate.translate(c.text, sentence).then(ko => {
@@ -2567,12 +2684,54 @@
   }
   // For a clicked word, find the text of the sentence it belongs to so we
   // can pass it as `context` to the translator.
+  //
+  // Cross-page stitching: paginateByHeight splits paragraphs at word
+  // boundaries, so a sentence may straddle two pages ("I want" on page A,
+  // "to go" on page B). When the visible portion is partial — no leading
+  // capital / closing punctuation — we splice in the adjacent page's text
+  // so the chunker sees the full logical sentence and produces unified
+  // chunks that the body-side matcher can then highlight piecewise.
   function getContextSentence(wEl) {
     if (!wEl || !SENTENCE_MAP || !SENTENCE_MAP.length) return '';
-    for (const s of SENTENCE_MAP) {
-      if (s.words && s.words.indexOf(wEl) !== -1) return (s.text || '').trim();
+    let localIdx = -1;
+    for (let i = 0; i < SENTENCE_MAP.length; i++) {
+      if (SENTENCE_MAP[i].words && SENTENCE_MAP[i].words.indexOf(wEl) !== -1) {
+        localIdx = i; break;
+      }
     }
-    return '';
+    if (localIdx < 0) return '';
+    let text = (SENTENCE_MAP[localIdx].text || '').trim();
+    if (!text) return '';
+
+    const endsWithPunct = /[.!?]\s*["”'’)\]]?\s*$/.test(text);
+    // Tail extension: last sentence on this page lacks terminal punct →
+    // pull the first sentence-ish chunk from the next page's first paragraph.
+    if (!endsWithPunct
+        && localIdx === SENTENCE_MAP.length - 1
+        && pageIdx + 1 < (PAGES || []).length) {
+      const nextParas = PAGES[pageIdx + 1] || [];
+      const firstNextPara = nextParas[0] || '';
+      const firstNextSent = (typeof splitIntoSentences === 'function')
+        ? (splitIntoSentences(firstNextPara)[0] || firstNextPara)
+        : firstNextPara;
+      if (firstNextSent) text = text + ' ' + firstNextSent.trim();
+    }
+    // Head extension: first sentence on this page is mid-sentence (the
+    // previous page's last sentence didn't end with .!?) → prepend it so
+    // the chunker has full context for what's visible here.
+    if (localIdx === 0 && pageIdx > 0) {
+      const prevParas = PAGES[pageIdx - 1] || [];
+      const lastPrevPara = prevParas[prevParas.length - 1] || '';
+      const lastPrevSents = (typeof splitIntoSentences === 'function')
+        ? splitIntoSentences(lastPrevPara)
+        : [lastPrevPara];
+      const lastPrevSent = (lastPrevSents[lastPrevSents.length - 1] || '').trim();
+      const prevEndsProperly = /[.!?]\s*["”'’)\]]?\s*$/.test(lastPrevSent);
+      if (lastPrevSent && !prevEndsProperly) {
+        text = lastPrevSent + ' ' + text;
+      }
+    }
+    return text;
   }
 
   // ============== page pre-translation ==============
@@ -3164,6 +3323,41 @@
       // user sees their new page index reflected immediately.
       updateSentenceCounter();
       animating = false;
+      // Cross-page cursor handoff: when the previous page's last/first word
+      // was reached and the user kept stepping, trySingleStep / tryAnchorKey
+      // queued an edge-select request. Now that the new page's DOM is live,
+      // place the cursor on the correct edge word and surface the card.
+      if (_pendingSingleEdgeSelect) {
+        const dir = _pendingSingleEdgeSelect;
+        _pendingSingleEdgeSelect = null;
+        const ws = Array.from(newRoot.querySelectorAll('.w:not(.punct)'));
+        const target = (dir === 'right')
+          ? ws.find(w => isSelectable(w, { skipMastered: false }))
+          : [...ws].reverse().find(w => isSelectable(w, { skipMastered: false }));
+        if (target) {
+          target.classList.add('active');
+          const word = target.dataset.word;
+          const sentence = getContextSentence(target);
+          if (useSidebar()) showInSidebar(word, sentence, target);
+          else              showInWordSheet(word, sentence, target);
+        }
+      }
+      if (_pendingContEdgeSelect) {
+        const dir = _pendingContEdgeSelect;
+        _pendingContEdgeSelect = null;
+        const ws = Array.from(newRoot.querySelectorAll('.w:not(.punct)'));
+        const target = (dir === 'right')
+          ? ws.find(w => isSelectable(w))
+          : [...ws].reverse().find(w => isSelectable(w));
+        if (target) {
+          CONT_SELECTED.add(target);
+          target.classList.add('cont-sel');
+          // Preserve grow direction so the next ← / → keeps extending the
+          // same side instead of shrinking the freshly-seeded selection.
+          _lastGrow = dir;
+          if (typeof refreshContTranslation === 'function') refreshContTranslation();
+        }
+      }
     }, 300);
   }
 
@@ -4564,20 +4758,29 @@
       }
     }
 
-    // ⏮ Previous sentence. Always reads from the start of the new sentence;
-    // when already at sentence 0 of page 0, just re-reads the very first.
+    // ⏮ Previous sentence / ⏭ Next sentence — now NAVIGATE only (no
+    // auto-restart of playback). Auto-restart caused two bugs:
+    //   (a) jumpAndPlay() restarted the TTS loop, which kept advancing
+    //       CURRENT_SENTENCE asynchronously. A user tapping prev twice
+    //       in quick succession saw the second click compute prev based
+    //       on a CURRENT_SENTENCE that the loop had already moved
+    //       forward → "11 → 10 → 19" jumps.
+    //   (b) On a page change the loop's "speak finished" event would
+    //       race with the next click's stopAnyPlayback().
+    // Plain navigation: snapshot global index, stop any in-flight audio,
+    // move the cursor. The user taps ▶ if they want playback.
     if (prevBtn) prevBtn.addEventListener('click', () => {
       const cur = globalSentenceIdx();
-      jumpAndPlay(Math.max(0, cur - 1));
+      stopAnyPlayback();
+      gotoGlobalSentence(Math.max(0, cur - 1));
+      updateSentenceCounter();
     });
-    // ⏭ Next sentence. On the very last sentence: stop, stay on page.
     if (nextBtn) nextBtn.addEventListener('click', () => {
       const cur = globalSentenceIdx();
-      if (cur >= TOTAL_SENTENCES - 1) {
-        stopAnyPlayback();
-        return;
-      }
-      jumpAndPlay(cur + 1);
+      stopAnyPlayback();
+      if (cur >= TOTAL_SENTENCES - 1) return;
+      gotoGlobalSentence(cur + 1);
+      updateSentenceCounter();
     });
     // ⏹ Stop & reset to the very beginning (page 0, sentence 0).
     if (stopBtn) stopBtn.addEventListener('click', () => {

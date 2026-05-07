@@ -109,7 +109,7 @@
   // sentence it's a memory hit, eliminating the ~200-500ms Edge Function
   // round-trip that used to gap each period.
   async function prefetch(text, opts = {}) {
-    text = (text || '').toString().trim();
+    text = stripQuotes((text || '').toString()).trim();
     if (!text) return;
     const voice = opts.voice || getVoice();
     const rate  = opts.rate  ?? 1.0;
@@ -124,8 +124,16 @@
     }
   }
 
+  // Quote characters are read aloud as "open quote / close quote" by some
+  // Google Neural2 voices (especially in news-style prompts). Strip them
+  // before synthesis so the audio sounds like fluent reading rather than
+  // dictation. Both straight (" ') and curly (" " ' ') quotes get removed.
+  function stripQuotes(text) {
+    return String(text || '').replace(/[“”„‟"‘’‚‛']/g, '');
+  }
+
   async function speak(text, opts = {}) {
-    text = (text || '').toString().trim();
+    text = stripQuotes((text || '').toString()).trim();
     if (!text) return;
     stop();
 
