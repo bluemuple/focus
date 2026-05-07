@@ -1160,9 +1160,19 @@
     const exUl      = document.getElementById('ws-examples');
     const coUl      = document.getElementById('ws-collocs');
     if (meaningEl) meaningEl.textContent = '…';
-    if (mnemEl)    mnemEl.innerHTML = '<span class="tx-loading">불러오는 중...</span>';
-    if (exUl)      exUl.innerHTML = '';
-    if (coUl)      coUl.innerHTML = '';
+    // Skeleton animation while GPT response is in flight — 3 short pulsing
+    // bars so the panel feels alive instead of frozen-blank.
+    if (mnemEl) mnemEl.innerHTML =
+      '<div class="ws-skel"><span class="skel-line w70"></span>' +
+      '<span class="skel-line w90"></span>' +
+      '<span class="skel-line w55"></span></div>';
+    if (exUl) exUl.innerHTML =
+      '<li><span class="skel-line w90"></span></li>' +
+      '<li><span class="skel-line w70"></span></li>';
+    if (coUl) coUl.innerHTML =
+      '<li><span class="skel-line w55"></span></li>' +
+      '<li><span class="skel-line w70"></span></li>' +
+      '<li><span class="skel-line w55"></span></li>';
     const exPan = document.getElementById('ws-panel-ex');
     const coPan = document.getElementById('ws-panel-co');
     if (exPan) exPan.hidden = true;
@@ -2310,6 +2320,65 @@
       try { await Translate.translateBatch(words, ctx); }
       catch (e) { /* prefetch is best-effort; silent on failure */ }
     }
+    // After translations are warm, warm the rich GPT word-info too. This
+    // is what makes the mnemonic / examples / collocations panel appear
+    // INSTANTLY when the user finally taps a word — no GPT round-trip.
+    prefetchWordInfo(myToken);
+  }
+
+  // ---- prefetch GPT word-info in the background ----
+  // Cost: ~$0.0002 × N words (capped). Heavily caps to ~30 entries per
+  // page render so a long-paragraph lesson doesn't burn API credit on
+  // words the user will never click. Skips state-4 / state-5 / state-(-1)
+  // (already-known and ignored words) and very short stop-word-likes.
+  // Throttled to 3 concurrent calls.
+  function prefetchWordInfo(token) {
+    if (!window.Translate || !Translate.getWordInfo) return;
+    if (!SENTENCE_MAP || !SENTENCE_MAP.length) return;
+    const PREFETCH_CAP = 30;
+    const MAX_CONCURRENT = 3;
+    const seen = new Set();
+    const queue = [];
+    for (const s of SENTENCE_MAP) {
+      const sentenceText = (s.text || '').trim();
+      if (!sentenceText) continue;
+      for (const wEl of (s.words || [])) {
+        if (!wEl || !wEl.classList || !wEl.classList.contains('w')) continue;
+        if (wEl.classList.contains('punct')) continue;
+        const word = (wEl.dataset.word || '').toLowerCase().trim();
+        if (!word || word.length < 3) continue;       // skip "to", "I", "a"
+        const v = WORD_STATES[word];
+        const st = v && v.state;
+        // Skip mastered (5), ignored (-1), and "배운 단어" (4) — user is
+        // unlikely to re-click these.
+        if (st === 5 || st === -1 || st === 4) continue;
+        const key = word + '|' + sentenceText;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queue.push({ word, sentence: sentenceText });
+        if (queue.length >= PREFETCH_CAP) break;
+      }
+      if (queue.length >= PREFETCH_CAP) break;
+    }
+    if (!queue.length) return;
+    let active = 0;
+    function drain() {
+      // Page changed? abort remaining work.
+      if (token !== _prefetchToken) return;
+      while (active < MAX_CONCURRENT && queue.length > 0) {
+        const job = queue.shift();
+        active++;
+        Translate.getWordInfo(job.word, job.sentence).catch(() => {}).finally(() => {
+          active--;
+          // Yield to the browser between calls so we never starve clicks.
+          if (typeof requestIdleCallback === 'function') requestIdleCallback(drain);
+          else setTimeout(drain, 30);
+        });
+      }
+    }
+    // Defer the initial drain so we don't compete with the page render.
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(drain, { timeout: 1000 });
+    else setTimeout(drain, 250);
   }
 
   function setCurrentSentence(idx) {

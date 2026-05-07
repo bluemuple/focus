@@ -36,39 +36,26 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
 
+    // Compact system prompt — same schema, less noise = faster TTFT.
     const sys = [
-      "You are a bilingual English-to-Korean dictionary for Korean learners.",
-      "Return ONLY valid JSON. No prose, no markdown.",
-      "",
-      "Required keys:",
-      "- lemma: base form of the word (string).",
-      "- ipa: IPA pronunciation, slashes included (string).",
-      "- level: CEFR — A1|A2|B1|B2|C1|C2 (string).",
-      "- pos: primary part of speech, e.g. \"noun\", \"verb\" (string).",
-      "- ko: contextual Korean translation that fits the given sentence (string).",
-      "- senses: 3-6 most common meanings, sorted by frequency.",
-      "    Each: { pos, ko, example } where example is a short natural English sentence.",
-      "- collocations: 4-6 most frequent pairings.",
-      "    Each: { phrase: phrase containing the lemma, ko: Korean translation }.",
-      "- examples: 2-3 fresh natural example sentences (different from senses' examples).",
-      "    Each: { en: string, ko: string }.",
-      "- mnemonic: { text, highlights }",
-      "    text: a Korean memory tip under 60 chars. Pick the BEST strategy for THIS word —",
-      "      etymology breakdown, sound association with Korean, visual imagery,",
-      "      related-word family, or mnemonic story. Vary across calls.",
-      "    highlights: array of substrings inside text that should be visually emphasised",
-      "      (typically the etymology fragments, English roots, or sound-mapped Korean).",
-      "      Don't list Korean particles or filler words.",
-      "",
-      "If a sentence is provided, ALSO return:",
-      "- phraseChunk: the syntactic group containing the target word in the sentence.",
-      "    Group words by clausal/phrase role: subject NP, verb phrase, prepositional phrase,",
-      "    infinitive phrase, adverbial. Each clause is one chunk.",
-      "    Example: \"I went to China to see my uncle yesterday\" splits into",
-      "      [\"I went to China\", \"to see my uncle\", \"yesterday\"].",
-      "    Format: { text: chunk text, indices: [start, end] }.",
-      "    indices are 0-based positions in the sentence's whitespace-split words,",
-      "    IGNORING punctuation. The target word's index falls within [start, end].",
+      "Bilingual English→Korean dictionary for Korean learners. JSON only.",
+      "Keys:",
+      "- lemma (string), ipa (slashes included), level (A1-C2), pos.",
+      "- ko: contextual Korean meaning matching the sentence.",
+      "- senses: 3-5 frequency-sorted [{pos, ko, example}].",
+      "- collocations: 4 frequent [{phrase: includes lemma, ko}].",
+      "- examples: 2 fresh [{en, ko}].",
+      "- mnemonic: {text, highlights}. text: Korean memory tip under 60 chars,",
+      "  best strategy for THIS word (etymology / Korean sound association /",
+      "  imagery / word family). highlights: substrings inside text to emphasise",
+      "  (etymology fragments or sound-mapped parts; not Korean particles).",
+      "If sentence given, also:",
+      "- phraseChunk: {text, indices: [start, end]} = syntactic group containing",
+      "  the target word. Group by clausal role (subject NP / verb phrase /",
+      "  prepositional / infinitive / adverbial). indices are 0-based whitespace",
+      "  word positions, ignoring punctuation. Target word index ∈ [start, end].",
+      "  Example: \"I went to China to see my uncle yesterday\" →",
+      "    \"I went to China\" / \"to see my uncle\" / \"yesterday\".",
     ].join("\n");
 
     const user = sentence
@@ -84,7 +71,9 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.4,
-        max_tokens: 900,
+        // Trimmed from 900 → 600 — typical responses fit in 400-500 tokens
+        // and a smaller cap lets the API stop generating sooner = faster.
+        max_tokens: 600,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: sys },
