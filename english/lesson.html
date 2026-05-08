@@ -307,12 +307,17 @@
        selected, slides up above the lesson-bar, and stays put while the
        user adjusts the selection. Far faster (no anchor math, no waiting
        on translate before showing) and uses full screen width. -->
+  <!-- Layout per spec: phrase fills the full top row width, Korean
+       translation fills the full bottom row width, and the action
+       buttons sit in a narrow vertical column on the right (× on top,
+       + below) spanning both rows — so both the phrase and the
+       translation read with the maximum horizontal space.
+       The 🔊 speaker button was removed; word selection auto-speaks. -->
   <div class="cont-bar" id="cont-bar" hidden>
-    <div class="cb-top">
-      <span class="cb-phrase" id="cb-phrase">—</span>
-      <button class="cb-speak" id="cb-speak" aria-label="발음 듣기" title="발음 듣기">🔊</button>
-      <button class="cb-add"   id="cb-add"   aria-label="구문에 추가" title="구문에 추가">＋</button>
+    <span class="cb-phrase" id="cb-phrase">—</span>
+    <div class="cb-actions">
       <button class="cb-close" id="cb-close" aria-label="닫기"        title="닫기">×</button>
+      <button class="cb-add"   id="cb-add"   aria-label="구문에 추가" title="구문에 추가">＋</button>
     </div>
     <div class="cb-trans" id="cb-trans"><span class="tx-loading">번역 중...</span></div>
   </div>
@@ -1423,13 +1428,11 @@
   // moment the user selects a word; the translation streams in.
   let CONT_BAR_PHRASE = null;       // { text, ko } currently shown
   function setupContBar() {
-    const speak = document.getElementById('cb-speak');
+    // (cb-speak handler removed — the button itself is gone; word/phrase
+    // selection auto-speaks via the existing TTS.speak call in
+    // tryAnchorKey / handleContClick.)
     const add   = document.getElementById('cb-add');
     const close = document.getElementById('cb-close');
-    if (speak) speak.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (CONT_BAR_PHRASE) TTS.speak(CONT_BAR_PHRASE.text);
-    });
     if (add) add.addEventListener('click', (e) => {
       e.stopPropagation();
       if (!CONT_BAR_PHRASE || !CONT_BAR_PHRASE.text) return;
@@ -5346,7 +5349,10 @@
       audioEl.addEventListener('play',  () => { setPlayBtnIcon(true); });
       playBtn.addEventListener('click', () => {
         if (audioEl.paused) {
-          dismissWordOverlays();
+          // Per spec: keep the word/phrase selection UI (focus glow,
+          // chunk underline, word-sheet / cont-bar) visible during
+          // playback so the user can still see what they were
+          // studying. Just start audio.
           audioEl.play();
         } else {
           audioEl.pause();
@@ -5586,9 +5592,12 @@
       // bar runs the existing sequential reader.
       playBtn.addEventListener('click', async () => {
         if (ttsPlaying) { pauseTTS(); return; }
-        // Per spec: dismiss the bottom overlays before any playback so
-        // the screen is clean (mode-agnostic, null-safe).
-        dismissWordOverlays();
+        // Per spec: word selection UI (focus glow, chunk underline,
+        // word-sheet / cont-bar) STAYS visible during playback so the
+        // user keeps seeing the word they were studying. We only
+        // swap lesson-bar → playbar at the bottom; everything else
+        // remains untouched. (The previous dismissWordOverlays call
+        // closed the panel — removed.)
         if (PLAY_VARIANT === 'word') {
           const t = await resolveVariantTexts();
           if (!t.word) return;
