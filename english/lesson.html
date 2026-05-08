@@ -903,10 +903,56 @@
     if (wordEl) wordEl.textContent = word;
     if (list) list.innerHTML = '<div class="cp-empty muted">불러오는 중...</div>';
     popup.hidden = false;
-    // Trigger the slide-up animation by adding `.show` AFTER the
-    // browser has applied the initial (off-screen) transform — gives
-    // the CSS transition something to animate from.
-    requestAnimationFrame(() => popup.classList.add('show'));
+
+    // Shared-element morph: card starts at the word-sheet's exact
+    // bounding box (so visually it looks like the sheet GROWS into
+    // the corpus card) then animates to its full-screen rest size.
+    // We override the .cp-card's CSS-driven transform with inline
+    // top/left/width/height matching the sheet's getBoundingClientRect,
+    // then RAF-toggle to inset values so the transition runs. Inline
+    // styles get cleared after the transition so the existing CSS
+    // (centered max-width: 920px) takes over for layout / resize.
+    const card = popup.querySelector('.cp-card');
+    const sheet = document.getElementById('word-sheet');
+    const sheetRect = (sheet && !sheet.hidden) ? sheet.getBoundingClientRect() : null;
+    if (card && sheetRect && sheetRect.height > 20) {
+      card.style.position = 'fixed';
+      card.style.top    = sheetRect.top    + 'px';
+      card.style.left   = sheetRect.left   + 'px';
+      card.style.width  = sheetRect.width  + 'px';
+      card.style.height = sheetRect.height + 'px';
+      card.style.maxWidth = 'none';
+      card.style.maxHeight = 'none';
+      card.style.transform = 'none';
+      card.style.opacity = '1';
+      card.style.transition = 'none';
+      // Two-frame deferred trigger — the first frame commits the
+      // initial styles to the rendering tree; the second frame swaps
+      // them to the target values WITH transition enabled.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          card.style.transition =
+            'top .32s cubic-bezier(.22,.6,.36,1),' +
+            'left .32s cubic-bezier(.22,.6,.36,1),' +
+            'width .32s cubic-bezier(.22,.6,.36,1),' +
+            'height .32s cubic-bezier(.22,.6,.36,1)';
+          card.style.top    = '24px';
+          card.style.left   = '24px';
+          card.style.width  = 'calc(100vw - 48px)';
+          card.style.height = 'calc(100vh - 48px)';
+          popup.classList.add('show');
+        });
+      });
+      // Clear inline styles AFTER the transition so subsequent
+      // resize / reopen falls back to the centered CSS layout.
+      setTimeout(() => {
+        ['position','top','left','width','height','maxWidth','maxHeight',
+         'transform','opacity','transition'].forEach(p => card.style[p] = '');
+      }, 380);
+    } else {
+      // Fallback (no sheet rect available) — use existing slide-up CSS.
+      requestAnimationFrame(() => popup.classList.add('show'));
+    }
 
     // Build / read the index (async, may touch network if lessons cache is cold).
     const idx = await buildCorpusIndex();
@@ -1149,6 +1195,14 @@
       popup.hidden = true;
       const fr = document.getElementById('np-iframe');
       if (fr) fr.src = 'about:blank';
+      // Restore the bottom sheet that was animated out by the
+      // sheet-down-then-Naver-down choreography. The sheet's DOM
+      // stayed put with `_sheetWord` intact, so re-adding `.show`
+      // brings it back with the same word's data.
+      const sheetEl = document.getElementById('word-sheet');
+      if (sheetEl && _sheetWord && !sheetEl.hidden) {
+        sheetEl.classList.add('show');
+      }
     }, 280);
   }
 
@@ -1273,26 +1327,43 @@
       }
 
       // Direction routing per spec (commit at 50 px in dominant axis):
-      //   ↑ (dy < 0)  → corpora popup
-      //   ↓ (dy > 0)  → Naver dictionary popup
+      //   ↑ (dy < 0)  → corpora popup (card grows from sheet)
+      //   ↓ (dy > 0)  → bottom-sheet exits down, THEN Naver enters from top
       //   ← (dx < 0)  → Popular Meanings panel inline
       //   → (dx > 0)  → Collocations panel inline
       if (Math.max(absX, absY) < 50) return;
       const word = _sheetWord || '';
       if (!word) { dragStart = null; return; }
       if (absY > absX) {
-        if (dy < -50) { dragStart = null; openCorporaPopup(word); }
-        else if (dy > 50) { dragStart = null; openMobileNaver(word); }
+        if (dy < -50) {
+          dragStart = null;
+          openCorporaPopup(word);
+        } else if (dy > 50) {
+          dragStart = null;
+          // TWO-PHASE choreography per spec: first slide the bottom
+          // sheet out the bottom of the screen, then bring Naver
+          // dict in from the top. The phases overlap slightly
+          // (sheet starts exiting, Naver starts entering 180 ms
+          // later) so total wall-clock is ~440 ms instead of 560.
+          const sheetEl = document.getElementById('word-sheet');
+          if (sheetEl) {
+            sheetEl.style.transition = '';
+            sheetEl.style.transform = '';
+            sheetEl.classList.remove('show');   // CSS animates to translateY(110%)
+          }
+          setTimeout(() => openMobileNaver(word), 180);
+        }
       } else {
         if (dx < -50) { dragStart = null; toggleWsPanel('pm'); }
         else if (dx > 50) { dragStart = null; toggleWsPanel('co'); }
       }
     }
     // Helper: open the named ws-panel inline (PM = Popular Meanings,
-    // CO = Collocations). Per spec, every time we toggle to a NEW
-    // panel-state via swipe, flash a tiny center label naming what's
-    // shown — including "본문" when the swipe collapses back to the
-    // chunk box. Auto-fades in ~1 s.
+    // CO = Collocations) with a slide-in animation matching the
+    // swipe direction. Slide direction:
+    //   pm (swipe LEFT)  → new panel slides IN from the right.
+    //   co (swipe RIGHT) → new panel slides IN from the left.
+    //   ex / default     → no slide animation.
     function toggleWsPanel(id) {
       const panel = document.getElementById('ws-panel-' + id);
       if (!panel) return;
@@ -1307,9 +1378,29 @@
         if (matchingBtn) matchingBtn.classList.add('active');
         if (mn) mn.hidden = true;
         toastLabel = id === 'pm' ? '의미' : id === 'co' ? '연어' : id === 'ex' ? '예문' : '';
+        // Slide the freshly-shown panel IN from the gesture's edge:
+        //   pm = swipe LEFT  → enters from the RIGHT  (translateX(100%) → 0)
+        //   co = swipe RIGHT → enters from the LEFT   (translateX(-100%) → 0)
+        if (id === 'pm' || id === 'co') {
+          const fromRight = id === 'pm';
+          panel.style.transition = 'none';
+          panel.style.transform = 'translateX(' + (fromRight ? '100%' : '-100%') + ')';
+          panel.style.opacity = '0';
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              panel.style.transition = 'transform .26s cubic-bezier(.22,.6,.36,1), opacity .2s ease';
+              panel.style.transform = 'translateX(0)';
+              panel.style.opacity = '1';
+            });
+          });
+          setTimeout(() => {
+            panel.style.transition = '';
+            panel.style.transform = '';
+            panel.style.opacity = '';
+          }, 320);
+        }
       } else {
         if (mn) mn.hidden = false;
-        // Returning to the default chunk-box view — labelled "본문".
         toastLabel = '본문';
       }
       if (toastLabel && typeof showSheetToast === 'function') {
