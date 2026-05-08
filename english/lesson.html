@@ -1815,13 +1815,13 @@
       .replace(/[“”‘’".,!?;:()\[\]—–]/g, '')
       .trim();
     // Tokenize chunk text the SAME way the body tokenizer extracts .w
-    // elements (`/[\p{L}][\p{L}\p{M}'-]*/gu` — letter sequences only,
-    // hyphens/apostrophes allowed inside). Splitting by whitespace alone
-    // produced a stray "&" token from chunk text like "Stanley Black &
-    // Decker", which doesn't appear in the body's non-punct word list,
-    // so the matcher gave up partway through. Letter-only extraction
-    // drops `&`, `/`, `+`, etc. — exactly mirroring what the body shows.
-    const target = (String(chunkText).match(/[\p{L}][\p{L}\p{M}'-]*/gu) || [])
+    // elements. First pass: dot-letter abbreviations (U.S., I.B.M., a.m.)
+    // captured whole. Second pass: regular letter/digit sequences. This
+    // mirrors renderParagraph so the body and chunk word counts stay
+    // aligned even with abbreviations or special chars (& / +) in the
+    // chunk text.
+    const target = (String(chunkText)
+      .match(/([A-Za-z]\.(?:[A-Za-z]\.)+)|([\p{L}\p{N}][\p{L}\p{M}\p{N}'-]*)/gu) || [])
       .map(norm)
       .filter(Boolean);
     if (!target.length) return null;
@@ -2102,6 +2102,12 @@
     let latestWordKo = '';
     let latestChunk = null;
     let latestChunkKo = '';
+    // Promise-resolution order is non-deterministic — DeepL can be slower
+    // than a cache-hit GPT. Without this flag, a slow DeepL that
+    // resolved AFTER GPT would silently overwrite the GPT translation
+    // (the bug the user reported as "mobile stays on DeepL"). The flag
+    // says: once GPT has won, DeepL must NOT overwrite.
+    let latestSource = null;          // 'deepl' | 'gpt' | null
     function repaintChunkPanel() {
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
@@ -2113,11 +2119,13 @@
       : Translate.translate(word, sentence);
     deeplP.then(ko => {
       if (_sheetWord !== word) return;
+      if (latestSource === 'gpt') return;       // GPT already won — don't clobber
       if (meaningEl) meaningEl.textContent = ko || '—';
       latestWordKo = (ko || '').trim();
+      latestSource = 'deepl';
       repaintChunkPanel();
     }).catch(() => {
-      if (meaningEl) meaningEl.textContent = '—';
+      if (meaningEl && latestSource !== 'gpt') meaningEl.textContent = '—';
     });
     if (aiOn && Translate.translateGPT) {
       Translate.translateGPT(word, sentence).then(gpt => {
@@ -2126,11 +2134,11 @@
         if (!g) return;       // empty / failed → keep DeepL on the row
         if (meaningEl) meaningEl.textContent = g;       // REPLACE DeepL
         latestWordKo = g;
+        latestSource = 'gpt';
         repaintChunkPanel();
       }).catch(err => {
         // Surface to console so a misconfigured translate-gpt Edge
-        // Function is debuggable. Silent failure was the cause of
-        // "GPT 해석이 안 나와요".
+        // Function is debuggable.
         console.warn('[translate-gpt]', err && err.message || err);
       });
     }
@@ -2456,12 +2464,14 @@
     }
 
     // Dual-mode translation: DeepL first, GPT replaces when it lands.
-    // Same closure-tracked latestWordKo pattern as the mobile sheet so
-    // the chunk panel's pink Korean highlight follows whichever word
-    // translation is currently displayed.
+    // Same closure-tracked latestWordKo + latestSource pattern as the
+    // mobile sheet — without the source flag, a slow DeepL that
+    // resolves after a fast GPT (cache hit) silently overwrites the
+    // GPT translation back to DeepL.
     let sbLatestWordKo = '';
     let sbLatestChunk = null;
     let sbLatestChunkKo = '';
+    let sbLatestSource = null;        // 'deepl' | 'gpt' | null
     function repaintSidebarChunk() {
       if (!sbLatestChunk || !mnEl) return;
       renderChunkTx(mnEl, sbLatestChunk.text, sbLatestChunkKo, text, sbLatestWordKo);
@@ -2474,12 +2484,15 @@
     sbDeeplP.then(ko => {
       const cur = document.getElementById('ls-word');
       if (!cur || cur.textContent !== text) return;
+      if (sbLatestSource === 'gpt') return;
       SIDEBAR_PHRASE = { text, ko };
       if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
       sbLatestWordKo = (ko || '').trim();
+      sbLatestSource = 'deepl';
       repaintSidebarChunk();
     }).catch(() => {
-      if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
+      if (transEl && sbLatestSource !== 'gpt')
+        transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
     if (sbAiOn && Translate.translateGPT) {
       Translate.translateGPT(text, sentence).then(gpt => {
@@ -2490,6 +2503,7 @@
         if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(g) + '</span>';
         SIDEBAR_PHRASE = { text, ko: g };
         sbLatestWordKo = g;
+        sbLatestSource = 'gpt';
         repaintSidebarChunk();
       }).catch(err => {
         console.warn('[translate-gpt]', err && err.message || err);
@@ -3952,11 +3966,15 @@
     p.className = 'para';
     const lines = par.split(/\n/);
     lines.forEach((line, li) => {
-      // Token regex now treats DIGITS as word characters too — so "5",
-      // "2026", "5G", "3rd" each become a single selectable .w. The
-      // arrow-key cursor and 이어서 selection will land on numbers like
-      // any other word. Punct group is the inverse (non-letter+non-digit).
-      const tokens = line.match(/([\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*)|([^\p{L}\p{N}]+)/gu) || [];
+      // Token regex precedence:
+      //   1) Dot-letter abbreviation pattern — `U.S.`, `U.S.A.`, `I.B.M.`,
+      //      `a.m.` — one letter, period, repeated 2+ times. Captured as
+      //      ONE word token so its internal periods don't trigger sentence
+      //      breaks AND chunk highlighting can include the whole abbrev.
+      //   2) General letter/digit run — `5`, `2026`, `5G`, `3rd`, plus
+      //      hyphens / apostrophes inside.
+      //   3) Punct: anything that isn't letter or digit.
+      const tokens = line.match(/([A-Za-z]\.(?:[A-Za-z]\.)+)|([\p{L}\p{N}][\p{L}\p{M}\p{N}'’-]*)|([^\p{L}\p{N}]+)/gu) || [];
       for (const tk of tokens) {
         if (/^[\p{L}\p{N}]/u.test(tk)) {
           const span = document.createElement('span');
