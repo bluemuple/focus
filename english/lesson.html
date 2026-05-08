@@ -728,11 +728,33 @@
     PAGES = paginateByHeight(LESSON.body || '');
     computePageCharCounts();
     pageIdx = 0;
+    // Cross-lesson corpus jump: when arriving via lesson.html?id=…&hl=…,
+    // start on the page that contains the highlighted sentence so the
+    // user lands directly on the spot they tapped in the corpus popup.
+    // The actual underline is applied AFTER renderInto fills the DOM.
+    const hlParam = params.get('hl');
+    let hlSentence = '';
+    if (hlParam) {
+      try { hlSentence = decodeURIComponent(hlParam); } catch (_) { hlSentence = hlParam; }
+      const tp = findSentencePageIdx(hlSentence);
+      if (tp >= 0) pageIdx = tp;
+      // Strip the param from the URL so a refresh doesn't re-trigger
+      // the highlight (and so the address bar reads cleanly).
+      try {
+        const url = new URL(location.href);
+        url.searchParams.delete('hl');
+        history.replaceState(null, '', url.toString());
+      } catch (_) {}
+    }
     renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
     bindWordInteractions(document.getElementById('lesson-text'));
     buildSentenceMap(document.getElementById('lesson-text'));
     prefetchPage();              // background DeepL batch — fills the cache
     updateProgress();
+    if (hlSentence) {
+      // RAF after the initial render so SENTENCE_MAP is up to date.
+      requestAnimationFrame(() => highlightSentenceOnCurrentPage(hlSentence));
+    }
     setupAudio();
     setupVoicePicker();
     setupPopupDrag();
@@ -897,12 +919,76 @@
           if (seen.has(k)) continue;
           seen.add(k);
           if (!byWord.has(k)) byWord.set(k, []);
-          byWord.get(k).push({ sentence, lessonTitle: lesson.title || '' });
+          byWord.get(k).push({
+            sentence,
+            lessonTitle: lesson.title || '',
+            lessonId: lesson.id || lesson.lessonId || '',
+          });
         }
       }
     }
     _corpusCache = { byWord, builtAt: Date.now() };
     return _corpusCache;
+  }
+
+  // Locate which page index of the current LESSON contains `target`. We
+  // walk PAGES (array of paragraph-string arrays) and look for a direct
+  // substring hit; falling back to a 40-char prefix match if the full
+  // sentence isn't found verbatim (cross-page splits may have re-flowed
+  // whitespace). Returns -1 when the sentence isn't in the current
+  // lesson at all.
+  function findSentencePageIdx(target) {
+    if (!Array.isArray(PAGES) || !target) return -1;
+    const t = String(target).trim();
+    if (!t) return -1;
+    const prefix = t.slice(0, Math.min(40, t.length));
+    for (let p = 0; p < PAGES.length; p++) {
+      const paras = PAGES[p] || [];
+      for (const para of paras) {
+        const s = String(para);
+        if (s.indexOf(t) !== -1 || s.indexOf(prefix) !== -1) return p;
+      }
+    }
+    return -1;
+  }
+
+  // Apply a 3-second pink underline to the words of the SENTENCE_MAP
+  // entry that best matches `target`. Match strategy: exact lowercase,
+  // then prefix-includes either way (handles cross-page sentence
+  // fragments where the body shows only part of the corpus's full
+  // sentence). After 3 s, fade out via CSS transition (0.4 s), then
+  // remove the class.
+  function highlightSentenceOnCurrentPage(target) {
+    const root = document.getElementById('lesson-text');
+    if (!root) return;
+    buildSentenceMap(root);
+    const t = String(target || '').trim().toLowerCase();
+    if (!t) return;
+    const prefix = t.slice(0, Math.min(40, t.length));
+    let best = null;
+    for (const sm of SENTENCE_MAP) {
+      const smText = (sm.text || '').trim().toLowerCase();
+      if (!smText) continue;
+      const smPrefix = smText.slice(0, Math.min(40, smText.length));
+      if (smText === t
+          || smText.indexOf(prefix) !== -1
+          || t.indexOf(smPrefix) !== -1) {
+        best = sm;
+        break;
+      }
+    }
+    if (!best) return;
+    const wordEls = best.words.slice();
+    wordEls.forEach(w => w.classList.add('cp-jump-hl'));
+    setTimeout(() => {
+      wordEls.forEach(w => w.classList.add('fading'));
+      setTimeout(() => {
+        wordEls.forEach(w => {
+          w.classList.remove('cp-jump-hl');
+          w.classList.remove('fading');
+        });
+      }, 420);
+    }, 3000);
   }
 
   function escapeRegex(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -1000,6 +1086,42 @@
     });
 
     setupCorporaDrag(list);
+
+    // Tap a sentence row → close popup, navigate body to that sentence,
+    // and apply the 3-second pink underline. setupCorporaDrag sets
+    // list._dragMoved = true when the pointer travels >5px, so a real
+    // drag-then-release doesn't trigger this click handler.
+    list.querySelectorAll('.cp-row').forEach((row, idx) => {
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', () => {
+        if (list._dragMoved) return;
+        const hit = hits[idx];
+        if (!hit) return;
+        closeCorporaPopup();
+        if (LESSON && hit.lessonId && String(hit.lessonId) === String(LESSON.id)) {
+          // Same lesson — jump-render the page that contains the sentence
+          // (no slide animation; corpus → body navigation is a hop, not
+          // a turn) and highlight after the DOM swap.
+          const targetPage = findSentencePageIdx(hit.sentence);
+          const doHighlight = () => highlightSentenceOnCurrentPage(hit.sentence);
+          if (targetPage >= 0 && targetPage !== pageIdx) {
+            jumpToPage(targetPage);
+            // Two RAFs so layout from renderInto/buildSentenceMap settles
+            // before we measure SENTENCE_MAP for the highlight.
+            requestAnimationFrame(() => requestAnimationFrame(doHighlight));
+          } else {
+            doHighlight();
+          }
+        } else if (hit.lessonId) {
+          // Different lesson — navigate. The destination lesson reads
+          // ?hl=<sentence-prefix> on load and applies the same jump +
+          // highlight there.
+          const url = 'lesson.html?id=' + encodeURIComponent(hit.lessonId) +
+                      '&hl=' + encodeURIComponent(hit.sentence.slice(0, 100));
+          window.location.href = url;
+        }
+      });
+    });
   }
 
   function closeCorporaPopup() {
@@ -1083,6 +1205,10 @@
       startX = clientX(e);
       baseX = readVar();
       samples = [{ x: startX, t: performance.now() }];
+      // Reset the per-gesture drag flag. The .cp-row click handler reads
+      // this AFTER mouseup/touchend — if we moved more than ~5 px during
+      // the gesture, the click is treated as a drag-release and ignored.
+      list._dragMoved = false;
     }
     function onMove(e) {
       if (!dragging) return;
@@ -1094,6 +1220,7 @@
       // anchored on the FINAL motion, not stale early frames.
       const cutoff = performance.now() - 120;
       while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
+      if (Math.abs(dx) > 5) list._dragMoved = true;
     }
     function onUp() {
       if (!dragging) return;
@@ -1925,6 +2052,21 @@
       return escapeHtml(w.slice(0, firstLem.length)) +
              '<span class="hl-infl">' + escapeHtml(w.slice(firstLem.length)) + '</span>';
     }
+    // Doubled-consonant comparatives / superlatives:
+    //   "bigger"  → big + "ger"
+    //   "biggest" → big + "gest"
+    //   "hottest" → hot + "test"
+    // The doubled letter visually belongs to the inflected suffix, so
+    // we color "ger" / "gest" / "test" (not just "er" / "est").
+    const dblComp = lo.match(/([bcdfghjklmnpqrstvwxz])\1(er|est)$/);
+    if (dblComp) {
+      const sufLen = 1 + dblComp[2].length;        // doubled letter + er/est
+      const stemLen = lo.length - sufLen;
+      if (stemLen >= 2) {
+        return escapeHtml(w.slice(0, stemLen)) +
+               '<span class="hl-infl">' + escapeHtml(w.slice(stemLen)) + '</span>';
+      }
+    }
     // Spelling-based fallback for irregular lemmas (e.g. lemma "study"
     // but word "studies" — "study" isn't a prefix of "studies").
     const sufMatch = lo.match(/(ies|ied|ing|ed|es|s)$/);
@@ -2547,6 +2689,13 @@
         return lo.slice(0, -4);
       }
       if (/([bcdfghjklmnpqrstvwxz])\1ed$/.test(lo) && lo.length > 4) {
+        return lo.slice(0, -3);
+      }
+      // doubled-consonant + er / est (bigger → big, hottest → hot)
+      if (/([bcdfghjklmnpqrstvwxz])\1est$/.test(lo) && lo.length > 5) {
+        return lo.slice(0, -4);
+      }
+      if (/([bcdfghjklmnpqrstvwxz])\1er$/.test(lo) && lo.length > 4) {
         return lo.slice(0, -3);
       }
       // -ing  (going → go, making → make)
@@ -6010,217 +6159,63 @@
         if (CURRENT_SENTENCE < 0) setCurrentSentence(0);
 
         let startLocal = Math.max(0, CURRENT_SENTENCE);
-        // When the previous iteration spoke a STITCHED last+first
-        // sentence (cross-page partial), the next page's first sentence
-        // was already covered — so we skip its index 0 on resume.
-        let skipFirstOfNextPage = false;
         while (ttsPlaying && myToken === _playToken) {
           buildSentenceMap(document.getElementById('lesson-text'));
           const list = SENTENCE_MAP.length
             ? SENTENCE_MAP.map(s => s.text)
             : [text];
 
-          // Honor the cross-page stitch flag set by the previous loop.
-          if (skipFirstOfNextPage) {
-            startLocal = Math.max(startLocal, 1);
-            skipFirstOfNextPage = false;
-          }
-
-          // Reset mid-utterance flip flag at the start of each page
-          // pass; it's set by the stitched-sentence onMidpoint callback
-          // when the page slides during audio playback.
-          let midpointFlippedThisPage = false;
-
           const ttsRate = 0.9 * speed;
           if (TTS.prefetch && list.length > startLocal) {
             TTS.prefetch(list[startLocal], { rate: ttsRate });
           }
 
-          // Helper: build the stitched cross-page text for the current
-          // page's last sentence IF that sentence ends without terminal
-          // punctuation (i.e. the sentence continues onto the next page).
-          // Returns '' when no stitching applies.
-          const stitchedTextForLastOfPage = () => {
-            if (pageIdx + 1 >= PAGES.length) return '';
-            const last = (list[list.length - 1] || '').trim();
-            if (!last) return '';
-            if (/[.!?]\s*["”'’)\]]?\s*$/.test(last)) return '';
-            const nextPara = (PAGES[pageIdx + 1] || [])[0] || '';
-            const firstNextSent = (typeof splitIntoSentences === 'function')
-              ? (splitIntoSentences(nextPara)[0] || nextPara)
-              : nextPara;
-            const tail = String(firstNextSent || '').trim();
-            return tail ? (last + ' ' + tail) : '';
-          };
-
           for (let i = startLocal; i < list.length; i++) {
             if (!ttsPlaying || myToken !== _playToken) break;
 
-            // Pre-warm the NEXT sentence's audio in parallel. When `i + 1`
-            // is the LAST sentence of the page AND it'll be stitched
-            // across the page boundary, prefetch the STITCHED text
-            // (not just sentence i+1 on its own) so the actual playback
-            // gets a cache hit on the joined audio — eliminating the
-            // ~2s silent gap the user described.
+            // Pre-warm the NEXT sentence's audio so the handoff after
+            // this one's `onend` is a cache hit (no ~200-500ms Edge
+            // Function round-trip between sentences). When the current
+            // sentence IS the last on the page, prefetch the next
+            // page's first sentence instead — same purpose, just
+            // across the page boundary.
             if (TTS.prefetch && i + 1 < list.length) {
-              const isNextLast = (i + 1 === list.length - 1);
-              if (isNextLast) {
-                const nextSent = (list[i + 1] || '').trim();
-                const isPartial = nextSent && !/[.!?]\s*["”'’)\]]?\s*$/.test(nextSent);
-                if (isPartial && pageIdx + 1 < PAGES.length) {
-                  const np = (PAGES[pageIdx + 1] || [])[0] || '';
-                  const tail = (typeof splitIntoSentences === 'function')
-                    ? (splitIntoSentences(np)[0] || np)
-                    : np;
-                  if (tail) {
-                    TTS.prefetch(list[i + 1] + ' ' + tail.trim(), { rate: ttsRate });
-                  } else {
-                    TTS.prefetch(list[i + 1], { rate: ttsRate });
-                  }
-                } else {
-                  TTS.prefetch(list[i + 1], { rate: ttsRate });
-                }
-              } else {
-                TTS.prefetch(list[i + 1], { rate: ttsRate });
-              }
-            }
-            // When the CURRENT sentence is the last of the page AND
-            // stitching does NOT apply (last sentence ends cleanly),
-            // prefetch the next page's first sentence so its handoff
-            // is also instant after the slide.
-            const stitched = (i === list.length - 1) ? stitchedTextForLastOfPage() : '';
-            if (TTS.prefetch && i === list.length - 1
-                && pageIdx + 1 < PAGES.length && !stitched) {
+              TTS.prefetch(list[i + 1], { rate: ttsRate });
+            } else if (TTS.prefetch && i === list.length - 1
+                       && pageIdx + 1 < PAGES.length) {
               const nextPara = (PAGES[pageIdx + 1] || [])[0] || '';
               const firstNext = String(nextPara)
                 .split(/(?<=[.!?])\s+/)[0] || '';
               if (firstNext.trim()) TTS.prefetch(firstNext.trim(), { rate: ttsRate });
             }
 
-            const speakText = stitched || list[i];
-
-            // For STITCHED utterances, slide to the next page MID-AUDIO
-            // (when audio's currentTime crosses the page-A-tail / total
-            // ratio) so the new page is in place before audio finishes
-            // — eliminates the visible "wait for slide" gap the user
-            // described as a 2-second silence.
-            //
-            // The fraction is roughly the share of the stitched text
-            // that belongs to page A. For "I want" + " " + "to go to
-            // the store." (6 + 1 + 21 = 28 chars), page-A share is
-            // 6/28 ≈ 0.21 — slide kicks off at ~21% through the audio.
-            // Capped to [0.10, 0.85] so degenerate ratios still feel
-            // sensible.
-            let midpointFraction = 0;
-            if (stitched) {
-              const pageATail = (list[i] || '').trim();
-              const total = stitched.trim();
-              if (pageATail && total.length > 0) {
-                const ratio = pageATail.length / total.length;
-                // Floor raised from 0.10 → 0.35 so even very short page-A
-                // tails (e.g. "stretched") get at least ~35% of the stitched
-                // audio duration BEFORE the slide kicks off. This is the
-                // window during which the previous-page underline is
-                // visible to the user — under the old 0.10 floor it could
-                // be < 300 ms and felt invisible.
-                midpointFraction = Math.max(0.35, Math.min(0.85, ratio));
-              }
-            }
-            // Pre-set the underline SYNCHRONOUSLY before TTS.speak so the
-            // previous-page-tail underline appears the instant we commit
-            // to this sentence — independent of the `playing` event's
-            // timing (which can be delayed by network/decode/iOS Safari
-            // quirks). Without this, for short page-A tails the underline
-            // could appear too late or not at all before the mid-audio
-            // slide moved us to page B. Belt-and-braces with the onplay
-            // setCurrentSentence(i) call below, which still serves as
-            // the canonical sync point for normal (non-stitched) sentences.
-            if (SENTENCE_MAP.length && i < SENTENCE_MAP.length) {
-              setCurrentSentence(i);
-            }
             await new Promise(resolve => {
-              TTS.speak(speakText, {
+              TTS.speak(list[i], {
                 rate: ttsRate,
                 onplay: () => {
                   if (!ttsPlaying || myToken !== _playToken) return;
                   if (SENTENCE_MAP.length) setCurrentSentence(i);
                 },
-                onMidpoint: stitched ? () => {
-                  // Token re-check — a stop/seek between speak start
-                  // and midpoint must not silently advance the page.
-                  if (!ttsPlaying || myToken !== _playToken) return;
-                  if (pageIdx + 1 >= PAGES.length) return;
-                  if (animating) return;     // a slide is already underway
-                  midpointFlippedThisPage = true;
-                  goPage(+1);
-                  // Per spec: do NOT auto-underline sentence 0 of the
-                  // new page after the slide. The page-A tail (the
-                  // earlier-page underline) is the only highlight
-                  // shown for the stitched utterance — once the page
-                  // turns, no underline appears on the new page until
-                  // the NEXT real sentence starts and its onplay
-                  // setCurrentSentence(1) fires naturally.
-                } : null,
-                midpointFraction: stitched ? midpointFraction : 0,
                 onend: resolve,
               });
             });
-
-            if (stitched) {
-              // We just spoke the page-A tail joined with page-B's first
-              // sentence as one utterance. Mark so the next loop iteration
-              // skips page B's index 0.
-              skipFirstOfNextPage = true;
-            }
-
-            // Mid-utterance flip already advanced the page — bail out
-            // of the for loop; the outer while will rebuild
-            // SENTENCE_MAP for the new page. (Without this break, the
-            // next for-loop iteration would try to read list[i+1] from
-            // the OLD page's sentence list, which is already on screen
-            // for mere milliseconds before the slide animation
-            // finishes.)
-            if (midpointFlippedThisPage) break;
           }
           startLocal = 0;
           if (!ttsPlaying || myToken !== _playToken) break;
-
-          // Mid-utterance page flip already happened: skip the
-          // conventional end-of-loop goPage. Wait for the slide to
-          // finish if it's still animating, then loop back so the
-          // outer while rebuilds SENTENCE_MAP for the new page.
-          if (midpointFlippedThisPage) {
-            midpointFlippedThisPage = false;
-            if (animating) {
-              await new Promise(resolve => {
-                const tStart = Date.now();
-                const check = () => {
-                  if (!animating || Date.now() - tStart > 800) resolve();
-                  else setTimeout(check, 24);
-                };
-                check();
-              });
-            }
-            continue;
-          }
-
           if (pageIdx >= PAGES.length - 1) break;
 
+          // Page flip — keep the gap to a minimum: kick off the slide
+          // and start polling immediately. The next sentence's audio
+          // is already prefetched (above), so as soon as the new page's
+          // SENTENCE_MAP is in place we can speak() with no network
+          // latency on top.
           await new Promise(resolve => {
             goPage(+1);
-            // Wait for goPage's slide + DOM swap to finish (animating
-            // clears at the end of its setTimeout(300)). Polling instead
-            // of a fixed timer is robust against slide-timing drift.
-            const tStart = Date.now();
             const check = () => {
-              if (!animating || Date.now() - tStart > 800) resolve();
-              else setTimeout(check, 24);
+              if (!animating) resolve();
+              else setTimeout(check, 16);
             };
-            // Reduced initial wait (was 320 → 100): the previous value
-            // padded ~120ms of dead air on top of the slide. The poll
-            // catches `animating === false` as soon as it flips, so the
-            // resume happens within ~50ms of the swap — not 320+.
-            setTimeout(check, 100);
+            setTimeout(check, 16);
           });
         }
         // ROOT CAUSE FIX for "next sentence plays one then stops":
