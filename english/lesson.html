@@ -1616,7 +1616,27 @@
       // Right swipe → target enters from LEFT (-100%).
       // Left  swipe → target enters from RIGHT (+100%).
       const targetSign = (initialDir === 'right') ? -1 : +1;
+
+      // ---- Bottom-anchored carousel measurement ----
+      // Capture both panels' natural content heights BEFORE we switch
+      // them to position:absolute (where offsetHeight would lose its
+      // flow contribution). Current is in flow → read offsetHeight.
+      // Target is hidden → un-hide briefly to measure.
+      const curH = currentPanel.offsetHeight || 0;
       targetPanel.hidden = false;
+      const tgtH = targetPanel.offsetHeight || 0;
+      const rowEl = sheet.querySelector('.ws-row');
+      const rowH  = rowEl ? rowEl.offsetHeight : 0;
+      const gap   = 8;
+      const PAD_T = 12, PAD_B = 14;
+      // Sheet starts at the CURRENT panel's natural height. As the user
+      // drags, updateWsSwipe lerps this toward the target's natural
+      // height — so the sheet's TOP border alone moves while the
+      // bottom rail stays pinned at bottom: 64 px. (i.e. only the top
+      // border slides up/down, the floor doesn't budge.)
+      sheet.style.height = (PAD_T + rowH + gap + curH + PAD_B) + 'px';
+      sheet.classList.add('is-swiping');
+
       targetPanel.style.transition = 'none';
       targetPanel.style.transform  = 'translateX(' + (targetSign * 100) + '%)';
       currentPanel.style.transition = 'none';
@@ -1628,6 +1648,10 @@
         targetPanel,
         currentView: cur,
         targetView,
+        currentH: curH,
+        targetH: tgtH,
+        rowH,
+        baseChrome: PAD_T + rowH + gap + PAD_B,
         lastDx: 0,
       };
     }
@@ -1645,6 +1669,16 @@
       s.currentPanel.style.transform = 'translateX(' + dx + 'px)';
       const targetStartPx = s.targetSign * w;
       s.targetPanel.style.transform  = 'translateX(' + (targetStartPx + dx) + 'px)';
+
+      // Lerp sheet height between current and target panel's natural
+      // height in proportion to swipe progress. Bottom of the sheet is
+      // pinned (CSS `bottom: 64px`), so increasing/decreasing height
+      // only moves the TOP border up/down — visual intent: the new
+      // sheet "appears glued to the floor" with its own height, only
+      // the top edge differs.
+      const progress = Math.min(1, Math.abs(dx) / w);
+      const h = s.currentH + (s.targetH - s.currentH) * progress;
+      sheet.style.height = (s.baseChrome + h) + 'px';
     }
     function endWsSwipe(dx) {
       const s = swipeSession;
@@ -1656,11 +1690,25 @@
       const ease = 'transform .22s cubic-bezier(.22,.6,.36,1)';
       s.currentPanel.style.transition = ease;
       s.targetPanel.style.transition  = ease;
+      // Animate the sheet's height to its FINAL value so the top
+      // border glides into place instead of snapping. Bottom rail
+      // stays pinned by CSS — only the top edge moves.
+      sheet.style.transition = 'height .22s cubic-bezier(.22,.6,.36,1)';
+      const finalH = matchesDir ? s.targetH : s.currentH;
+      sheet.style.height = (s.baseChrome + finalH) + 'px';
       const cleanup = () => {
         [s.currentPanel, s.targetPanel].forEach(el => {
           el.style.transition = '';
           el.style.transform  = '';
         });
+        // Drop the swipe styling so panels return to in-flow layout
+        // and the sheet's natural content-driven height takes over.
+        sheet.classList.remove('is-swiping');
+        sheet.style.height = '';
+        sheet.style.minHeight = '';
+        // Restore the canonical CSS transition (transform .22s for
+        // open/close) — we hijacked it with `height ...` during commit.
+        sheet.style.transition = '';
       };
       if (matchesDir) {
         // Commit — current exits the OPPOSITE side of where target came from.
@@ -1747,6 +1795,7 @@
     window.__applyWsView = applyWsView;
     function onTouchEnd() {
       dragStart = null;
+      const wasH = (axisLocked === 'h');
       axisLocked = null;
       // Resolve the horizontal carousel session — commit if the user
       // crossed the threshold, otherwise snap both panels back.
@@ -1754,17 +1803,23 @@
         endWsSwipe(swipeSession.lastDx || 0);
         swipeSession = null;
       }
-      // Snap the sheet back to its resting position with the original
-      // CSS transition restored so any vertical-drag rebound feels smooth.
-      if (sheet) {
+      // Vertical-drag rebound: snap sheet back to its resting position
+      // and restore the open/close transform transition. SKIP this for
+      // horizontal swipes — endWsSwipe owns the sheet's transition
+      // (animating `height`) and clearing it here would clobber the
+      // committed top-edge animation.
+      if (sheet && !wasH) {
         sheet.style.transition = '';
         sheet.style.transform = '';
       }
     }
-    row.addEventListener('touchstart', onTouchStart, { passive: true });
-    row.addEventListener('touchmove',  onTouchMove,  { passive: true });
-    row.addEventListener('touchend',   onTouchEnd);
-    row.addEventListener('touchcancel', onTouchEnd);
+    // Bind the gesture to the WHOLE sheet so the user can grab anywhere
+    // (not just the top row) to swipe up/down/left/right. The 8 px dead
+    // zone in onTouchMove keeps button taps from firing as gestures.
+    sheet.addEventListener('touchstart', onTouchStart, { passive: true });
+    sheet.addEventListener('touchmove',  onTouchMove,  { passive: true });
+    sheet.addEventListener('touchend',   onTouchEnd);
+    sheet.addEventListener('touchcancel', onTouchEnd);
   }
 
   // ============== motivation feedback (per-tap rewards) ==============
@@ -3055,7 +3110,18 @@
 
   function hideWordSheet() {
     const sheet = document.getElementById('word-sheet');
-    if (sheet) { sheet.classList.remove('show'); sheet.hidden = true; }
+    if (sheet) {
+      sheet.classList.remove('show');
+      sheet.hidden = true;
+      // Defensive cleanup: if the sheet was closed mid-swipe (e.g. via
+      // an external trigger before endWsSwipe ran), strip the
+      // carousel-only state so the next open starts in a clean
+      // canonical layout.
+      sheet.classList.remove('is-swiping');
+      sheet.style.height = '';
+      sheet.style.minHeight = '';
+      sheet.style.transition = '';
+    }
     const lp = document.getElementById('ws-level-pop');
     if (lp) lp.hidden = true;
     // Clear any in-flight toast so the next sheet open starts clean.
@@ -3223,6 +3289,12 @@
 
     const isPhrase = /\s/.test(text);
     const lower = text.toLowerCase();
+    // Title is rendered AFTER sbLatestLemma is seeded below, via
+    // repaintSidebarTitle() — that way the inflection suffix sky-blue
+    // styling is in place from the very first paint. Set a textContent
+    // fallback first so any code that reads .textContent for word
+    // identity (e.g. the staleness checks in the translate callbacks)
+    // still finds the literal word.
     document.getElementById('ls-word').textContent = text;
 
     // Speaker icon was removed per spec — keep the auto-pronunciation
@@ -3322,36 +3394,43 @@
       renderChunkTx(mnEl, sbLatestChunk.text, sbLatestChunkKo, text, sbLatestWordKo);
     }
 
-    // Sidebar meaning row renders the same way as the mobile word
-    // sheet's top row: `<word with inflection sky-blue>: <Korean>`.
-    // We keep using the existing #ls-trans element (the "현재 의미"
-    // section) so layout stays consistent — only its content shape
-    // changes from "<ko>" to "<word>: <ko>". Phrase selections (multi-
-    // word) bypass the inflection logic and just show plain Korean.
+    // Sidebar meaning row — Korean ONLY. The English word lives in the
+    // big #ls-word title at the top of the card (also rendered with
+    // inflection coloring), so duplicating it here would be redundant.
+    // Phrase selections render the same way (just Korean).
     function repaintSidebarMeaning() {
       if (!transEl) return;
-      if (isPhrase) {
-        transEl.innerHTML = sbLatestWordKo
-          ? '<span class="ko">' + escapeHtml(sbLatestWordKo) + '</span>'
-          : '<span class="tx-loading">번역 중...</span>';
-        return;
-      }
-      const wDisplay = renderWordWithInflectionHTML(text, sbLatestLemma);
       if (!sbLatestWordKo) {
-        transEl.innerHTML = wDisplay + ': <span class="tx-loading">…</span>';
+        transEl.innerHTML = '<span class="tx-loading">번역 중...</span>';
         return;
       }
-      transEl.innerHTML = wDisplay + ': <span class="ko">' +
+      transEl.innerHTML = '<span class="ko">' +
                           escapeHtml(sbLatestWordKo) + '</span>';
     }
+    // Big card-title repaint — renders the word with sky-blue inflection
+    // suffix (e.g. "point<sky>ing</sky>") alongside the same plain text
+    // in the #ls-word slot. Same font size as before; only the markup
+    // changes from textContent → innerHTML so the inflection span
+    // takes effect.
+    function repaintSidebarTitle() {
+      const wEl = document.getElementById('ls-word');
+      if (!wEl) return;
+      if (isPhrase) {
+        wEl.textContent = text;
+        return;
+      }
+      wEl.innerHTML = renderWordWithInflectionHTML(text, sbLatestLemma);
+    }
 
-    // Seed the lemma with the heuristic guess so the row shows
-    // "stretch: …" the moment the sidebar opens (no waiting for
-    // word-info-gpt). Mirror of the mobile word-sheet flow.
+    // Seed the lemma with the heuristic guess so both the title and
+    // the meaning row render the inflection coloring the moment the
+    // sidebar opens (no waiting for word-info-gpt). Mirror of the
+    // mobile word-sheet flow.
     if (!isPhrase) {
       sbLatestLemma = quickLemma(text);
-      repaintSidebarMeaning();
     }
+    repaintSidebarTitle();
+    repaintSidebarMeaning();
 
     // Phase 1 — fast contextless Korean. STATIC dict / cross-sentence
     // cache often hits instantly; otherwise DeepL without context
@@ -3424,12 +3503,15 @@
           tag.textContent = info.pos;
           posTags.appendChild(tag);
         }
-        // Authoritative lemma replaces the heuristic seed → meaning row
-        // re-renders with the proper root (e.g. "stretch" → "stretch out"
-        // for phrasal verbs). Same flow as the mobile word sheet.
+        // Authoritative lemma replaces the heuristic seed → both the
+        // title and (in the mobile world) the meaning row re-render
+        // with the proper root (e.g. heuristic "stretch" → GPT
+        // "stretch out" for phrasal verbs). Sidebar's meaning row no
+        // longer shows the English at all (Korean only) so we only
+        // need to repaint the title here.
         if (info.lemma) {
           sbLatestLemma = info.lemma;
-          repaintSidebarMeaning();
+          repaintSidebarTitle();
         }
         // Don't override transEl with info.ko — Translate.translate
         // already filled it with the contextual meaning, and info.ko

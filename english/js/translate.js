@@ -212,18 +212,14 @@
     const lower = text.toLowerCase();
     if (STATIC[lower]) return STATIC[lower];
 
-    // Cache lookup — namespaced by engine + context hash.
-    const engineName = USE_GPT ? 'gpt' : ENGINE;
-    const ck = cacheKey(text, context, engineName);
-    if (memCache[ck]) return memCache[ck];
-
-    let out = '';
-    let lastErr = null;
-
     // Sanity check: a Korean translation MUST contain at least one Hangul
     // character. External translators occasionally echo the English back
-    // when the input is a single short token like "over" / "a" / "to" —
-    // we treat those responses as failures and try the next engine.
+    // when the input is a single short token ("Soviet" → "Soviet" / "over"
+    // → "over"). We treat those responses as failures and try the next
+    // engine. Defined BEFORE the cache lookup so we can also reject
+    // previously-cached bad values (e.g. an old session cached "Soviet"
+    // before this validation existed — without this gate the bad entry
+    // would be returned forever).
     const isUsefulKo = (s) => {
       if (!s) return false;
       const trimmed = String(s).trim();
@@ -231,6 +227,22 @@
       if (!/[가-힣]/.test(trimmed)) return false;
       return true;
     };
+
+    // Cache lookup — namespaced by engine + context hash. Validate the
+    // cached value too: stale entries that lack any Hangul (e.g. "Soviet"
+    // returned by an engine in a previous session) get evicted and we
+    // fall through to a fresh fetch.
+    const engineName = USE_GPT ? 'gpt' : ENGINE;
+    const ck = cacheKey(text, context, engineName);
+    if (memCache[ck]) {
+      if (isUsefulKo(memCache[ck])) return memCache[ck];
+      // Drop the bad entry so we don't keep paying the lookup cost.
+      delete memCache[ck];
+      persist();
+    }
+
+    let out = '';
+    let lastErr = null;
 
     if (USE_GPT) {
       try {
