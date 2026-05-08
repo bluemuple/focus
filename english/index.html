@@ -446,7 +446,7 @@
           `).join('')}
         </div>
         <div class="money-add" id="exp-add-form" hidden>
-          <input class="ma-cents" id="exp-cents" type="number" min="1" step="1" placeholder="센트 (예: 50)">
+          <input class="ma-cents" id="exp-cents" type="text" inputmode="decimal" autocomplete="off" placeholder="$ 금액 (예: 3.30)">
           <input class="ma-note"  id="exp-note"  type="text" maxlength="40" placeholder="메모 (선택)">
           <button class="btn primary" id="exp-save-btn">저장</button>
         </div>
@@ -458,7 +458,13 @@
       const note   = card.querySelector('#exp-note');
       addBtn.onclick = () => { form.hidden = false; cents.focus(); };
       save.onclick = () => {
-        const c = parseInt(cents.value, 10);
+        // Input is a DOLLAR amount (e.g. "3.30" = $3 30¢ → 330 cents).
+        // Strip currency symbols / commas / whitespace before parsing so
+        // copy-pasted values like "$3.30" or "3,300.00" still work.
+        const raw = String(cents.value || '').trim().replace(/[$₩,\s]/g, '');
+        const dollars = parseFloat(raw);
+        if (!Number.isFinite(dollars) || dollars <= 0) { cents.focus(); return; }
+        const c = Math.round(dollars * 100);
         if (!c || c <= 0) { cents.focus(); return; }
         DB.addExpense(c, note.value);
         // Re-render the card with updated totals.
