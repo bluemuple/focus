@@ -2759,42 +2759,50 @@
     // before the new value was committed — the card never animated up.
     // Removing that side effect fixed the "shift doesn't trigger" bug.
   }
-  // Stable shift: only triggered when the user picks a word in the
-  // BOTTOM 3 LINES of the page. Once shifted, the text stays put for
-  // every subsequent word click in this sheet session — no more up-down
-  // jitter. Reset when the sheet closes or the user navigates pages.
+  // Auto-lift: shift top-bar + body up by EXACTLY enough so the
+  // tapped word sits a comfortable margin above the bottom sheet's
+  // top edge — regardless of where on the page the word is. Triggers
+  // for every word tap; if the word is already visible above the
+  // sheet, this is a no-op. Reset when the sheet closes (× tap) by
+  // clearWordFocus → main.style.transform reset.
   function ensureWordVisibleAboveSheet(wEl) {
     const lt = document.getElementById('lesson-text');
     if (!lt) return;
     const sheet = document.getElementById('word-sheet');
     if (!sheet || sheet.hidden || !wEl) return;
-    const wrap = document.getElementById('lesson-text-wrap');
-    if (!wrap) return;
     const main = document.getElementById('lesson-main');
     if (!main) return;
 
     // Mobile only — the PC sidebar is the surface there, not the sheet.
     if (window.matchMedia('(min-width: 1024px)').matches) return;
 
-    // Same trigger logic as before: bottom 3-ish lines of the wrap.
-    const lineHeight = parseFloat(getComputedStyle(lt).lineHeight) || 40;
-    const SAFE_BOTTOM_LINES = 4;
-    const wrapBottom = wrap.getBoundingClientRect().bottom;
-    const wRect      = wEl.getBoundingClientRect();
-    const distFromBottom = wrapBottom - wRect.bottom;
-    if (distFromBottom >= lineHeight * SAFE_BOTTOM_LINES) return;
+    // Compute the sheet's FINAL top position. We can't trust
+    // getBoundingClientRect().top here because the sheet may still be
+    // mid-transition (translateY(110%) → translateY(0)) when this
+    // function runs from inside the open RAF. Layout height (offsetHeight)
+    // and the CSS-known bottom offset are stable through the animation.
+    const SHEET_BOTTOM_PX = 64;     // matches .word-sheet { bottom: 64px }
+    const sheetHeight = sheet.offsetHeight || 0;
+    if (!sheetHeight) return;       // sheet not laid out yet
+    const sheetTopFinal = window.innerHeight - SHEET_BOTTOM_PX - sheetHeight;
 
+    // Desired: word's bottom edge sits at MOST (sheetTopFinal - MARGIN).
+    // If it's already there or above, no shift needed. Otherwise shift
+    // by exactly the overlap so the word lands right above the sheet.
+    const MARGIN = 12;              // breathing room between word and sheet
+    const wRect = wEl.getBoundingClientRect();
+    const desiredBottom = sheetTopFinal - MARGIN;
+    if (wRect.bottom <= desiredBottom) return;
+
+    const additional = Math.ceil(wRect.bottom - desiredBottom);
     // Drive the shift via INLINE transform on .lesson-main. Inline beats
     // any class-rule transform (cont-bar-open, etc.) and is immune to
-    // CSS-variable race conditions where back-to-back set/remove of a
-    // var inside one task flushes only the final state. Read the current
-    // inline translateY (default 0), add the additional needed amount.
-    const additional = Math.ceil(lineHeight * SAFE_BOTTOM_LINES - distFromBottom + 8);
+    // CSS-variable race conditions. Stack onto any existing translateY
+    // so a SECOND tap on a word still further down can shift even more
+    // (and hideWordSheet → clearWordFocus animates back to 0 on close).
     const m = (main.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
     const currentY = m ? parseFloat(m[1]) : 0;
     const newY = currentY - additional;
-    // Set transition explicitly so the slide animates even when no
-    // class rule contributed a transition for this element.
     main.style.transition = 'transform .22s cubic-bezier(.22,.6,.36,1)';
     main.style.transform = 'translateY(' + Math.round(newY) + 'px)';
   }
