@@ -1899,6 +1899,42 @@
     out += escapeHtml(text.slice(last));
     return out;
   }
+  // For the bottom-sheet's TOP MEANING ROW: render the user's clicked
+  // word as it appears in the body (e.g. "pointing"), with the
+  // inflectional suffix (-ing / -ed / -s / -es / -ies / -ied) colored
+  // sky-blue. This replaces the older "<lemma>: <ko>" format — the
+  // user wanted to see the literal text-form, not the lemma, with the
+  // inflection highlighted.
+  //   "pointing"  →  point<sky>ing</sky>
+  //   "stretched" →  stretch<sky>ed</sky>
+  //   "studies"   →  stud<sky>ies</sky>
+  //   "is"        →  is              (no detectable inflection)
+  // Strategy:
+  //   1. If the lemma (or its first word, for phrasal verbs like
+  //      "stretch out") is a clean prefix of the word → suffix = rest.
+  //   2. Else fall back to spelling-based detection for irregular
+  //      lemmas where the GPT lemma isn't a string prefix.
+  function renderWordWithInflectionHTML(word, lemma) {
+    const w = String(word || '');
+    if (!w) return '';
+    const lo = w.toLowerCase();
+    const lem = (lemma || '').toLowerCase();
+    const firstLem = lem.split(/\s+/)[0] || '';
+    // Lemma's first word is a clean prefix → color the suffix only.
+    if (firstLem && firstLem.length < lo.length && lo.startsWith(firstLem)) {
+      return escapeHtml(w.slice(0, firstLem.length)) +
+             '<span class="hl-infl">' + escapeHtml(w.slice(firstLem.length)) + '</span>';
+    }
+    // Spelling-based fallback for irregular lemmas (e.g. lemma "study"
+    // but word "studies" — "study" isn't a prefix of "studies").
+    const sufMatch = lo.match(/(ies|ied|ing|ed|es|s)$/);
+    if (sufMatch && (lo.length - sufMatch[0].length) >= 2) {
+      const stemLen = lo.length - sufMatch[0].length;
+      return escapeHtml(w.slice(0, stemLen)) +
+             '<span class="hl-infl">' + escapeHtml(w.slice(stemLen)) + '</span>';
+    }
+    return escapeHtml(w);
+  }
   // Like highlightLemma but DISTINGUISHES the lemma stem (pink) from
   // any short inflection suffix (-s, -es, -ed, -ing, -ies, -ied) in
   // sky-blue. Used in Popular Meanings example sentences so learners
@@ -1929,45 +1965,31 @@
   // Renders the chunk that contains the focused word — the English chunk
   // text (with the focused word in pink) above its Korean translation.
   // Replaces the old mnemonic block: more useful info, less waffle.
-  function renderChunkTx(host, chunkText, chunkKo, lemma /*, wordKo (deprecated) */) {
+  function renderChunkTx(host, chunkText, chunkKo, lemma, wordKo) {
     if (!host) return;
     if (!chunkText) { host.innerHTML = ''; return; }
-    // Stash the chunk Korean + lemma on the host so the click handler
-    // below can re-render with pink highlight on demand without re-fetching.
+    // Stash the chunk Korean + lemma on the host so an external repaint
+    // (e.g. when a faster wordKo arrives) can re-render without
+    // re-fetching the chunk text.
     host.dataset.chunkKo = chunkKo || '';
     host.dataset.lemma   = lemma || '';
-    // DEFAULT: no pink Korean — the user wants the chunk Korean to load
-    // as fast as possible, without waiting for the per-word translate
-    // call needed for substring matching. Pink Korean activates ONLY
-    // when the user taps the pink English lemma in the chunk.
+    // Auto pink-highlight: if we have BOTH the chunk Korean and the
+    // selected word's Korean translation, automatically pink the
+    // matching substring inside ck-ko. The user wanted this to happen
+    // as soon as both pieces are available — no extra tap required.
+    // Falls back to plain (gray) chunk Korean when the mapping is
+    // ambiguous (no match / multiple matches / wordKo too short).
+    let koHtml;
+    if (!chunkKo) {
+      koHtml = '<span class="tx-loading">번역 중...</span>';
+    } else if (wordKo) {
+      koHtml = highlightKoSubstring(chunkKo, wordKo);
+    } else {
+      koHtml = escapeHtml(chunkKo);
+    }
     host.innerHTML =
       '<div class="ck-en">' + highlightLemma(chunkText, lemma || '') + '</div>' +
-      (chunkKo
-        ? '<div class="ck-ko">' + escapeHtml(chunkKo) + '</div>'
-        : '<div class="ck-ko"><span class="tx-loading">번역 중...</span></div>');
-    // Tap-to-highlight: when the user taps the pink English lemma, find
-    // its contextual Korean meaning (already on screen in the row above)
-    // and pink-highlight the matching substring inside ck-ko. Skips if
-    // the meaning isn't unique inside the chunk Korean — see
-    // highlightKoSubstring(). Mobile uses #ws-meaning, PC uses #ls-trans .ko.
-    host.querySelectorAll('.ck-en .hl-lemma').forEach(el => {
-      el.style.cursor = 'pointer';
-      el.onclick = (ev) => {
-        ev.stopPropagation();
-        const koEl = host.querySelector('.ck-ko');
-        const ko = host.dataset.chunkKo || '';
-        if (!koEl || !ko) return;
-        let wordKo = '';
-        if (host.closest('.word-sheet')) {
-          const m = document.getElementById('ws-meaning');
-          wordKo = m ? m.textContent.trim() : '';
-        } else if (host.closest('.lesson-sidebar')) {
-          const m = document.querySelector('#ls-trans .ko');
-          wordKo = m ? m.textContent.trim() : '';
-        }
-        koEl.innerHTML = highlightKoSubstring(ko, wordKo);
-      };
-    });
+      '<div class="ck-ko">' + koHtml + '</div>';
   }
   // Pink-highlight the Korean span inside `chunkKo` that corresponds to the
   // selected English word. Uses the word's contextual Korean (from
@@ -2550,26 +2572,21 @@
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
     }
-    // Per spec: inflected words display as "<root>: <Korean>". The
-    // root starts as a fast heuristic guess (so it appears the moment
-    // the sheet opens) and is upgraded to word-info-gpt's authoritative
-    // lemma when that resolves. The Korean similarly upgrades from a
-    // contextless DeepL hit to the contextual translation when ready.
-    // Crucially: when the Korean isn't ready yet, we still show the
-    // root prefix so the user sees "stretch: …" instead of just "…".
+    // Per spec: render the word AS IT APPEARS in the body (e.g.
+    // "pointing"), with any inflectional suffix (-ing / -ed / -s …)
+    // colored sky-blue, followed by ": <Korean>". The Korean fades in
+    // after the contextless DeepL call (sub-second) and is upgraded
+    // to the contextual translation when that resolves.
+    // While the Korean is still loading we show "<word>: …" so the
+    // user immediately sees which word the sheet belongs to.
     function repaintMeaning() {
       if (!meaningEl) return;
-      const wLower = (word || '').toLowerCase();
-      const useLemma = latestLemma || '';
-      const lemmaShown = useLemma && useLemma.toLowerCase() !== wLower;
+      const wDisplay = renderWordWithInflectionHTML(word, latestLemma);
       if (!latestWordKo) {
-        // Korean still loading — keep the root prefix visible if we have one.
-        meaningEl.textContent = lemmaShown ? (useLemma + ': …') : '…';
+        meaningEl.innerHTML = wDisplay + ': …';
         return;
       }
-      meaningEl.textContent = lemmaShown
-        ? (useLemma + ': ' + latestWordKo)
-        : latestWordKo;
+      meaningEl.innerHTML = wDisplay + ': ' + escapeHtml(latestWordKo);
     }
 
     // Seed the lemma with the heuristic guess RIGHT AWAY so the row
