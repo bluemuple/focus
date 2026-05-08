@@ -137,34 +137,53 @@
   }
 
   async function gate(onAuthed) {
+    // Watchers are attached unconditionally on script load (below) so
+    // they fire whether or not the page started in an authed state.
+    // gate() now only handles the initial render.
     if (await isAuthed()) {
       document.body.classList.remove('signed-out');
       onAuthed && onAuthed();
-      // Listen for mid-session sign-outs (token refresh failures, another
-      // tab signing out, iOS storage wipe). When that happens we put the
-      // login modal back up — without this the user just sees a broken
-      // page after Supabase silently invalidates their session.
-      attachSignOutWatcher(onAuthed);
+      _lastOnAuthed = onAuthed || _lastOnAuthed;
       return;
     }
+    _lastOnAuthed = onAuthed || _lastOnAuthed;
     renderModal(onAuthed);
   }
 
-  // Idempotent: only attaches the listener once per page load.
-  let _signOutWatcherAttached = false;
-  function attachSignOutWatcher(onAuthed) {
-    if (_signOutWatcherAttached) return;
-    _signOutWatcherAttached = true;
-    window.addEventListener('eng:signed-out', () => {
-      // The user might already be in try-mode at this point (e.g. they
-      // tapped 체험하기 in another tab). Don't show the modal in that case.
-      if (DB.isTryMode()) return;
-      // Also ignore if a modal is already up.
-      if (document.getElementById('auth-modal-root') &&
-          document.getElementById('auth-modal-root').innerHTML.trim()) return;
-      renderModal(onAuthed || (() => location.reload()));
-    });
+  function modalIsUp() {
+    const root = document.getElementById('auth-modal-root');
+    return !!(root && root.innerHTML.trim());
   }
+
+  // Most recent onAuthed callback the page passed to gate(). Reused by
+  // the auto-attached watchers below so that re-showing the modal
+  // (after a mid-session sign-out) and auto-dismissing it (after a
+  // cross-tab sign-in) both run the same post-auth handler the page
+  // originally wired up — no full reload needed in the typical case.
+  let _lastOnAuthed = null;
+
+  // Mid-session sign-out (token refresh failure, another tab signing
+  // out, iOS storage wipe, parent Bidoro app signing out): re-show the
+  // login modal so the user can re-authenticate without a broken page.
+  window.addEventListener('eng:signed-out', () => {
+    if (DB.isTryMode()) return;          // try-mode bypasses the modal
+    if (modalIsUp()) return;             // already up — leave it
+    renderModal(_lastOnAuthed || (() => location.reload()));
+  });
+
+  // Cross-tab / cross-app sign-in (e.g. user just signed in to the
+  // parent Bidoro app with the same account → the shared Supabase
+  // session updates here). If our login modal is currently up, dismiss
+  // it and reload so the home page comes back with the new session.
+  window.addEventListener('eng:signed-in', () => {
+    if (!modalIsUp()) return;
+    document.body.classList.remove('signed-out');
+    const root = document.getElementById('auth-modal-root');
+    if (root) root.innerHTML = '';
+    // Reload so all data fetches use the new session — the page may
+    // have been loaded entirely under the modal with no user data.
+    location.reload();
+  });
 
   async function signOutAndReload() {
     await DB.signOut();

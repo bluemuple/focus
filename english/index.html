@@ -89,6 +89,26 @@
 <script src="js/auth.js"></script>
 <script>
 (async function () {
+  // Fallback header click handler — runs IMMEDIATELY (before Auth.gate
+  // resolves) so a user landing in a logged-out state where the auth
+  // modal failed to mount for some reason can still summon the login
+  // form by tapping the "게스트" chip. renderHeader() (called inside
+  // gate's authed callback) overrides this with the full handler that
+  // also routes signed-in users to the settings panel.
+  (function setupFallbackChipClick() {
+    const chip = document.getElementById('acct-chip');
+    if (!chip) return;
+    chip.style.cursor = 'pointer';
+    chip.onclick = (e) => {
+      const so = document.getElementById('signout-btn');
+      if (e.target === so || (so && so.contains(e.target))) return;
+      // Always show the login modal in this fallback path — covers both
+      // try-mode users wanting to upgrade and logged-out users whose
+      // gate-rendered modal didn't appear.
+      Auth.showModal(() => location.reload());
+    };
+  })();
+
   // Show auth gate. After authed (or "체험하기"), render home.
   Auth.gate(async () => {
     await renderHeader();

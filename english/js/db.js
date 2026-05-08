@@ -73,14 +73,22 @@
 
   // React to login / logout events from anywhere — Supabase fires these
   // when a token refresh fails, when the user signs out in another tab,
-  // when ITP wipes storage, etc. We update the cached user and dispatch
-  // a window event so auth.js can re-show the login modal.
+  // when the parent Bidoro app signs in/out with a shared session, when
+  // ITP wipes storage, etc. We update the cached user and dispatch a
+  // window event so auth.js can re-show / dismiss the login modal.
   if (sb) {
     sb.auth.onAuthStateChange((event, session) => {
       _user = (session && session.user) || null;
       if (event === 'SIGNED_OUT' || (!session && event !== 'INITIAL_SESSION')) {
         try {
           window.dispatchEvent(new CustomEvent('eng:signed-out', { detail: { event } }));
+        } catch (e) {}
+      } else if (session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')) {
+        // Cross-tab / cross-app sign-in: the parent Bidoro app shares the
+        // Supabase storage key with us, so a sign-in there fires SIGNED_IN
+        // here. Surface it so a modal that's currently up can auto-dismiss.
+        try {
+          window.dispatchEvent(new CustomEvent('eng:signed-in', { detail: { event, user: session.user } }));
         } catch (e) {}
       }
     });
