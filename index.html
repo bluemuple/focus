@@ -64,12 +64,14 @@
   /* Brand sits inside the topbar's first column (which matches the gauge
      column width). Left-aligned with a small indent so the text starts a
      little to the right of the gauge's left edge — easier to read than
-     flush-left, and visually anchored above the gauge. */
+     flush-left, and visually anchored above the gauge. Click → Focus page. */
   .brand {
     font-weight: 800; letter-spacing: -.01em;
     text-align: left;
     padding-left: 10px;
+    cursor: pointer; user-select: none;
   }
+  .brand:hover { color: #2563eb; }
   .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
   .motivation {
     color: #4b5563;
@@ -2410,7 +2412,7 @@
 <body>
 
 <header class="topbar">
-  <div class="brand">Bidoro<small>Bid on your time</small></div>
+  <div class="brand" id="brand-home" role="button" tabindex="0" title="Go to Focus page">Bidoro<small>Bid on your time</small></div>
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
     <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects">🔈</button>
@@ -3273,9 +3275,9 @@ const defaultState = () => ({
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
   events: [],
-  // Up to 4 daily backups of the full state. Each: { id, savedAt, money,
+  // Up to 3 daily backups of the full state. Each: { id, savedAt, money,
   // manaScore, label, snapshot: {tasks, watchLog, money, mana, ext, …} }.
-  // Created automatically at 3 AM and trimmed to the latest 4. Click any
+  // Created automatically at 3 AM and trimmed to the latest 3. Click any
   // entry in the Account panel to restore.
   versions: [],
   scoreLog: [],                 // [{ timestamp, ext, int }] for the daily chart
@@ -3867,7 +3869,7 @@ async function pushSettingsToCloud() {
         last3amResetDate:        state.last3amResetDate || '',
         scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
         events:                  Array.isArray(state.events)   ? state.events.slice(-500)    : [],
-        versions:                Array.isArray(state.versions) ? state.versions.slice(-4)    : [],
+        versions:                Array.isArray(state.versions) ? state.versions.slice(-3)    : [],
         motivationalCurrent:     state.motivationalCurrent || null,
         // ---- Money system (synced) ----
         money:                   +state.money || 0,
@@ -4092,7 +4094,7 @@ function applyRemoteSettings(remote) {
     if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
     if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
     if (Array.isArray(ss.events))   state.events   = ss.events;
-    if (Array.isArray(ss.versions)) state.versions = ss.versions.slice(-4);
+    if (Array.isArray(ss.versions)) state.versions = ss.versions.slice(-3);
     if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
     // Money system — money/log/factors/sleep markers
     if (typeof ss.money === 'number') state.money = ss.money;
@@ -4250,6 +4252,15 @@ function showPage(name) {
 //  showPage('setup') still safely redirects to 'focus' if anything calls it.)
 document.getElementById('tab-focus').onclick = ()=>showPage('focus');
 document.getElementById('tab-stats').onclick = ()=>showPage('stats');
+// Top-bar brand "Bidoro · Bid on your time" → Focus page (logo behaves as
+// home, like most apps).
+const _brandHomeEl = document.getElementById('brand-home');
+if (_brandHomeEl) {
+  _brandHomeEl.addEventListener('click',  () => showPage('focus'));
+  _brandHomeEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showPage('focus'); }
+  });
+}
 // Manual tab — opens the User Manual modal instead of switching pages.
 const tabManualBtn = document.getElementById('tab-manual');
 if (tabManualBtn) tabManualBtn.onclick = () => {
@@ -9748,8 +9759,8 @@ function pushDailyVersion(label) {
     snapshot: snap
   };
   state.versions.push(v);
-  // Keep only the 4 most recent.
-  if (state.versions.length > 4) state.versions = state.versions.slice(-4);
+  // Keep only the 3 most recent.
+  if (state.versions.length > 3) state.versions = state.versions.slice(-3);
 }
 
 async function restoreVersion(id) {

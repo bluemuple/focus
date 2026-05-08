@@ -299,9 +299,22 @@
       </svg>
     </button>
     <span class="pb-spacer"></span>
+    <!-- Repeat-mode cycler. Tap to advance:
+           1️⃣ 문장  — sequential (default): each sentence once, advance.
+           2️⃣ 의미  — chunk loop: replay the syntactic unit around the
+                       currently selected word indefinitely.
+           3️⃣ 단어  — word loop: replay the currently selected word.
+         Modes 2/3 require a selected word — if none, a brief alert
+         fades in over the playbar telling the user to select one. -->
+    <button class="pb-btn pb-repeat" id="pb-repeat" title="반복 모드 (문장 / 의미단위 / 단어)" aria-label="반복 모드">
+      <span class="pb-rep-label">문장</span>
+    </button>
     <button class="pb-btn"          id="speed-btn" title="재생 속도">1×</button>
     <button class="pb-btn pb-voice" id="voice-btn" title="목소리 선택">F</button>
     <button class="pb-btn pb-close" id="pb-close" aria-label="플레이바 닫기">×</button>
+    <!-- Brief "select a word first" toast — JS shows it for ~2s when the
+         user cycles to chunk/word loop mode without an active selection. -->
+    <div class="pb-toast" id="pb-toast" hidden>단어를 선택하면 소리가 나와요</div>
   </div>
 
   <!-- Voice picker popup. Anchored above the playbar, shows the available
@@ -4609,6 +4622,38 @@
   // clicks compute their target from a CURRENT_SENTENCE that the
   // background loop has been silently advancing.
   let _playToken = 0;
+  // Repeat mode cycler in the playbar:
+  //   1 (default) = sequential sentence playback (each sentence once,
+  //                 then advance — natural reading flow).
+  //   2           = loop the syntactic chunk around the currently
+  //                 selected word, indefinitely.
+  //   3           = loop the currently selected word, indefinitely.
+  // Modes 2/3 require an active word selection; the toggle still cycles
+  // but a brief toast tells the user nothing will play until they
+  // tap a word.
+  let REPEAT_MODE = 1;
+
+  // Pull the currently focused/active word element across all reading
+  // modes. Used by repeat modes 2/3 to pick the chunk / word to loop.
+  function getActiveWordEl() {
+    const root = document.getElementById('lesson-text');
+    if (!root) return null;
+    if (MODE === 'single') {
+      return root.querySelector('.w.active') || _focusedWordEl || null;
+    }
+    if (CONT_SELECTED && CONT_SELECTED.size) {
+      // For 이어서 / 이어서밑줄, anchor on the leftmost selected word so
+      // the chunk that contains it is well-defined.
+      let leftmost = null;
+      for (const el of CONT_SELECTED) {
+        if (!leftmost) { leftmost = el; continue; }
+        const cmp = el.compareDocumentPosition(leftmost);
+        if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) leftmost = el;
+      }
+      return leftmost;
+    }
+    return _focusedWordEl || null;
+  }
 
   // Slider geometry — shared between audio_url and TTS playback. Both are
   // expressed as a 0..1 "read position" measured in characters across the
@@ -4647,6 +4692,56 @@
     const prevBtn  = document.getElementById('pb-prev');
     const nextBtn  = document.getElementById('pb-next');
     const stopBtn  = document.getElementById('pb-stop');
+    const repeatBtn = document.getElementById('pb-repeat');
+
+    // ── Repeat-mode cycler ──
+    // Tap → 1 → 2 → 3 → 1. Updates label + tint to reflect the new mode.
+    // When entering modes 2/3 with no active word, briefly flash the
+    // "select a word" toast over the playbar instead of yelling errors.
+    function refreshRepeatBtn() {
+      if (!repeatBtn) return;
+      const lbl = repeatBtn.querySelector('.pb-rep-label');
+      repeatBtn.classList.remove('mode-chunk', 'mode-word');
+      if (REPEAT_MODE === 1) { if (lbl) lbl.textContent = '문장'; }
+      else if (REPEAT_MODE === 2) {
+        if (lbl) lbl.textContent = '의미';
+        repeatBtn.classList.add('mode-chunk');
+      }
+      else if (REPEAT_MODE === 3) {
+        if (lbl) lbl.textContent = '단어';
+        repeatBtn.classList.add('mode-word');
+      }
+    }
+    function flashSelectWordToast() {
+      const t = document.getElementById('pb-toast');
+      if (!t) return;
+      t.hidden = false;
+      requestAnimationFrame(() => t.classList.add('show'));
+      clearTimeout(flashSelectWordToast._timer);
+      flashSelectWordToast._timer = setTimeout(() => {
+        t.classList.remove('show');
+        setTimeout(() => { t.hidden = true; }, 220);
+      }, 2000);
+    }
+    if (repeatBtn) {
+      repeatBtn.addEventListener('click', () => {
+        REPEAT_MODE = REPEAT_MODE >= 3 ? 1 : REPEAT_MODE + 1;
+        refreshRepeatBtn();
+        // For chunk/word modes, alert the user when no word is selected
+        // — playback can still be triggered, but it'll no-op until they
+        // tap one. Mode 1 (sequential) needs no warning.
+        if (REPEAT_MODE !== 1 && !getActiveWordEl()) flashSelectWordToast();
+        // If playback is currently running, restart in the new mode so
+        // the change takes effect immediately rather than at the next
+        // sentence boundary.
+        if (ttsPlaying) {
+          stopAnyPlayback();
+          // Defer one tick so the loop fully bails on token check.
+          setTimeout(() => { playBtn.click(); }, 30);
+        }
+      });
+      refreshRepeatBtn();
+    }
 
     // Toggles the play button between a ▶ (paused state) and ⏸ (playing
     // state) inline SVG. Both share the same .pb-icon size so the button
@@ -4726,6 +4821,61 @@
         const myToken = ++_playToken;
         ttsPlaying = true;
         setPlayBtnIcon(true);
+
+        const ttsRate0 = 0.9 * speed;
+
+        // ── Repeat mode 2/3: loop the chunk / word indefinitely. ──
+        // The active selection might not exist (user hit ▶ before tapping
+        // a word). In that case bail quietly — the cycle button already
+        // flashed a toast when the mode was set; pressing ▶ again after
+        // selecting a word will start the loop.
+        if (REPEAT_MODE === 2 || REPEAT_MODE === 3) {
+          const wEl = getActiveWordEl();
+          if (!wEl) {
+            flashSelectWordToast();
+            ttsPlaying = false;
+            setPlayBtnIcon(false);
+            return;
+          }
+          const word = (wEl.dataset && wEl.dataset.word) || wEl.textContent || '';
+          let loopText = word.trim();
+          if (REPEAT_MODE === 2) {
+            // Mode 2: replay the syntactic chunk. Resolve via cached
+            // chunk-gpt; fall through to just the word if we can't.
+            try {
+              const sentence = getContextSentence(wEl);
+              if (sentence && Translate.getChunks) {
+                const chunks = await Translate.getChunks(sentence);
+                if (chunks) {
+                  const c = findChunkForWord(wEl, chunks);
+                  if (c && c.text) loopText = c.text;
+                }
+              }
+            } catch (_) {}
+          }
+          if (!loopText) {
+            ttsPlaying = false;
+            setPlayBtnIcon(false);
+            return;
+          }
+          // Pre-warm so the first iteration is instant.
+          if (TTS.prefetch) TTS.prefetch(loopText, { rate: ttsRate0 });
+          while (ttsPlaying && myToken === _playToken) {
+            await new Promise(resolve => {
+              TTS.speak(loopText, { rate: ttsRate0, onend: resolve });
+            });
+            // Brief pause between repeats so the listener can mentally
+            // separate iterations rather than hearing one run-on stream.
+            await new Promise(r => setTimeout(r, 280));
+          }
+          if (myToken === _playToken) {
+            ttsPlaying = false;
+            setPlayBtnIcon(false);
+          }
+          return;
+        }
+
+        // ── Repeat mode 1 (default): sequential sentence playback ──
         // If we're cold-starting (no current sentence), begin at sentence 0.
         if (CURRENT_SENTENCE < 0) setCurrentSentence(0);
 
