@@ -1435,7 +1435,10 @@
         }
       }
       if (opts.showToast) {
-        const label = view === 'pm' ? '의미' : view === 'co' ? '연어' : '텍스트';
+        // Swipe-only labels — fired by cycleWsView when the user
+        // changes view via left/right slide. Sheet (re)opens skip
+        // this branch entirely (showToast: false in applyWsView).
+        const label = view === 'pm' ? '의미' : view === 'co' ? '연어' : '본문';
         if (typeof showSheetToast === 'function') showSheetToast(label);
       }
       if (typeof applyWordSheetShift === 'function') {
@@ -2321,7 +2324,10 @@
     const mnemEl    = document.getElementById('ws-mnemonic');
     const exUl      = document.getElementById('ws-examples');
     const coUl      = document.getElementById('ws-collocs');
-    if (meaningEl) meaningEl.textContent = '…';
+    // Placeholder is set inside repaintMeaning() once the heuristic
+    // lemma is seeded below — this avoids the brief "…" → "stretch: …"
+    // flicker. Just clear stale content from a prior open.
+    if (meaningEl) meaningEl.textContent = '';
     // Skeleton placeholder for the chunk-translation panel + lists below.
     if (mnemEl) mnemEl.innerHTML =
       '<div class="ws-skel">' +
@@ -2341,16 +2347,16 @@
     // Re-show the chunk panel — a previous tab-open may have hidden it.
     if (mnemEl) mnemEl.hidden = false;
     document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
-    // Re-apply the remembered cycle view (text / pm / co). This makes
-    // a CLOSE → reopen flow remember the view: if the user closed the
-    // sheet while on 연어 view, the next word's sheet opens directly
-    // on 연어. Skip toast on the 'text' default — first-tap should
-    // appear quietly; show toast only when re-opening on a non-default
-    // view (so the user knows what they're seeing).
+    // Re-apply the remembered cycle view (text / pm / co). Close →
+    // reopen on a new word should restore the same view silently —
+    // the center toast (의미 / 연어 / 본문) is reserved for SWIPE
+    // gestures only, not for sheet (re)opens. Without this, every
+    // word tap after closing on 연어 would flash "연어" again, which
+    // the user found noisy.
     if (typeof window.__applyWsView === 'function') {
       window.__applyWsView(_wsLastView || 'text', {
         slideFrom: null,
-        showToast: _wsLastView && _wsLastView !== 'text',
+        showToast: false,
       });
     }
     const lp = document.getElementById('ws-level-pop');
@@ -2500,31 +2506,112 @@
     let latestLemma  = '';        // from word-info-gpt; used for root-word display
     let latestChunk = null;
     let latestChunkKo = '';
+
+    // Fast lemma heuristic — strips the most common English inflections so
+    // the "<root>: <Korean>" row can render the SECOND the sheet opens,
+    // before word-info-gpt finishes (~1-2 s). When the GPT response
+    // arrives, `latestLemma` is replaced with the authoritative form
+    // (e.g. heuristic "stretch" → GPT "stretch out") and the row repaints.
+    // Conservative: short words and irregulars fall through to identity,
+    // in which case `lemmaShown === false` and we show only the Korean.
+    function quickLemma(w) {
+      const lo = (w || '').toLowerCase();
+      if (!lo || lo.length < 4 || /[^a-z]/.test(lo)) return lo;
+      // -ied / -ies → -y  (studies → study, tried → try)
+      if (/[^aeiou]ies$/.test(lo)) return lo.slice(0, -3) + 'y';
+      if (/[^aeiou]ied$/.test(lo)) return lo.slice(0, -3) + 'y';
+      // doubled-consonant + ing / ed (running → run, stopped → stop)
+      if (/([bcdfghjklmnpqrstvwxz])\1ing$/.test(lo) && lo.length > 5) {
+        return lo.slice(0, -4);
+      }
+      if (/([bcdfghjklmnpqrstvwxz])\1ed$/.test(lo) && lo.length > 4) {
+        return lo.slice(0, -3);
+      }
+      // -ing  (going → go, making → make)
+      if (/ing$/.test(lo) && lo.length > 4) {
+        const stem = lo.slice(0, -3);
+        if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
+        return stem;
+      }
+      // -ed   (talked → talk, hoped → hope)
+      if (/ed$/.test(lo) && lo.length > 3) {
+        const stem = lo.slice(0, -2);
+        if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
+        return stem;
+      }
+      // -es after sibilant (boxes → box, pushes → push)
+      if (/(?:s|x|z|ch|sh)es$/.test(lo) && lo.length > 3) return lo.slice(0, -2);
+      // bare -s (cats → cat, runs → run) — skip very short forms (us, is)
+      if (/[^aeious]s$/.test(lo) && lo.length > 3) return lo.slice(0, -1);
+      return lo;
+    }
+
     function repaintChunkPanel() {
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
     }
     // Per spec: inflected words display as "<root>: <Korean>". The
-    // root comes from word-info-gpt; the Korean from translate. Either
-    // can resolve first, so we compose the row from BOTH whenever the
-    // values change.
+    // root starts as a fast heuristic guess (so it appears the moment
+    // the sheet opens) and is upgraded to word-info-gpt's authoritative
+    // lemma when that resolves. The Korean similarly upgrades from a
+    // contextless DeepL hit to the contextual translation when ready.
+    // Crucially: when the Korean isn't ready yet, we still show the
+    // root prefix so the user sees "stretch: …" instead of just "…".
     function repaintMeaning() {
       if (!meaningEl) return;
-      if (!latestWordKo) return;          // wait for translation
       const wLower = (word || '').toLowerCase();
-      const lemmaShown = latestLemma && latestLemma.toLowerCase() !== wLower;
+      const useLemma = latestLemma || '';
+      const lemmaShown = useLemma && useLemma.toLowerCase() !== wLower;
+      if (!latestWordKo) {
+        // Korean still loading — keep the root prefix visible if we have one.
+        meaningEl.textContent = lemmaShown ? (useLemma + ': …') : '…';
+        return;
+      }
       meaningEl.textContent = lemmaShown
-        ? (latestLemma + ': ' + latestWordKo)
+        ? (useLemma + ': ' + latestWordKo)
         : latestWordKo;
     }
 
+    // Seed the lemma with the heuristic guess RIGHT AWAY so the row
+    // shows "stretch: …" immediately while the network calls are in
+    // flight. Repaint once now (the placeholder will read "stretch: …"
+    // until the Korean arrives).
+    latestLemma = quickLemma(word);
+    repaintMeaning();
+
+    // Fast Korean path: contextless translate. Hits the STATIC dictionary
+    // (pronouns/prepositions) instantly, or the cache if this word has
+    // been clicked before. Without the sentence context, DeepL also
+    // tends to return faster than the contextual variant — gives the
+    // user "something Korean" within a few hundred ms, which is then
+    // upgraded by the contextual translate below.
+    Translate.translate(word).then(ko => {
+      if (_sheetWord !== word) return;
+      // Only paint if the contextual call hasn't already filled it in
+      // (it could have raced ahead on a cache hit). The contextual
+      // result is always the source of truth; this is just a quick
+      // bridge to avoid the bare "…" placeholder.
+      if (!latestWordKo) {
+        latestWordKo = (ko || '').trim();
+        repaintMeaning();
+        repaintChunkPanel();
+      }
+    }).catch(() => {});
+
+    // Authoritative contextual translation — replaces the fast Korean
+    // (if any) with the meaning that actually fits this sentence.
     Translate.translate(word, sentence).then(ko => {
       if (_sheetWord !== word) return;
-      latestWordKo = (ko || '').trim();
-      repaintMeaning();
-      repaintChunkPanel();
+      const next = (ko || '').trim();
+      if (next) {
+        latestWordKo = next;
+        repaintMeaning();
+        repaintChunkPanel();
+      }
     }).catch(() => {
-      if (meaningEl) meaningEl.textContent = '—';
+      // Only show "—" if we never got ANY Korean (the contextless call
+      // also failed). Otherwise the fast path's value stays visible.
+      if (!latestWordKo && meaningEl) meaningEl.textContent = '—';
     });
 
     // Chunk = words around the clicked word that form one syntactic unit.
