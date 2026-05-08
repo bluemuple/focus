@@ -33,8 +33,9 @@
             </div>
 
             <div class="lesson-head">
+              <!-- ✨ AI translation toggle was removed — DeepL is now the
+                   single translation engine for all word/phrase lookups. -->
               <div class="head-tools">
-                <button class="toggle-btn dict" id="gpt-toggle-btn" title="더 좋은 번역 (gpt-4o-mini, 클릭 시 그 단어만 GPT로)">✨</button>
                 <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
                 <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
                 <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
@@ -2088,60 +2089,26 @@
     // signal. The TTS module no-ops if the user has muted globally.
     try { TTS.speak(word); } catch (_) {}
 
-    // ── Dual-mode translation (DeepL first, GPT replaces) ──
-    // DeepL renders immediately so the user sees SOMETHING fast.
-    // When the strict GPT call resolves, it REPLACES DeepL in the row
-    // (not appended) — DeepL gets erased. The chunk-panel pink Korean
-    // highlight always tracks whatever the LATEST wordKo is, so it
-    // updates in lockstep when GPT swaps in.
-    //
-    // Closure vars `latestWordKo / latestChunk / latestChunkKo` let
-    // every async resolution call `repaintChunkPanel()` to keep the
-    // chunk box's Korean substring pink-highlighting in sync with
-    // whichever translation is currently shown above.
+    // DeepL-only translation. (Dual-mode with GPT was removed along
+    // with the ✨ toggle button — DeepL is now the single engine.) The
+    // chunk-panel pink Korean highlight tracks `latestWordKo` so it
+    // updates as soon as DeepL returns.
     let latestWordKo = '';
     let latestChunk = null;
     let latestChunkKo = '';
-    // Promise-resolution order is non-deterministic — DeepL can be slower
-    // than a cache-hit GPT. Without this flag, a slow DeepL that
-    // resolved AFTER GPT would silently overwrite the GPT translation
-    // (the bug the user reported as "mobile stays on DeepL"). The flag
-    // says: once GPT has won, DeepL must NOT overwrite.
-    let latestSource = null;          // 'deepl' | 'gpt' | null
     function repaintChunkPanel() {
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
     }
 
-    const aiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
-    const deeplP = Translate.translateWith
-      ? Translate.translateWith(word, sentence, false)
-      : Translate.translate(word, sentence);
-    deeplP.then(ko => {
+    Translate.translate(word, sentence).then(ko => {
       if (_sheetWord !== word) return;
-      if (latestSource === 'gpt') return;       // GPT already won — don't clobber
       if (meaningEl) meaningEl.textContent = ko || '—';
       latestWordKo = (ko || '').trim();
-      latestSource = 'deepl';
       repaintChunkPanel();
     }).catch(() => {
-      if (meaningEl && latestSource !== 'gpt') meaningEl.textContent = '—';
+      if (meaningEl) meaningEl.textContent = '—';
     });
-    if (aiOn && Translate.translateGPT) {
-      Translate.translateGPT(word, sentence).then(gpt => {
-        if (_sheetWord !== word) return;
-        const g = (gpt || '').trim();
-        if (!g) return;       // empty / failed → keep DeepL on the row
-        if (meaningEl) meaningEl.textContent = g;       // REPLACE DeepL
-        latestWordKo = g;
-        latestSource = 'gpt';
-        repaintChunkPanel();
-      }).catch(err => {
-        // Surface to console so a misconfigured translate-gpt Edge
-        // Function is debuggable.
-        console.warn('[translate-gpt]', err && err.message || err);
-      });
-    }
 
     // Chunk = words around the clicked word that form one syntactic unit.
     // Renders chunk text immediately, then chunk Korean when it resolves.
@@ -2463,52 +2430,29 @@
       clearWordFocus();
     }
 
-    // Dual-mode translation: DeepL first, GPT replaces when it lands.
-    // Same closure-tracked latestWordKo + latestSource pattern as the
-    // mobile sheet — without the source flag, a slow DeepL that
-    // resolves after a fast GPT (cache hit) silently overwrites the
-    // GPT translation back to DeepL.
+    // DeepL-only translation. (GPT dual-mode and the ✨ toggle were
+    // removed.) The chunk panel's pink Korean highlight tracks
+    // `sbLatestWordKo`, repainted by `repaintSidebarChunk()` whenever
+    // either DeepL's word translation or the chunk Korean lands.
     let sbLatestWordKo = '';
     let sbLatestChunk = null;
     let sbLatestChunkKo = '';
-    let sbLatestSource = null;        // 'deepl' | 'gpt' | null
     function repaintSidebarChunk() {
       if (!sbLatestChunk || !mnEl) return;
       renderChunkTx(mnEl, sbLatestChunk.text, sbLatestChunkKo, text, sbLatestWordKo);
     }
 
-    const sbAiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
-    const sbDeeplP = Translate.translateWith
-      ? Translate.translateWith(text, sentence, false)
-      : Translate.translate(text, sentence);
-    sbDeeplP.then(ko => {
+    Translate.translate(text, sentence).then(ko => {
       const cur = document.getElementById('ls-word');
       if (!cur || cur.textContent !== text) return;
-      if (sbLatestSource === 'gpt') return;
       SIDEBAR_PHRASE = { text, ko };
       if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
       sbLatestWordKo = (ko || '').trim();
-      sbLatestSource = 'deepl';
       repaintSidebarChunk();
     }).catch(() => {
-      if (transEl && sbLatestSource !== 'gpt')
+      if (transEl)
         transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
-    if (sbAiOn && Translate.translateGPT) {
-      Translate.translateGPT(text, sentence).then(gpt => {
-        const cur = document.getElementById('ls-word');
-        if (!cur || cur.textContent !== text) return;
-        const g = (gpt || '').trim();
-        if (!g) return;
-        if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(g) + '</span>';
-        SIDEBAR_PHRASE = { text, ko: g };
-        sbLatestWordKo = g;
-        sbLatestSource = 'gpt';
-        repaintSidebarChunk();
-      }).catch(err => {
-        console.warn('[translate-gpt]', err && err.message || err);
-      });
-    }
 
     // Chunk highlight + translation — single words only. Pulls the cached
     // chunk for this sentence and shows the chunk text + Korean in the
@@ -3239,23 +3183,12 @@
     // (DL ↔ G translator toggle removed — DeepL is the default and Google is
     // a silent code-side fallback inside Translate.translate().)
 
-    // ✨ "Better translation" toggle: when on, every word click is routed
-    // through GPT-4o-mini (with the surrounding sentence as context) for the
-    // highest-quality nuance. When off, we use DeepL (also with context) —
-    // free, fast, very good for ~90% of cases.
-    const gptBtn = document.getElementById('gpt-toggle-btn');
-    if (gptBtn) {
-      function refreshGpt() {
-        const on = (window.Translate && Translate.getUseGPT && Translate.getUseGPT()) || false;
-        gptBtn.classList.toggle('gpt-on', on);
-      }
-      gptBtn.addEventListener('click', () => {
-        const cur = !!(Translate.getUseGPT && Translate.getUseGPT());
-        Translate.setUseGPT(!cur);
-        refreshGpt();
-      });
-      refreshGpt();
-    }
+    // (✨ AI toggle button was removed. DeepL is the sole translation
+    // engine. The Translate.setUseGPT / getUseGPT helpers still exist
+    // for any caller that wants to opt into GPT explicitly, but no UI
+    // surfaces that path anymore — and we force it off on load to
+    // ensure consistent behavior even for users who had it enabled.)
+    if (window.Translate && Translate.setUseGPT) Translate.setUseGPT(false);
 
     // Lesson font size + line-height — primary controls live in the home
     // page's settings modal (⚙ → 저장), but we ALSO expose quick +/- pills
