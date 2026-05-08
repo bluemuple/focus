@@ -1786,22 +1786,34 @@
     const wrap = document.getElementById('lesson-text-wrap');
     if (!wrap) return;
 
-    // If we already shifted in this sheet session, keep it. The user
-    // explicitly asked for fewer up-down moves — stability over precision.
-    if (lt.style.transform) return;
-
+    // We measure the word's CURRENT viewport position — which already
+    // reflects any inline transform on lesson-text — and only apply
+    // ADDITIONAL shift when the word is actually in the bottom-3-lines
+    // danger zone of the wrap.
+    //
+    // (The previous "bail if any transform is set" guard meant tapping
+    // a fresh word with the sheet still open never triggered a new shift
+    // when the existing one was insufficient — that's the case the user
+    // hit when finger-tapping a word in the bottom 3 lines after the
+    // sheet had already settled.)
     const lineHeight = parseFloat(getComputedStyle(lt).lineHeight) || 40;
-    const SHIFT_THRESHOLD_LINES = 3;
+    const SAFE_BOTTOM_LINES = 4;     // word should land 4+ lines above wrap bottom
     const wrapBottom = wrap.getBoundingClientRect().bottom;
     const wRect      = wEl.getBoundingClientRect();
     const distFromBottom = wrapBottom - wRect.bottom;
-    if (distFromBottom < lineHeight * SHIFT_THRESHOLD_LINES) {
-      // Shift by ~4 lines worth so the bottom 3 lines plus a buffer
-      // sit comfortably above the sheet. Generous on purpose.
-      const shift = Math.ceil(lineHeight * (SHIFT_THRESHOLD_LINES + 1) + 16);
-      lt.style.transform = 'translateY(-' + shift + 'px)';
-      lt.style.transition = 'transform .2s cubic-bezier(.22,.6,.36,1)';
-    }
+
+    // Already safely above the sheet — leave the existing transform alone.
+    if (distFromBottom >= lineHeight * SAFE_BOTTOM_LINES) return;
+
+    // Need to lift the text so this word clears the sheet. Compute how
+    // much MORE shift to add on top of any existing translate.
+    const additional = Math.ceil(lineHeight * SAFE_BOTTOM_LINES - distFromBottom + 8);
+    const m = (lt.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
+    const currentY = m ? parseFloat(m[1]) : 0;
+    const newY = currentY - additional;
+
+    lt.style.transform = 'translateY(' + Math.round(newY) + 'px)';
+    lt.style.transition = 'transform .2s cubic-bezier(.22,.6,.36,1)';
   }
 
   function renderSidebarWordList(host) {
