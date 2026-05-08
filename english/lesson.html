@@ -254,27 +254,25 @@
          the user the sheet responds to vertical swipes — UP = corpora,
          DOWN = Naver dictionary. They're decorative (the actual swipe
          lives on the whole sheet's drag area), purely a visual cue. -->
-    <!-- Row layout (left → right): meaning → 4-way drag-hint → level
-         → ×. The 예문 button was removed (slide LEFT now opens
-         Popular Meanings); 연 stays for now as the explicit collocations
-         tab. The 4-way arrow tells the user the sheet responds to ALL
-         four swipe directions: ↑ corpora, ↓ Naver dict, ← popular
-         meanings, → collocations. -->
+    <!-- Row layout (left → right): meaning → level → ×.
+         The 연 button + 4-way arrow icon were removed — swipes
+         (↑ corpora, ↓ Naver dict, ← Popular Meanings, → Collocations)
+         are the only entry points now. Tiny chevron markers on the
+         sheet's four edges (see CSS .ws-edge-* below) hint at the
+         swipe directions. -->
     <div class="ws-row">
       <span class="ws-meaning" id="ws-meaning">—</span>
-      <span class="ws-drag-hint" aria-hidden="true" title="↑ 코퍼스 / ↓ 사전 / ← 의미 / → 연어">
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
-             stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="5 4 8 2 11 4"/>
-          <polyline points="5 12 8 14 11 12"/>
-          <polyline points="4 5 2 8 4 11"/>
-          <polyline points="12 5 14 8 12 11"/>
-        </svg>
-      </span>
-      <button class="ws-tab" id="ws-tab-co" data-panel="co" aria-label="연어"   title="자주 함께 쓰는 말">연</button>
-      <button class="ws-tab ws-level-tab" id="ws-level-tab" aria-label="단계"   title="단어 단계">·</button>
+      <button class="ws-tab ws-level-tab" id="ws-level-tab" aria-label="단계" title="단어 단계">·</button>
       <button class="ws-icon ws-close" id="ws-close" aria-label="닫기">×</button>
     </div>
+
+    <!-- Tiny gray chevrons on the sheet's four edges, centered on each
+         side, indicating the directions the sheet responds to swipes.
+         Decorative; the touch handler lives on the sheet itself. -->
+    <span class="ws-edge ws-edge-up"    aria-hidden="true">‹</span>
+    <span class="ws-edge ws-edge-down"  aria-hidden="true">›</span>
+    <span class="ws-edge ws-edge-left"  aria-hidden="true">‹</span>
+    <span class="ws-edge ws-edge-right" aria-hidden="true">›</span>
 
     <!-- Mnemonic — visible by default. Highlights are coloured pink. -->
     <div class="ws-mnemonic" id="ws-mnemonic"><span class="tx-loading">불러오는 중...</span></div>
@@ -504,8 +502,17 @@
     if (!punctEl || !punctEl.classList || !punctEl.classList.contains('punct')) return false;
     const txt = punctEl.textContent || '';
     if (!/[.!?]/.test(txt)) return false;
-    // ! and ? always end a sentence; periods need an abbreviation check.
+    // ! and ? always end a sentence; periods need extra checks.
     if (/[!?]/.test(txt)) return true;
+    // Period must be FOLLOWED by whitespace to count as a sentence end.
+    // The body tokenizer's `[^\p{L}\p{N}]+` greedily captures runs of
+    // non-letter/non-digit chars, so:
+    //   "Hello world. Hi" → punct token is ". " (period + space).
+    //   "GPT 5.5-Cyber"   → punct token between digits is just "."
+    //                        (no trailing whitespace).
+    // The latter is mid-token punctuation — version numbers, decimals,
+    // model identifiers — and SHOULD NOT cut the sentence.
+    if (!/\s/.test(txt)) return false;
     if (prevWordEl) {
       const prev = (prevWordEl.dataset && prevWordEl.dataset.word) || prevWordEl.textContent || '';
       if (SENTENCE_ABBR.has(prev.toLowerCase())) return false;
@@ -896,6 +903,10 @@
     if (wordEl) wordEl.textContent = word;
     if (list) list.innerHTML = '<div class="cp-empty muted">불러오는 중...</div>';
     popup.hidden = false;
+    // Trigger the slide-up animation by adding `.show` AFTER the
+    // browser has applied the initial (off-screen) transform — gives
+    // the CSS transition something to animate from.
+    requestAnimationFrame(() => popup.classList.add('show'));
 
     // Build / read the index (async, may touch network if lessons cache is cold).
     const idx = await buildCorpusIndex();
@@ -934,7 +945,10 @@
 
   function closeCorporaPopup() {
     const popup = document.getElementById('corpora-popup');
-    if (popup) popup.hidden = true;
+    if (!popup) return;
+    // Reverse-animate then hide once the transition completes.
+    popup.classList.remove('show');
+    setTimeout(() => { popup.hidden = true; }, 280);
   }
 
   // Mouse + touch drag-to-scroll on the corpora list — with momentum.
@@ -1125,13 +1139,17 @@
     if (wEl) wEl.textContent = word;
     if (fr)  fr.src = naverDictUrl(word);
     popup.hidden = false;
+    requestAnimationFrame(() => popup.classList.add('show'));
   }
   function closeMobileNaver() {
     const popup = document.getElementById('naver-popup');
     if (!popup) return;
-    popup.hidden = true;
-    const fr = document.getElementById('np-iframe');
-    if (fr) fr.src = 'about:blank';
+    popup.classList.remove('show');
+    setTimeout(() => {
+      popup.hidden = true;
+      const fr = document.getElementById('np-iframe');
+      if (fr) fr.src = 'about:blank';
+    }, 280);
   }
 
   function setupCorporaAndNaverPopups() {
@@ -1147,6 +1165,63 @@
     if (npOverlay) npOverlay.addEventListener('click', e => {
       if (e.target === npOverlay) closeMobileNaver();
     });
+
+    // Drag-to-close on the popup HEADER. Swipe in ANY direction with
+    // finger-follow animation; commit at 60 px. The card itself
+    // tracks the touch in real time, snaps back if released early.
+    function attachDragClose(headerSelector, cardSelector, onClose) {
+      const header = document.querySelector(headerSelector);
+      if (!header) return;
+      const card = header.closest(cardSelector);
+      if (!card) return;
+      let start = null;
+      function onDown(e) {
+        const t = e.touches ? e.touches[0] : e;
+        start = { x: t.clientX, y: t.clientY };
+        card.style.transition = 'none';
+      }
+      function onMove(e) {
+        if (!start) return;
+        const t = e.touches ? e.touches[0] : e;
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        // Damp slightly so a wild fling doesn't fly off-screen
+        // before crossing the commit threshold.
+        card.style.transform = 'translate(' + (dx * 0.7) + 'px,' + (dy * 0.7) + 'px)';
+      }
+      function onUp(e) {
+        if (!start) return;
+        const t = (e.changedTouches && e.changedTouches[0]) || e;
+        const dx = t.clientX - start.x;
+        const dy = t.clientY - start.y;
+        const dist = Math.hypot(dx, dy);
+        start = null;
+        card.style.transition = '';
+        if (dist > 60) {
+          // Commit — fling to direction then close.
+          card.style.transform = 'translate(' + (dx * 1.6) + 'px,' + (dy * 1.6) + 'px)';
+          card.style.opacity = '0';
+          setTimeout(() => {
+            onClose();
+            // Reset for next open.
+            card.style.transform = '';
+            card.style.opacity = '';
+          }, 260);
+        } else {
+          // Snap back.
+          card.style.transform = '';
+        }
+      }
+      header.addEventListener('touchstart', onDown, { passive: true });
+      header.addEventListener('touchmove',  onMove, { passive: true });
+      header.addEventListener('touchend',   onUp);
+      header.addEventListener('touchcancel', onUp);
+      header.addEventListener('mousedown',  onDown);
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup',   onUp);
+    }
+    attachDragClose('.cp-header', '.cp-card', closeCorporaPopup);
+    attachDragClose('.np-header', '.np-card', closeMobileNaver);
     // Esc closes whichever popup is open.
     document.addEventListener('keydown', e => {
       if (e.key !== 'Escape') return;
@@ -1214,9 +1289,10 @@
       }
     }
     // Helper: open the named ws-panel inline (PM = Popular Meanings,
-    // CO = Collocations). Hides the chunk box, deactivates other tabs,
-    // and matches the toast labelling already wired on the explicit
-    // button taps so swipe + tap behave identically.
+    // CO = Collocations). Per spec, every time we toggle to a NEW
+    // panel-state via swipe, flash a tiny center label naming what's
+    // shown — including "본문" when the swipe collapses back to the
+    // chunk box. Auto-fades in ~1 s.
     function toggleWsPanel(id) {
       const panel = document.getElementById('ws-panel-' + id);
       if (!panel) return;
@@ -1224,16 +1300,20 @@
       document.querySelectorAll('.ws-panel').forEach(p => { p.hidden = true; });
       document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
       const mn = document.getElementById('ws-mnemonic');
+      let toastLabel = '';
       if (!wasOpen) {
         panel.hidden = false;
         const matchingBtn = document.querySelector('.ws-tab[data-panel="' + id + '"]');
         if (matchingBtn) matchingBtn.classList.add('active');
         if (mn) mn.hidden = true;
-        if (typeof showSheetToast === 'function') {
-          showSheetToast(id === 'pm' ? '의미' : id === 'co' ? '연어' : id === 'ex' ? '예문' : '');
-        }
-      } else if (mn) {
-        mn.hidden = false;
+        toastLabel = id === 'pm' ? '의미' : id === 'co' ? '연어' : id === 'ex' ? '예문' : '';
+      } else {
+        if (mn) mn.hidden = false;
+        // Returning to the default chunk-box view — labelled "본문".
+        toastLabel = '본문';
+      }
+      if (toastLabel && typeof showSheetToast === 'function') {
+        showSheetToast(toastLabel);
       }
       if (typeof applyWordSheetShift === 'function') {
         requestAnimationFrame(applyWordSheetShift);
@@ -2370,10 +2450,11 @@
     toast.textContent = label;
     toast.classList.add('show');
     if (_wsToastTimer) clearTimeout(_wsToastTimer);
+    // Per spec: appear briefly (~1 s), then fade out softly.
     _wsToastTimer = setTimeout(() => {
       toast.classList.remove('show');
       _wsToastTimer = null;
-    }, 3000);
+    }, 1000);
   }
 
   // Mode-agnostic helper used by the ▶ button: drops every "selected word"
@@ -5798,6 +5879,24 @@
                   if (animating) return;     // a slide is already underway
                   midpointFlippedThisPage = true;
                   goPage(+1);
+                  // After the slide settles, underline sentence 0 of the
+                  // new page — that's the CONTINUATION fragment of the
+                  // stitched utterance currently being read aloud. Without
+                  // this, the user sees no underline on the new page
+                  // until the next NEW sentence starts (because we skip
+                  // index 0 in the for-loop after a stitched flip).
+                  const tStart = Date.now();
+                  const tickHighlight = () => {
+                    if (myToken !== _playToken || !ttsPlaying) return;
+                    if (animating && Date.now() - tStart < 800) {
+                      setTimeout(tickHighlight, 24);
+                      return;
+                    }
+                    if (SENTENCE_MAP && SENTENCE_MAP.length > 0) {
+                      setCurrentSentence(0);
+                    }
+                  };
+                  setTimeout(tickHighlight, 50);
                 } : null,
                 midpointFraction: stitched ? midpointFraction : 0,
                 onend: resolve,

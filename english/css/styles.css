@@ -2789,23 +2789,50 @@ body:has(.lesson-page) {
 .word-sheet.show { transform: translateY(0); }
 .word-sheet[hidden] { display: none; }
 
-/* Ephemeral mode label that appears in the bottom-right of whichever gray
-   box is visible (chunk panel / examples / collocations) when the user
-   taps ✨ / 예 / 연. JS sets the textContent and toggles `.show`; CSS
-   handles the fade-in/out. Auto-fades after 3 s — see showSheetToast(). */
+/* Ephemeral mode label, centered on the bottom-sheet's panel area.
+   Per spec:
+     - First tap (no swipe yet) — no label.
+     - Swipe LEFT → "의미", RIGHT → "연어" — center, gray, fades after ~1 s.
+     - Default chunk-panel state ("본문") — same center treatment.
+   Font size 12, gray, fades softly. JS sets textContent + .show class. */
 .ws-toast {
   position: absolute;
-  bottom: 12px;
-  right: 16px;
-  font-size: 10px;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
   color: #9ca3af;
   pointer-events: none;
   opacity: 0;
   transition: opacity .22s ease;
   z-index: 6;
   letter-spacing: 0.2px;
+  font-weight: 600;
 }
 .ws-toast.show { opacity: 1; }
+
+/* Tiny gray chevrons centered on each edge of the sheet, hinting at
+   the four swipe directions. Pointer-events: none so they don't
+   intercept the touch handler on the sheet itself. */
+.word-sheet .ws-edge {
+  position: absolute;
+  color: #cbd5e1;
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.word-sheet .ws-edge-up {
+  top: 4px; left: 50%;
+  transform: translateX(-50%) rotate(90deg);
+}
+.word-sheet .ws-edge-down {
+  bottom: 4px; left: 50%;
+  transform: translateX(-50%) rotate(90deg);
+}
+.word-sheet .ws-edge-left  { left:  4px; top: 50%; transform: translateY(-50%); }
+.word-sheet .ws-edge-right { right: 4px; top: 50%; transform: translateY(-50%); }
 
 /* First action row — speaker · contextual meaning · 예 / 연 / level / × */
 .word-sheet .ws-row {
@@ -2861,18 +2888,9 @@ body:has(.lesson-page) {
    word selection auto-speaks via TTS.speak so a dedicated speaker
    button on the sheet was redundant.) */
 
-/* Drag-direction hint glyph — small chevron pair on the right of the row
-   suggesting the sheet responds to vertical swipes (UP for corpora,
-   DOWN for Naver dictionary). Decorative only. */
-.word-sheet .ws-drag-hint {
-  display: inline-grid;
-  place-items: center;
-  width: 28px; height: 28px;
-  color: #9ca3af;
-  pointer-events: none;
-  flex-shrink: 0;
-}
-.word-sheet .ws-drag-hint svg { display: block; }
+/* (.ws-drag-hint and the inline 4-way arrow icon were removed — the
+   four-edge chevron markers now hint at swipe directions; the 연
+   button is gone too. See .ws-edge-* rules elsewhere.) */
 
 /* Mnemonic — visible by default. Highlights are pink. */
 .word-sheet .ws-mnemonic {
@@ -3363,13 +3381,17 @@ body:has(.lesson-page) {
    ============================================================= */
 .corpora-popup {
   position: fixed; inset: 0;
-  background: rgba(20, 25, 40, 0.55);
+  background: rgba(20, 25, 40, 0);   /* fades up from transparent */
   z-index: 220;
   display: grid;
   place-items: center;
   padding: 24px;
+  transition: background .25s ease;
 }
 .corpora-popup[hidden] { display: none; }
+.corpora-popup.show {
+  background: rgba(20, 25, 40, 0.55);
+}
 .corpora-popup .cp-card {
   background: #fff;
   border-radius: 18px;
@@ -3380,6 +3402,18 @@ body:has(.lesson-page) {
   flex-direction: column;
   box-shadow: 0 18px 40px rgba(0,0,0,0.18);
   overflow: hidden;
+  /* Card animates UP from the bottom-sheet's resting position when
+     the swipe-up gesture opens it — gives the spatial sense that the
+     sheet is "growing" into a full card rather than appearing
+     suddenly. JS toggles the .show class one frame after rendering. */
+  transform: translateY(40vh) scale(0.96);
+  opacity: 0;
+  transition: transform .28s cubic-bezier(.22,.6,.36,1),
+              opacity   .22s ease;
+}
+.corpora-popup.show .cp-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
 }
 .cp-header {
   display: flex; align-items: center; gap: 12px;
@@ -3511,12 +3545,14 @@ body:has(.lesson-page) {
    ============================================================= */
 .naver-popup {
   position: fixed; inset: 0;
-  background: rgba(20, 25, 40, 0.55);
+  background: rgba(20, 25, 40, 0);    /* fades up from transparent */
   z-index: 220;
   display: grid; place-items: center;
   padding: 8px;
+  transition: background .25s ease;
 }
 .naver-popup[hidden] { display: none; }
+.naver-popup.show { background: rgba(20, 25, 40, 0.55); }
 .naver-popup .np-card {
   background: #fff;
   border-radius: 14px;
@@ -3525,6 +3561,16 @@ body:has(.lesson-page) {
   display: flex; flex-direction: column;
   overflow: hidden;
   box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+  /* Per spec: Naver dict slides DOWN from the top of the screen when
+     the swipe-down gesture opens it. */
+  transform: translateY(-100%);
+  opacity: 0;
+  transition: transform .28s cubic-bezier(.22,.6,.36,1),
+              opacity   .22s ease;
+}
+.naver-popup.show .np-card {
+  transform: translateY(0);
+  opacity: 1;
 }
 .np-header {
   display: flex; align-items: center; gap: 12px;
