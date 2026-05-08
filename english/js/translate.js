@@ -432,11 +432,16 @@
   const chunkCache = {};
   // v2 — invalidates pre-6-word chunks cached under v1 (the chunk-gpt
   // prompt's hard limit dropped from 7 → 6 words).
-  const CHUNK_LS = 'eng.v2.chunks';
+  // v3 — bumped after the prompt was hardened against PP-internal splits
+  // (e.g. "stretched for nearly / a mile" mid-PP break). Old v2 cache
+  // entries are discarded so the user immediately gets the new chunking
+  // without manually clearing localStorage.
+  const CHUNK_LS = 'eng.v3.chunks';
   let chunkLs = {};
   try {
     chunkLs = JSON.parse(localStorage.getItem(CHUNK_LS) || '{}') || {};
     localStorage.removeItem('eng.v1.chunks');   // drop stale 7-word chunks
+    localStorage.removeItem('eng.v2.chunks');   // drop pre-PP-fix entries
   } catch (e) { chunkLs = {}; }
   function persistChunks() { try { localStorage.setItem(CHUNK_LS, JSON.stringify(chunkLs)); } catch (e) {} }
 

@@ -899,12 +899,45 @@
     let samples = [];               // [{x, t}, ...] for velocity calc
     let momentumRAF = null;
 
+    // Per-direction scroll bounds. Recomputed each time a value is
+    // committed — rows are few (≤60) and the math is cheap, so the
+    // computation runs in well under a millisecond and we never have
+    // to worry about stale bounds when the popup re-opens with a new
+    // word, on resize, or on font-size change.
+    //
+    // Logic: limits are set by the row that extends FURTHEST in each
+    // direction, per spec ("좌우 각각으로 가장 많이 간 문장을 끝으로").
+    //   maxX (drag right) = max(-rowOffset) across rows.
+    //     The row with the most pre-highlight text has its left edge
+    //     furthest off-screen left at cp-x=0; dragging right by exactly
+    //     -rowOffset brings that left edge flush with the viewport.
+    //   minX (drag left)  = min(viewport - rowOffset - rowWidth).
+    //     Symmetric on the right side.
+    function computeBounds() {
+      const viewport = list.clientWidth;
+      let maxX = 0, minX = 0;
+      list.querySelectorAll('.cp-row').forEach(row => {
+        const offsetStr = row.style.getPropertyValue('--cp-row-offset') || '0';
+        const rowOffset = parseFloat(offsetStr) || 0;
+        const rowWidth  = row.scrollWidth;
+        const myMax = -rowOffset;
+        const myMin = viewport - rowOffset - rowWidth;
+        if (myMax > maxX) maxX = myMax;
+        if (myMin < minX) minX = myMin;
+      });
+      return { minX, maxX };
+    }
+    function clamp(v) {
+      const b = computeBounds();
+      return Math.max(b.minX, Math.min(b.maxX, v));
+    }
+
     function readVar() {
       const v = list.style.getPropertyValue('--cp-x');
       return parseFloat(v) || 0;
     }
     function setVar(v) {
-      list.style.setProperty('--cp-x', Math.round(v) + 'px');
+      list.style.setProperty('--cp-x', Math.round(clamp(v)) + 'px');
     }
     function clientX(e) {
       return e.touches ? e.touches[0].clientX : e.clientX;
@@ -956,9 +989,19 @@
       const tick = (now) => {
         const frameMs = Math.min(40, now - last);   // clamp tab-switch jumps
         last = now;
-        let cur = readVar();
-        cur += velocity * frameMs;
-        setVar(cur);
+        const before = readVar();
+        const next = before + velocity * frameMs;
+        setVar(next);                               // setVar clamps internally
+        const after = readVar();
+        // If clamping ate the motion (we hit a wall), kill momentum
+        // so the glide stops cleanly at the boundary instead of
+        // silently re-clamping every frame until decay.
+        const intended = Math.abs(next - before);
+        const moved    = Math.abs(after - before);
+        if (intended > 0.5 && moved < intended - 0.5) {
+          momentumRAF = null;
+          return;
+        }
         velocity *= Math.pow(0.94, frameMs / 16.67);
         if (Math.abs(velocity) < 0.05) {
           momentumRAF = null;
