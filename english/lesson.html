@@ -27,9 +27,11 @@
                 </svg>
               </a>
               <h1 id="lesson-title">불러오는 중...</h1>
-              <button class="title-heart" id="bookmark-btn" aria-pressed="false" title="이 레슨을 찜한 레슨에 추가/제거">
-                <span class="title-heart-ico">♡</span>
-              </button>
+              <!-- Bookmark heart relocated to the homepage gallery card.
+                   The lesson page no longer carries a per-lesson heart
+                   in the title row — the title now wraps to up to 2
+                   lines on mobile with the freed horizontal space. -->
+
             </div>
 
             <div class="lesson-head">
@@ -164,6 +166,7 @@
           <ul>
             <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
             <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
+            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
             <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
           </ul>
         </section>
@@ -2048,6 +2051,110 @@
     return true;
   }
 
+  // 하나씩 mode vertical arrow navigation: up / down arrow selects the
+  // word ROUGHLY ABOVE / BELOW the current cursor at a similar X
+  // position. PC-only in practice (mobile has no keyboard), and only
+  // makes sense in single mode where one word is the cursor — for
+  // 이어서 modes the up/down keys keep their browser-default behavior.
+  //
+  // Strategy:
+  //   1. Read current .active word's bounding rect → midX, midY.
+  //   2. Find candidates on a different visual line (Y differs by more
+  //      than half a line-height, in the requested direction).
+  //   3. Pick the LINE closest to the cursor (smallest |Δy|).
+  //   4. Within that line, prefer the word whose X range contains
+  //      cursorMidX; failing that, take the word with the closest X
+  //      center. Mastered/ignored words follow the same skip rules
+  //      as left/right stepping (skipMastered: false, skip state -1).
+  //   5. If no candidate exists on the page (cursor on first/last
+  //      visual line), step to the previous/next page and let the
+  //      post-slide hook land on a sensible edge word.
+  function trySingleVerticalStep(direction /* 'up' | 'down' */) {
+    if (MODE !== 'single') return false;
+    const root = document.getElementById('lesson-text');
+    if (!root) return false;
+
+    const cursor = root.querySelector('.w.active');
+    if (!cursor) return false;          // no active cursor → nothing to step from
+
+    const cRect = cursor.getBoundingClientRect();
+    const cMidX = cRect.left + cRect.width / 2;
+    const cMidY = cRect.top  + cRect.height / 2;
+
+    const all = Array.from(root.querySelectorAll('.w:not(.punct)'));
+    if (!all.length) return false;
+
+    const lineHeight = parseFloat(getComputedStyle(root).lineHeight) || 32;
+    const tolerance  = lineHeight * 0.5;
+
+    // Candidates on a strictly different line in the requested direction.
+    const candidates = all.filter(w => {
+      const r = w.getBoundingClientRect();
+      const midY = r.top + r.height / 2;
+      return direction === 'up'
+        ? midY < cMidY - tolerance
+        : midY > cMidY + tolerance;
+    });
+
+    if (!candidates.length) {
+      // No more lines on this page in that direction → step pages.
+      // Up at top → previous page, drop cursor at last selectable word
+      // (closest analogue to "above" without a measure-after-render).
+      // Down at bottom → next page, drop at first selectable word.
+      const delta = direction === 'down' ? +1 : -1;
+      const targetPage = pageIdx + delta;
+      if (targetPage < 0 || targetPage >= PAGES.length) return false;
+      _pendingSingleEdgeSelect = direction === 'down' ? 'left' : 'right';
+      goPage(delta);
+      return true;
+    }
+
+    // Pick the closest line — for 'up' that's the LARGEST midY among
+    // the above-set; for 'down' the SMALLEST midY among below-set.
+    let closestLineY = null;
+    for (const w of candidates) {
+      const r = w.getBoundingClientRect();
+      const midY = r.top + r.height / 2;
+      if (closestLineY === null) { closestLineY = midY; continue; }
+      if (direction === 'up'   && midY > closestLineY) closestLineY = midY;
+      if (direction === 'down' && midY < closestLineY) closestLineY = midY;
+    }
+    const lineWords = candidates.filter(w => {
+      const r = w.getBoundingClientRect();
+      const midY = r.top + r.height / 2;
+      return Math.abs(midY - closestLineY) < tolerance;
+    });
+
+    // Pick the word at a similar X to the cursor: prefer one whose
+    // horizontal range contains cMidX; else closest by X-center.
+    const skip = { skipMastered: false };
+    let target = null;
+    for (const w of lineWords) {
+      if (!isSelectable(w, skip)) continue;
+      const r = w.getBoundingClientRect();
+      if (cMidX >= r.left && cMidX <= r.right) { target = w; break; }
+    }
+    if (!target) {
+      let bestDist = Infinity;
+      for (const w of lineWords) {
+        if (!isSelectable(w, skip)) continue;
+        const r = w.getBoundingClientRect();
+        const wMidX = r.left + r.width / 2;
+        const d = Math.abs(wMidX - cMidX);
+        if (d < bestDist) { bestDist = d; target = w; }
+      }
+    }
+    if (!target) return false;
+
+    root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+    target.classList.add('active');
+    const word = target.dataset.word;
+    const sentence = getContextSentence(target);
+    if (useSidebar()) showInSidebar(word, sentence, target);
+    else              showInWordSheet(word, sentence, target);
+    return true;
+  }
+
   // Returns true when this keypress was used for selection; the caller
   // should then NOT also trigger page navigation.
   // Works on both PC (keyboard) and mobile (← / → tap buttons in lesson-bar).
@@ -3283,6 +3390,7 @@
             <ul>
               <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
               <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
+            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
               <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
             </ul>
           </section>
@@ -5268,11 +5376,16 @@
     if (e.key === ',' || e.key === '<') { e.preventDefault(); goPage(-1); return; }
     if (e.key === '.' || e.key === '>') { e.preventDefault(); goPage(+1); return; }
 
-    // Arrow keys: only used for cont-mode selection. They no longer
-    // navigate pages — that's now ',' and '.' above.
+    // Arrow keys: ←/→ step the cursor (single mode) or grow/shrink the
+    // selection (cont modes). ↑/↓ step vertically — only meaningful in
+    // single mode (cont modes' selection is contiguous and 1-D).
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       const dir = e.key === 'ArrowLeft' ? 'left' : 'right';
       if (tryAnchorKey(dir)) { e.preventDefault(); return; }
+    }
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      const dir = e.key === 'ArrowUp' ? 'up' : 'down';
+      if (trySingleVerticalStep(dir)) { e.preventDefault(); return; }
     }
 
     // Level shortcuts (PC sidebar only). When the sidebar is showing a

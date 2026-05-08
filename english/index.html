@@ -785,17 +785,14 @@
     const thumbStyle = hasThumb
       ? `style="background-image:url('${escapeAttr(l.thumbnail_url)}');background-size:cover;background-position:center;"`
       : '';
-    // Two badges, both shown when present: every lesson has text, and
-    // audio lessons stack a 🎧 오디오 badge on top of the 텍스트 one.
-    const audioBadge = l.audio_url ? '<span class="badge audio">🎧 오디오</span>' : '';
+    // Badges (📄 텍스트 / 🎧 오디오) were removed per spec; the heart
+    // button below now occupies the top-right of the thumb. The heart
+    // is ALWAYS shown (filled when bookmarked, hollow otherwise) so the
+    // user can toggle bookmark state directly from the gallery without
+    // entering the lesson page.
     a.innerHTML = `
       <div class="thumb" ${thumbStyle}>
-        <span class="badges">
-          <span class="badge">📄 텍스트</span>
-          ${audioBadge}
-        </span>
         ${hasThumb ? '' : `<span>${escapeHtml(initials)}</span>`}
-        ${l.bookmarked ? '<span class="bm-flag" title="찜한 레슨">♥</span>' : ''}
       </div>
       <div class="body">
         <div class="title">${escapeHtml(l.title || '제목 없음')}</div>
@@ -806,6 +803,37 @@
         </div>
       </div>
     `;
+
+    // Bookmark heart button — sits absolutely at the top-right of the
+    // card thumb. Like the kebab below, it lives OUTSIDE the <a> so its
+    // click doesn't navigate to the lesson page.
+    const heart = document.createElement('button');
+    heart.className = 'card-heart';
+    heart.type = 'button';
+    heart.setAttribute('aria-label', '찜하기');
+    heart.setAttribute('aria-pressed', l.bookmarked ? 'true' : 'false');
+    if (l.bookmarked) heart.classList.add('bookmarked');
+    heart.innerHTML = '<span class="ch-ico" aria-hidden="true">' +
+                      (l.bookmarked ? '♥' : '♡') + '</span>';
+    heart.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const next = !l.bookmarked;
+      l.bookmarked = next;
+      heart.classList.toggle('bookmarked', next);
+      heart.setAttribute('aria-pressed', next ? 'true' : 'false');
+      const ico = heart.querySelector('.ch-ico');
+      if (ico) ico.textContent = next ? '♥' : '♡';
+      try { await DB.setBookmark(l.id, next); }
+      catch (err) {
+        // Roll back UI if the DB write failed.
+        console.error('bookmark toggle failed', err);
+        l.bookmarked = !next;
+        heart.classList.toggle('bookmarked', !next);
+        heart.setAttribute('aria-pressed', !next ? 'true' : 'false');
+        if (ico) ico.textContent = !next ? '♥' : '♡';
+      }
+    });
 
     // Kebab (⋮) button at the bottom-right of the card. Clicks here open a
     // small popover with 수정 / 삭제. Stop propagation so the card's link
@@ -822,6 +850,7 @@
     });
 
     wrap.appendChild(a);
+    wrap.appendChild(heart);
     wrap.appendChild(kebab);
     return wrap;
   }

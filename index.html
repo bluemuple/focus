@@ -3823,6 +3823,31 @@ async function pushSettingsToCloud() {
     const sb = await getSupabaseClient();
     if (!sb) return false;
     const ts = state.settingsUpdatedAt || Date.now();
+    // ---- Backup-preservation guard (push side) ----
+    // Account-area backups (state.versions) must NEVER be wiped by a push.
+    // If local has no versions for any reason, fetch whatever the cloud has
+    // and reuse those — that way an empty/fresh device can't clobber the
+    // existing backups belonging to this user. Hydrate local too so the UI
+    // stays consistent with what we just preserved.
+    let versionsForPush = Array.isArray(state.versions) ? state.versions.slice() : [];
+    try {
+      if (versionsForPush.length === 0) {
+        const { data: cur, error: curErr } = await sb
+          .from(SB_SETTINGS_TABLE)
+          .select('session_state')
+          .eq('user_id', getEffectiveUserId())
+          .maybeSingle();
+        if (!curErr && cur && cur.session_state && Array.isArray(cur.session_state.versions)) {
+          versionsForPush = cur.session_state.versions.slice();
+          // Hydrate local state so the Account panel reflects the preserved
+          // backups immediately on this device.
+          state.versions = (typeof mergeVersions === 'function')
+            ? mergeVersions([], versionsForPush)
+            : versionsForPush.slice(-3);
+          if (typeof renderVersionsList === 'function') { try { renderVersionsList(); } catch (_) {} }
+        }
+      }
+    } catch (_) { /* network blip — fall through with local versions */ }
     const { error } = await sb.from(SB_SETTINGS_TABLE).upsert({
       user_id: getEffectiveUserId(),
       motivational_lines: state.motivationalLines || '',
@@ -3869,7 +3894,7 @@ async function pushSettingsToCloud() {
         last3amResetDate:        state.last3amResetDate || '',
         scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
         events:                  Array.isArray(state.events)   ? state.events.slice(-500)    : [],
-        versions:                Array.isArray(state.versions) ? state.versions.slice(-3)    : [],
+        versions:                Array.isArray(versionsForPush) ? versionsForPush.slice(-3)  : [],
         motivationalCurrent:     state.motivationalCurrent || null,
         // ---- Money system (synced) ----
         money:                   +state.money || 0,
@@ -4094,7 +4119,15 @@ function applyRemoteSettings(remote) {
     if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
     if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
     if (Array.isArray(ss.events))   state.events   = ss.events;
-    if (Array.isArray(ss.versions)) state.versions = ss.versions.slice(-3);
+    // Merge cloud + local versions instead of replacing. This guarantees a
+    // newly-signed-in device whose `state.versions` is empty does NOT wipe
+    // the backups that already exist on the cloud — both sides are unioned
+    // by id and the 3 most recent are kept.
+    if (Array.isArray(ss.versions)) {
+      state.versions = (typeof mergeVersions === 'function')
+        ? mergeVersions(state.versions, ss.versions)
+        : ss.versions.slice(-3);
+    }
     if ('motivationalCurrent' in ss) state.motivationalCurrent = ss.motivationalCurrent || null;
     // Money system — money/log/factors/sleep markers
     if (typeof ss.money === 'number') state.money = ss.money;
