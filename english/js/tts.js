@@ -45,13 +45,41 @@
 
   const audioCache = new Map();   // voice + '|' + text  →  objectURL
 
+  // Double-buffered audio elements for gapless transitions.
+  // `cloudAudio` is the currently playing element. `primedAudio` is a
+  // SECOND element with the next sentence's blob URL already loaded
+  // (preload='auto' + .load() forces buffering). When speak() is
+  // called for a URL that matches primedAudio.src, we SWAP — the
+  // primed element becomes the active one and play() starts almost
+  // instantly (no src-swap decode delay). This collapses sentence-to-
+  // sentence gaps from ~80-150 ms to ~10-30 ms in practice.
   let cloudAudio = null;
+  let primedAudio = null;
   function getCloudAudio() {
     if (!cloudAudio) {
       cloudAudio = new Audio();
       cloudAudio.preload = 'auto';
     }
     return cloudAudio;
+  }
+  function getPrimedAudio() {
+    if (!primedAudio) {
+      primedAudio = new Audio();
+      primedAudio.preload = 'auto';
+    }
+    return primedAudio;
+  }
+  // Pre-load `url` into the primedAudio element so a subsequent
+  // speak() with that same URL can hot-swap instead of paying the
+  // src-set + decode latency. Idempotent — re-priming the same URL
+  // is a no-op.
+  function primeNext(url) {
+    if (!url) return;
+    const a = getPrimedAudio();
+    if (a.src === url) return;       // already primed
+    try { a.pause(); } catch (_) {}
+    a.src = url;
+    try { a.load(); } catch (_) {}   // force preload of buffer
   }
 
   let currentAudio = null;
@@ -114,14 +142,22 @@
     const voice = opts.voice || getVoice();
     const rate  = opts.rate  ?? 1.0;
     const ck    = cacheKey(voice, rate, text);
-    if (audioCache.has(ck)) return;
-    try {
-      const url = await fetchCloudAudio(text, voice, rate);
-      audioCache.set(ck, url);
-    } catch (_) {
-      // Silent — if prefetch fails, normal speak() will retry and surface
-      // the error there.
+    let url = audioCache.get(ck);
+    if (!url) {
+      try {
+        url = await fetchCloudAudio(text, voice, rate);
+        audioCache.set(ck, url);
+      } catch (_) {
+        // Silent — if prefetch fails, normal speak() will retry and surface
+        // the error there.
+        return;
+      }
     }
+    // ALSO prime the secondary audio element so the upcoming speak()
+    // can hot-swap. (Both fresh fetches AND cache hits prime — ensures
+    // gapless transitions even when the URL has been around since
+    // an earlier session.)
+    primeNext(url);
   }
 
   // Quote characters are read aloud as "open quote / close quote" by some
@@ -159,16 +195,41 @@
       }
     }
 
-    const audio = getCloudAudio();
-    // Detach previous handlers and stop the current playback. The src swap
-    // below would otherwise reject the prior play() promise as "hard"
-    // failure, which we silently catch as benign at the bottom of this fn.
-    audio.onended = null;
-    audio.onerror = null;
-    audio.onplaying = null;
-    audio.ontimeupdate = null;       // reset midpoint tracking
-    try { audio.pause(); } catch (e) {}
-    audio.src = url;
+    // ── Hot-swap with primedAudio when its src matches ──
+    // If the lesson's prefetch loop already primed the secondary audio
+    // element with this URL (and the browser has buffered it via
+    // load()), we swap roles: the PRIMED element becomes the active
+    // one, and the previously-active becomes the new "primed slot"
+    // for the NEXT prefetch to write into. Eliminates the src-set +
+    // decode latency that produced the audible inter-sentence gap.
+    let audio;
+    if (primedAudio && primedAudio.src && primedAudio.src === url) {
+      // Swap.
+      const prev = cloudAudio;
+      cloudAudio = primedAudio;
+      primedAudio = prev;
+      audio = cloudAudio;
+      // Reset event listeners on the (now-active) audio. Don't change
+      // src — it's already set + buffered.
+      audio.onended = null;
+      audio.onerror = null;
+      audio.onplaying = null;
+      audio.ontimeupdate = null;
+      // Rewind in case it was previously partially played somehow.
+      try { audio.currentTime = 0; } catch (_) {}
+    } else {
+      audio = getCloudAudio();
+      // Detach previous handlers and stop the current playback. The src
+      // swap below would otherwise reject the prior play() promise as
+      // "hard" failure, which we silently catch as benign at the
+      // bottom of this fn.
+      audio.onended = null;
+      audio.onerror = null;
+      audio.onplaying = null;
+      audio.ontimeupdate = null;       // reset midpoint tracking
+      try { audio.pause(); } catch (e) {}
+      audio.src = url;
+    }
     pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
     audio.onended = () => firePending();
     // `onplay` callers want to know when audio AUDIBLY starts (so they can
