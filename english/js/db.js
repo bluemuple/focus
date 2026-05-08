@@ -126,6 +126,25 @@
     }
     return ls.get('lessons', []);
   }
+  // Like listLessons() but WITHOUT the user_id filter — pulls every
+  // lesson visible to the current account (subject to RLS policies on
+  // the `lessons` table). Used by the corpora popup so the user sees
+  // example sentences from across the whole site, not just their own
+  // lessons. We only request the columns we actually need (id, title,
+  // body) to keep the payload small even when there are many lessons.
+  async function listAllLessons() {
+    if (await useCloud()) {
+      const { data, error } = await sb.from('lessons')
+        .select('id,title,body').order('created_at', { ascending: false });
+      if (error) {
+        console.error(error);
+        // Fallback: return whatever's locally cached (the user's own).
+        return ls.get('lessons', []);
+      }
+      return data || [];
+    }
+    return ls.get('lessons', []);
+  }
   async function getLesson(id) {
     if (await useCloud()) {
       const { data, error } = await sb.from('lessons').select('*').eq('id', id).maybeSingle();
@@ -674,7 +693,7 @@
     haveSupabase,
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
-    listLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson,
+    listLessons, listAllLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson,
     loadWordStates, clickWord, setWordState,
     getHearted, setHearted, isHearted,
     listPhrases, addPhrase, deletePhrase,

@@ -540,8 +540,27 @@
     }
   }
 
+  // STRICT GPT — calls viaGPT directly with NO fallback to DeepL. Used
+  // for the dual-translation display where the appended half MUST be
+  // GPT or nothing; falling back silently to DeepL produced duplicate
+  // output that the equality check then suppressed, hiding the append
+  // entirely. Errors propagate (caller catches → empty append).
+  async function translateGPT(text, context) {
+    text = (text || '').trim();
+    if (!text) return '';
+    const ck = cacheKey(text, context, 'gpt');
+    if (memCache[ck]) return memCache[ck];
+    const out = await viaGPT(text, context);
+    const trimmed = out ? String(out).trim() : '';
+    if (trimmed) {
+      memCache[ck] = trimmed;
+      persist();
+    }
+    return trimmed;
+  }
+
   window.Translate = {
-    translate, translateBatch, translateWith, clearCache,
+    translate, translateBatch, translateWith, translateGPT, clearCache,
     setEngine, getEngine, lookupSenses, getWordInfo, getChunks,
     setUseGPT, getUseGPT,
   };

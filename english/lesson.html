@@ -805,7 +805,17 @@
     }
     const byWord = new Map();
     let lessons = [];
-    try { lessons = (await DB.listLessons()) || []; } catch (_) {}
+    // Pull EVERY lesson on the site (not just the current user's) so
+    // the corpora popup shows example sentences from across the whole
+    // collection. Falls back to the user's own lessons if the cross-
+    // account query is blocked by RLS.
+    try {
+      if (DB.listAllLessons) {
+        lessons = (await DB.listAllLessons()) || [];
+      } else {
+        lessons = (await DB.listLessons()) || [];
+      }
+    } catch (_) {}
     for (const lesson of lessons) {
       const body = (lesson && lesson.body) || '';
       if (!body) continue;
@@ -2078,40 +2088,56 @@
     // signal. The TTS module no-ops if the user has muted globally.
     try { TTS.speak(word); } catch (_) {}
 
-    // Contextual translation. Per spec, the meaning row shows the
-    // NON-AI (DeepL) translation as primary — it returns fastest. When
-    // the head-tools ✨ AI button is also ON, the AI translation gets
-    // appended after a comma so the user reads "비-AI, AI" inline.
-    // Both engines query in parallel; the AI half rewrites the row in
-    // place when it lands.
+    // Dual translation per spec: DeepL primary, GPT appended.
+    //
+    //   FIRST  (always shown) → DeepL with sentence context. Returns
+    //                            fastest; covers ~90% of cases well.
+    //   SECOND (✨ AI on only) → GPT with sentence context. Strict —
+    //                            does NOT silently fall back to DeepL,
+    //                            so when GPT actually returns something
+    //                            different, it appears.
+    //
+    // The previous appended path used translateWith(word, sentence, true)
+    // which goes through translate() — that function falls back to
+    // DeepL whenever the GPT proxy errors. Result: both halves were
+    // DeepL, identical, and the equality check suppressed the append.
+    // Now using translateGPT (strict) — failures throw, caller catches,
+    // and the append is simply omitted instead of duplicating DeepL.
     const aiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
-    const fastTranslateP = Translate.translateWith
+    const deeplP = Translate.translateWith
       ? Translate.translateWith(word, sentence, false)
       : Translate.translate(word, sentence);
-    fastTranslateP.then(ko => {
+    deeplP.then(ko => {
       if (_sheetWord !== word) return;
       if (meaningEl) meaningEl.textContent = ko || '—';
-    }).catch(() => {});
-    if (aiOn && Translate.translateWith) {
+    }).catch(() => {
+      if (meaningEl) meaningEl.textContent = '—';
+    });
+    if (aiOn && Translate.translateGPT) {
       Promise.all([
-        fastTranslateP.catch(() => ''),
-        Translate.translateWith(word, sentence, true).catch(() => ''),
-      ]).then(([fast, ai]) => {
+        deeplP.catch(() => ''),
+        Translate.translateGPT(word, sentence).catch(err => {
+          // Surface to console so a misconfigured translate-gpt Edge
+          // Function is debuggable (silent failure here was the cause
+          // of "GPT 해석은 DeepL 뒤에 나오지 않아서").
+          console.warn('[translate-gpt]', err && err.message || err);
+          return '';
+        }),
+      ]).then(([deepl, gpt]) => {
         if (_sheetWord !== word) return;
         if (!meaningEl) return;
-        const f = (fast || '').trim();
-        const a = (ai || '').trim();
-        // CRITICAL per spec: if the AI translation equals the non-AI one,
-        // DON'T render the second copy — leave the row reading just the
-        // non-AI half. Equality is whitespace/case-insensitive so trailing
-        // spaces or "오는" vs "오는 " don't sneak through as "different".
+        const d = (deepl || '').trim();
+        const g = (gpt   || '').trim();
+        // If GPT returned nothing (fail or empty) — leave the row at
+        // just the DeepL value.  If both populated and DIFFERENT, dual.
+        // If identical (whitespace/case-insensitive) — suppress the
+        // duplicate per spec.
         const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-        if (f && a && norm(f) !== norm(a)) {
-          meaningEl.textContent = f + ', ' + a;
-        } else if (a && !f) {
-          meaningEl.textContent = a;
+        if (d && g && norm(d) !== norm(g)) {
+          meaningEl.textContent = d + ', ' + g;
+        } else if (!d && g) {
+          meaningEl.textContent = g;
         }
-        // else: identical → leave the non-AI text already in the row.
       }).catch(() => {});
     }
 
@@ -2431,11 +2457,16 @@
       clearWordFocus();
     }
 
-    // Fast contextual translation — fills the sidebar's Korean meaning.
-    // Runs independently from chunk translation so chunk Korean can paint
-    // as soon as it returns; pink Korean highlight is now opt-in (user
-    // taps the pink lemma in the chunk panel to trigger it).
-    Translate.translate(text, sentence).then(ko => {
+    // Dual translation, same logic as the mobile sheet:
+    //   FIRST  → DeepL with sentence context (always shown).
+    //   SECOND → GPT with sentence context, appended when ✨ AI is on.
+    // Strict GPT (Translate.translateGPT) — no DeepL fallback — so
+    // failures show only DeepL instead of duplicate-suppressed silence.
+    const sbAiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
+    const sbDeeplP = Translate.translateWith
+      ? Translate.translateWith(text, sentence, false)
+      : Translate.translate(text, sentence);
+    sbDeeplP.then(ko => {
       const cur = document.getElementById('ls-word');
       if (!cur || cur.textContent !== text) return;
       SIDEBAR_PHRASE = { text, ko };
@@ -2443,6 +2474,26 @@
     }).catch(() => {
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
+    if (sbAiOn && Translate.translateGPT) {
+      Promise.all([
+        sbDeeplP.catch(() => ''),
+        Translate.translateGPT(text, sentence).catch(err => {
+          console.warn('[translate-gpt]', err && err.message || err);
+          return '';
+        }),
+      ]).then(([deepl, gpt]) => {
+        const cur = document.getElementById('ls-word');
+        if (!cur || cur.textContent !== text) return;
+        if (!transEl) return;
+        const d = (deepl || '').trim();
+        const g = (gpt   || '').trim();
+        const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+        if (d && g && norm(d) !== norm(g)) {
+          SIDEBAR_PHRASE = { text, ko: d + ', ' + g };
+          transEl.innerHTML = '<span class="ko">' + escapeHtml(d + ', ' + g) + '</span>';
+        }
+      }).catch(() => {});
+    }
 
     // Chunk highlight + translation — single words only. Pulls the cached
     // chunk for this sentence and shows the chunk text + Korean in the
