@@ -9763,6 +9763,22 @@ function pushDailyVersion(label) {
   if (state.versions.length > 3) state.versions = state.versions.slice(-3);
 }
 
+/* Merge two version arrays, dedup by `id`, keep the 3 most recent. Used both
+   when a remote pull arrives AND when a push is about to go out — so any
+   freshly-bootstrapped device can never accidentally erase backups that
+   exist on the other side of the sync. */
+function mergeVersions(a, b) {
+  const seen = new Map();
+  [].concat(Array.isArray(a) ? a : [], Array.isArray(b) ? b : []).forEach(v => {
+    if (!v || !v.id) return;
+    const prev = seen.get(v.id);
+    if (!prev || (+v.savedAt || 0) > (+prev.savedAt || 0)) seen.set(v.id, v);
+  });
+  return Array.from(seen.values())
+    .sort((x, y) => (+y.savedAt || 0) - (+x.savedAt || 0))
+    .slice(0, 3);
+}
+
 async function restoreVersion(id) {
   const v = (state.versions || []).find(x => x.id === id);
   if (!v || !v.snapshot) return;
