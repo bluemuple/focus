@@ -2189,34 +2189,31 @@
     const wrap = document.getElementById('lesson-text-wrap');
     if (!wrap) return;
 
-    // We measure the word's CURRENT viewport position — which already
-    // reflects any inline transform on lesson-text — and only apply
-    // ADDITIONAL shift when the word is actually in the bottom-3-lines
-    // danger zone of the wrap.
-    //
-    // (The previous "bail if any transform is set" guard meant tapping
-    // a fresh word with the sheet still open never triggered a new shift
-    // when the existing one was insufficient — that's the case the user
-    // hit when finger-tapping a word in the bottom 3 lines after the
-    // sheet had already settled.)
+    // Match 이어서 mode's behavior: when the selected word is in the
+    // bottom 3-line danger zone, shift the WHOLE lesson card (title
+    // bar + text) up — not just the text inside. Driven by the
+    // `--word-focus-shift` CSS variable; `body.word-focus-open
+    // .lesson-main { transform: translateY(var(--word-focus-shift)) }`
+    // applies it. Closing the sheet drops the body class, the var is
+    // cleared, and the card slides back via .lesson-main's existing
+    // transition.
     const lineHeight = parseFloat(getComputedStyle(lt).lineHeight) || 40;
-    const SAFE_BOTTOM_LINES = 4;     // word should land 4+ lines above wrap bottom
+    const SAFE_BOTTOM_LINES = 4;
     const wrapBottom = wrap.getBoundingClientRect().bottom;
     const wRect      = wEl.getBoundingClientRect();
     const distFromBottom = wrapBottom - wRect.bottom;
 
-    // Already safely above the sheet — leave the existing transform alone.
     if (distFromBottom >= lineHeight * SAFE_BOTTOM_LINES) return;
 
-    // Need to lift the text so this word clears the sheet. Compute how
-    // much MORE shift to add on top of any existing translate.
+    // ADDITIONAL shift on top of any existing var value — so tapping a
+    // bottom word with the sheet already open lifts the card further
+    // when the previous shift didn't cover the new word's position.
     const additional = Math.ceil(lineHeight * SAFE_BOTTOM_LINES - distFromBottom + 8);
-    const m = (lt.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
-    const currentY = m ? parseFloat(m[1]) : 0;
-    const newY = currentY - additional;
-
-    lt.style.transform = 'translateY(' + Math.round(newY) + 'px)';
-    lt.style.transition = 'transform .2s cubic-bezier(.22,.6,.36,1)';
+    const cur = parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--word-focus-shift')
+    ) || 0;
+    const newY = cur - additional;
+    document.documentElement.style.setProperty('--word-focus-shift', Math.round(newY) + 'px');
   }
 
   function renderSidebarWordList(host) {
