@@ -877,13 +877,22 @@
     if (popup) popup.hidden = true;
   }
 
-  // Mouse + touch drag-to-scroll on the corpora list. Updates `--cp-x`
-  // on the list element; rows inherit and re-render their transform
-  // via CSS calc().
+  // Mouse + touch drag-to-scroll on the corpora list — with momentum.
+  // Updates the shared `--cp-x` CSS var on the list element; rows
+  // inherit and re-render their transform via CSS calc().
+  //
+  // Inertia: tracks the last few pointer samples in `samples` (each
+  // {x, t}). On release we average the most recent ~100 ms into a
+  // velocity (px/ms) and let an rAF loop decay it ~5%/frame until it
+  // drops under 0.05 px/ms. Mirrors the "flick → glide → stop" feel
+  // of a native phone scroll. Fresh pointerdown cancels any in-flight
+  // momentum so the touch grabs the list immediately.
   function setupCorporaDrag(list) {
     if (list.dataset.dragBound === '1') return;
     list.dataset.dragBound = '1';
     let startX = 0, baseX = 0, dragging = false;
+    let samples = [];               // [{x, t}, ...] for velocity calc
+    let momentumRAF = null;
 
     function readVar() {
       const v = list.style.getPropertyValue('--cp-x');
@@ -895,20 +904,64 @@
     function clientX(e) {
       return e.touches ? e.touches[0].clientX : e.clientX;
     }
+    function cancelMomentum() {
+      if (momentumRAF) {
+        cancelAnimationFrame(momentumRAF);
+        momentumRAF = null;
+      }
+    }
     function onDown(e) {
+      cancelMomentum();
       dragging = true;
       list.classList.add('dragging');
       startX = clientX(e);
       baseX = readVar();
+      samples = [{ x: startX, t: performance.now() }];
     }
     function onMove(e) {
       if (!dragging) return;
-      const dx = clientX(e) - startX;
+      const x = clientX(e);
+      const dx = x - startX;
       setVar(baseX + dx);
+      samples.push({ x, t: performance.now() });
+      // Drop samples older than 120 ms — keeps the velocity computation
+      // anchored on the FINAL motion, not stale early frames.
+      const cutoff = performance.now() - 120;
+      while (samples.length > 2 && samples[0].t < cutoff) samples.shift();
     }
     function onUp() {
+      if (!dragging) return;
       dragging = false;
       list.classList.remove('dragging');
+      // Compute velocity from the recent samples (px/ms).
+      let velocity = 0;
+      if (samples.length >= 2) {
+        const a = samples[0];
+        const b = samples[samples.length - 1];
+        const dt = b.t - a.t;
+        if (dt > 0) velocity = (b.x - a.x) / dt;
+      }
+      samples = [];
+      // Anything quieter than a slow drift — don't bother animating.
+      if (Math.abs(velocity) < 0.05) return;
+      // Glide: each frame, move by velocity*frameMs, then dampen velocity.
+      // Decay 0.94 per frame ≈ stops within ~30 frames at 60 fps (~0.5 s)
+      // for a typical flick.
+      let last = performance.now();
+      const tick = (now) => {
+        const frameMs = Math.min(40, now - last);   // clamp tab-switch jumps
+        last = now;
+        let cur = readVar();
+        cur += velocity * frameMs;
+        setVar(cur);
+        velocity *= Math.pow(0.94, frameMs / 16.67);
+        if (Math.abs(velocity) < 0.05) {
+          momentumRAF = null;
+          return;
+        }
+        momentumRAF = requestAnimationFrame(tick);
+      };
+      momentumRAF = requestAnimationFrame(tick);
     }
     list.addEventListener('mousedown', onDown);
     document.addEventListener('mousemove', onMove);
@@ -916,6 +969,7 @@
     list.addEventListener('touchstart', onDown, { passive: true });
     list.addEventListener('touchmove',  onMove, { passive: true });
     list.addEventListener('touchend',   onUp);
+    list.addEventListener('touchcancel', onUp);
   }
 
   // =============================================================
@@ -2028,17 +2082,14 @@
         // above already filled it with the CONTEXT-aware meaning.
         renderExamples(exUl, info.examples, info.lemma || word);
         renderCollocations(coUl, info.collocations, info.lemma || word);
-        // Fallback chunk highlight if chunk-gpt cache missed.
-        if (!_focusedChunkEls && info.phraseChunk) {
-          applyChunkHighlight(anchorEl, info.phraseChunk);
-          if (mnemEl && !mnemEl.querySelector('.ck-en')) {
-            renderChunkTx(mnemEl, info.phraseChunk.text, '', word);
-            Translate.translate(info.phraseChunk.text, sentence).then(chunkKo => {
-              if (_sheetWord !== word) return;
-              renderChunkTx(mnemEl, info.phraseChunk.text, chunkKo, word);
-            }).catch(() => {});
-          }
-        }
+        // (Removed: info.phraseChunk fallback. Word-info-gpt and chunk-
+        // gpt produced DIFFERENT chunk boundaries, so when word-info
+        // resolved first it would underline a phraseChunk version that
+        // mismatched the chunk-gpt text shown in the panel below — the
+        // discrepancy the user reported. Chunk-gpt is now the single
+        // authority for both the body underline and the panel text;
+        // they always come from the same `c` returned by the Translate
+        // .getChunks call above.)
         requestAnimationFrame(applyWordSheetShift);
       }).catch(() => {});
     }
@@ -5326,84 +5377,126 @@
         if (CURRENT_SENTENCE < 0) setCurrentSentence(0);
 
         let startLocal = Math.max(0, CURRENT_SENTENCE);
+        // When the previous iteration spoke a STITCHED last+first
+        // sentence (cross-page partial), the next page's first sentence
+        // was already covered — so we skip its index 0 on resume.
+        let skipFirstOfNextPage = false;
         while (ttsPlaying && myToken === _playToken) {
           buildSentenceMap(document.getElementById('lesson-text'));
           const list = SENTENCE_MAP.length
             ? SENTENCE_MAP.map(s => s.text)
             : [text];
 
-          // Prefetch the FIRST sentence too — when starting cold (no current
-          // sentence and nothing in cache), the very first speak() would
-          // otherwise pay the full Edge Function round-trip. This kicks off
-          // the fetch immediately so it overlaps with the audio element setup.
+          // Honor the cross-page stitch flag set by the previous loop.
+          if (skipFirstOfNextPage) {
+            startLocal = Math.max(startLocal, 1);
+            skipFirstOfNextPage = false;
+          }
+
           const ttsRate = 0.9 * speed;
           if (TTS.prefetch && list.length > startLocal) {
             TTS.prefetch(list[startLocal], { rate: ttsRate });
           }
+
+          // Helper: build the stitched cross-page text for the current
+          // page's last sentence IF that sentence ends without terminal
+          // punctuation (i.e. the sentence continues onto the next page).
+          // Returns '' when no stitching applies.
+          const stitchedTextForLastOfPage = () => {
+            if (pageIdx + 1 >= PAGES.length) return '';
+            const last = (list[list.length - 1] || '').trim();
+            if (!last) return '';
+            if (/[.!?]\s*["”'’)\]]?\s*$/.test(last)) return '';
+            const nextPara = (PAGES[pageIdx + 1] || [])[0] || '';
+            const firstNextSent = (typeof splitIntoSentences === 'function')
+              ? (splitIntoSentences(nextPara)[0] || nextPara)
+              : nextPara;
+            const tail = String(firstNextSent || '').trim();
+            return tail ? (last + ' ' + tail) : '';
+          };
+
           for (let i = startLocal; i < list.length; i++) {
             if (!ttsPlaying || myToken !== _playToken) break;
-            // Pre-warm the NEXT sentence in parallel with the CURRENT one
-            // playing. The Edge Function call (~200-500ms) overlaps with
-            // the current audio's playback time, so by the time `onended`
-            // fires for sentence i, sentence i+1 is already a memory hit
-            // and starts within a few ms — closing the gap the user noticed.
+
+            // Pre-warm the NEXT sentence's audio in parallel. When `i + 1`
+            // is the LAST sentence of the page AND it'll be stitched
+            // across the page boundary, prefetch the STITCHED text
+            // (not just sentence i+1 on its own) so the actual playback
+            // gets a cache hit on the joined audio — eliminating the
+            // ~2s silent gap the user described.
             if (TTS.prefetch && i + 1 < list.length) {
-              TTS.prefetch(list[i + 1], { rate: ttsRate });
+              const isNextLast = (i + 1 === list.length - 1);
+              if (isNextLast) {
+                const nextSent = (list[i + 1] || '').trim();
+                const isPartial = nextSent && !/[.!?]\s*["”'’)\]]?\s*$/.test(nextSent);
+                if (isPartial && pageIdx + 1 < PAGES.length) {
+                  const np = (PAGES[pageIdx + 1] || [])[0] || '';
+                  const tail = (typeof splitIntoSentences === 'function')
+                    ? (splitIntoSentences(np)[0] || np)
+                    : np;
+                  if (tail) {
+                    TTS.prefetch(list[i + 1] + ' ' + tail.trim(), { rate: ttsRate });
+                  } else {
+                    TTS.prefetch(list[i + 1], { rate: ttsRate });
+                  }
+                } else {
+                  TTS.prefetch(list[i + 1], { rate: ttsRate });
+                }
+              } else {
+                TTS.prefetch(list[i + 1], { rate: ttsRate });
+              }
             }
-            // When the LAST sentence of this page is about to play, prefetch
-            // the FIRST sentence of the NEXT page so the cross-page handoff
-            // is just the slide-animation pause, not slide + cold fetch.
+            // When the CURRENT sentence is the last of the page AND
+            // stitching does NOT apply (last sentence ends cleanly),
+            // prefetch the next page's first sentence so its handoff
+            // is also instant after the slide.
+            const stitched = (i === list.length - 1) ? stitchedTextForLastOfPage() : '';
             if (TTS.prefetch && i === list.length - 1
-                && pageIdx + 1 < PAGES.length) {
+                && pageIdx + 1 < PAGES.length && !stitched) {
               const nextPara = (PAGES[pageIdx + 1] || [])[0] || '';
               const firstNext = String(nextPara)
                 .split(/(?<=[.!?])\s+/)[0] || '';
               if (firstNext.trim()) TTS.prefetch(firstNext.trim(), { rate: ttsRate });
             }
-            // Sync the sentence underline to when audio AUDIBLY starts —
-            // not when speak() is invoked. Otherwise on a cache miss /
-            // cold start the underline jumps to sentence i while sentence
-            // i-1's audio is still trailing or while we're awaiting a
-            // network fetch (200-500ms) — that's the visible mismatch the
-            // user reported. `onplay` fires from the audio element's
-            // `playing` event, strictly after the buffer is decoded and
-            // sound is actually being produced.
+
+            const speakText = stitched || list[i];
+
             await new Promise(resolve => {
-              TTS.speak(list[i], {
+              TTS.speak(speakText, {
                 rate: ttsRate,
                 onplay: () => {
-                  // Token check: a stopAnyPlayback() between speak() and
-                  // onplay() must not silently advance CURRENT_SENTENCE
-                  // — otherwise the next prev/next click computes its
-                  // target from a position the user never saw.
                   if (!ttsPlaying || myToken !== _playToken) return;
                   if (SENTENCE_MAP.length) setCurrentSentence(i);
                 },
                 onend: resolve,
               });
             });
+
+            if (stitched) {
+              // We just spoke the page-A tail joined with page-B's first
+              // sentence as one utterance. Mark so the next loop iteration
+              // skips page B's index 0.
+              skipFirstOfNextPage = true;
+            }
           }
           startLocal = 0;
           if (!ttsPlaying || myToken !== _playToken) break;
           if (pageIdx >= PAGES.length - 1) break;
           await new Promise(resolve => {
             goPage(+1);
-            // CRITICAL: goPage's internal setTimeout(300) is what actually
-            // swaps the new lesson-text DOM in (and rebuilds SENTENCE_MAP).
-            // The old 280 ms wait fired BEFORE that swap, so the next
-            // buildSentenceMap below read the OLD page's words, replaying
-            // the just-finished page's audio while the underline jumped
-            // to the new page (the "TTS stuck on first page" bug). Now
-            // we poll `animating` — cleared at the very end of goPage's
-            // swap — and only resume once it's false. The 320 ms initial
-            // delay matches the slide animation; the polling buys
-            // robustness against any future timing changes.
+            // Wait for goPage's slide + DOM swap to finish (animating
+            // clears at the end of its setTimeout(300)). Polling instead
+            // of a fixed timer is robust against slide-timing drift.
             const tStart = Date.now();
             const check = () => {
               if (!animating || Date.now() - tStart > 800) resolve();
-              else setTimeout(check, 30);
+              else setTimeout(check, 24);
             };
-            setTimeout(check, 320);
+            // Reduced initial wait (was 320 → 100): the previous value
+            // padded ~120ms of dead air on top of the slide. The poll
+            // catches `animating === false` as soon as it flips, so the
+            // resume happens within ~50ms of the swap — not 320+.
+            setTimeout(check, 100);
           });
         }
         ttsPlaying = false;
@@ -5448,10 +5541,15 @@
 
       // Resolve "what should we play" given the current variant. Returns
       // { word, chunk, phrase } where each is the text or '' if N/A.
+      // CRITICAL: re-query the live .w.active each time — if the user
+      // tapped a NEW word after the playbar opened, the cached
+      // VARIANT_ANCHOR_EL would point at the previous selection and
+      // 단어반복 / 밑줄반복 would loop the wrong word.
       async function resolveVariantTexts() {
         const out = { word: '', chunk: '', phrase: '' };
         if (PLAY_VARIANT === 'word') {
-          const wEl = VARIANT_ANCHOR_EL || document.querySelector('#lesson-text .w.active');
+          const live = document.querySelector('#lesson-text .w.active');
+          const wEl = live || VARIANT_ANCHOR_EL;
           if (!wEl) return out;
           out.word = (wEl.dataset && wEl.dataset.word) || wEl.textContent || '';
           // Resolve chunk via cached chunk-gpt for the word's sentence.
@@ -5513,22 +5611,29 @@
         if (wordRepBtn)  wordRepBtn.classList.remove('active');
         if (chunkRepBtn) chunkRepBtn.classList.remove('active');
       }
+      // Both rep buttons (re)start on the CURRENT selection on every
+      // tap. If an earlier loop is still running (whether on this same
+      // button or the other), it's stopped first. This means the user
+      // can change selection and tap 단어반복/밑줄반복 ONCE to switch
+      // — they were previously double-tapping (first tap paused the
+      // old loop, second tap started the new one).
       if (wordRepBtn) {
         wordRepBtn.addEventListener('click', async () => {
-          if (ttsPlaying) { pauseTTS(); clearRepActive(); return; }
+          if (ttsPlaying) pauseTTS();
           const t = await resolveVariantTexts();
           if (!t.word) return;
           clearRepActive();
           wordRepBtn.classList.add('active');
+          // pauseTTS bumped the token; new startLoopedPlayback claims
+          // the next one. Safe to start synchronously.
           startLoopedPlayback(t.word, Infinity);
         });
       }
       if (chunkRepBtn) {
         chunkRepBtn.addEventListener('click', async () => {
-          if (ttsPlaying) { pauseTTS(); clearRepActive(); return; }
+          if (ttsPlaying) pauseTTS();
           const t = await resolveVariantTexts();
-          // 하나씩 → loop the chunk; 이어서 → loop the phrase. (단어반복
-          // is the per-word equivalent for either mode.)
+          // 하나씩 → loop the chunk; 이어서 → loop the phrase.
           const txt = t.chunk || t.phrase || t.word;
           if (!txt) return;
           clearRepActive();
