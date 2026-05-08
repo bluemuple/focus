@@ -33,13 +33,12 @@
             </div>
 
             <div class="lesson-head">
-              <!-- ✨ AI translation toggle was removed — DeepL is now the
-                   single translation engine for all word/phrase lookups. -->
-              <div class="head-tools">
-                <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
-                <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
-                <button class="toggle-btn"      id="mode-toggle-btn" title="읽기 모드 전환 (하나씩 ↔ 이어서)">하나씩</button>
-              </div>
+              <!-- Font-size +/- and reading-mode toggle were RELOCATED:
+                   font-size buttons now live under the sidebar's empty
+                   state hint, and the mode toggle moved into the
+                   bottom bar (.lb-cont-controls) alongside ←/→ arrows
+                   so PC and mobile share the same controls layout. -->
+              <div class="head-tools"></div>
             </div>
           </div>
 
@@ -159,6 +158,10 @@
     <div class="ls-empty" id="ls-empty">
       <div class="ls-empty-ico">↩</div>
       단어를 선택하면<br>여기에 표시됩니다.
+      <div class="ls-empty-fontctl">
+        <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
+        <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
+      </div>
     </div>
     <div class="ls-card" id="ls-card" hidden>
       <div class="ls-card-head">
@@ -549,9 +552,14 @@
     return true;
   }
   function modeLabel(m) {
-    return m === 'contU' ? '<u>이어서</u>'
-         : m === 'cont'  ? '이어서'
-         :                  '하나씩';
+    // Per spec: descriptive multi-word labels so first-time users
+    // immediately understand what each mode does.
+    //   single → 단어 뜻 하나씩  (one word at a time, show its meaning)
+    //   cont   → 여러개 이어서   (chain multiple words into a phrase)
+    //   contU  → 이어서 아래     (cont mode, but Korean shown UNDER)
+    return m === 'contU' ? '이어서 아래'
+         : m === 'cont'  ? '여러개 이어서'
+         :                  '단어 뜻 하나씩';
   }
   function nextMode(m) {
     return m === 'single' ? 'cont' : (m === 'cont' ? 'contU' : 'single');
@@ -734,14 +742,16 @@
     // URLSearchParams.get already decodes the value — no second
     // decodeURIComponent (it would throw URIError on stray "%" chars).
     const hlSentence = params.get('hl') || '';
+    const hlWord     = params.get('hw') || '';
     if (hlSentence) {
       const tp = findSentencePageIdx(hlSentence);
       if (tp >= 0) pageIdx = tp;
-      // Strip the param from the URL so a refresh doesn't re-trigger
+      // Strip the params from the URL so a refresh doesn't re-trigger
       // the highlight (and so the address bar reads cleanly).
       try {
         const url = new URL(location.href);
         url.searchParams.delete('hl');
+        url.searchParams.delete('hw');
         history.replaceState(null, '', url.toString());
       } catch (_) {}
     }
@@ -752,7 +762,7 @@
     updateProgress();
     if (hlSentence) {
       // RAF after the initial render so SENTENCE_MAP is up to date.
-      requestAnimationFrame(() => highlightSentenceOnCurrentPage(hlSentence));
+      requestAnimationFrame(() => highlightSentenceOnCurrentPage(hlSentence, hlWord));
     }
     setupAudio();
     setupVoicePicker();
@@ -805,13 +815,15 @@
     }
   }
 
-  // ---- mobile bottom-bar center group ([←][mode-toggle][→]) ----
+  // ---- bottom-bar center group ([←][mode-toggle][→]) ----
+  // Originally mobile-only (the PC equivalent lived in the top bar's
+  // .head-tools). Now shown on EVERY viewport — the top-bar mode pill
+  // and font-size buttons were relocated, so this group is the single
+  // canonical control surface for both PC and mobile.
   function applyMobileContBar() {
-    // The center group is always present on phones now (no eye toggle), so
-    // we only need to keep the mode label in sync.
     const ctrlEl = document.getElementById('lb-cont-controls');
     if (!ctrlEl) return;
-    ctrlEl.hidden = !isMobileViewport();
+    ctrlEl.hidden = false;
     refreshAllModeBtns();
   }
   function setupMobileContBar() {
@@ -967,16 +979,19 @@
   }
 
   // Apply a 3-second pink underline to the words on the current page
-  // that match `target`. Strategy: scan all .w elements on the page,
-  // build a running concatenation of their text, and find where the
-  // target's prefix appears. Then walk the same elements again and
-  // mark every .w whose character range overlaps the matched span.
-  // This works for cross-page sentence fragments (only the start of
-  // target appears on the current page — we still mark up to where
-  // the page ends) without relying on SENTENCE_MAP boundaries.
-  // After 3 s, fade out via CSS transition (0.4 s), then strip both
-  // classes so no DOM residue remains for a future click.
-  function highlightSentenceOnCurrentPage(target) {
+  // that match `target`. If `hlWord` is provided, ALSO add a pink
+  // rectangular outline to the .w element whose word matches `hlWord`
+  // inside the matched span — used by the corpus jump so the user
+  // immediately sees the word that triggered the navigation. Both
+  // highlights share the 3 s + 0.4 s fade timing.
+  // Strategy: scan all .w elements on the page, build a running
+  // concatenation of their text, find where the target's prefix
+  // appears, then walk the same elements again and mark every .w whose
+  // character range overlaps the matched span. This works for cross-
+  // page sentence fragments (only the start of target appears on the
+  // current page — we still mark up to where the page ends) without
+  // relying on SENTENCE_MAP boundaries.
+  function highlightSentenceOnCurrentPage(target, hlWord) {
     const root = document.getElementById('lesson-text');
     if (!root) return;
     const t = String(target || '').trim();
@@ -1024,11 +1039,34 @@
     }
     if (!toMark.length) return;
     toMark.forEach(w => w.classList.add('cp-jump-hl'));
+
+    // Pink rectangle outline on the corpus's search word itself,
+    // restricted to a .w element whose data-word (lowercase) matches
+    // hlWord AND that lives inside the matched sentence span. Match
+    // case-insensitively so "Pointing" / "pointing" both highlight.
+    const wordRect = [];
+    if (hlWord) {
+      const wlo = String(hlWord).trim().toLowerCase();
+      if (wlo) {
+        for (const el of toMark) {
+          if (el.classList.contains('punct')) continue;
+          const dw = (el.dataset.word || el.textContent || '').toLowerCase();
+          if (dw === wlo) wordRect.push(el);
+        }
+      }
+    }
+    wordRect.forEach(w => w.classList.add('cp-jump-word-hl'));
+
     setTimeout(() => {
       toMark.forEach(w => w.classList.add('fading'));
+      wordRect.forEach(w => w.classList.add('fading'));
       setTimeout(() => {
         toMark.forEach(w => {
           w.classList.remove('cp-jump-hl');
+          w.classList.remove('fading');
+        });
+        wordRect.forEach(w => {
+          w.classList.remove('cp-jump-word-hl');
           w.classList.remove('fading');
         });
       }, 420);
@@ -1145,9 +1183,11 @@
         if (LESSON && hit.lessonId && String(hit.lessonId) === String(LESSON.id)) {
           // Same lesson — jump-render the page that contains the sentence
           // (no slide animation; corpus → body navigation is a hop, not
-          // a turn) and highlight after the DOM swap.
+          // a turn) and highlight after the DOM swap. We pass `word`
+          // (the corpus's search term) so the word itself gets a pink
+          // rectangular outline alongside the sentence underline.
           const targetPage = findSentencePageIdx(hit.sentence);
-          const doHighlight = () => highlightSentenceOnCurrentPage(hit.sentence);
+          const doHighlight = () => highlightSentenceOnCurrentPage(hit.sentence, word);
           if (targetPage >= 0 && targetPage !== pageIdx) {
             jumpToPage(targetPage);
             // Two RAFs so layout from renderInto/buildSentenceMap settles
@@ -1158,10 +1198,11 @@
           }
         } else if (hit.lessonId) {
           // Different lesson — navigate. The destination lesson reads
-          // ?hl=<sentence-prefix> on load and applies the same jump +
-          // highlight there.
+          // ?hl=<sentence-prefix>&hw=<word> on load and applies the same
+          // jump + sentence underline + word rectangle highlight.
           const url = 'lesson.html?id=' + encodeURIComponent(hit.lessonId) +
-                      '&hl=' + encodeURIComponent(hit.sentence.slice(0, 100));
+                      '&hl=' + encodeURIComponent(hit.sentence.slice(0, 100)) +
+                      '&hw=' + encodeURIComponent(word);
           window.location.href = url;
         }
       });
@@ -3119,7 +3160,20 @@
       host.innerHTML = `
         <div class="ls-empty-ico">↩</div>
         단어를 선택하면<br>여기에 표시됩니다.
+        <div class="ls-empty-fontctl">
+          <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
+          <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
+        </div>
       `;
+      // Font-size buttons are wired by setupToggles via getElementById,
+      // but setupToggles only ran once at init — bind here so the
+      // dynamically-rendered empty state buttons also work.
+      host.querySelectorAll('#font-down-btn, #font-up-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const evtName = btn.id === 'font-up-btn' ? 'eng:bumpFont:+' : 'eng:bumpFont:-';
+          window.dispatchEvent(new CustomEvent(evtName));
+        });
+      });
       return;
     }
     // Group by state, keep highest first (newest clicks usually).
@@ -4114,10 +4168,21 @@
       const next = Math.max(12, Math.min(40, Math.round(cur + delta)));
       applyFontPx(next);
     }
-    const fontUpBtn   = document.getElementById('font-up-btn');
-    const fontDownBtn = document.getElementById('font-down-btn');
-    if (fontUpBtn)   fontUpBtn.addEventListener('click',   () => bumpFont(+2));
-    if (fontDownBtn) fontDownBtn.addEventListener('click', () => bumpFont(-2));
+    // Font buttons are now rendered dynamically inside the sidebar's
+    // empty state (renderSidebarWordList rewrites #ls-empty's HTML on
+    // every clearSidebar). Listening on the elements directly would
+    // miss subsequent renders, so we rely on global custom events
+    // dispatched by the per-render binders. The events carry no
+    // payload — the bump direction is encoded in the event name.
+    window.addEventListener('eng:bumpFont:+', () => bumpFont(+2));
+    window.addEventListener('eng:bumpFont:-', () => bumpFont(-2));
+    // Initial-render fallback: the static #ls-empty in the HTML uses
+    // the same button IDs and is shown on first sidebar paint before
+    // renderSidebarWordList has had a chance to run. Bind those once.
+    const fontUpInit   = document.getElementById('font-up-btn');
+    const fontDownInit = document.getElementById('font-down-btn');
+    if (fontUpInit)   fontUpInit.addEventListener('click',   () => bumpFont(+2));
+    if (fontDownInit) fontDownInit.addEventListener('click', () => bumpFont(-2));
 
     // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
