@@ -5689,6 +5689,11 @@
             skipFirstOfNextPage = false;
           }
 
+          // Reset mid-utterance flip flag at the start of each page
+          // pass; it's set by the stitched-sentence onMidpoint callback
+          // when the page slides during audio playback.
+          let midpointFlippedThisPage = false;
+
           const ttsRate = 0.9 * speed;
           if (TTS.prefetch && list.length > startLocal) {
             TTS.prefetch(list[startLocal], { rate: ttsRate });
@@ -5757,6 +5762,27 @@
 
             const speakText = stitched || list[i];
 
+            // For STITCHED utterances, slide to the next page MID-AUDIO
+            // (when audio's currentTime crosses the page-A-tail / total
+            // ratio) so the new page is in place before audio finishes
+            // — eliminates the visible "wait for slide" gap the user
+            // described as a 2-second silence.
+            //
+            // The fraction is roughly the share of the stitched text
+            // that belongs to page A. For "I want" + " " + "to go to
+            // the store." (6 + 1 + 21 = 28 chars), page-A share is
+            // 6/28 ≈ 0.21 — slide kicks off at ~21% through the audio.
+            // Capped to [0.10, 0.85] so degenerate ratios still feel
+            // sensible.
+            let midpointFraction = 0;
+            if (stitched) {
+              const pageATail = (list[i] || '').trim();
+              const total = stitched.trim();
+              if (pageATail && total.length > 0) {
+                const ratio = pageATail.length / total.length;
+                midpointFraction = Math.max(0.10, Math.min(0.85, ratio));
+              }
+            }
             await new Promise(resolve => {
               TTS.speak(speakText, {
                 rate: ttsRate,
@@ -5764,6 +5790,16 @@
                   if (!ttsPlaying || myToken !== _playToken) return;
                   if (SENTENCE_MAP.length) setCurrentSentence(i);
                 },
+                onMidpoint: stitched ? () => {
+                  // Token re-check — a stop/seek between speak start
+                  // and midpoint must not silently advance the page.
+                  if (!ttsPlaying || myToken !== _playToken) return;
+                  if (pageIdx + 1 >= PAGES.length) return;
+                  if (animating) return;     // a slide is already underway
+                  midpointFlippedThisPage = true;
+                  goPage(+1);
+                } : null,
+                midpointFraction: stitched ? midpointFraction : 0,
                 onend: resolve,
               });
             });
@@ -5774,10 +5810,40 @@
               // skips page B's index 0.
               skipFirstOfNextPage = true;
             }
+
+            // Mid-utterance flip already advanced the page — bail out
+            // of the for loop; the outer while will rebuild
+            // SENTENCE_MAP for the new page. (Without this break, the
+            // next for-loop iteration would try to read list[i+1] from
+            // the OLD page's sentence list, which is already on screen
+            // for mere milliseconds before the slide animation
+            // finishes.)
+            if (midpointFlippedThisPage) break;
           }
           startLocal = 0;
           if (!ttsPlaying || myToken !== _playToken) break;
+
+          // Mid-utterance page flip already happened: skip the
+          // conventional end-of-loop goPage. Wait for the slide to
+          // finish if it's still animating, then loop back so the
+          // outer while rebuilds SENTENCE_MAP for the new page.
+          if (midpointFlippedThisPage) {
+            midpointFlippedThisPage = false;
+            if (animating) {
+              await new Promise(resolve => {
+                const tStart = Date.now();
+                const check = () => {
+                  if (!animating || Date.now() - tStart > 800) resolve();
+                  else setTimeout(check, 24);
+                };
+                check();
+              });
+            }
+            continue;
+          }
+
           if (pageIdx >= PAGES.length - 1) break;
+
           await new Promise(resolve => {
             goPage(+1);
             // Wait for goPage's slide + DOM swap to finish (animating

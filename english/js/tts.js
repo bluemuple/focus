@@ -166,6 +166,7 @@
     audio.onended = null;
     audio.onerror = null;
     audio.onplaying = null;
+    audio.ontimeupdate = null;       // reset midpoint tracking
     try { audio.pause(); } catch (e) {}
     audio.src = url;
     pendingOnend = (typeof opts.onend === 'function') ? opts.onend : null;
@@ -181,6 +182,27 @@
         if (fired) return;
         fired = true;
         try { opts.onplay(); } catch (e) {}
+      };
+    }
+    // `onMidpoint` + `midpointFraction` — fire ONCE when the audio's
+    // currentTime crosses the requested fraction of total duration.
+    // Used by the lesson page to slide to the next page mid-utterance
+    // when a STITCHED cross-page sentence is playing: audio crosses
+    // the page-A-tail / total ratio → trigger goPage(+1) so the new
+    // page is in place before the audio finishes. Self-removes after
+    // firing; reset on every speak() via the ontimeupdate=null above.
+    if (typeof opts.onMidpoint === 'function'
+        && typeof opts.midpointFraction === 'number'
+        && opts.midpointFraction > 0 && opts.midpointFraction < 1) {
+      let fired = false;
+      const frac = opts.midpointFraction;
+      audio.ontimeupdate = () => {
+        if (fired) return;
+        if (audio.duration > 0 && audio.currentTime >= audio.duration * frac) {
+          fired = true;
+          audio.ontimeupdate = null;
+          try { opts.onMidpoint(); } catch (e) {}
+        }
       };
     }
     currentAudio = audio;
