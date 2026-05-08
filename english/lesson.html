@@ -504,15 +504,28 @@
     if (!/[.!?]/.test(txt)) return false;
     // ! and ? always end a sentence; periods need extra checks.
     if (/[!?]/.test(txt)) return true;
-    // Period must be FOLLOWED by whitespace to count as a sentence end.
-    // The body tokenizer's `[^\p{L}\p{N}]+` greedily captures runs of
-    // non-letter/non-digit chars, so:
-    //   "Hello world. Hi" → punct token is ". " (period + space).
-    //   "GPT 5.5-Cyber"   → punct token between digits is just "."
-    //                        (no trailing whitespace).
-    // The latter is mid-token punctuation — version numbers, decimals,
-    // model identifiers — and SHOULD NOT cut the sentence.
-    if (!/\s/.test(txt)) return false;
+    // Period must be FOLLOWED by whitespace to count as a sentence end —
+    // EXCEPT when it's the very last token in its paragraph, in which
+    // case it's still a real period (just no space after because the
+    // paragraph ended).
+    //
+    //   "Hello world. Hi" → ". " (with whitespace) → break.
+    //   "5.5-Cyber"       → "." (no whitespace, NOT last token in <p>)
+    //                        → mid-token punct (decimals, version
+    //                        numbers, model IDs) → NOT a break.
+    //   "to go to the store." (end of paragraph) → "." (no whitespace,
+    //                        but IS the last child of its <p>) → break.
+    //
+    // Without the last-in-paragraph carve-out, end-of-paragraph periods
+    // failed to break, causing buildSentenceMap to merge separate
+    // paragraphs into one super-sentence — which made skipFirstOfNextPage
+    // accidentally skip the next paragraph's content during cross-page
+    // stitched playback.
+    if (!/\s/.test(txt)) {
+      const parent = punctEl.parentElement;
+      const isLastInPara = parent && parent.lastElementChild === punctEl;
+      if (!isLastInPara) return false;
+    }
     if (prevWordEl) {
       const prev = (prevWordEl.dataset && prevWordEl.dataset.word) || prevWordEl.textContent || '';
       if (SENTENCE_ABBR.has(prev.toLowerCase())) return false;

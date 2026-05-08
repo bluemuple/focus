@@ -243,6 +243,51 @@
     return true;
   }
 
+  // Full lesson edit: update title + body, optionally replace audio /
+  // thumbnail (new files), or null them out (`clearAudio` /
+  // `clearThumbnail`). The kebab "수정" menu on the home page now
+  // routes to import.html?edit=<id> which gathers a full set of
+  // changes and posts them in one call here.
+  async function updateLesson(id, opts) {
+    opts = opts || {};
+    const patch = {};
+    if (typeof opts.title === 'string') patch.title = opts.title.trim();
+    if (typeof opts.body  === 'string') patch.body  = opts.body;
+
+    async function uploadToAudioBucket(file, prefix) {
+      const u = await currentUser();
+      const ext = (file.name.split('.').pop() || 'bin').toLowerCase();
+      const path = `${u.id}/${prefix}/${Date.now()}.${ext}`;
+      const { error: upErr } = await sb.storage.from('audio')
+        .upload(path, file, { upsert: false, contentType: file.type || 'application/octet-stream' });
+      if (upErr) { console.error('upload ' + prefix, upErr); return null; }
+      const { data: pub } = sb.storage.from('audio').getPublicUrl(path);
+      return (pub && pub.publicUrl) || null;
+    }
+
+    if (await useCloud()) {
+      if (opts.audioFile)        patch.audio_url     = await uploadToAudioBucket(opts.audioFile, 'audio');
+      else if (opts.clearAudio)  patch.audio_url     = null;
+      if (opts.thumbFile)        patch.thumbnail_url = await uploadToAudioBucket(opts.thumbFile, 'thumb');
+      else if (opts.clearThumbnail) patch.thumbnail_url = null;
+      const { error } = await sb.from('lessons').update(patch).eq('id', id);
+      if (error) { console.error('updateLesson', error); return false; }
+      return true;
+    }
+
+    // localStorage path: encode files as data-URLs.
+    const list = ls.get('lessons', []);
+    const i = list.findIndex(x => x.id === id);
+    if (i < 0) return false;
+    if (opts.audioFile)        list[i].audio_url     = await fileToDataURL(opts.audioFile);
+    else if (opts.clearAudio)  list[i].audio_url     = null;
+    if (opts.thumbFile)        list[i].thumbnail_url = await fileToDataURL(opts.thumbFile);
+    else if (opts.clearThumbnail) list[i].thumbnail_url = null;
+    Object.assign(list[i], patch);
+    ls.set('lessons', list);
+    return true;
+  }
+
   // ---------- WORD STATES ----------
   // State semantics (user-controlled, LingQ-style):
   //   -1 = ignored ("무시")                — no highlight
@@ -693,7 +738,7 @@
     haveSupabase,
     isTryMode, setTryMode,
     currentUser, signIn, signUp, signOut,
-    listLessons, listAllLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson,
+    listLessons, listAllLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson, updateLesson,
     loadWordStates, clickWord, setWordState,
     getHearted, setHearted, isHearted,
     listPhrases, addPhrase, deletePhrase,

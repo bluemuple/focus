@@ -23,7 +23,7 @@
   </header>
 
   <main class="container">
-    <h1 style="margin:6px 0 16px">새 레슨 가져오기</h1>
+    <h1 id="page-title" style="margin:6px 0 16px">새 레슨 가져오기</h1>
 
     <form class="import-form" id="import-form">
       <div class="field">
@@ -47,6 +47,8 @@
           <img id="f-thumb-preview" alt="썸네일 미리보기" style="display:none">
           <input id="f-thumb" type="file" accept="image/*" style="display:none">
         </div>
+        <button type="button" id="f-thumb-clear" class="btn ghost"
+                style="display:none;margin-top:8px;font-size:13px">🗑 썸네일 삭제</button>
       </div>
 
       <div class="field">
@@ -57,6 +59,8 @@
           <div class="muted" style="font-size:12px;margin-top:4px">텍스트 듣기에 사용됩니다. 비워두면 영국식 여성 음성(TTS)으로 자동 생성됩니다.</div>
           <input id="f-audio" type="file" accept="audio/*" style="display:none">
         </div>
+        <button type="button" id="f-audio-clear" class="btn ghost"
+                style="display:none;margin-top:8px;font-size:13px">🗑 오디오 삭제</button>
       </div>
 
       <div class="err" id="form-err" style="color:#b03a3a;font-size:13px;min-height:18px"></div>
@@ -92,7 +96,7 @@
     avatar.textContent = (label[0] || 'U').toUpperCase();
   }
 
-  function bindForm() {
+  async function bindForm() {
     const form = document.getElementById('import-form');
     const zone = document.getElementById('f-zone');
     const fileInput = document.getElementById('f-audio');
@@ -109,6 +113,63 @@
     let chosenFile  = null;     // audio
     let chosenThumb = null;     // image
 
+    // Edit-mode detection: ?edit=<lessonId> rewires the form to load
+    // the existing lesson and submit via DB.updateLesson instead of
+    // DB.addLesson. The home page's kebab "수정" entry navigates here.
+    const params = new URLSearchParams(location.search);
+    const editId = params.get('edit');
+    let isEditMode = false;
+    let clearAudioFlag = false;
+    let clearThumbnailFlag = false;
+    let editLesson = null;
+    if (editId) {
+      try {
+        editLesson = await DB.getLesson(editId);
+      } catch (err) { console.error('getLesson', err); }
+      if (editLesson) {
+        isEditMode = true;
+        document.getElementById('page-title').textContent = '레슨 수정';
+        document.getElementById('f-title').value = editLesson.title || '';
+        document.getElementById('f-body').value  = editLesson.body  || '';
+        saveBtn.textContent = '확인';
+        // Pre-populate the thumbnail preview if one exists.
+        if (editLesson.thumbnail_url) {
+          thumbPrev.src = editLesson.thumbnail_url;
+          thumbPrev.style.display = '';
+          thumbPh.style.display = 'none';
+          thumbZone.classList.add('has-file');
+          document.getElementById('f-thumb-clear').style.display = '';
+        }
+        // Pre-populate the audio zone text if a recording exists.
+        if (editLesson.audio_url) {
+          zone.classList.add('has-file');
+          zoneText.innerHTML = '✓ 기존 오디오 사용 중 <span class="muted" style="font-weight:400">· 새 파일을 올리거나 삭제할 수 있어요</span>';
+          document.getElementById('f-audio-clear').style.display = '';
+        }
+      }
+    }
+    // Wire the delete buttons (always present in DOM; visibility is
+    // controlled above for edit mode and below when a NEW file is set).
+    const thumbClearBtn = document.getElementById('f-thumb-clear');
+    const audioClearBtn = document.getElementById('f-audio-clear');
+    if (thumbClearBtn) thumbClearBtn.addEventListener('click', () => {
+      chosenThumb = null;
+      clearThumbnailFlag = true;
+      thumbPrev.style.display = 'none';
+      thumbPh.style.display = '';
+      thumbZone.classList.remove('has-file');
+      thumbClearBtn.style.display = 'none';
+      thumbInput.value = '';
+    });
+    if (audioClearBtn) audioClearBtn.addEventListener('click', () => {
+      chosenFile = null;
+      clearAudioFlag = true;
+      zone.classList.remove('has-file');
+      zoneText.innerHTML = '클릭하거나 파일을 끌어다 놓아 오디오(MP3 등)를 추가';
+      audioClearBtn.style.display = 'none';
+      fileInput.value = '';
+    });
+
     // ---- audio zone ----
     zone.addEventListener('click', () => fileInput.click());
     zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = 'var(--accent)'; });
@@ -124,9 +185,12 @@
     function setFile(f) {
       if (!/^audio\//.test(f.type)) { errBox.textContent = '오디오 파일만 업로드 가능합니다.'; return; }
       chosenFile = f;
+      clearAudioFlag = false;
       zone.classList.add('has-file');
       zoneText.innerHTML = '✓ ' + escapeHtml(f.name) + ' <span class="muted" style="font-weight:400">· 다른 파일로 변경하려면 클릭</span>';
       errBox.textContent = '';
+      const btn = document.getElementById('f-audio-clear');
+      if (btn) btn.style.display = '';
     }
 
     // ---- thumbnail zone ----
@@ -144,6 +208,7 @@
     function setThumb(f) {
       if (!/^image\//.test(f.type)) { errBox.textContent = '이미지 파일만 업로드 가능합니다.'; return; }
       chosenThumb = f;
+      clearThumbnailFlag = false;
       const reader = new FileReader();
       reader.onload = () => {
         thumbPrev.src = reader.result;
@@ -153,6 +218,8 @@
       };
       reader.readAsDataURL(f);
       errBox.textContent = '';
+      const btn = document.getElementById('f-thumb-clear');
+      if (btn) btn.style.display = '';
     }
 
     form.addEventListener('submit', async (e) => {
@@ -162,7 +229,7 @@
       const body  = document.getElementById('f-body').value.trim();
       if (!title || !body) { errBox.textContent = '제목과 텍스트를 모두 입력해 주세요.'; return; }
       saveBtn.disabled = true;
-      saveBtn.textContent = '저장 중...';
+      saveBtn.textContent = isEditMode ? '저장 중...' : '저장 중...';
       try {
         // Shrink the thumbnail before uploading. Cards display ~220–280 px
         // wide so 1024×640 @ JPEG q0.85 is plenty and saves storage / bandwidth.
@@ -171,17 +238,30 @@
           try { thumbToUpload = await resizeImage(thumbToUpload, 1024, 640, 0.85); }
           catch (err) { console.warn('thumb resize failed, uploading original', err); }
         }
-        const row = await DB.addLesson({
-          title, body,
-          audioFile: chosenFile,
-          thumbFile: thumbToUpload,
-        });
-        location.href = 'lesson.html?id=' + encodeURIComponent(row.id);
+        if (isEditMode) {
+          // Edit existing lesson — patch with whatever changed.
+          const ok = await DB.updateLesson(editId, {
+            title, body,
+            audioFile: chosenFile || null,
+            thumbFile: thumbToUpload || null,
+            clearAudio:     clearAudioFlag && !chosenFile,
+            clearThumbnail: clearThumbnailFlag && !chosenThumb,
+          });
+          if (!ok) throw new Error('업데이트 실패');
+          location.href = 'index.html';
+        } else {
+          const row = await DB.addLesson({
+            title, body,
+            audioFile: chosenFile,
+            thumbFile: thumbToUpload,
+          });
+          location.href = 'lesson.html?id=' + encodeURIComponent(row.id);
+        }
       } catch (err) {
         console.error(err);
-        errBox.textContent = '저장에 실패했습니다: ' + ((err && err.message) || err);
+        errBox.textContent = (isEditMode ? '수정' : '저장') + '에 실패했습니다: ' + ((err && err.message) || err);
         saveBtn.disabled = false;
-        saveBtn.textContent = '가져오기';
+        saveBtn.textContent = isEditMode ? '확인' : '가져오기';
       }
     });
   }
