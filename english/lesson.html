@@ -1354,62 +1354,84 @@
           setTimeout(() => openMobileNaver(word), 180);
         }
       } else {
-        if (dx < -50) { dragStart = null; toggleWsPanel('pm'); }
-        else if (dx > 50) { dragStart = null; toggleWsPanel('co'); }
+        if (dx < -50) { dragStart = null; cycleWsView('left'); }
+        else if (dx > 50) { dragStart = null; cycleWsView('right'); }
       }
     }
-    // Helper: open the named ws-panel inline (PM = Popular Meanings,
-    // CO = Collocations) with a slide-in animation matching the
-    // swipe direction. Slide direction:
-    //   pm (swipe LEFT)  → new panel slides IN from the right.
-    //   co (swipe RIGHT) → new panel slides IN from the left.
-    //   ex / default     → no slide animation.
-    function toggleWsPanel(id) {
-      const panel = document.getElementById('ws-panel-' + id);
-      if (!panel) return;
-      const wasOpen = !panel.hidden;
+    // Three-state cycle:  text → pm → co → text (right swipe), reverse
+    // for left. Both directions cycle indefinitely. Selected view is
+    // remembered in `_wsLastView` so closing the sheet and tapping a
+    // new word re-opens at the same view (e.g. close while on 연어 →
+    // next word's sheet opens in 연어 view too).
+    const _wsViewSeq = ['text', 'pm', 'co'];
+    function cycleWsView(direction) {
+      const i = Math.max(0, _wsViewSeq.indexOf(_wsLastView));
+      const next = direction === 'right'
+        ? _wsViewSeq[(i + 1) % _wsViewSeq.length]
+        : _wsViewSeq[(i + _wsViewSeq.length - 1) % _wsViewSeq.length];
+      const slideFrom = direction === 'right' ? 'right' : 'left';
+      _wsLastView = next;
+      applyWsView(next, { slideFrom: slideFrom, showToast: true });
+    }
+
+    // Apply a view to the bottom sheet:
+    //   text → chunk box (ws-mnemonic) visible, all panels hidden.
+    //   pm   → Popular Meanings panel visible.
+    //   co   → Collocations panel visible.
+    // `opts.slideFrom`: 'left' | 'right' — animate the entering content
+    //   from that side. Omit for instant (no animation).
+    // `opts.showToast`: boolean — flash the corresponding center label.
+    function applyWsView(view, opts) {
+      opts = opts || {};
+      const mn = document.getElementById('ws-mnemonic');
       document.querySelectorAll('.ws-panel').forEach(p => { p.hidden = true; });
       document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
-      const mn = document.getElementById('ws-mnemonic');
-      let toastLabel = '';
-      if (!wasOpen) {
-        panel.hidden = false;
-        const matchingBtn = document.querySelector('.ws-tab[data-panel="' + id + '"]');
-        if (matchingBtn) matchingBtn.classList.add('active');
+      let panel = null;
+      if (view === 'text') {
+        if (mn) mn.hidden = false;
+      } else {
         if (mn) mn.hidden = true;
-        toastLabel = id === 'pm' ? '의미' : id === 'co' ? '연어' : id === 'ex' ? '예문' : '';
-        // Slide the freshly-shown panel IN from the gesture's edge:
-        //   pm = swipe LEFT  → enters from the RIGHT  (translateX(100%) → 0)
-        //   co = swipe RIGHT → enters from the LEFT   (translateX(-100%) → 0)
-        if (id === 'pm' || id === 'co') {
-          const fromRight = id === 'pm';
-          panel.style.transition = 'none';
-          panel.style.transform = 'translateX(' + (fromRight ? '100%' : '-100%') + ')';
-          panel.style.opacity = '0';
+        panel = document.getElementById('ws-panel-' + view);
+        if (panel) {
+          panel.hidden = false;
+          const btn = document.querySelector('.ws-tab[data-panel="' + view + '"]');
+          if (btn) btn.classList.add('active');
+        }
+      }
+      // Slide-in animation. The chunk box also animates when the view
+      // is 'text' (mn becomes visible after a swipe back to text).
+      if (opts.slideFrom) {
+        const target = panel || (view === 'text' ? mn : null);
+        if (target) {
+          const sign = opts.slideFrom === 'right' ? 1 : -1;
+          target.style.transition = 'none';
+          target.style.transform = 'translateX(' + (sign * 100) + '%)';
+          target.style.opacity = '0';
           requestAnimationFrame(() => {
             requestAnimationFrame(() => {
-              panel.style.transition = 'transform .26s cubic-bezier(.22,.6,.36,1), opacity .2s ease';
-              panel.style.transform = 'translateX(0)';
-              panel.style.opacity = '1';
+              target.style.transition = 'transform .26s cubic-bezier(.22,.6,.36,1), opacity .2s ease';
+              target.style.transform = 'translateX(0)';
+              target.style.opacity = '1';
             });
           });
           setTimeout(() => {
-            panel.style.transition = '';
-            panel.style.transform = '';
-            panel.style.opacity = '';
+            target.style.transition = '';
+            target.style.transform = '';
+            target.style.opacity = '';
           }, 320);
         }
-      } else {
-        if (mn) mn.hidden = false;
-        toastLabel = '본문';
       }
-      if (toastLabel && typeof showSheetToast === 'function') {
-        showSheetToast(toastLabel);
+      if (opts.showToast) {
+        const label = view === 'pm' ? '의미' : view === 'co' ? '연어' : '텍스트';
+        if (typeof showSheetToast === 'function') showSheetToast(label);
       }
       if (typeof applyWordSheetShift === 'function') {
         requestAnimationFrame(applyWordSheetShift);
       }
     }
+    // Expose so showInWordSheet can re-apply the remembered view on
+    // every sheet open (memory-across-word-taps requirement).
+    window.__applyWsView = applyWsView;
     function onTouchEnd() {
       dragStart = null;
       // Snap the sheet back to its resting position with the original
@@ -2258,6 +2280,12 @@
   //   Mobile word sheet (single-mode bottom panel)
   // ===========================================================
   let _sheetWord = null;
+  // Bottom-sheet view-cycle state. Per spec the user can swipe left or
+  // right indefinitely and cycle through 텍스트(text) → 의미(pm) →
+  // 연어(co) → 텍스트 (right) and the reverse on left. The chosen
+  // view PERSISTS across × close → next word tap, so closing while on
+  // 연어 then tapping a different word reopens in 연어 view.
+  let _wsLastView = 'text';
   function showInWordSheet(word, sentence, anchorEl) {
     const sheet = document.getElementById('word-sheet');
     if (!sheet) return;
@@ -2300,6 +2328,18 @@
     // Re-show the chunk panel — a previous tab-open may have hidden it.
     if (mnemEl) mnemEl.hidden = false;
     document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
+    // Re-apply the remembered cycle view (text / pm / co). This makes
+    // a CLOSE → reopen flow remember the view: if the user closed the
+    // sheet while on 연어 view, the next word's sheet opens directly
+    // on 연어. Skip toast on the 'text' default — first-tap should
+    // appear quietly; show toast only when re-opening on a non-default
+    // view (so the user knows what they're seeing).
+    if (typeof window.__applyWsView === 'function') {
+      window.__applyWsView(_wsLastView || 'text', {
+        slideFrom: null,
+        showToast: _wsLastView && _wsLastView !== 'text',
+      });
+    }
     const lp = document.getElementById('ws-level-pop');
     if (lp) lp.hidden = true;
 
