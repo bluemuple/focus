@@ -2088,21 +2088,25 @@
     // signal. The TTS module no-ops if the user has muted globally.
     try { TTS.speak(word); } catch (_) {}
 
-    // Dual translation per spec: DeepL primary, GPT appended.
+    // ── Dual-mode translation (DeepL first, GPT replaces) ──
+    // DeepL renders immediately so the user sees SOMETHING fast.
+    // When the strict GPT call resolves, it REPLACES DeepL in the row
+    // (not appended) — DeepL gets erased. The chunk-panel pink Korean
+    // highlight always tracks whatever the LATEST wordKo is, so it
+    // updates in lockstep when GPT swaps in.
     //
-    //   FIRST  (always shown) → DeepL with sentence context. Returns
-    //                            fastest; covers ~90% of cases well.
-    //   SECOND (✨ AI on only) → GPT with sentence context. Strict —
-    //                            does NOT silently fall back to DeepL,
-    //                            so when GPT actually returns something
-    //                            different, it appears.
-    //
-    // The previous appended path used translateWith(word, sentence, true)
-    // which goes through translate() — that function falls back to
-    // DeepL whenever the GPT proxy errors. Result: both halves were
-    // DeepL, identical, and the equality check suppressed the append.
-    // Now using translateGPT (strict) — failures throw, caller catches,
-    // and the append is simply omitted instead of duplicating DeepL.
+    // Closure vars `latestWordKo / latestChunk / latestChunkKo` let
+    // every async resolution call `repaintChunkPanel()` to keep the
+    // chunk box's Korean substring pink-highlighting in sync with
+    // whichever translation is currently shown above.
+    let latestWordKo = '';
+    let latestChunk = null;
+    let latestChunkKo = '';
+    function repaintChunkPanel() {
+      if (!latestChunk || !mnemEl) return;
+      renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
+    }
+
     const aiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
     const deeplP = Translate.translateWith
       ? Translate.translateWith(word, sentence, false)
@@ -2110,41 +2114,33 @@
     deeplP.then(ko => {
       if (_sheetWord !== word) return;
       if (meaningEl) meaningEl.textContent = ko || '—';
+      latestWordKo = (ko || '').trim();
+      repaintChunkPanel();
     }).catch(() => {
       if (meaningEl) meaningEl.textContent = '—';
     });
     if (aiOn && Translate.translateGPT) {
-      Promise.all([
-        deeplP.catch(() => ''),
-        Translate.translateGPT(word, sentence).catch(err => {
-          // Surface to console so a misconfigured translate-gpt Edge
-          // Function is debuggable (silent failure here was the cause
-          // of "GPT 해석은 DeepL 뒤에 나오지 않아서").
-          console.warn('[translate-gpt]', err && err.message || err);
-          return '';
-        }),
-      ]).then(([deepl, gpt]) => {
+      Translate.translateGPT(word, sentence).then(gpt => {
         if (_sheetWord !== word) return;
-        if (!meaningEl) return;
-        const d = (deepl || '').trim();
-        const g = (gpt   || '').trim();
-        // If GPT returned nothing (fail or empty) — leave the row at
-        // just the DeepL value.  If both populated and DIFFERENT, dual.
-        // If identical (whitespace/case-insensitive) — suppress the
-        // duplicate per spec.
-        const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-        if (d && g && norm(d) !== norm(g)) {
-          meaningEl.textContent = d + ', ' + g;
-        } else if (!d && g) {
-          meaningEl.textContent = g;
-        }
-      }).catch(() => {});
+        const g = (gpt || '').trim();
+        if (!g) return;       // empty / failed → keep DeepL on the row
+        if (meaningEl) meaningEl.textContent = g;       // REPLACE DeepL
+        latestWordKo = g;
+        repaintChunkPanel();
+      }).catch(err => {
+        // Surface to console so a misconfigured translate-gpt Edge
+        // Function is debuggable. Silent failure was the cause of
+        // "GPT 해석이 안 나와요".
+        console.warn('[translate-gpt]', err && err.message || err);
+      });
     }
 
     // Chunk = words around the clicked word that form one syntactic unit.
-    // Renders chunk text immediately, then chunk Korean as soon as it
-    // resolves — no waiting on the word translation. Pink Korean
-    // highlight is now opt-in (user taps the pink lemma in the chunk).
+    // Renders chunk text immediately, then chunk Korean when it resolves.
+    // The pink Korean highlight inside the chunk's translation is driven
+    // by `latestWordKo` (which DeepL/GPT update above), so as soon as
+    // GPT swaps in a more idiomatic word translation, the pink span in
+    // the chunk Korean re-anchors to the new substring.
     if (Translate.getChunks) {
       Translate.getChunks(sentence).then(chunks => {
         if (_sheetWord !== word) return;
@@ -2152,10 +2148,12 @@
         const c = findChunkForWord(anchorEl, chunks);
         if (!c) return;
         applyChunkHighlight(anchorEl, c);
-        renderChunkTx(mnemEl, c.text, '', word);
+        latestChunk = c;
+        repaintChunkPanel();    // chunk text immediately, Korean blank
         Translate.translate(c.text, sentence).then(chunkKo => {
           if (_sheetWord !== word) return;
-          renderChunkTx(mnemEl, c.text, chunkKo, word);
+          latestChunkKo = chunkKo || '';
+          repaintChunkPanel();  // re-render with chunk Korean + pink
         }).catch(() => {});
       }).catch(() => {});
     }
@@ -2457,11 +2455,18 @@
       clearWordFocus();
     }
 
-    // Dual translation, same logic as the mobile sheet:
-    //   FIRST  → DeepL with sentence context (always shown).
-    //   SECOND → GPT with sentence context, appended when ✨ AI is on.
-    // Strict GPT (Translate.translateGPT) — no DeepL fallback — so
-    // failures show only DeepL instead of duplicate-suppressed silence.
+    // Dual-mode translation: DeepL first, GPT replaces when it lands.
+    // Same closure-tracked latestWordKo pattern as the mobile sheet so
+    // the chunk panel's pink Korean highlight follows whichever word
+    // translation is currently displayed.
+    let sbLatestWordKo = '';
+    let sbLatestChunk = null;
+    let sbLatestChunkKo = '';
+    function repaintSidebarChunk() {
+      if (!sbLatestChunk || !mnEl) return;
+      renderChunkTx(mnEl, sbLatestChunk.text, sbLatestChunkKo, text, sbLatestWordKo);
+    }
+
     const sbAiOn = !!(window.Translate && Translate.getUseGPT && Translate.getUseGPT());
     const sbDeeplP = Translate.translateWith
       ? Translate.translateWith(text, sentence, false)
@@ -2471,28 +2476,24 @@
       if (!cur || cur.textContent !== text) return;
       SIDEBAR_PHRASE = { text, ko };
       if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
+      sbLatestWordKo = (ko || '').trim();
+      repaintSidebarChunk();
     }).catch(() => {
       if (transEl) transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
     if (sbAiOn && Translate.translateGPT) {
-      Promise.all([
-        sbDeeplP.catch(() => ''),
-        Translate.translateGPT(text, sentence).catch(err => {
-          console.warn('[translate-gpt]', err && err.message || err);
-          return '';
-        }),
-      ]).then(([deepl, gpt]) => {
+      Translate.translateGPT(text, sentence).then(gpt => {
         const cur = document.getElementById('ls-word');
         if (!cur || cur.textContent !== text) return;
-        if (!transEl) return;
-        const d = (deepl || '').trim();
-        const g = (gpt   || '').trim();
-        const norm = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim();
-        if (d && g && norm(d) !== norm(g)) {
-          SIDEBAR_PHRASE = { text, ko: d + ', ' + g };
-          transEl.innerHTML = '<span class="ko">' + escapeHtml(d + ', ' + g) + '</span>';
-        }
-      }).catch(() => {});
+        const g = (gpt || '').trim();
+        if (!g) return;
+        if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(g) + '</span>';
+        SIDEBAR_PHRASE = { text, ko: g };
+        sbLatestWordKo = g;
+        repaintSidebarChunk();
+      }).catch(err => {
+        console.warn('[translate-gpt]', err && err.message || err);
+      });
     }
 
     // Chunk highlight + translation — single words only. Pulls the cached
@@ -2507,10 +2508,12 @@
         if (!c) return;
         applyChunkHighlight(anchorEl, c);
         if (mnBlock) mnBlock.hidden = false;
-        renderChunkTx(mnEl, c.text, '', text);
+        sbLatestChunk = c;
+        repaintSidebarChunk();
         Translate.translate(c.text, sentence).then(ko => {
           if (cur.textContent !== text) return;
-          renderChunkTx(mnEl, c.text, ko, text);
+          sbLatestChunkKo = ko || '';
+          repaintSidebarChunk();
         }).catch(() => {});
       }).catch(() => {});
     }
