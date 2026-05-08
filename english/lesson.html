@@ -1478,10 +1478,27 @@
     const row = sheet.querySelector('.ws-row');
     if (!row) return;
     let dragStart = null;
+    let swipeSession = null;
+    let axisLocked = null;          // 'h' once a horizontal swipe is committed,
+                                    // 'v' once vertical motion has begun.
+    // Three-state cycle:  text ↔ pm ↔ co (with wrap). Right swipe
+    // reveals the LEFT neighbor (previous in cycle); left swipe
+    // reveals the RIGHT neighbor (next in cycle) — iOS-style carousel
+    // direction so the incoming panel feels visually attached to the
+    // finger. Selected view is remembered in `_wsLastView` so closing
+    // and reopening on a new word restores the same view.
+    const _wsViewSeq = ['text', 'pm', 'co'];
+    function _wsPanelEl(view) {
+      return view === 'text'
+        ? document.getElementById('ws-mnemonic')
+        : document.getElementById('ws-panel-' + view);
+    }
     function onTouchStart(e) {
       const t = e.touches && e.touches[0];
       if (!t) return;
       dragStart = { x: t.clientX, y: t.clientY };
+      swipeSession = null;
+      axisLocked = null;
       // Disable the CSS transition during finger-tracking so the sheet
       // follows the touch in real time. Re-enabled in onTouchEnd.
       if (sheet) sheet.style.transition = 'none';
@@ -1494,68 +1511,136 @@
       const dy = t.clientY - dragStart.y;
       const absX = Math.abs(dx), absY = Math.abs(dy);
 
-      // Finger-follow animation: track the touch in real-time on the
-      // dominant axis — gives the sheet (+ its shadow, since it's the
-      // same element) a tactile, page-swipe feel before the swipe is
-      // even committed. We dampen the translation slightly (×0.6) so
-      // a flick doesn't fly the sheet completely off-screen before the
-      // commit threshold; that reads as cleaner. The transform gets
-      // reset in onTouchEnd whether we commit or cancel.
-      if (sheet && Math.max(absX, absY) > 8) {
-        if (absX > absY) {
-          // Horizontal — show the slide-direction.
-          sheet.style.transform = 'translateX(' + (dx * 0.6) + 'px)';
-        } else {
-          sheet.style.transform = 'translateY(' + (dy * 0.6) + 'px)';
-        }
-      }
+      // Wait for a small dead zone before committing to a gesture axis.
+      if (Math.max(absX, absY) < 8) return;
+      // Lock the axis on the FIRST commit past the dead zone — keeps
+      // a diagonal drag from oscillating between vertical and
+      // horizontal handlers as the dominant axis flips.
+      if (!axisLocked) axisLocked = absX > absY ? 'h' : 'v';
 
-      // Direction routing per spec (commit at 50 px in dominant axis):
-      //   ↑ (dy < 0)  → corpora popup (card grows from sheet)
-      //   ↓ (dy > 0)  → bottom-sheet exits down, THEN Naver enters from top
-      //   ← (dx < 0)  → Popular Meanings panel inline
-      //   → (dx > 0)  → Collocations panel inline
-      if (Math.max(absX, absY) < 50) return;
-      const word = _sheetWord || '';
-      if (!word) { dragStart = null; return; }
-      if (absY > absX) {
+      if (axisLocked === 'v') {
+        // Vertical: damped finger-follow on the sheet itself; commit
+        // at 50 px to corpora (up) or Naver (down) flows.
+        if (sheet) sheet.style.transform = 'translateY(' + (dy * 0.6) + 'px)';
+        if (absY < 50) return;
+        const word = _sheetWord || '';
+        if (!word) { dragStart = null; return; }
         if (dy < -50) {
           dragStart = null;
           openCorporaPopup(word);
         } else if (dy > 50) {
           dragStart = null;
-          // TWO-PHASE choreography per spec: first slide the bottom
-          // sheet out the bottom of the screen, then bring Naver
-          // dict in from the top. The phases overlap slightly
-          // (sheet starts exiting, Naver starts entering 180 ms
-          // later) so total wall-clock is ~440 ms instead of 560.
+          // TWO-PHASE choreography: bottom sheet exits down, Naver
+          // dict enters from top — phases overlap by 180 ms so total
+          // wall-clock is ~440 ms.
           const sheetEl = document.getElementById('word-sheet');
           if (sheetEl) {
             sheetEl.style.transition = '';
             sheetEl.style.transform = '';
-            sheetEl.classList.remove('show');   // CSS animates to translateY(110%)
+            sheetEl.classList.remove('show');
           }
           setTimeout(() => openMobileNaver(word), 180);
         }
-      } else {
-        if (dx < -50) { dragStart = null; cycleWsView('left'); }
-        else if (dx > 50) { dragStart = null; cycleWsView('right'); }
+        return;
       }
+
+      // axisLocked === 'h' — finger-follow carousel between text/pm/co.
+      // Both the current panel AND the incoming panel translate by `dx`
+      // in lock-step, so the user sees them as a single attached unit
+      // sliding under their finger. On release we commit (slide
+      // through) or roll back depending on whether they crossed a
+      // 25%-of-width threshold.
+      if (!swipeSession) {
+        swipeSession = startWsSwipe(dx > 0 ? 'right' : 'left');
+        if (!swipeSession) return;
+      }
+      updateWsSwipe(dx);
     }
-    // Three-state cycle:  text → pm → co → text (right swipe), reverse
-    // for left. Both directions cycle indefinitely. Selected view is
-    // remembered in `_wsLastView` so closing the sheet and tapping a
-    // new word re-opens at the same view (e.g. close while on 연어 →
-    // next word's sheet opens in 연어 view too).
-    const _wsViewSeq = ['text', 'pm', 'co'];
-    function cycleWsView(direction) {
-      const i = Math.max(0, _wsViewSeq.indexOf(_wsLastView));
-      const next = direction === 'right'
-        ? _wsViewSeq[(i + 1) % _wsViewSeq.length]
-        : _wsViewSeq[(i + _wsViewSeq.length - 1) % _wsViewSeq.length];
-      const slideFrom = direction === 'right' ? 'right' : 'left';
-      _wsLastView = next;
-      applyWsView(next, { slideFrom: slideFrom, showToast: true });
+
+    function startWsSwipe(initialDir) {
+      const cur = _wsLastView || 'text';
+      const i = Math.max(0, _wsViewSeq.indexOf(cur));
+      // Right swipe reveals LEFT neighbor (previous), left swipe
+      // reveals RIGHT neighbor (next). This is the natural carousel
+      // mapping — finger goes right, the panel that was on the left
+      // comes into view (and the current one exits to the right).
+      const targetIdx = (initialDir === 'right')
+        ? (i + _wsViewSeq.length - 1) % _wsViewSeq.length
+        : (i + 1) % _wsViewSeq.length;
+      const targetView = _wsViewSeq[targetIdx];
+      const currentPanel = _wsPanelEl(cur);
+      const targetPanel  = _wsPanelEl(targetView);
+      if (!currentPanel || !targetPanel) return null;
+      // Park target off-screen on the side it'll enter from.
+      // Right swipe → target enters from LEFT (-100%).
+      // Left  swipe → target enters from RIGHT (+100%).
+      const targetSign = (initialDir === 'right') ? -1 : +1;
+      targetPanel.hidden = false;
+      targetPanel.style.transition = 'none';
+      targetPanel.style.transform  = 'translateX(' + (targetSign * 100) + '%)';
+      currentPanel.style.transition = 'none';
+      currentPanel.style.transform  = 'translateX(0)';
+      return {
+        direction: initialDir,
+        targetSign,
+        currentPanel,
+        targetPanel,
+        currentView: cur,
+        targetView,
+        lastDx: 0,
+      };
+    }
+    function updateWsSwipe(dx) {
+      const s = swipeSession;
+      if (!s) return;
+      // Clamp dx to the session's direction so a reverse-past-zero
+      // doesn't open a wrong-side gap (the target panel is only
+      // parked on ONE side). Drags BACK toward zero are still
+      // honored so the user can cancel mid-gesture by easing off.
+      if (s.direction === 'right') dx = Math.max(0, dx);
+      else                          dx = Math.min(0, dx);
+      s.lastDx = dx;
+      const w = s.currentPanel.offsetWidth || 1;
+      s.currentPanel.style.transform = 'translateX(' + dx + 'px)';
+      const targetStartPx = s.targetSign * w;
+      s.targetPanel.style.transform  = 'translateX(' + (targetStartPx + dx) + 'px)';
+    }
+    function endWsSwipe(dx) {
+      const s = swipeSession;
+      if (!s) return;
+      const w = s.currentPanel.offsetWidth || 1;
+      const threshold = Math.min(80, w * 0.25);
+      const matchesDir = (s.direction === 'right' && dx >  threshold)
+                      || (s.direction === 'left'  && dx < -threshold);
+      const ease = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+      s.currentPanel.style.transition = ease;
+      s.targetPanel.style.transition  = ease;
+      const cleanup = () => {
+        [s.currentPanel, s.targetPanel].forEach(el => {
+          el.style.transition = '';
+          el.style.transform  = '';
+        });
+      };
+      if (matchesDir) {
+        // Commit — current exits the OPPOSITE side of where target came from.
+        const exitSign = -s.targetSign;
+        s.currentPanel.style.transform = 'translateX(' + (exitSign * 100) + '%)';
+        s.targetPanel.style.transform  = 'translateX(0)';
+        setTimeout(() => {
+          _wsLastView = s.targetView;
+          cleanup();
+          applyWsView(s.targetView, { slideFrom: null, showToast: true });
+        }, 230);
+      } else {
+        // Roll back to start. Re-hide the target panel after the
+        // animation so canonical visibility is restored.
+        s.currentPanel.style.transform = 'translateX(0)';
+        s.targetPanel.style.transform  = 'translateX(' + (s.targetSign * 100) + '%)';
+        setTimeout(() => {
+          cleanup();
+          if (s.targetView !== _wsLastView) s.targetPanel.hidden = true;
+        }, 230);
+      }
     }
 
     // Apply a view to the bottom sheet:
@@ -1621,8 +1706,15 @@
     window.__applyWsView = applyWsView;
     function onTouchEnd() {
       dragStart = null;
+      axisLocked = null;
+      // Resolve the horizontal carousel session — commit if the user
+      // crossed the threshold, otherwise snap both panels back.
+      if (swipeSession) {
+        endWsSwipe(swipeSession.lastDx || 0);
+        swipeSession = null;
+      }
       // Snap the sheet back to its resting position with the original
-      // CSS transition restored so the rebound feels smooth.
+      // CSS transition restored so any vertical-drag rebound feels smooth.
       if (sheet) {
         sheet.style.transition = '';
         sheet.style.transform = '';
