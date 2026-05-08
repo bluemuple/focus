@@ -521,8 +521,22 @@
     }
   }
 
+  // Per-call engine override — runs translate() while USE_GPT is forced
+  // to the requested value, then restores. Used by the lesson page when
+  // the user wants BOTH translations side-by-side ("non-AI, AI"): two
+  // calls with different engines, both displayed.
+  async function translateWith(text, context, useGPT) {
+    const prev = USE_GPT;
+    USE_GPT = !!useGPT;
+    try {
+      return await translate(text, context);
+    } finally {
+      USE_GPT = prev;
+    }
+  }
+
   window.Translate = {
-    translate, translateBatch, clearCache,
+    translate, translateBatch, translateWith, clearCache,
     setEngine, getEngine, lookupSenses, getWordInfo, getChunks,
     setUseGPT, getUseGPT,
   };

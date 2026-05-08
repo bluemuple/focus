@@ -821,6 +821,16 @@ body:has(.lesson-page) {
   font-style: italic;
   min-width: 28px;
   text-align: center;
+  /* Override the toggle-btn sky-blue default — the dict tools (✨ AI,
+     font−, font+) read better as plain white pills against the
+     lesson-card so only the mode toggle on the right wears the blue. */
+  background: #fff;
+  border-color: var(--line);
+  color: var(--ink);
+}
+.toggle-btn.dict:hover {
+  background: #f1f3f5;
+  border-color: #cfd4d9;
 }
 
 /* Bookmark toggle (찜) — pink fill while active. Same shape as other
@@ -2168,6 +2178,31 @@ body:has(.lesson-page) {
 }
 .playbar .pb-spacer { flex: 1; }   /* push speed/voice/× to right edge */
 
+/* Variant-bar: when the user opens playback with a word selected in
+   하나씩 / 이어서, the playbar swaps the sentence-step controls for
+   per-word / per-phrase repeat buttons. CSS toggles based on a class
+   on .playbar; JS owns the class. */
+.playbar .pb-variant-only { display: none; }
+.playbar.variant-word .pb-default-only,
+.playbar.variant-phrase .pb-default-only { display: none; }
+.playbar.variant-word .pb-variant-only,
+.playbar.variant-phrase .pb-variant-only { display: grid; place-items: center; }
+
+/* The repeat buttons are wider than the icon-only ones so the Korean
+   labels read comfortably. Keep them tappable on phones. */
+.playbar .pb-word-rep,
+.playbar .pb-chunk-rep {
+  width: auto; min-width: 70px; padding: 0 12px;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: -0.3px;
+}
+.playbar .pb-word-rep.active,
+.playbar .pb-chunk-rep.active {
+  background: #fff8d6;
+  border-color: #f5b800;
+  color: #6b4f00;
+}
+
 /* Repeat-mode cycler. The mode label ("문장" / "의미" / "단어") sits
    inside the round button so it reads at a glance. Modes 2/3 (chunk
    and word loops) get a subtle amber tint to distinguish them from the
@@ -2793,20 +2828,23 @@ body:has(.lesson-page) {
 .word-sheet .ws-level-tab.s3 { background: var(--word-3); }
 .word-sheet .ws-level-tab.s4 { background: var(--word-4); }
 
-/* ✨ GPT toggle in the sheet — same gold-glow active state as the
-   head-tools pill so users immediately recognise the matching control. */
-.word-sheet .ws-gpt-tab {
-  font-family: 'Apple Color Emoji', 'Segoe UI Emoji', sans-serif;
-  font-size: 14px;
+/* (✨ GPT toggle and 🔊 speaker tab were removed from the sheet row. The
+   head-tools ✨ pill is the single source of truth for AI translation;
+   word selection auto-speaks via TTS.speak so a dedicated speaker
+   button on the sheet was redundant.) */
+
+/* Drag-direction hint glyph — small chevron pair on the right of the row
+   suggesting the sheet responds to vertical swipes (UP for corpora,
+   DOWN for Naver dictionary). Decorative only. */
+.word-sheet .ws-drag-hint {
+  display: inline-grid;
+  place-items: center;
+  width: 28px; height: 28px;
+  color: #9ca3af;
+  pointer-events: none;
+  flex-shrink: 0;
 }
-.word-sheet .ws-gpt-tab.gpt-on {
-  background: linear-gradient(135deg, #fff8d6 0%, #ffe082 100%);
-  border-color: #f5b800;
-  box-shadow: 0 0 0 2px rgba(245,184,0,0.18);
-}
-.word-sheet .ws-gpt-tab.gpt-on:hover {
-  background: linear-gradient(135deg, #fff3b3 0%, #ffd54f 100%);
-}
+.word-sheet .ws-drag-hint svg { display: block; }
 
 /* Mnemonic — visible by default. Highlights are pink. */
 .word-sheet .ws-mnemonic {
@@ -3235,3 +3273,207 @@ body.word-focus-open .lesson-text {
 .voice-menu .vm-gender { font-size: 13px; font-weight: 700; color: var(--ink); }
 .voice-menu .vm-note   { font-size: 11px; color: var(--muted); }
 .voice-menu .vm-check  { font-size: 16px; color: #1a73e8; font-weight: 800; }
+
+/* =============================================================
+   코퍼스 / Corpora popup
+   Vertical list of sentences from across the user's lessons that use
+   the target word. Each row's translateX is pre-computed so the
+   pink-highlighted word lands at the popup's horizontal center; a
+   shared --cp-x CSS variable lets the whole list slide left/right in
+   lockstep on user drag — every sentence moves as a single column.
+   ============================================================= */
+.corpora-popup {
+  position: fixed; inset: 0;
+  background: rgba(20, 25, 40, 0.55);
+  z-index: 220;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.corpora-popup[hidden] { display: none; }
+.corpora-popup .cp-card {
+  background: #fff;
+  border-radius: 18px;
+  width: 100%;
+  max-width: 920px;
+  height: min(78vh, 640px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.18);
+  overflow: hidden;
+}
+.cp-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.cp-title { font-weight: 700; font-size: 15px; color: var(--ink); }
+.cp-title .cp-word { color: #db5395; font-weight: 800; }
+.cp-meta  { color: var(--muted); font-size: 12px; }
+.cp-close {
+  margin-left: auto;
+  width: 32px; height: 32px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff;
+  font-size: 18px; line-height: 1; color: var(--ink);
+  cursor: pointer; flex-shrink: 0;
+}
+.cp-close:hover { background: #f1f3f5; }
+.cp-list {
+  flex: 1; min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 12px 0;
+  /* `--cp-x` is the shared horizontal offset every row reads; JS sets
+     it on this list element on drag and rows inherit. */
+  --cp-x: 0px;
+  cursor: grab;
+  user-select: none; -webkit-user-select: none;
+  position: relative;
+}
+.cp-list.dragging { cursor: grabbing; }
+.cp-row {
+  white-space: nowrap;
+  font-size: 15px; line-height: 1.7;
+  padding: 4px 0;
+  color: var(--ink);
+  /* Row's `--cp-row-offset` (set per-row by JS) centers its highlighted
+     word; `--cp-x` adds the user's drag delta on top. */
+  transform: translateX(calc(var(--cp-row-offset, 0px) + var(--cp-x, 0px)));
+  will-change: transform;
+}
+.cp-row .cp-hl {
+  color: #db5395; font-weight: 800;
+  background: rgba(219, 83, 149, 0.08);
+  border-radius: 4px;
+  padding: 0 2px;
+}
+.cp-row .cp-meta-tag {
+  color: var(--muted); font-size: 11px;
+  margin-left: 12px;
+}
+/* Vertical guide line at the popup's horizontal center — gives the user
+   a visual anchor that matches where every row's highlight sits. */
+.cp-list::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(219, 83, 149, 0.18);
+  pointer-events: none;
+  z-index: 0;
+}
+.cp-row { position: relative; z-index: 1; }
+.cp-empty { padding: 30px 18px; text-align: center; }
+.cp-hint  {
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Mobile: the popup stretches to match the lesson page's white card —
+   nearly full screen, generous rounded corners. */
+@media (max-width: 1023px) {
+  .corpora-popup { padding: 8px; }
+  .corpora-popup .cp-card {
+    max-width: 100%;
+    width: 100%;
+    height: 100%;
+    border-radius: 14px;
+  }
+}
+
+/* Sidebar buttons that open corpora / Naver dict — small pills next to
+   the headword, color-matched to the existing speak/heart row. */
+.lesson-sidebar .ls-corpus-btn,
+.lesson-sidebar .ls-naver-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px; font-weight: 700;
+  color: #4b5563;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.lesson-sidebar .ls-corpus-btn:hover,
+.lesson-sidebar .ls-naver-btn:hover {
+  background: #f1f3f5; border-color: #cfd4d9; color: #1f2937;
+}
+
+/* When the sidebar is showing the Naver iframe, hide the word card
+   contents and let the iframe fill the vertical space. */
+.lesson-sidebar.naver-mode .ls-card,
+.lesson-sidebar.naver-mode .ls-empty { display: none; }
+.lesson-sidebar .ls-naver-frame {
+  position: absolute; inset: 0;
+  background: #fff;
+  display: flex; flex-direction: column;
+  z-index: 5;
+}
+.lesson-sidebar .ls-naver-frame[hidden] { display: none; }
+.lesson-sidebar .ls-naver-head {
+  display: flex; align-items: center; padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.lesson-sidebar .ls-naver-head .ls-naver-w {
+  font-weight: 700; color: var(--ink);
+}
+.lesson-sidebar .ls-naver-head .ls-naver-x {
+  margin-left: auto;
+  width: 28px; height: 28px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff;
+  font-size: 16px; line-height: 1; cursor: pointer;
+}
+.lesson-sidebar .ls-naver-iframe {
+  flex: 1; min-height: 0;
+  border: none; width: 100%;
+}
+
+/* =============================================================
+   Naver dict popup (mobile)
+   Same overlay/card pattern as the corpora popup. Triggered by a
+   downward drag on the word-sheet's row.
+   ============================================================= */
+.naver-popup {
+  position: fixed; inset: 0;
+  background: rgba(20, 25, 40, 0.55);
+  z-index: 220;
+  display: grid; place-items: center;
+  padding: 8px;
+}
+.naver-popup[hidden] { display: none; }
+.naver-popup .np-card {
+  background: #fff;
+  border-radius: 14px;
+  width: 100%;
+  height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+}
+.np-header {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.np-title { font-weight: 700; font-size: 14px; color: var(--ink); }
+.np-title .np-word { color: var(--accent-ink); font-weight: 800; }
+.np-close {
+  margin-left: auto;
+  width: 32px; height: 32px; border-radius: 999px;
+  border: 1px solid var(--line); background: #fff;
+  font-size: 18px; line-height: 1; cursor: pointer;
+}
+.np-iframe {
+  flex: 1; min-height: 0;
+  border: none; width: 100%;
+}
+@media (min-width: 1024px) {
+  /* PC uses the sidebar iframe instead — never show this popup. */
+  .naver-popup { display: none !important; }
+}
