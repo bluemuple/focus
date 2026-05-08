@@ -42,34 +42,29 @@
             </div>
           </div>
 
-          <!-- Page-flip buttons sit on either side of the page-count
-               thumbnail per spec: LEFT = next, RIGHT = previous (Korean
-               book navigation convention). They auto-hide when the
-               lesson has only one page; on mobile the playbar already
-               has its own sentence-level controls so we hide the pair
-               there to keep the title row uncluttered. -->
-          <button class="lh-page-btn" id="lh-page-next" aria-label="다음 페이지" title="다음 페이지" hidden>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
-                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="9 6 15 12 9 18"/>
-            </svg>
-          </button>
-
           <!-- Thumbnail uses background-image so it can stretch to the
                full height of .lh-left (title row + tools row). Hidden when
                the lesson has no uploaded thumbnail. The inner span is the
                "current/total" page indicator that overlays the image when
-               the lesson is paginated to 2+ pages. -->
+               the lesson is paginated to 2+ pages. The page-flip pair sits
+               on top of the thumb via absolute positioning — translucent
+               white when an image is present (so the image still reads
+               through), opaque gray when there's no image. -->
           <div class="lesson-thumb-img" id="lesson-thumb-img" hidden>
+            <button class="lh-page-btn lh-page-prev" id="lh-page-prev" aria-label="이전 페이지" title="이전 페이지" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                   stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="15 6 9 12 15 18"/>
+              </svg>
+            </button>
             <span class="thumb-pages" id="thumb-pages" hidden></span>
+            <button class="lh-page-btn lh-page-next" id="lh-page-next" aria-label="다음 페이지" title="다음 페이지" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                   stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <polyline points="9 6 15 12 9 18"/>
+              </svg>
+            </button>
           </div>
-
-          <button class="lh-page-btn" id="lh-page-prev" aria-label="이전 페이지" title="이전 페이지" hidden>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
-                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="15 6 9 12 15 18"/>
-            </svg>
-          </button>
         </div>
 
         <div class="lesson-text-wrap" id="lesson-text-wrap">
@@ -194,9 +189,21 @@
         <ul class="ls-collocs" id="ls-collocs"></ul>
       </details>
 
-      <!-- Phrase add button (multi-word selections in cont mode) -->
+      <!-- Phrase add button (multi-word selections in 이어서 mode).
+           Saves the current selection to the user's "구문" list so it
+           shows up in the 문장 연습 / 구문 review later. Re-tapping when
+           the button reads "추가됨" toggles OFF (removes the saved
+           phrase). The icon is an inline SVG using currentColor so it
+           tints together with the button text in the active state. -->
       <button class="ls-add" id="ls-add" hidden>
-        <img src="images/add.jpg" alt="" onerror="this.style.display='none';">
+        <svg class="ls-add-ico" viewBox="0 0 24 24" width="20" height="20" fill="none"
+             stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <g class="ls-add-plus">
+            <line x1="12" y1="5"  x2="12" y2="19"/>
+            <line x1="5"  y1="12" x2="19" y2="12"/>
+          </g>
+          <polyline class="ls-add-check" points="5 12.5 10 17.5 19 8.5"/>
+        </svg>
         <span>구문에 추가</span>
       </button>
 
@@ -679,10 +686,28 @@
     if (toggle) toggle.addEventListener('click', () => { SIDEBAR_OPEN = true;  applySidebarVisibility(); });
     if (add) add.addEventListener('click', () => {
       if (!SIDEBAR_PHRASE) return;
+      const span = add.querySelector('span');
+      // Toggle: if already added, this click REMOVES the saved phrase.
+      // Match by phrase text (DB.deletePhrase needs the entry's id; we
+      // look it up from the current list). Fall back to add-on-error.
+      if (add.classList.contains('added')) {
+        try {
+          const list = (DB.listPhrases() || []);
+          const target = list.find(p =>
+            (p.phrase || '').trim() === (SIDEBAR_PHRASE.text || '').trim()
+            && p.lessonId === lessonId
+          ) || list.find(p =>
+            (p.phrase || '').trim() === (SIDEBAR_PHRASE.text || '').trim()
+          );
+          if (target && target.id) DB.deletePhrase(target.id);
+        } catch (e) {}
+        add.classList.remove('added');
+        if (span) span.textContent = '구문에 추가';
+        return;
+      }
       try { DB.addPhrase(SIDEBAR_PHRASE.text, SIDEBAR_PHRASE.ko, lessonId); } catch (e) {}
       add.classList.add('added');
-      const span = add.querySelector('span');
-      if (span) span.textContent = '추가됨 ✓';
+      if (span) span.textContent = '추가됨';
     });
     // (Anchor-direction pill removed — the arrow keys now use _lastGrow
     // tracking and don't need a sticky direction toggle.)
@@ -1855,13 +1880,24 @@
       else          mountLevelBar(levelHost, text);
     }
 
-    // Add-phrase button (multi-word selection only)
+    // Add-phrase button (multi-word selection only). If the phrase is
+    // ALREADY in the user's saved list, reflect that state on open so
+    // re-tapping behaves as a remove (the toggle in setupSidebar's
+    // click handler keys off this `.added` class).
     const addBtn = document.getElementById('ls-add');
     if (addBtn) {
       addBtn.hidden = !isPhrase;
       addBtn.classList.remove('added');
       const span = addBtn.querySelector('span');
-      if (span) span.textContent = '구문에 추가';
+      let already = false;
+      if (isPhrase) {
+        try {
+          const list = DB.listPhrases() || [];
+          already = list.some(p => (p.phrase || '').trim() === (text || '').trim());
+        } catch (_) {}
+      }
+      if (already) addBtn.classList.add('added');
+      if (span) span.textContent = already ? '추가됨' : '구문에 추가';
     }
 
     // Reset all rich sections
@@ -4039,11 +4075,33 @@
     const trans = document.createElement('div');
     trans.className = 'cont-trans';
     trans.textContent = ko;
-    // Sit 3px below the line so descenders (g, p, y…) don't kiss the
-    // gray Korean caption — was 1px before, now 2px lower per spec.
-    trans.style.top  = (lastRect.bottom - ltRect.top + 3) + 'px';
-    trans.style.left = (leftRect.left   - ltRect.left)    + 'px';
+    trans.style.left = (leftRect.left - ltRect.left) + 'px';
+    // Append hidden first so we can measure its rendered height before
+    // committing to "below" or "above" placement.
+    trans.style.visibility = 'hidden';
+    trans.style.top = '0px';
     lt.appendChild(trans);
+
+    // Decide BELOW vs ABOVE the line. Default sits 3 px below — gives
+    // descenders (g, p, y) breathing room and matches the prior spec.
+    // But when the selection is on the LAST visible line of the page,
+    // a "below" position would be clipped by lesson-text's overflow:
+    // hidden — the user reported the Korean caption disappears for
+    // bottom-line selections. Falling back to "above" the FIRST line
+    // of the selection keeps the caption visible without changing the
+    // line spacing of the body.
+    const transHeight = trans.getBoundingClientRect().height || 18;
+    const ltHeight = ltRect.height;
+    const belowTop = lastRect.bottom - ltRect.top + 3;
+    if (belowTop + transHeight > ltHeight - 2) {
+      const firstSel = sorted[0];
+      const firstRect = firstSel.getBoundingClientRect();
+      const aboveTop = firstRect.top - ltRect.top - transHeight - 1;
+      trans.style.top = Math.max(0, aboveTop) + 'px';
+    } else {
+      trans.style.top = belowTop + 'px';
+    }
+    trans.style.visibility = '';
   }
 
   // ============== anchored word popup ==============

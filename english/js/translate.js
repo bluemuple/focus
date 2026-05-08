@@ -440,12 +440,61 @@
   } catch (e) { chunkLs = {}; }
   function persistChunks() { try { localStorage.setItem(CHUNK_LS, JSON.stringify(chunkLs)); } catch (e) {} }
 
+  // Hard 6-word ceiling enforced CLIENT-SIDE. The chunk-gpt prompt asks
+  // for ≤6-word chunks but gpt-4o-mini occasionally returns longer ones
+  // (especially on news-style sentences with multi-PP modifiers). Rather
+  // than fight the model, we post-process: any chunk longer than 6 words
+  // is split into 6-word slabs at whitespace boundaries, with indices
+  // recomputed so applyChunkHighlight on the body still aligns.
+  // Also re-applies on cache reads so previously-cached oversized chunks
+  // get clamped automatically — no second redeploy required.
+  function clampChunks(rawChunks) {
+    if (!Array.isArray(rawChunks)) return rawChunks;
+    const out = [];
+    for (const c of rawChunks) {
+      if (!c || !c.text) continue;
+      const words = String(c.text).split(/\s+/).filter(Boolean);
+      const baseStart = (Array.isArray(c.indices) && Number.isFinite(c.indices[0]))
+        ? (c.indices[0] | 0) : 0;
+      if (words.length <= 6) {
+        // Already small enough — keep as-is, with safe indices.
+        const end = (Array.isArray(c.indices) && Number.isFinite(c.indices[1]))
+          ? (c.indices[1] | 0) : (baseStart + words.length - 1);
+        out.push({ text: c.text, indices: [baseStart, end] });
+        continue;
+      }
+      // Too long. Slab into pieces of at most 6 words.
+      let cursor = 0;
+      while (cursor < words.length) {
+        const len = Math.min(6, words.length - cursor);
+        const slab = words.slice(cursor, cursor + len).join(' ');
+        out.push({
+          text: slab,
+          indices: [baseStart + cursor, baseStart + cursor + len - 1],
+        });
+        cursor += len;
+      }
+    }
+    return out;
+  }
+
   async function getChunks(sentence) {
     sentence = (sentence || '').trim();
     if (!sentence || sentence.length < 5) return null;
     const key = _hashStr(sentence);
+    // Even cached chunks pass through the clamp, so a localStorage entry
+    // produced before client-side clamping still gets corrected on read.
     if (chunkCache[key]) return chunkCache[key];
-    if (chunkLs[key])    { chunkCache[key] = chunkLs[key]; return chunkLs[key]; }
+    if (chunkLs[key])    {
+      const clamped = clampChunks(chunkLs[key]);
+      chunkCache[key] = clamped;
+      // Re-persist if the clamp actually changed anything.
+      if (clamped.length !== chunkLs[key].length) {
+        chunkLs[key] = clamped;
+        persistChunks();
+      }
+      return clamped;
+    }
     try {
       const { url, headers } = supabaseUrl('/functions/v1/chunk-gpt');
       const r = await fetch(url, {
@@ -461,10 +510,11 @@
       if (!data || data.error || !Array.isArray(data.chunks)) {
         throw new Error('chunk-gpt: ' + (data && data.error || 'bad shape'));
       }
-      chunkCache[key] = data.chunks;
-      chunkLs[key] = data.chunks;
+      const clamped = clampChunks(data.chunks);
+      chunkCache[key] = clamped;
+      chunkLs[key] = clamped;
       persistChunks();
-      return data.chunks;
+      return clamped;
     } catch (e) {
       console.warn('[chunk-gpt]', e && e.message || e);
       return null;
