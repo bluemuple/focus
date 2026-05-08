@@ -732,10 +732,10 @@
     // start on the page that contains the highlighted sentence so the
     // user lands directly on the spot they tapped in the corpus popup.
     // The actual underline is applied AFTER renderInto fills the DOM.
-    const hlParam = params.get('hl');
-    let hlSentence = '';
-    if (hlParam) {
-      try { hlSentence = decodeURIComponent(hlParam); } catch (_) { hlSentence = hlParam; }
+    // URLSearchParams.get already decodes the value — no second
+    // decodeURIComponent (it would throw URIError on stray "%" chars).
+    const hlSentence = params.get('hl') || '';
+    if (hlSentence) {
       const tp = findSentencePageIdx(hlSentence);
       if (tp >= 0) pageIdx = tp;
       // Strip the param from the URL so a refresh doesn't re-trigger
@@ -932,58 +932,103 @@
   }
 
   // Locate which page index of the current LESSON contains `target`. We
-  // walk PAGES (array of paragraph-string arrays) and look for a direct
-  // substring hit; falling back to a 40-char prefix match if the full
-  // sentence isn't found verbatim (cross-page splits may have re-flowed
-  // whitespace). Returns -1 when the sentence isn't in the current
-  // lesson at all.
+  // join each page's paragraphs (so multi-paragraph or paginated mid-
+  // sentence cases still match on the joined text) and look first for
+  // the FULL sentence, then a 40-char prefix, then the page's tail —
+  // covering the case where paginateByHeight split the sentence and
+  // only the first half lives on page p (continuation on p+1).
+  // Returns -1 when the sentence isn't in the current lesson at all.
   function findSentencePageIdx(target) {
     if (!Array.isArray(PAGES) || !target) return -1;
     const t = String(target).trim();
     if (!t) return -1;
     const prefix = t.slice(0, Math.min(40, t.length));
+    // Pass 1: full sentence (verbatim) inside the page's joined text.
     for (let p = 0; p < PAGES.length; p++) {
-      const paras = PAGES[p] || [];
-      for (const para of paras) {
-        const s = String(para);
-        if (s.indexOf(t) !== -1 || s.indexOf(prefix) !== -1) return p;
+      const joined = (PAGES[p] || []).join(' ');
+      if (joined.indexOf(t) !== -1) return p;
+    }
+    // Pass 2: 40-char prefix match (safe for very long sentences that
+    // were truncated to 100 chars in the URL).
+    for (let p = 0; p < PAGES.length; p++) {
+      const joined = (PAGES[p] || []).join(' ');
+      if (joined.indexOf(prefix) !== -1) return p;
+    }
+    // Pass 3: cross-page split — the page's TAIL is the start of the
+    // target. We walk a sliding window from longest to shortest to find
+    // any prefix-of-target that ends a page.
+    for (let p = 0; p < PAGES.length; p++) {
+      const joined = (PAGES[p] || []).join(' ');
+      const maxOverlap = Math.min(joined.length, t.length - 1);
+      for (let n = maxOverlap; n >= 8; n--) {
+        if (t.startsWith(joined.slice(joined.length - n))) return p;
       }
     }
     return -1;
   }
 
-  // Apply a 3-second pink underline to the words of the SENTENCE_MAP
-  // entry that best matches `target`. Match strategy: exact lowercase,
-  // then prefix-includes either way (handles cross-page sentence
-  // fragments where the body shows only part of the corpus's full
-  // sentence). After 3 s, fade out via CSS transition (0.4 s), then
-  // remove the class.
+  // Apply a 3-second pink underline to the words on the current page
+  // that match `target`. Strategy: scan all .w elements on the page,
+  // build a running concatenation of their text, and find where the
+  // target's prefix appears. Then walk the same elements again and
+  // mark every .w whose character range overlaps the matched span.
+  // This works for cross-page sentence fragments (only the start of
+  // target appears on the current page — we still mark up to where
+  // the page ends) without relying on SENTENCE_MAP boundaries.
+  // After 3 s, fade out via CSS transition (0.4 s), then strip both
+  // classes so no DOM residue remains for a future click.
   function highlightSentenceOnCurrentPage(target) {
     const root = document.getElementById('lesson-text');
     if (!root) return;
-    buildSentenceMap(root);
-    const t = String(target || '').trim().toLowerCase();
+    const t = String(target || '').trim();
     if (!t) return;
-    const prefix = t.slice(0, Math.min(40, t.length));
-    let best = null;
-    for (const sm of SENTENCE_MAP) {
-      const smText = (sm.text || '').trim().toLowerCase();
-      if (!smText) continue;
-      const smPrefix = smText.slice(0, Math.min(40, smText.length));
-      if (smText === t
-          || smText.indexOf(prefix) !== -1
-          || t.indexOf(smPrefix) !== -1) {
-        best = sm;
-        break;
-      }
+    const tLower = t.toLowerCase();
+    const tPrefix = tLower.slice(0, Math.min(40, tLower.length));
+
+    const wEls = Array.from(root.querySelectorAll('.w'));
+    if (!wEls.length) return;
+    const concatLower = wEls
+      .map(el => (el.textContent || '').toLowerCase())
+      .join('');
+    let startIdx = concatLower.indexOf(tPrefix);
+    if (startIdx < 0) {
+      // Last-ditch: shorter 20-char prefix in case rendering altered
+      // the first 40 chars (rare, e.g. unicode normalization).
+      const tinyPrefix = tLower.slice(0, Math.min(20, tLower.length));
+      startIdx = concatLower.indexOf(tinyPrefix);
+      if (startIdx < 0) return;
     }
-    if (!best) return;
-    const wordEls = best.words.slice();
-    wordEls.forEach(w => w.classList.add('cp-jump-hl'));
+    // Prefer ending at the FULL target's last character if it appears
+    // verbatim; otherwise stop at start+target-length (clipped to the
+    // concat's end), which covers cross-page fragment cases.
+    let endIdx;
+    const fullAt = concatLower.indexOf(tLower, startIdx);
+    if (fullAt === startIdx) {
+      endIdx = startIdx + tLower.length;
+    } else {
+      endIdx = Math.min(startIdx + tLower.length, concatLower.length);
+    }
+
+    // Walk again, summing element widths, collecting overlaps with
+    // [startIdx, endIdx).
+    let pos = 0;
+    const toMark = [];
+    for (const el of wEls) {
+      const txt = (el.textContent || '');
+      const elStart = pos;
+      const elEnd   = pos + txt.length;
+      if (elEnd > startIdx && elStart < endIdx) {
+        toMark.push(el);
+      }
+      pos = elEnd;
+      if (pos >= endIdx) break;
+    }
+    if (!toMark.length) return;
+    toMark.forEach(w => w.classList.add('cp-jump-hl'));
     setTimeout(() => {
-      wordEls.forEach(w => w.classList.add('fading'));
+      toMark.forEach(w => w.classList.add('fading'));
       setTimeout(() => {
-        wordEls.forEach(w => {
+        toMark.forEach(w => {
           w.classList.remove('cp-jump-hl');
           w.classList.remove('fading');
         });
