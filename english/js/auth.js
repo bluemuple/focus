@@ -92,6 +92,14 @@
       if (!email || !pw) return;
       submitBtn.disabled = true;
       submitBtn.textContent = '처리 중...';
+      // Mark the form as in-flight so the eng:signed-in watcher
+      // (attached at module load) won't ALSO race-reload the page —
+      // this handler owns the post-success flow (teardown + onAuthed).
+      // Without this guard, the watcher's location.reload() fired
+      // mid-submit before setTryMode / onAuthed could run, and in
+      // some browsers the reload beat Supabase's session write to
+      // localStorage → "modal closed but login didn't take effect".
+      _submittingForm = true;
       try {
         if (mode === 'signup') {
           await DB.signUp(email, pw);
@@ -121,6 +129,8 @@
         else errBox.textContent = msg;
         submitBtn.disabled = false;
         submitBtn.textContent = mode === 'signup' ? '계정 만들기' : '로그인';
+      } finally {
+        _submittingForm = false;
       }
     });
 
@@ -162,6 +172,12 @@
   // originally wired up — no full reload needed in the typical case.
   let _lastOnAuthed = null;
 
+  // Set true while the modal's own form-submit handler is awaiting
+  // DB.signIn / DB.signUp. The eng:signed-in watcher checks this so it
+  // only handles EXTERNAL sign-ins (cross-tab, parent Bidoro app) and
+  // leaves the form's own success flow alone.
+  let _submittingForm = false;
+
   // Mid-session sign-out (token refresh failure, another tab signing
   // out, iOS storage wipe, parent Bidoro app signing out): re-show the
   // login modal so the user can re-authenticate without a broken page.
@@ -175,7 +191,11 @@
   // parent Bidoro app with the same account → the shared Supabase
   // session updates here). If our login modal is currently up, dismiss
   // it and reload so the home page comes back with the new session.
+  // SKIPPED when our own form is mid-submit — that handler owns the
+  // teardown + onAuthed flow and we'd otherwise race-reload before the
+  // session storage write is flushed.
   window.addEventListener('eng:signed-in', () => {
+    if (_submittingForm) return;         // own form-submit owns the path
     if (!modalIsUp()) return;
     document.body.classList.remove('signed-out');
     const root = document.getElementById('auth-modal-root');
