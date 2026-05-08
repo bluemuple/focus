@@ -1703,6 +1703,24 @@
     _focusedWordEl = null;
     _focusedChunkEls = null;
     document.body.classList.remove('word-focus-open');
+    // Slide the card back to its natural position. We animate via the
+    // SAME .22s transition the shift used so the close motion feels
+    // symmetric. After the animation finishes, drop the inline style
+    // so future class-rule transforms (e.g. cont-bar-open) aren't
+    // shadowed by a leftover translateY(0).
+    const main = document.getElementById('lesson-main');
+    if (main && main.style.transform && main.style.transform !== 'translateY(0px)') {
+      main.style.transition = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+      main.style.transform = 'translateY(0px)';
+      setTimeout(() => {
+        if (main && main.style.transform === 'translateY(0px)') {
+          main.style.transform = '';
+          main.style.transition = '';
+        }
+      }, 260);
+    }
+    // Legacy var cleanup (the old approach used a CSS variable; removing
+    // here keeps history-clean if anything still queries it).
     document.documentElement.style.removeProperty('--word-focus-shift');
   }
   function applyWordFocus(wEl) {
@@ -2216,9 +2234,12 @@
     _sheetWord = null;
   }
   function applyWordSheetShift() {
-    // No longer shifts the entire lesson-main (that hid the title row).
-    // Per-word text shift is handled by ensureWordVisibleAboveSheet.
-    document.documentElement.style.removeProperty('--word-focus-shift');
+    // No-op. The actual shift is owned by ensureWordVisibleAboveSheet
+    // (called right after this in the same RAF). The legacy code here
+    // used to clear `--word-focus-shift`, which collapsed back-to-back
+    // writes into a single "var unset" state that the browser flushed
+    // before the new value was committed — the card never animated up.
+    // Removing that side effect fixed the "shift doesn't trigger" bug.
   }
   // Stable shift: only triggered when the user picks a word in the
   // BOTTOM 3 LINES of the page. Once shifted, the text stays put for
@@ -2231,32 +2252,33 @@
     if (!sheet || sheet.hidden || !wEl) return;
     const wrap = document.getElementById('lesson-text-wrap');
     if (!wrap) return;
+    const main = document.getElementById('lesson-main');
+    if (!main) return;
 
-    // Match 이어서 mode's behavior: when the selected word is in the
-    // bottom 3-line danger zone, shift the WHOLE lesson card (title
-    // bar + text) up — not just the text inside. Driven by the
-    // `--word-focus-shift` CSS variable; `body.word-focus-open
-    // .lesson-main { transform: translateY(var(--word-focus-shift)) }`
-    // applies it. Closing the sheet drops the body class, the var is
-    // cleared, and the card slides back via .lesson-main's existing
-    // transition.
+    // Mobile only — the PC sidebar is the surface there, not the sheet.
+    if (window.matchMedia('(min-width: 1024px)').matches) return;
+
+    // Same trigger logic as before: bottom 3-ish lines of the wrap.
     const lineHeight = parseFloat(getComputedStyle(lt).lineHeight) || 40;
     const SAFE_BOTTOM_LINES = 4;
     const wrapBottom = wrap.getBoundingClientRect().bottom;
     const wRect      = wEl.getBoundingClientRect();
     const distFromBottom = wrapBottom - wRect.bottom;
-
     if (distFromBottom >= lineHeight * SAFE_BOTTOM_LINES) return;
 
-    // ADDITIONAL shift on top of any existing var value — so tapping a
-    // bottom word with the sheet already open lifts the card further
-    // when the previous shift didn't cover the new word's position.
+    // Drive the shift via INLINE transform on .lesson-main. Inline beats
+    // any class-rule transform (cont-bar-open, etc.) and is immune to
+    // CSS-variable race conditions where back-to-back set/remove of a
+    // var inside one task flushes only the final state. Read the current
+    // inline translateY (default 0), add the additional needed amount.
     const additional = Math.ceil(lineHeight * SAFE_BOTTOM_LINES - distFromBottom + 8);
-    const cur = parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue('--word-focus-shift')
-    ) || 0;
-    const newY = cur - additional;
-    document.documentElement.style.setProperty('--word-focus-shift', Math.round(newY) + 'px');
+    const m = (main.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
+    const currentY = m ? parseFloat(m[1]) : 0;
+    const newY = currentY - additional;
+    // Set transition explicitly so the slide animates even when no
+    // class rule contributed a transition for this element.
+    main.style.transition = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+    main.style.transform = 'translateY(' + Math.round(newY) + 'px)';
   }
 
   function renderSidebarWordList(host) {
