@@ -42,6 +42,19 @@
             </div>
           </div>
 
+          <!-- Page-flip buttons sit on either side of the page-count
+               thumbnail per spec: LEFT = next, RIGHT = previous (Korean
+               book navigation convention). They auto-hide when the
+               lesson has only one page; on mobile the playbar already
+               has its own sentence-level controls so we hide the pair
+               there to keep the title row uncluttered. -->
+          <button class="lh-page-btn" id="lh-page-next" aria-label="다음 페이지" title="다음 페이지" hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="9 6 15 12 9 18"/>
+            </svg>
+          </button>
+
           <!-- Thumbnail uses background-image so it can stretch to the
                full height of .lh-left (title row + tools row). Hidden when
                the lesson has no uploaded thumbnail. The inner span is the
@@ -50,6 +63,13 @@
           <div class="lesson-thumb-img" id="lesson-thumb-img" hidden>
             <span class="thumb-pages" id="thumb-pages" hidden></span>
           </div>
+
+          <button class="lh-page-btn" id="lh-page-prev" aria-label="이전 페이지" title="이전 페이지" hidden>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                 stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="15 6 9 12 15 18"/>
+            </svg>
+          </button>
         </div>
 
         <div class="lesson-text-wrap" id="lesson-text-wrap">
@@ -3078,7 +3098,11 @@
   // Called whenever the selection changes.
   function renderContOutlines() {
     document.querySelectorAll('.cont-outline').forEach(el => el.remove());
-    if (CONT_SELECTED.size < 2) return;
+    // Even a single selected word gets the rectangular outline now —
+    // the user wants visual feedback the moment the first word is picked,
+    // not only after multi-word selection. Multi-line layouts still
+    // produce one outline rectangle per visual line below.
+    if (CONT_SELECTED.size < 1) return;
 
     const lt = document.getElementById('lesson-text');
     if (!lt) return;
@@ -3339,6 +3363,19 @@
     const prev  = document.getElementById('page-prev'); if (prev)  prev.disabled = pageIdx === 0;
     const next  = document.getElementById('page-next'); if (next)  next.disabled = pageIdx >= total - 1;
 
+    // Lesson-header page-flip pair (PC). Show only when the lesson is
+    // paginated to 2+ pages; disable the relevant edge button at each
+    // boundary so the user can't tap into a non-existent page.
+    const lhPrev = document.getElementById('lh-page-prev');
+    const lhNext = document.getElementById('lh-page-next');
+    if (lhPrev && lhNext) {
+      const multiPage = total > 1;
+      lhPrev.hidden = !multiPage;
+      lhNext.hidden = !multiPage;
+      lhPrev.disabled = pageIdx === 0;
+      lhNext.disabled = pageIdx >= total - 1;
+    }
+
     // Overlay "current/total" on the thumbnail when the lesson spans
     // multiple pages. The thumb is also force-shown for paginated lessons
     // even if the user hasn't uploaded an image. In that case the box
@@ -3451,6 +3488,14 @@
   const nextBtn = document.getElementById('page-next');
   if (prevBtn) prevBtn.addEventListener('click', () => goPage(-1));
   if (nextBtn) nextBtn.addEventListener('click', () => goPage(+1));
+
+  // New PC lesson-header page-flip pair flanking the page-counter
+  // thumbnail. Per spec: LEFT button advances (next), RIGHT button
+  // rewinds (previous) — Korean book reading convention.
+  const lhPrevBtn = document.getElementById('lh-page-prev');
+  const lhNextBtn = document.getElementById('lh-page-next');
+  if (lhPrevBtn) lhPrevBtn.addEventListener('click', () => goPage(-1));
+  if (lhNextBtn) lhNextBtn.addEventListener('click', () => goPage(+1));
   document.addEventListener('keydown', (e) => {
     if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
 
