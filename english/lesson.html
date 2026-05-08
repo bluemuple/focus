@@ -2231,6 +2231,13 @@
       lt.style.transition = '';
     }
     clearWordFocus();
+    // Per spec: closing the sheet via × means "deselect the word".
+    // Clear .active (the cursor that arrow-stepping walks from) and
+    // .focused/.focused-chunk (already done by clearWordFocus). Net
+    // effect: pressing × leaves the page in a "no-word-selected"
+    // state, so the next interaction starts fresh.
+    document.querySelectorAll('#lesson-text .w.active')
+      .forEach(el => el.classList.remove('active'));
     _sheetWord = null;
   }
   function applyWordSheetShift() {
@@ -3647,8 +3654,16 @@
     const pbClose = document.getElementById('pb-close');
     if (lbPlay) lbPlay.addEventListener('click', showPlaybar);
     if (pbClose) pbClose.addEventListener('click', () => {
-      // Stop any audio before hiding the playbar.
+      // Per spec: × on ANY playback bar variant fully stops playback.
+      // Bumping `_playToken` and flipping `ttsPlaying = false` ensures
+      // any in-flight loop (sequential, word-loop, chunk-loop, phrase-
+      // loop) bails on its next iteration; TTS.stop() halts the audio
+      // element; the audio_url branch's audioEl is paused. Without the
+      // token bump, the loop would silently keep ticking and cycle to
+      // the next sentence after we'd already closed the bar.
       try {
+        if (typeof _playToken !== 'undefined') _playToken++;
+        if (typeof ttsPlaying !== 'undefined') ttsPlaying = false;
         if (audioEl && !audioEl.paused) audioEl.pause();
         if (typeof TTS !== 'undefined' && TTS.stop) TTS.stop();
       } catch (e) {}
