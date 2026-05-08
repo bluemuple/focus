@@ -5346,6 +5346,14 @@
     updateProgress();
   }
 
+  // Shared reference so `jumpAndPlay` (in the cross-branch section
+  // below) can resume sequential playback directly, bypassing the
+  // playBtn.click() handler that would otherwise route through variant
+  // dispatch (and play the SELECTED WORD twice instead of continuing
+  // to the next sentence). Set by the TTS branch when it defines its
+  // sequential reader.
+  let _startSequentialPlayback = null;
+
   function setupAudio() {
     const playBtn  = document.getElementById('play-btn');
     const speedBtn = document.getElementById('speed-btn');
@@ -5597,6 +5605,11 @@
         TTS.stop();
         setPlayBtnIcon(false);
       }
+      // Hand the sequential reader to the cross-branch jumpAndPlay so
+      // prev/next sentence buttons resume in FULL-TEXT mode regardless
+      // of any active variant.
+      _startSequentialPlayback = startTTSFromCurrent;
+
       // ── Variant playback runner ──────────────────────────────────────
       // Plays `text` repeatedly. `count` is the play target (e.g. 2 for
       // "play twice then stop"); pass Infinity for infinite-until-pause.
@@ -5776,13 +5789,35 @@
       if (audioEl && !audioEl.paused) { try { audioEl.pause(); } catch (e) {} }
     }
     // Common path for ⏮ / ⏭ : move + start playback from the new sentence.
+    //
+    // Sentence prev/next is ALWAYS sequential reading (per spec the
+    // user wants the new sentence + everything after it to play). If
+    // the playbar happened to be in a per-word/-phrase variant, we
+    // force-clear it here — both the JS state and the visual class
+    // — so the resumed playback runs through `startTTSFromCurrent`
+    // (sequential), not `startLoopedPlayback` (plays the selected
+    // word/phrase twice and stops).
+    //
+    // We also bypass `playBtn.click()` and call the sequential reader
+    // directly. Going through the click handler would re-route through
+    // the variant dispatch on every prev/next press — fragile, and the
+    // source of "presses next, plays one sentence, stops" reports.
     function jumpAndPlay(globalIdx) {
       stopAnyPlayback();
       gotoGlobalSentence(globalIdx);
+      if (typeof PLAY_VARIANT !== 'undefined') {
+        PLAY_VARIANT = null;
+        VARIANT_ANCHOR_EL = null;
+        const playbar = document.getElementById('playbar');
+        if (playbar) playbar.classList.remove('variant-word', 'variant-phrase');
+      }
       if (audioEl) {
         try { audioEl.play(); } catch (e) {}
+      } else if (typeof _startSequentialPlayback === 'function') {
+        _startSequentialPlayback();
       } else {
-        // ttsPlaying is false now — clicking play will START (not pause).
+        // Fallback for any path where the TTS branch hasn't yet exposed
+        // its sequential reader (shouldn't happen, but be defensive).
         playBtn.click();
       }
     }
