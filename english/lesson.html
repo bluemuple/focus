@@ -284,9 +284,17 @@
       <ul class="ws-list ws-examples" id="ws-examples"></ul>
     </div>
 
-    <!-- Collocations panel (toggled by 연) -->
+    <!-- Collocations panel (toggled by 연 OR by swipe-RIGHT). -->
     <div class="ws-panel" id="ws-panel-co" data-panel="co" hidden>
       <ul class="ws-list ws-collocs" id="ws-collocs"></ul>
+    </div>
+
+    <!-- Popular Meanings panel (opened by swipe-LEFT on the sheet).
+         Each row shows "Korean meaning | example sentence" with the
+         example's headword in pink and any inflection in sky-blue.
+         Tap an example row → its Korean translation appears below. -->
+    <div class="ws-panel" id="ws-panel-pm" data-panel="pm" hidden>
+      <ul class="ws-list ws-pm-list" id="ws-pm-list"></ul>
     </div>
 
     <!-- Ephemeral label that appears in the bottom-right of whichever
@@ -1161,6 +1169,9 @@
       const t = e.touches && e.touches[0];
       if (!t) return;
       dragStart = { x: t.clientX, y: t.clientY };
+      // Disable the CSS transition during finger-tracking so the sheet
+      // follows the touch in real time. Re-enabled in onTouchEnd.
+      if (sheet) sheet.style.transition = 'none';
     }
     function onTouchMove(e) {
       if (!dragStart) return;
@@ -1168,24 +1179,79 @@
       if (!t) return;
       const dx = t.clientX - dragStart.x;
       const dy = t.clientY - dragStart.y;
-      if (Math.abs(dx) > Math.abs(dy)) { dragStart = null; return; }   // horizontal — bail
-      if (Math.abs(dy) < 50) return;
-      const word = (document.getElementById('ws-meaning') ? _sheetWord : '') || '';
-      const target = word || '';
-      if (!target) { dragStart = null; return; }
-      if (dy < -50) {
-        // Drag UP → corpora.
-        dragStart = null;
-        openCorporaPopup(target);
-      } else if (dy > 50) {
-        dragStart = null;
-        openMobileNaver(target);
+      const absX = Math.abs(dx), absY = Math.abs(dy);
+
+      // Finger-follow animation: track the touch in real-time on the
+      // dominant axis — gives the sheet (+ its shadow, since it's the
+      // same element) a tactile, page-swipe feel before the swipe is
+      // even committed. We dampen the translation slightly (×0.6) so
+      // a flick doesn't fly the sheet completely off-screen before the
+      // commit threshold; that reads as cleaner. The transform gets
+      // reset in onTouchEnd whether we commit or cancel.
+      if (sheet && Math.max(absX, absY) > 8) {
+        if (absX > absY) {
+          // Horizontal — show the slide-direction.
+          sheet.style.transform = 'translateX(' + (dx * 0.6) + 'px)';
+        } else {
+          sheet.style.transform = 'translateY(' + (dy * 0.6) + 'px)';
+        }
+      }
+
+      // Direction routing per spec (commit at 50 px in dominant axis):
+      //   ↑ (dy < 0)  → corpora popup
+      //   ↓ (dy > 0)  → Naver dictionary popup
+      //   ← (dx < 0)  → Popular Meanings panel inline
+      //   → (dx > 0)  → Collocations panel inline
+      if (Math.max(absX, absY) < 50) return;
+      const word = _sheetWord || '';
+      if (!word) { dragStart = null; return; }
+      if (absY > absX) {
+        if (dy < -50) { dragStart = null; openCorporaPopup(word); }
+        else if (dy > 50) { dragStart = null; openMobileNaver(word); }
+      } else {
+        if (dx < -50) { dragStart = null; toggleWsPanel('pm'); }
+        else if (dx > 50) { dragStart = null; toggleWsPanel('co'); }
       }
     }
-    function onTouchEnd() { dragStart = null; }
+    // Helper: open the named ws-panel inline (PM = Popular Meanings,
+    // CO = Collocations). Hides the chunk box, deactivates other tabs,
+    // and matches the toast labelling already wired on the explicit
+    // button taps so swipe + tap behave identically.
+    function toggleWsPanel(id) {
+      const panel = document.getElementById('ws-panel-' + id);
+      if (!panel) return;
+      const wasOpen = !panel.hidden;
+      document.querySelectorAll('.ws-panel').forEach(p => { p.hidden = true; });
+      document.querySelectorAll('.ws-tab[data-panel]').forEach(b => b.classList.remove('active'));
+      const mn = document.getElementById('ws-mnemonic');
+      if (!wasOpen) {
+        panel.hidden = false;
+        const matchingBtn = document.querySelector('.ws-tab[data-panel="' + id + '"]');
+        if (matchingBtn) matchingBtn.classList.add('active');
+        if (mn) mn.hidden = true;
+        if (typeof showSheetToast === 'function') {
+          showSheetToast(id === 'pm' ? '의미' : id === 'co' ? '연어' : id === 'ex' ? '예문' : '');
+        }
+      } else if (mn) {
+        mn.hidden = false;
+      }
+      if (typeof applyWordSheetShift === 'function') {
+        requestAnimationFrame(applyWordSheetShift);
+      }
+    }
+    function onTouchEnd() {
+      dragStart = null;
+      // Snap the sheet back to its resting position with the original
+      // CSS transition restored so the rebound feels smooth.
+      if (sheet) {
+        sheet.style.transition = '';
+        sheet.style.transform = '';
+      }
+    }
     row.addEventListener('touchstart', onTouchStart, { passive: true });
     row.addEventListener('touchmove',  onTouchMove,  { passive: true });
     row.addEventListener('touchend',   onTouchEnd);
+    row.addEventListener('touchcancel', onTouchEnd);
   }
 
   // ============== motivation feedback (per-tap rewards) ==============
@@ -1624,6 +1690,33 @@
     out += escapeHtml(text.slice(last));
     return out;
   }
+  // Like highlightLemma but DISTINGUISHES the lemma stem (pink) from
+  // any short inflection suffix (-s, -es, -ed, -ing, -ies, -ied) in
+  // sky-blue. Used in Popular Meanings example sentences so learners
+  // see at a glance which form of the headword appears.
+  // "I consulted yesterday" with lemma "consult" →
+  //   "I <pink>consult</pink><sky>ed</sky> yesterday"
+  function highlightLemmaWithInflection(text, lemma) {
+    if (!text) return '';
+    if (!lemma) return escapeHtml(text);
+    const escaped = lemma.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Match lemma followed by an OPTIONAL 1-3-letter alpha suffix.
+    // 1-3 chars covers s/es/ed/ing/ies/ied without false-matching
+    // longer derived nouns ("consultation" — suffix "ation" 5 chars,
+    // doesn't match).
+    const re = new RegExp('\\b(' + escaped + ')([a-z]{1,3})?\\b', 'gi');
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      out += escapeHtml(text.slice(last, m.index));
+      out += '<span class="hl-lemma">' + escapeHtml(m[1]) + '</span>';
+      if (m[2]) out += '<span class="hl-infl">' + escapeHtml(m[2]) + '</span>';
+      last = m.index + m[0].length;
+    }
+    out += escapeHtml(text.slice(last));
+    return out;
+  }
   // Renders the chunk that contains the focused word — the English chunk
   // text (with the focused word in pink) above its Korean translation.
   // Replaces the old mnemonic block: more useful info, less waffle.
@@ -1724,16 +1817,66 @@
       ul.appendChild(li);
     }
   }
-  function renderSenseList(ul, senses) {
+  // Mobile word-sheet's swipe-LEFT panel: each row is a single line
+  // showing "<Korean meaning>  |  <example sentence>" with the example's
+  // headword pink and inflection sky-blue. Tapping the example row
+  // expands an extra line below with the example's Korean translation
+  // (lazy-fetched on first expand). N popular meanings → N rows by
+  // default, exactly the height the user asked for.
+  function renderPopularMeaningsRows(ul, senses, lemma) {
     if (!ul) return;
     ul.innerHTML = '';
     const list = (senses || []).slice(0, 6);
     for (const s of list) {
       const li = document.createElement('li');
-      // ko · pos · example — all inline so each sense fits in 1-2 lines.
+      li.className = 'ws-pm-row';
+      const ko = escapeHtml(s.ko || '');
+      const ex = highlightLemmaWithInflection(s.example || '', lemma || '');
+      li.innerHTML =
+        '<span class="ws-pm-ko">' + ko + '</span>' +
+        '<span class="ws-pm-divider">|</span>' +
+        '<span class="ws-pm-ex">' + ex + '</span>' +
+        '<div class="ws-pm-ex-ko" hidden></div>';
+      const exEl  = li.querySelector('.ws-pm-ex');
+      const exKoEl = li.querySelector('.ws-pm-ex-ko');
+      if (exEl && exKoEl) {
+        exEl.style.cursor = 'pointer';
+        exEl.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (!exKoEl.hidden) { exKoEl.hidden = true; return; }
+          // Lazy-translate on first expand. Cache the result on the
+          // element via dataset.
+          if (!exKoEl.dataset.loaded) {
+            exKoEl.textContent = '번역 중...';
+            exKoEl.hidden = false;
+            try {
+              const ko = await Translate.translate(s.example || '', s.example || '');
+              exKoEl.textContent = ko || '';
+              exKoEl.dataset.loaded = '1';
+            } catch (_) {
+              exKoEl.textContent = '—';
+            }
+          } else {
+            exKoEl.hidden = false;
+          }
+        });
+      }
+      ul.appendChild(li);
+    }
+  }
+  function renderSenseList(ul, senses, lemma) {
+    if (!ul) return;
+    ul.innerHTML = '';
+    const list = (senses || []).slice(0, 6);
+    for (const s of list) {
+      const li = document.createElement('li');
+      // Per spec: Korean meaning + POS pill on ONE line (POS in
+      // gray-button style); example sentence on the line below with
+      // the headword pink and any inflection suffix (-ed/-ing/-s)
+      // in sky-blue.
       let html = '<span class="ls-sense-ko">' + escapeHtml(s.ko || '') + '</span>';
-      if (s.pos)     html += '<span class="ls-sense-pos">' + escapeHtml(s.pos) + '</span>';
-      if (s.example) html += '<span class="ls-sense-ex">' + escapeHtml(s.example) + '</span>';
+      if (s.pos)     html += '<span class="ls-sense-pos ls-pos-tag">' + escapeHtml(s.pos) + '</span>';
+      if (s.example) html += '<span class="ls-sense-ex">' + highlightLemmaWithInflection(s.example, lemma || '') + '</span>';
       li.innerHTML = html;
       ul.appendChild(li);
     }
@@ -2199,6 +2342,9 @@
         }
         renderExamples(exUl, info.examples, info.lemma || word);
         renderCollocations(coUl, info.collocations, info.lemma || word);
+        // Populate the new Popular Meanings panel for swipe-LEFT.
+        const pmUl = document.getElementById('ws-pm-list');
+        if (pmUl && info.senses) renderPopularMeaningsRows(pmUl, info.senses, info.lemma || word);
         // (Removed: info.phraseChunk fallback. Word-info-gpt and chunk-
         // gpt produced DIFFERENT chunk boundaries, so when word-info
         // resolved first it would underline a phraseChunk version that
@@ -2556,7 +2702,7 @@
         // All three sections OPEN by default — user wants to see everything
         // without an extra tap. Closed only if they explicitly collapse.
         if (info.senses && info.senses.length) {
-          renderSenseList(sUl, info.senses);
+          renderSenseList(sUl, info.senses, info.lemma || text);
           const cnt = document.getElementById('ls-senses-count');
           if (cnt) cnt.textContent = '(' + info.senses.length + ')';
           if (sBlock) { sBlock.hidden = false; sBlock.open = true; }
