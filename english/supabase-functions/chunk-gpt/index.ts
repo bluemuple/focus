@@ -29,12 +29,69 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+
+// Stable hash of a normalized sentence — used as the shared-cache PK
+// in `chunk_gpt_cache`. Normalization (lowercase, collapse whitespace)
+// means trivially-different copies of the same sentence ("...heard from
+// nations" vs "... heard  from nations") share the same row.
+async function hashSentence(s: string): Promise<string> {
+  const norm = s.trim().toLowerCase().replace(/\s+/g, ' ');
+  const buf = new TextEncoder().encode(norm);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32);              // 128-bit hex prefix; collision-free at our scale.
+}
+
+async function readCache(hash: string): Promise<any | null> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return null;
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/chunk_gpt_cache`
+              + `?sentence_hash=eq.${encodeURIComponent(hash)}&select=chunks`;
+    const r = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+    });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    return arr?.[0]?.chunks || null;
+  } catch { return null; }
+}
+
+async function writeCache(hash: string, chunks: any): Promise<void> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/chunk_gpt_cache`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({ sentence_hash: hash, chunks }),
+    });
+  } catch {}
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
     const body = await req.json();
     const sentence = String(body?.sentence || "").trim();
     if (!sentence) return json({ error: "sentence required" }, 400);
+
+    // L2 (cloud) cache check — same sentence seen by ANY device/user
+    // before? Skip GPT entirely. Massive savings for textbook-style
+    // material that many users read.
+    const hash = await hashSentence(sentence);
+    const cached = await readCache(hash);
+    if (cached) return json({ chunks: cached });
 
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
@@ -242,6 +299,9 @@ Deno.serve(async (req) => {
     if (!parsed || !Array.isArray(parsed.chunks)) {
       return json({ error: "Bad GPT output", raw: raw.slice(0, 400) }, 502);
     }
+    // Fire-and-forget cache write — don't block the response on the
+    // INSERT. If it fails the next caller pays for one more GPT call.
+    writeCache(hash, parsed.chunks);
     return json({ chunks: parsed.chunks });
   } catch (e: any) {
     return json({ error: String(e?.message || e) }, 500);

@@ -387,18 +387,24 @@
     } catch (e) { return []; }
   }
 
-  // ---------- rich GPT word-info (senses + collocations + examples + mnemonic + chunk) ----------
-  // Single GPT call returns everything the sidebar / mobile word sheet
-  // needs to render. Cached by (word + sentence-hash) so the same word
-  // in the same sentence is fetched only once across reloads.
+  // ---------- rich GPT word-info (senses + collocations + examples) ----------
+  // Single GPT call returns the dictionary-style fields the sidebar /
+  // mobile word sheet needs. The Edge Function NO LONGER takes a
+  // sentence — sentence-dependent fields (contextual `ko`,
+  // `phraseChunk`) are handled separately by `Translate.translate
+  // (word, sentence)` (DeepL) and `getChunks(sentence)` (chunk-gpt).
+  // Result: same word across many sentences shares ONE cache entry,
+  // both in localStorage AND in the cloud-shared Supabase cache the
+  // Edge Function reads/writes — drastically lower GPT call volume.
   const wiCache = {};                          // L1: in-memory
-  // v4 — invalidates v3 cache so refreshed entries pick up the new
-  // collocations rule (phrase always uses LEMMA form, not inflected).
-  const WI_LS = 'eng.v4.wordInfo';
+  // v5 — schema change (no sentence in key, no `ko`/`phraseChunk` in
+  // value) invalidates v4 entries.
+  const WI_LS = 'eng.v5.wordInfo';
   let wiLs = {};
   try {
     wiLs = JSON.parse(localStorage.getItem(WI_LS) || '{}') || {};
     localStorage.removeItem('eng.v3.wordInfo');
+    localStorage.removeItem('eng.v4.wordInfo');     // drop per-sentence keys
   } catch (e) { wiLs = {}; }
   function persistWi() { try { localStorage.setItem(WI_LS, JSON.stringify(wiLs)); } catch (e) {} }
   function _hashStr(s) {
@@ -407,17 +413,17 @@
     for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
     return h.toString(36);
   }
-  async function getWordInfo(word, sentence) {
+  async function getWordInfo(word /* sentence ignored */) {
     word = (word || '').trim();
     if (!word) return null;
-    const key = word.toLowerCase() + '|' + (sentence ? _hashStr(sentence) : '');
+    const key = word.toLowerCase();
     if (wiCache[key]) return wiCache[key];
     if (wiLs[key])    { wiCache[key] = wiLs[key]; return wiLs[key]; }
     try {
       const { url, headers } = supabaseUrl('/functions/v1/word-info-gpt');
       const r = await fetch(url, {
         method: 'POST', headers,
-        body: JSON.stringify({ word, sentence: sentence || '' }),
+        body: JSON.stringify({ word }),
       });
       if (!r.ok) {
         let detail = '';
