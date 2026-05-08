@@ -6005,8 +6005,26 @@
               const total = stitched.trim();
               if (pageATail && total.length > 0) {
                 const ratio = pageATail.length / total.length;
-                midpointFraction = Math.max(0.10, Math.min(0.85, ratio));
+                // Floor raised from 0.10 → 0.35 so even very short page-A
+                // tails (e.g. "stretched") get at least ~35% of the stitched
+                // audio duration BEFORE the slide kicks off. This is the
+                // window during which the previous-page underline is
+                // visible to the user — under the old 0.10 floor it could
+                // be < 300 ms and felt invisible.
+                midpointFraction = Math.max(0.35, Math.min(0.85, ratio));
               }
+            }
+            // Pre-set the underline SYNCHRONOUSLY before TTS.speak so the
+            // previous-page-tail underline appears the instant we commit
+            // to this sentence — independent of the `playing` event's
+            // timing (which can be delayed by network/decode/iOS Safari
+            // quirks). Without this, for short page-A tails the underline
+            // could appear too late or not at all before the mid-audio
+            // slide moved us to page B. Belt-and-braces with the onplay
+            // setCurrentSentence(i) call below, which still serves as
+            // the canonical sync point for normal (non-stitched) sentences.
+            if (SENTENCE_MAP.length && i < SENTENCE_MAP.length) {
+              setCurrentSentence(i);
             }
             await new Promise(resolve => {
               TTS.speak(speakText, {
