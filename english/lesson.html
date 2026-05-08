@@ -162,7 +162,6 @@
     </div>
     <div class="ls-card" id="ls-card" hidden>
       <div class="ls-card-head">
-        <button class="speak" id="ls-speak" title="발음 듣기">🔊</button>
         <span class="ls-word" id="ls-word">—</span>
         <button class="wp-heart" id="ls-heart" title="퀴즈 카드에 추가" aria-pressed="false">♡</button>
         <!-- Corpora lookup — pulls every sentence on the site that uses
@@ -2122,6 +2121,53 @@
     }
     return escapeHtml(w);
   }
+  // Fast lemma heuristic — strips the most common English inflections so
+  // the "<root>: <Korean>" row can render the SECOND the sheet/sidebar
+  // opens, before word-info-gpt finishes (~1-2 s). When the GPT response
+  // arrives the heuristic is replaced with the authoritative form
+  // (e.g. heuristic "stretch" → GPT "stretch out") and the row repaints.
+  // Conservative: short words and irregulars fall through to identity,
+  // in which case `lemmaShown === false` and we show only the Korean.
+  // Module-scoped so BOTH the mobile word sheet and the PC sidebar can
+  // call it (the heuristic has to seed both surfaces).
+  function quickLemma(w) {
+    const lo = (w || '').toLowerCase();
+    if (!lo || lo.length < 4 || /[^a-z]/.test(lo)) return lo;
+    // -ied / -ies → -y  (studies → study, tried → try)
+    if (/[^aeiou]ies$/.test(lo)) return lo.slice(0, -3) + 'y';
+    if (/[^aeiou]ied$/.test(lo)) return lo.slice(0, -3) + 'y';
+    // doubled-consonant + ing / ed (running → run, stopped → stop)
+    if (/([bcdfghjklmnpqrstvwxz])\1ing$/.test(lo) && lo.length > 5) {
+      return lo.slice(0, -4);
+    }
+    if (/([bcdfghjklmnpqrstvwxz])\1ed$/.test(lo) && lo.length > 4) {
+      return lo.slice(0, -3);
+    }
+    // doubled-consonant + er / est (bigger → big, hottest → hot)
+    if (/([bcdfghjklmnpqrstvwxz])\1est$/.test(lo) && lo.length > 5) {
+      return lo.slice(0, -4);
+    }
+    if (/([bcdfghjklmnpqrstvwxz])\1er$/.test(lo) && lo.length > 4) {
+      return lo.slice(0, -3);
+    }
+    // -ing  (going → go, making → make)
+    if (/ing$/.test(lo) && lo.length > 4) {
+      const stem = lo.slice(0, -3);
+      if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
+      return stem;
+    }
+    // -ed   (talked → talk, hoped → hope)
+    if (/ed$/.test(lo) && lo.length > 3) {
+      const stem = lo.slice(0, -2);
+      if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
+      return stem;
+    }
+    // -es after sibilant (boxes → box, pushes → push)
+    if (/(?:s|x|z|ch|sh)es$/.test(lo) && lo.length > 3) return lo.slice(0, -2);
+    // bare -s (cats → cat, runs → run) — skip very short forms (us, is)
+    if (/[^aeious]s$/.test(lo) && lo.length > 3) return lo.slice(0, -1);
+    return lo;
+  }
   // Like highlightLemma but DISTINGUISHES the lemma stem (pink) from
   // any short inflection suffix (-s, -es, -ed, -ing, -ies, -ied) in
   // sky-blue. Used in Popular Meanings example sentences so learners
@@ -2716,52 +2762,6 @@
     let latestChunk = null;
     let latestChunkKo = '';
 
-    // Fast lemma heuristic — strips the most common English inflections so
-    // the "<root>: <Korean>" row can render the SECOND the sheet opens,
-    // before word-info-gpt finishes (~1-2 s). When the GPT response
-    // arrives, `latestLemma` is replaced with the authoritative form
-    // (e.g. heuristic "stretch" → GPT "stretch out") and the row repaints.
-    // Conservative: short words and irregulars fall through to identity,
-    // in which case `lemmaShown === false` and we show only the Korean.
-    function quickLemma(w) {
-      const lo = (w || '').toLowerCase();
-      if (!lo || lo.length < 4 || /[^a-z]/.test(lo)) return lo;
-      // -ied / -ies → -y  (studies → study, tried → try)
-      if (/[^aeiou]ies$/.test(lo)) return lo.slice(0, -3) + 'y';
-      if (/[^aeiou]ied$/.test(lo)) return lo.slice(0, -3) + 'y';
-      // doubled-consonant + ing / ed (running → run, stopped → stop)
-      if (/([bcdfghjklmnpqrstvwxz])\1ing$/.test(lo) && lo.length > 5) {
-        return lo.slice(0, -4);
-      }
-      if (/([bcdfghjklmnpqrstvwxz])\1ed$/.test(lo) && lo.length > 4) {
-        return lo.slice(0, -3);
-      }
-      // doubled-consonant + er / est (bigger → big, hottest → hot)
-      if (/([bcdfghjklmnpqrstvwxz])\1est$/.test(lo) && lo.length > 5) {
-        return lo.slice(0, -4);
-      }
-      if (/([bcdfghjklmnpqrstvwxz])\1er$/.test(lo) && lo.length > 4) {
-        return lo.slice(0, -3);
-      }
-      // -ing  (going → go, making → make)
-      if (/ing$/.test(lo) && lo.length > 4) {
-        const stem = lo.slice(0, -3);
-        if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
-        return stem;
-      }
-      // -ed   (talked → talk, hoped → hope)
-      if (/ed$/.test(lo) && lo.length > 3) {
-        const stem = lo.slice(0, -2);
-        if (/[bcdfghjklmnpqrstvwxz][bcdfghjklmnprtvz]$/.test(stem)) return stem + 'e';
-        return stem;
-      }
-      // -es after sibilant (boxes → box, pushes → push)
-      if (/(?:s|x|z|ch|sh)es$/.test(lo) && lo.length > 3) return lo.slice(0, -2);
-      // bare -s (cats → cat, runs → run) — skip very short forms (us, is)
-      if (/[^aeious]s$/.test(lo) && lo.length > 3) return lo.slice(0, -1);
-      return lo;
-    }
-
     function repaintChunkPanel() {
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
@@ -3079,8 +3079,9 @@
     const lower = text.toLowerCase();
     document.getElementById('ls-word').textContent = text;
 
-    const sp = document.getElementById('ls-speak');
-    if (sp) sp.onclick = () => TTS.speak(text);
+    // Speaker icon was removed per spec — keep the auto-pronunciation
+    // on sheet open (same as the mobile word-sheet flow). The user can
+    // re-listen by re-tapping the word in the body.
     TTS.speak(text);
 
     // Heart (single word only)
@@ -3166,22 +3167,73 @@
     // `sbLatestWordKo`, repainted by `repaintSidebarChunk()` whenever
     // either DeepL's word translation or the chunk Korean lands.
     let sbLatestWordKo = '';
-    let sbLatestChunk = null;
+    let sbLatestLemma  = '';      // from word-info-gpt; heuristic-seeded
+    let sbLatestChunk  = null;
     let sbLatestChunkKo = '';
+
     function repaintSidebarChunk() {
       if (!sbLatestChunk || !mnEl) return;
       renderChunkTx(mnEl, sbLatestChunk.text, sbLatestChunkKo, text, sbLatestWordKo);
     }
 
+    // Sidebar meaning row renders the same way as the mobile word
+    // sheet's top row: `<word with inflection sky-blue>: <Korean>`.
+    // We keep using the existing #ls-trans element (the "현재 의미"
+    // section) so layout stays consistent — only its content shape
+    // changes from "<ko>" to "<word>: <ko>". Phrase selections (multi-
+    // word) bypass the inflection logic and just show plain Korean.
+    function repaintSidebarMeaning() {
+      if (!transEl) return;
+      if (isPhrase) {
+        transEl.innerHTML = sbLatestWordKo
+          ? '<span class="ko">' + escapeHtml(sbLatestWordKo) + '</span>'
+          : '<span class="tx-loading">번역 중...</span>';
+        return;
+      }
+      const wDisplay = renderWordWithInflectionHTML(text, sbLatestLemma);
+      if (!sbLatestWordKo) {
+        transEl.innerHTML = wDisplay + ': <span class="tx-loading">…</span>';
+        return;
+      }
+      transEl.innerHTML = wDisplay + ': <span class="ko">' +
+                          escapeHtml(sbLatestWordKo) + '</span>';
+    }
+
+    // Seed the lemma with the heuristic guess so the row shows
+    // "stretch: …" the moment the sidebar opens (no waiting for
+    // word-info-gpt). Mirror of the mobile word-sheet flow.
+    if (!isPhrase) {
+      sbLatestLemma = quickLemma(text);
+      repaintSidebarMeaning();
+    }
+
+    // Phase 1 — fast contextless Korean. STATIC dict / cross-sentence
+    // cache often hits instantly; otherwise DeepL without context
+    // still tends to return faster than the contextual variant.
+    Translate.translate(text).then(ko => {
+      const cur = document.getElementById('ls-word');
+      if (!cur || cur.textContent !== text) return;
+      if (!sbLatestWordKo) {
+        sbLatestWordKo = (ko || '').trim();
+        repaintSidebarMeaning();
+        repaintSidebarChunk();
+      }
+    }).catch(() => {});
+
+    // Phase 2 — authoritative contextual Korean. Replaces the fast
+    // value if a different (sentence-aware) translation comes back.
     Translate.translate(text, sentence).then(ko => {
       const cur = document.getElementById('ls-word');
       if (!cur || cur.textContent !== text) return;
-      SIDEBAR_PHRASE = { text, ko };
-      if (transEl) transEl.innerHTML = '<span class="ko">' + escapeHtml(ko) + '</span>';
-      sbLatestWordKo = (ko || '').trim();
-      repaintSidebarChunk();
+      const next = (ko || '').trim();
+      if (next) {
+        sbLatestWordKo = next;
+        SIDEBAR_PHRASE = { text, ko: next };
+        repaintSidebarMeaning();
+        repaintSidebarChunk();
+      }
     }).catch(() => {
-      if (transEl)
+      if (!sbLatestWordKo && transEl)
         transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
 
@@ -3226,10 +3278,16 @@
           tag.textContent = info.pos;
           posTags.appendChild(tag);
         }
-        // Don't override transEl — Translate.translate already filled it
-        // with the contextual meaning. info.ko (no sentence) would be
-        // generic. (Mnemonic dropped per user request — chunk translation
-        // is rendered in the same slot below from chunk-gpt.)
+        // Authoritative lemma replaces the heuristic seed → meaning row
+        // re-renders with the proper root (e.g. "stretch" → "stretch out"
+        // for phrasal verbs). Same flow as the mobile word sheet.
+        if (info.lemma) {
+          sbLatestLemma = info.lemma;
+          repaintSidebarMeaning();
+        }
+        // Don't override transEl with info.ko — Translate.translate
+        // already filled it with the contextual meaning, and info.ko
+        // (no sentence) would be generic.
         // All three sections OPEN by default — user wants to see everything
         // without an extra tap. Closed only if they explicitly collapse.
         if (info.senses && info.senses.length) {
