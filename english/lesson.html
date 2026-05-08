@@ -254,16 +254,23 @@
          the user the sheet responds to vertical swipes — UP = corpora,
          DOWN = Naver dictionary. They're decorative (the actual swipe
          lives on the whole sheet's drag area), purely a visual cue. -->
+    <!-- Row layout (left → right): meaning → 4-way drag-hint → level
+         → ×. The 예문 button was removed (slide LEFT now opens
+         Popular Meanings); 연 stays for now as the explicit collocations
+         tab. The 4-way arrow tells the user the sheet responds to ALL
+         four swipe directions: ↑ corpora, ↓ Naver dict, ← popular
+         meanings, → collocations. -->
     <div class="ws-row">
       <span class="ws-meaning" id="ws-meaning">—</span>
-      <span class="ws-drag-hint" aria-hidden="true" title="위로 — 코퍼스 / 아래로 — 사전">
+      <span class="ws-drag-hint" aria-hidden="true" title="↑ 코퍼스 / ↓ 사전 / ← 의미 / → 연어">
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor"
              stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="4 6 8 2 12 6"/>
-          <polyline points="4 10 8 14 12 10"/>
+          <polyline points="5 4 8 2 11 4"/>
+          <polyline points="5 12 8 14 11 12"/>
+          <polyline points="4 5 2 8 4 11"/>
+          <polyline points="12 5 14 8 12 11"/>
         </svg>
       </span>
-      <button class="ws-tab" id="ws-tab-ex" data-panel="ex" aria-label="예시문" title="예시문">예</button>
       <button class="ws-tab" id="ws-tab-co" data-panel="co" aria-label="연어"   title="자주 함께 쓰는 말">연</button>
       <button class="ws-tab ws-level-tab" id="ws-level-tab" aria-label="단계"   title="단어 단계">·</button>
       <button class="ws-icon ws-close" id="ws-close" aria-label="닫기">×</button>
@@ -595,17 +602,46 @@
     PAGE_SENTENCE_STARTS = [];
     let charsBefore = 0;
     for (let p = 0; p < (PAGES || []).length; p++) {
-      PAGE_SENTENCE_STARTS.push(ALL_SENTENCES.length);
+      // Tentative: this page's first logical sentence is the next index
+      // we'd push. If the FIRST item we add for this page turns out to
+      // be a continuation merged into the previous page's tail, we
+      // adjust the start to point at the merged entry instead.
+      let pageStart = ALL_SENTENCES.length;
+      let pageHasContent = false;
       for (const para of (PAGES[p] || [])) {
         const sents = (typeof splitIntoSentences === 'function')
           ? splitIntoSentences(para)
           : [para];
         const list = sents.length ? sents : [para];
         for (const s of list) {
-          ALL_SENTENCES.push({ pageIdx: p, text: s, charStart: charsBefore });
+          const last = ALL_SENTENCES[ALL_SENTENCES.length - 1];
+          // CROSS-PAGE MERGE per spec: when paginateByHeight splits a
+          // sentence at a word boundary, the trailing fragment ends up
+          // on page P with no terminal punct and the leading fragment
+          // shows up on page P+1. Treat them as ONE logical sentence
+          // — so the playbar's "n / total" reflects real sentence
+          // count, prev/next sentence buttons step by logical
+          // sentence, and TTS playback's cross-page stitching has
+          // matching indices to skip over.
+          if (last && last.pageIdx !== p
+              && !/[.!?]\s*["”'’)\]]?\s*$/.test((last.text || '').trim())) {
+            last.text = (last.text + ' ' + s).trim();
+            last.spans = last.spans || [last.pageIdx];
+            if (last.spans[last.spans.length - 1] !== p) last.spans.push(p);
+            // First item on this page got merged into the previous
+            // page's tail entry — the page's "first sentence" is that
+            // merged entry, sitting at length-1.
+            if (!pageHasContent) pageStart = ALL_SENTENCES.length - 1;
+          } else {
+            ALL_SENTENCES.push({
+              pageIdx: p, text: s, charStart: charsBefore, spans: [p],
+            });
+          }
           charsBefore += s.length;
+          pageHasContent = true;
         }
       }
+      PAGE_SENTENCE_STARTS.push(pageStart);
     }
     TOTAL_SENTENCES = ALL_SENTENCES.length;
   }
@@ -2094,17 +2130,31 @@
     // chunk-panel pink Korean highlight tracks `latestWordKo` so it
     // updates as soon as DeepL returns.
     let latestWordKo = '';
+    let latestLemma  = '';        // from word-info-gpt; used for root-word display
     let latestChunk = null;
     let latestChunkKo = '';
     function repaintChunkPanel() {
       if (!latestChunk || !mnemEl) return;
       renderChunkTx(mnemEl, latestChunk.text, latestChunkKo, word, latestWordKo);
     }
+    // Per spec: inflected words display as "<root>: <Korean>". The
+    // root comes from word-info-gpt; the Korean from translate. Either
+    // can resolve first, so we compose the row from BOTH whenever the
+    // values change.
+    function repaintMeaning() {
+      if (!meaningEl) return;
+      if (!latestWordKo) return;          // wait for translation
+      const wLower = (word || '').toLowerCase();
+      const lemmaShown = latestLemma && latestLemma.toLowerCase() !== wLower;
+      meaningEl.textContent = lemmaShown
+        ? (latestLemma + ': ' + latestWordKo)
+        : latestWordKo;
+    }
 
     Translate.translate(word, sentence).then(ko => {
       if (_sheetWord !== word) return;
-      if (meaningEl) meaningEl.textContent = ko || '—';
       latestWordKo = (ko || '').trim();
+      repaintMeaning();
       repaintChunkPanel();
     }).catch(() => {
       if (meaningEl) meaningEl.textContent = '—';
@@ -2141,8 +2191,12 @@
       Translate.getWordInfo(word).then(info => {
         if (_sheetWord !== word) return;
         if (!info) return;
-        // Don't override meaningEl from info.ko — Translate.translate
-        // above already filled it with the CONTEXT-aware meaning.
+        // Stash the lemma and re-paint so a "<root>: <Korean>" row
+        // appears whether word-info-gpt or DeepL resolved first.
+        if (info.lemma) {
+          latestLemma = info.lemma;
+          repaintMeaning();
+        }
         renderExamples(exUl, info.examples, info.lemma || word);
         renderCollocations(coUl, info.collocations, info.lemma || word);
         // (Removed: info.phraseChunk fallback. Word-info-gpt and chunk-
@@ -5595,8 +5649,19 @@
             setTimeout(check, 100);
           });
         }
-        ttsPlaying = false;
-        setPlayBtnIcon(false);
+        // ROOT CAUSE FIX for "next sentence plays one then stops":
+        // When this loop exits via TOKEN MISMATCH (i.e. a NEW loop has
+        // already taken over via stopAnyPlayback + startTTSFromCurrent),
+        // we must NOT touch ttsPlaying / the play icon — the NEW loop
+        // has set ttsPlaying=true and is in the middle of speaking.
+        // Unconditionally setting ttsPlaying=false here would clobber
+        // the NEW loop, killing it on its next iteration's
+        // `while (ttsPlaying && ...)` check. Guard with token equality
+        // so only the OWNING loop releases the flag.
+        if (myToken === _playToken) {
+          ttsPlaying = false;
+          setPlayBtnIcon(false);
+        }
       }
       function pauseTTS() {
         // Bump the token so any in-flight loop bails on next iteration.
