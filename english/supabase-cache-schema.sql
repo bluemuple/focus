@@ -36,12 +36,24 @@ CREATE TABLE IF NOT EXISTS public.word_info_gpt_cache (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- RLS: lock both tables down. Service-role (used by Edge Functions)
+-- 3) Furigana cache — keyed by SHA-256 prefix of the JP sentence.
+--    Stores GPT-generated ruby annotations (kanji → contextual reading)
+--    so 何ですか reads as なん, 今日 as きょう, etc. The lesson page
+--    pre-fetches these for every body line on first JP entry; later
+--    loads pull from this cache and pay zero GPT calls.
+CREATE TABLE IF NOT EXISTS public.furigana_gpt_cache (
+  sentence_hash TEXT PRIMARY KEY,
+  ruby          JSONB NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- RLS: lock these tables down. Service-role (used by Edge Functions)
 -- bypasses RLS automatically; clients with anon/authenticated keys get
 -- nothing — which is what we want, since the Edge Functions are the
 -- only intended writers and readers of this cache layer.
 ALTER TABLE public.chunk_gpt_cache       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.word_info_gpt_cache   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.furigana_gpt_cache    ENABLE ROW LEVEL SECURITY;
 
 -- (No policies = deny by default for non-service-role roles.)
 

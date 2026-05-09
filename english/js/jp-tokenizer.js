@@ -336,18 +336,36 @@
   // still a valid reading.
   function _fixContextualReadings(tokens) {
     const NAN_BEFORE_RE = /^(です|だ|でしょ|でし|じゃ|で|の|人|時|分|秒|日|月|年|回|個|枚|本|冊|匹|階|番|才|歳|度)/;
+    const out = [];
     for (let i = 0; i < tokens.length; i++) {
       const tk = tokens[i];
       if (tk.surface_form === '何' && tk.reading) {
         const next = tokens[i + 1];
         const nextSurf = (next && next.surface_form) || '';
+        // Explicit inline annotation 何 + なん — author specified the
+        // reading directly. Adopt it as the authoritative reading and
+        // drop the duplicate, regardless of how kuromoji tagged なん
+        // (which could be 名詞/連体詞/助動詞 across IPADIC versions —
+        // _stripDuplicateReadings's pos check might miss it).
+        if (nextSurf === 'なん') {
+          tk.reading = 'ナン';
+          tk.pronunciation = 'ナン';
+          out.push(tk);
+          i++;                                     // consume the なん
+          continue;
+        }
+        // Contextual override (no inline annotation): 何 followed by
+        // copula / の / counter → reads as ナン. Reading flips here;
+        // any inline kana matching the new reading will then be picked
+        // up by _stripDuplicateReadings' Case-1 exact-match branch.
         if (NAN_BEFORE_RE.test(nextSurf)) {
           tk.reading = 'ナン';
           tk.pronunciation = 'ナン';
         }
       }
+      out.push(tk);
     }
-    return tokens;
+    return out;
   }
 
   // Strip "inline-furigana" duplicates: when a kanji-bearing token is
@@ -443,15 +461,64 @@
     return out;
   }
 
-  // Render a tokenizer-output array into the same .w / .w.punct DOM
-  // shape the English path produces. Word tokens get a `data-word`
-  // (the BASIC FORM — kuromoji's lemma — so 食べた / 食べる / 食べて
-  // share one word_states entry across conjugations) and surface-
-  // form text wrapped in <ruby> when the token contains kanji.
-  // Auxiliary verbs are merged into the preceding verb so a learner
-  // sees 食べました as ONE clickable unit (not 3 separate chips).
-  function renderTokens(tokens) {
-    const merged = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(tokens)));
+  // Cleans raw kuromoji tokens through the standard pipeline (fix
+  // contextual readings → strip inline-furigana duplicates → merge
+  // auxiliaries) and returns the pre-merged result. Exposed because
+  // the lesson page needs the cleaned surface as a CACHE KEY for the
+  // GPT-furigana lookup (so the same line tokenized at preload time
+  // and again at paginate-reflow time both hit the same ruby entry).
+  function processTokens(rawTokens) {
+    return _mergeAuxiliaries(
+      _stripDuplicateReadings(
+        _fixContextualReadings(rawTokens)
+      )
+    );
+  }
+  // Cleaned-surface string from processed tokens — concatenation of
+  // surface_forms. Used as the cache key for furigana lookup.
+  function surfaceOf(processedTokens) {
+    let s = '';
+    for (const t of processedTokens || []) s += (t.surface_form || '');
+    return s;
+  }
+
+  // Render an HTML string of .w / .w.punct chips from kuromoji tokens.
+  // Word tokens carry a `data-word` (the BASIC FORM / lemma so 食べた /
+  // 食べる / 食べて share one word_states entry) and the surface text,
+  // wrapped in <ruby> over any kanji segment.
+  //
+  // `tokens` is the raw kuromoji output — processTokens() runs
+  // internally so callers don't have to remember the order.
+  //
+  // `ruby` (optional) is the GPT-furigana annotation array
+  // ({t, r}[]) keyed at sentence level. When supplied, kanji readings
+  // come from `ruby` (in-context, accurate) instead of kuromoji's
+  // single-entry default. Concatenated `t` values must equal the
+  // cleaned surface; otherwise we fall back to the kuromoji-only path
+  // for that whole sentence.
+  function renderTokens(tokens, ruby) {
+    const merged = processTokens(tokens);
+    if (Array.isArray(ruby) && ruby.length &&
+        _rubyMatchesSurface(ruby, surfaceOf(merged))) {
+      return _renderTokensWithRuby(merged, ruby);
+    }
+    return _renderTokensKuromoji(merged);
+  }
+
+  // Position-bookkeeping check: does the ruby annotation cover EXACTLY
+  // the cleaned surface? We don't render with stale / mis-cached ruby
+  // — better to fall back to kuromoji readings than show misaligned
+  // furigana over the wrong characters.
+  function _rubyMatchesSurface(ruby, surface) {
+    let s = '';
+    for (const seg of ruby) s += (seg && seg.t) || '';
+    return s === surface;
+  }
+
+  // Kuromoji-readings-only renderer (the original code path). Used
+  // when no GPT ruby is available, when ruby is malformed, or when
+  // the ruby cache hasn't loaded yet for a freshly reflowed line.
+  function _renderTokensKuromoji(merged) {
     const out = [];
     for (const tk of merged) {
       const surface = tk.surface_form || '';
@@ -462,9 +529,6 @@
       const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
       const reading = katakanaToHiragana(tk.reading || '');
       const inner = _renderWordInner(surface, reading);
-      // data-segments: JSON array of original (pre-merge) surface
-      // chunks. Empty/single-segment tokens have no suffix coloring;
-      // multi-segment ones get cycle-colored in the meaning row.
       const segs = tk._segments || [surface];
       const segsAttr = _escapeHtml(JSON.stringify(segs));
       out.push(
@@ -475,6 +539,103 @@
       );
     }
     return out.join('');
+  }
+
+  // GPT-furigana renderer — overlays per-segment readings from the
+  // sentence-level ruby annotation onto each kuromoji token's chip.
+  //
+  // Algorithm: walk tokens in surface order, tracking the running char
+  // offset. For each token, find the ruby segments that overlap its
+  // [start, end) char range. Render each overlapped segment:
+  //   • Fully-covered kanji segment → <ruby>kanji<rt>reading</rt></ruby>
+  //   • Fully-covered non-kanji segment → plain text
+  //   • Partial overlap (token boundary cuts a kanji compound) →
+  //     fallback to plain text for that fragment, since slicing a
+  //     hiragana reading by raw kanji-char count isn't safe (今日 is
+  //     2 kanji ↔ 3 kana — no per-char correspondence).
+  // Tokens with no ruby coverage at all (empty surface, e.g.) get an
+  // empty chip.
+  function _renderTokensWithRuby(merged, ruby) {
+    // Pre-index ruby segments with absolute char positions.
+    const segs = [];
+    let pos = 0;
+    for (const r of ruby) {
+      const text = (r && r.t) || '';
+      const reading = (r && r.r) || '';
+      segs.push({ start: pos, end: pos + text.length, text, reading });
+      pos += text.length;
+    }
+
+    const out = [];
+    let tokenStart = 0;
+    for (const tk of merged) {
+      const surface = tk.surface_form || '';
+      const tokenEnd = tokenStart + surface.length;
+
+      if (!_isWordToken(tk)) {
+        out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
+        tokenStart = tokenEnd;
+        continue;
+      }
+
+      let inner = '';
+      for (const seg of segs) {
+        if (seg.end <= tokenStart) continue;
+        if (seg.start >= tokenEnd) break;
+        const sliceStart = Math.max(seg.start, tokenStart);
+        const sliceEnd   = Math.min(seg.end,   tokenEnd);
+        const sliceText  = seg.text.slice(sliceStart - seg.start, sliceEnd - seg.start);
+        const fullyInsideToken = (seg.start >= tokenStart && seg.end <= tokenEnd);
+        if (seg.reading && fullyInsideToken) {
+          inner += '<ruby>' + _escapeHtml(sliceText) +
+                   '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
+        } else {
+          inner += _escapeHtml(sliceText);
+        }
+      }
+      if (!inner) inner = _escapeHtml(surface);
+
+      const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
+      const tkSegs = tk._segments || [surface];
+      const segsAttr = _escapeHtml(JSON.stringify(tkSegs));
+      out.push(
+        '<span class="w" data-word="' + _escapeHtml(lemma) +
+        '" data-surface="' + _escapeHtml(surface) +
+        '" data-segments="' + segsAttr + '">' +
+        inner + '</span>'
+      );
+      tokenStart = tokenEnd;
+    }
+    return out.join('');
+  }
+
+  // Fetch GPT-generated furigana for one sentence via the
+  // `furigana-gpt` Edge Function. Returns the ruby array on success,
+  // null on any error / missing config / network failure (caller
+  // falls back to kuromoji readings). Idempotent at the server side
+  // — repeat calls hit the Supabase cache and pay zero GPT credits.
+  async function getFurigana(sentence) {
+    const cfg = window.SUPABASE_CONFIG;
+    if (!cfg || !cfg.url || !cfg.anon) return null;
+    const trimmed = String(sentence || '').trim();
+    if (!trimmed) return null;
+    try {
+      const url = cfg.url.replace(/\/+$/, '') + '/functions/v1/furigana-gpt';
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': 'Bearer ' + cfg.anon,
+          'apikey':        cfg.anon,
+        },
+        body: JSON.stringify({ sentence: trimmed }),
+      });
+      if (!r.ok) return null;
+      const data = await r.json();
+      return Array.isArray(data && data.ruby) ? data.ruby : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   // Sentence segmentation for Japanese — split on 。！？ keeping the
@@ -546,7 +707,10 @@
     ready,
     tokenize,
     tokenizeSync,
+    processTokens,
+    surfaceOf,
     renderTokens,
+    getFurigana,
     katakanaToHiragana,
     splitSentencesJa,
     chunkSentenceJa,

@@ -769,13 +769,42 @@
         const rawParas = (LESSON.body || '').split(/\n{2,}|\r\n{2,}/)
           .map(s => s.trim()).filter(Boolean);
         const tokenizer = await window.JPT.ready();
+        // Pass 1 — tokenize every line and build the cleaned-surface
+        // set we'll fetch GPT furigana for. The cleaned surface is the
+        // canonical cache key (matches what paginate-reflowed text
+        // collapses to after our strip pipeline runs again).
+        const cleanLines = new Set();
         for (const para of rawParas) {
           for (const line of String(para).split(/\n/)) {
-            if (line.trim() && !_jpTokensByLine.has(line)) {
-              _jpTokensByLine.set(line, tokenizer.tokenize(line));
+            if (!line.trim() || _jpTokensByLine.has(line)) continue;
+            const raw = tokenizer.tokenize(line);
+            _jpTokensByLine.set(line, raw);
+            const processed = window.JPT.processTokens(raw);
+            const clean = window.JPT.surfaceOf(processed);
+            if (clean && !_jpFuriganaByCleanLine.has(clean)) {
+              cleanLines.add(clean);
             }
           }
         }
+        // Pass 2 — fetch GPT furigana with bounded concurrency. Cache
+        // hit on the server side returns instantly; the slow path is
+        // first-uncached fetches (1-2 s each). 4 workers keep the
+        // splash short on cold lessons without thrashing the OpenAI
+        // rate limit. Failures are silent — render falls back to
+        // kuromoji readings, the lesson still works.
+        const lineList = Array.from(cleanLines);
+        let nextIdx = 0;
+        const CONCURRENCY = 4;
+        const workers = Array.from({ length: CONCURRENCY }, async () => {
+          while (true) {
+            const i = nextIdx++;
+            if (i >= lineList.length) return;
+            const line = lineList[i];
+            const ruby = await window.JPT.getFurigana(line);
+            if (ruby) _jpFuriganaByCleanLine.set(line, ruby);
+          }
+        });
+        await Promise.all(workers);
       } catch (e) {
         console.warn('[jp-tokenize] preload failed', e);
       } finally {
@@ -5444,6 +5473,13 @@
   // finishes; we just need the tokens to already be computed when
   // renderInto walks paragraphs in a slide animation).
   const _jpTokensByLine = new Map();
+  // Cache of GPT-generated furigana annotations keyed by the CLEANED
+  // surface of a line (= concatenation of processed-token surfaces,
+  // i.e. with inline-furigana duplicates stripped). The same cleaned
+  // surface is what we send to `furigana-gpt`, so a renderer call —
+  // whether it gets the original line or a paginate-reflowed copy —
+  // hits the same key after running JPT.processTokens once.
+  const _jpFuriganaByCleanLine = new Map();
 
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
   // ship as ~5 MB gzip, ~13 MB uncompressed across 12 files. Shows a
@@ -5508,8 +5544,34 @@
     if (!all.size) return;
     try {
       const tokenizer = await window.JPT.ready();
+      const cleanLines = new Set();
       for (const line of all) {
-        _jpTokensByLine.set(line, tokenizer.tokenize(line));
+        const raw = tokenizer.tokenize(line);
+        _jpTokensByLine.set(line, raw);
+        if (window.JPT.processTokens && window.JPT.surfaceOf) {
+          const clean = window.JPT.surfaceOf(window.JPT.processTokens(raw));
+          if (clean && !_jpFuriganaByCleanLine.has(clean)) cleanLines.add(clean);
+        }
+      }
+      // Background furigana fetch — this path runs on mode changes
+      // and resize repaginate, where the user is already looking at
+      // the page. Don't block; the next render-after-await picks up
+      // whatever finished and falls back gracefully on still-pending
+      // entries (which then get the GPT readings on the following
+      // repaint when the page next re-renders).
+      const list = Array.from(cleanLines);
+      if (list.length && window.JPT.getFurigana) {
+        let nextIdx = 0;
+        const CONCURRENCY = 4;
+        const workers = Array.from({ length: CONCURRENCY }, async () => {
+          while (true) {
+            const i = nextIdx++;
+            if (i >= list.length) return;
+            const ruby = await window.JPT.getFurigana(list[i]);
+            if (ruby) _jpFuriganaByCleanLine.set(list[i], ruby);
+          }
+        });
+        Promise.all(workers).catch(() => {});
       }
     } catch (e) {
       console.warn('[jp-tokenize] builder failed', e);
@@ -5585,11 +5647,22 @@
         if (tokens && tokens.length) _jpTokensByLine.set(line, tokens);
       }
       if (tokens && tokens.length) {
+        // GPT furigana lookup — keyed by the CLEANED surface (post-
+        // strip / post-merge), which is the same form cached during
+        // preload. Falls back to null (kuromoji readings) on miss; the
+        // lesson still renders, just with kuromoji's default reading
+        // per kanji entry.
+        let ruby = null;
+        if (window.JPT && window.JPT.processTokens && window.JPT.surfaceOf) {
+          const processed = window.JPT.processTokens(tokens);
+          const clean = window.JPT.surfaceOf(processed);
+          ruby = _jpFuriganaByCleanLine.get(clean) || null;
+        }
         // Build chips via JPT.renderTokens (HTML string), then
         // mount into a temp container and move the .w children
         // over so we can apply per-element WORD_STATES classes.
         const tmp = document.createElement('span');
-        tmp.innerHTML = window.JPT.renderTokens(tokens);
+        tmp.innerHTML = window.JPT.renderTokens(tokens, ruby);
         while (tmp.firstChild) {
           const child = tmp.firstChild;
           if (child.classList && child.classList.contains('w') &&
