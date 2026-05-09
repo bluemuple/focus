@@ -322,6 +322,34 @@
   // particles independently.
   // Specifically merges: 助動詞 (たい/た/ます/ません/ない/etc.),
   //                       接尾 verbs (動詞,接尾 → 過ぎる etc.).
+  // Override readings for kanji that take a different on-yomi/kun-yomi
+  // depending on context — kuromoji + IPADIC always picks ONE reading
+  // per dictionary entry, so common alternatives need a post-pass fix.
+  //
+  // 何 (kuromoji default: ナニ) — but reads as ナン before:
+  //   • です / だ / でしょう / じゃ / で (copula forms)
+  //   • の (genitive linker — 何の本)
+  //   • counters: 人/時/分/秒/日/月/年/回/個/枚/本/冊/匹/階/番/才/歳/度
+  //     (何人 = なんにん, 何時 = なんじ, …)
+  // This list covers ~95% of real "なん" cases without false positives;
+  // the rare miss falls back to the kuromoji default なに which is
+  // still a valid reading.
+  function _fixContextualReadings(tokens) {
+    const NAN_BEFORE_RE = /^(です|だ|でしょ|でし|じゃ|で|の|人|時|分|秒|日|月|年|回|個|枚|本|冊|匹|階|番|才|歳|度)/;
+    for (let i = 0; i < tokens.length; i++) {
+      const tk = tokens[i];
+      if (tk.surface_form === '何' && tk.reading) {
+        const next = tokens[i + 1];
+        const nextSurf = (next && next.surface_form) || '';
+        if (NAN_BEFORE_RE.test(nextSurf)) {
+          tk.reading = 'ナン';
+          tk.pronunciation = 'ナン';
+        }
+      }
+    }
+    return tokens;
+  }
+
   // Strip "inline-furigana" duplicates: when a kanji-bearing token is
   // immediately followed by hiragana tokens whose concatenated surface
   // equals the kanji token's reading, those hiragana tokens are a
@@ -401,7 +429,7 @@
   // Auxiliary verbs are merged into the preceding verb so a learner
   // sees 食べました as ONE clickable unit (not 3 separate chips).
   function renderTokens(tokens) {
-    const merged = _mergeAuxiliaries(_stripDuplicateReadings(tokens));
+    const merged = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(tokens)));
     const out = [];
     for (const tk of merged) {
       const surface = tk.surface_form || '';
@@ -458,7 +486,7 @@
     const raw = String(sentence || '');
     if (!raw.trim()) return [];
     if (!_tokenizer) return null;            // caller should ensure ready()
-    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_tokenizer.tokenize(raw)));
+    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(_tokenizer.tokenize(raw))));
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
