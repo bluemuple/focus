@@ -29,6 +29,58 @@
   let _readyPromise = null;
   let _tokenizer = null;
 
+  // BELT-AND-SUSPENDERS FIX for the kuromoji 0.1.2 path.join bug.
+  // The prototype patch (further down) is the clean fix, but in
+  // some minified builds the loader's `loadArrayBuffer` is hidden
+  // behind a non-enumerable closure — the prototype walk doesn't
+  // catch it, the XHR fires with a broken `https:/cdn...` URL, and
+  // the browser resolves it as scheme-relative → 404.
+  //
+  // This wraps `XMLHttpRequest.prototype.open` SITE-WIDE and rewrites
+  // any URL matching the broken kuromoji-CDN patterns BEFORE the
+  // request goes out. The wrap is idempotent and only touches URLs
+  // that match jsdelivr's kuromoji path, so it's harmless for all
+  // other XHRs the page makes.
+  function _patchXhrOpen() {
+    if (_patchXhrOpen._done) return;
+    _patchXhrOpen._done = true;
+    try {
+      const origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        let fixed = String(url == null ? '' : url);
+        // Only rewrite URLs that look like jsdelivr's kuromoji dict
+        // (or the script itself). Avoid touching unrelated XHRs.
+        if (/cdn\.jsdelivr\.net\/npm\/kuromoji/.test(fixed)) {
+          // Case A: `https:/cdn...` (single slash from path.join).
+          fixed = fixed.replace(/^(https?):\/(?!\/)/, '$1://');
+          // Case B: `/cdn.jsdelivr.net/...` (protocol stripped).
+          if (/^\/cdn\.jsdelivr\.net\//.test(fixed)) {
+            fixed = 'https:' + fixed;
+          }
+          // Case C: `cdn.jsdelivr.net/...` (no protocol or slash) —
+          // would resolve as page-relative.
+          if (/^cdn\.jsdelivr\.net\//.test(fixed)) {
+            fixed = 'https://' + fixed;
+          }
+          // Case D: already mis-resolved → `https://<origin>/cdn.jsdelivr.net/...`.
+          // Strip the origin and reset to https://cdn.jsdelivr.net/...
+          fixed = fixed.replace(
+            /^https?:\/\/[^/]+\/(cdn\.jsdelivr\.net\/)/,
+            'https://$1'
+          );
+        }
+        // Forward through with the fixed URL plus any remaining
+        // arguments (async, user, password) untouched.
+        const args = Array.prototype.slice.call(arguments);
+        args[1] = fixed;
+        return origOpen.apply(this, args);
+      };
+    } catch (e) {
+      console.warn('[jp-tokenizer] XHR open patch failed', e);
+    }
+  }
+  _patchXhrOpen();
+
   function _loadScript() {
     if (window.kuromoji) return Promise.resolve();
     return new Promise((resolve, reject) => {
