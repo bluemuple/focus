@@ -1,7 +1,9 @@
 // =============================================================
 //   Story client — calls the Supabase Edge Function `story-gpt`
-//   to ask GPT-4o-mini for a tiny English mini-lesson built
-//   around 3 mastered vocabulary words.
+//   to ask GPT-4o-mini for a tiny mini-lesson built around 3
+//   mastered vocabulary words. Sends `lang` ('en' | 'ja') so the
+//   server picks the right prompt: EN mode → English mini-lesson,
+//   JP mode → Japanese mini-lesson.
 //
 //   Public API (window.Story):
 //     • generate(words, opts?)  → { title, body, words }
@@ -25,18 +27,21 @@
   }
 
   // generate(words, opts):
-  //   words : array of 3 English words to weave into the story.
+  //   words : array of 3 mastered words to weave into the story.
   //   opts  : { level: 'easy' | 'medium' }   (default 'easy')
   // Returns: { title, body, words }  on success, or rejects on error.
+  // The active learning language is auto-detected from DB.getLang()
+  // so callers don't have to thread it through.
   async function generate(words, opts) {
     if (!Array.isArray(words) || words.length < 1) {
       throw new Error('words[] required');
     }
     const level = (opts && opts.level) || 'easy';
+    const lang  = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
     const { url, headers } = supabaseUrl('/functions/v1/story-gpt');
     const r = await fetch(url, {
       method: 'POST', headers,
-      body: JSON.stringify({ words, level }),
+      body: JSON.stringify({ words, level, lang }),
     });
     if (!r.ok) {
       // Surface the body on dev so we can debug 401/5xx quickly.

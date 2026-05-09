@@ -521,15 +521,21 @@
     return n;
   }
 
-  function listStories() { return ls.get('stories', []) || []; }
+  // Stories are language-namespaced via `lsLang` so EN and JP keep
+  // separate collections — clicking 영어 mode shows English-prompt
+  // stories, 일본어 mode shows Japanese-prompt stories. Existing EN
+  // users keep their data: `lsLang` returns the bare key `'stories'`
+  // for English (preserving backwards compatibility), and `'ja.stories'`
+  // for Japanese (a fresh empty list on first JP entry).
+  function listStories() { return lsLang.get('stories', []) || []; }
   function addStory(s)   {
     const list = listStories();
     list.unshift(s);
-    ls.set('stories', list);
+    lsLang.set('stories', list);
     return s;
   }
   function deleteStory(id) {
-    ls.set('stories', listStories().filter(s => s.id !== id));
+    lsLang.set('stories', listStories().filter(s => s.id !== id));
   }
 
   // ---------- cross-device user_state sync ----------

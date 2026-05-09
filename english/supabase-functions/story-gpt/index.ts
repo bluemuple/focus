@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
   try {
-    const { words, level } = await req.json();
+    const { words, level, lang } = await req.json();
 
     if (!Array.isArray(words) || words.length < 1) {
       return json({ error: "words[] required" }, 400);
@@ -45,14 +45,32 @@ Deno.serve(async (req) => {
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
 
     const lvl = (level === "medium") ? "intermediate" : "easy";
-    const sys = [
-      "You write tiny English mini-lessons for Korean learners of English.",
-      "Output exactly valid JSON with two keys: \"title\" and \"body\".",
-      "title: a short noun phrase (max 6 words) capturing the topic.",
-      "body: 1 to 3 short, natural English sentences (under 50 words total)",
-      `that use ALL of the given words verbatim, at a ${lvl} reading level.`,
-      "Do not translate to Korean. Do not add commentary. JSON only.",
-    ].join(" ");
+    // Per-language prompt. EN: tiny English mini-lesson. JA: tiny
+    // Japanese mini-lesson, since the mastered words ARE Japanese
+    // (food / 動詞 / etc.) and the EN prompt would mistranslate or
+    // leave them as foreign-loan strings ("食べる" stranded inside
+    // an English sentence). Korean learners reading the JA story
+    // benefit from natural-Japanese contexts using the same surface
+    // form they marked as mastered.
+    const targetLang = String(lang || "en").toLowerCase() === "ja" ? "ja" : "en";
+    const sys = targetLang === "ja"
+      ? [
+          "You write tiny Japanese mini-lessons for Korean learners of Japanese.",
+          "Output exactly valid JSON with two keys: \"title\" and \"body\".",
+          "title: a short Japanese noun phrase (max 8 characters) capturing the topic.",
+          "body: 1 to 3 short, natural Japanese sentences (under 60 characters total)",
+          `that use ALL of the given words verbatim, at a ${lvl} reading level (use kanji where natural).`,
+          "Use the words EXACTLY as given — do NOT change inflection / 活用形 / particle.",
+          "Do not translate to Korean. Do not add commentary. Do not romanize. JSON only.",
+        ].join(" ")
+      : [
+          "You write tiny English mini-lessons for Korean learners of English.",
+          "Output exactly valid JSON with two keys: \"title\" and \"body\".",
+          "title: a short noun phrase (max 6 words) capturing the topic.",
+          "body: 1 to 3 short, natural English sentences (under 50 words total)",
+          `that use ALL of the given words verbatim, at a ${lvl} reading level.`,
+          "Do not translate to Korean. Do not add commentary. JSON only.",
+        ].join(" ");
 
     const user = `Words to use: ${clean.map(w => `"${w}"`).join(", ")}`;
 

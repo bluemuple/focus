@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>English · 영어 학습</title>
+<title>또박또박</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -86,6 +86,31 @@
            by the active tab above. -->
       <div id="lessons-grid" class="cards"></div>
       <div id="wm-section" hidden>
+        <!-- Level filter row — horizontal buttons. Picking one shows the
+             words in that state below. Counts update from the live word
+             states; an empty state is displayed if a tier has no words. -->
+        <div class="wm-filter" id="wm-filter">
+          <button class="wm-filter-btn s2" data-state="2" type="button">
+            <span class="wm-filter-dot">2</span>
+            <span class="wm-filter-label">어디서 본 단어</span>
+            <span class="wm-filter-count" data-count="2">0</span>
+          </button>
+          <button class="wm-filter-btn s3" data-state="3" type="button">
+            <span class="wm-filter-dot">3</span>
+            <span class="wm-filter-label">어디서 많이 본 단어</span>
+            <span class="wm-filter-count" data-count="3">0</span>
+          </button>
+          <button class="wm-filter-btn s4" data-state="4" type="button">
+            <span class="wm-filter-dot">4</span>
+            <span class="wm-filter-label">익숙한 단어</span>
+            <span class="wm-filter-count" data-count="4">0</span>
+          </button>
+          <button class="wm-filter-btn s5 active" data-state="5" type="button">
+            <span class="wm-filter-dot">✓</span>
+            <span class="wm-filter-label">완전히 아는 단어</span>
+            <span class="wm-filter-count" data-count="5">0</span>
+          </button>
+        </div>
         <div id="wm-grid" class="wm-grid"></div>
       </div>
       <div id="ws-section" hidden>
@@ -145,6 +170,11 @@
     const FLAGS = { en: '🇬🇧', ja: '🇯🇵' };
     const cur = (DB && DB.getLang) ? DB.getLang() : 'en';
     if (flagCur) flagCur.textContent = FLAGS[cur] || '🇬🇧';
+    // Browser tab title — reflects the active learning language so the
+    // user can tell which mode the site is in from the OS task switcher
+    // / pinned tabs. Toggling the language already triggers a reload
+    // (below), so this runs every time the choice changes.
+    document.title = '또박또박 (' + (cur === 'ja' ? '일본어' : '영어') + ')';
     menu.querySelectorAll('.lang-opt').forEach(opt => {
       if (opt.dataset.lang === cur) opt.classList.add('active');
       opt.addEventListener('click', () => {
@@ -624,40 +654,121 @@
     paintWordStories(states);
   }
 
-  // ===== 워드 마스터 — every word at state 5. =====
+  // ===== 워드 마스터 — filterable view across states 2..5. =====
+  // Layout: a row of 4 filter buttons (●2 / ●3 / ●4 / ✓5) that switch
+  // the chip grid below to show ONLY the words at that state. The
+  // active filter is module-scoped so it persists across re-renders
+  // (e.g. when a lesson visit pushes a new word into a state).
+  // Default = state 5 (preserves the prior "mastered words" landing).
+  // Words ARE language-separated already — `loadWordStates()` reads
+  // from the active language's slot — so EN and JP each have their
+  // own collection without any extra plumbing here.
+  let _wmActiveState = 5;
+  function _wmCountByState(states) {
+    const c = { 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const v of Object.values(states || {})) {
+      if (!v) continue;
+      if (c[v.state] !== undefined) c[v.state]++;
+    }
+    return c;
+  }
   function paintWordMaster(states) {
-    const grid = document.getElementById('wm-grid');
-    const count = document.getElementById('wm-tab-count');
-    const mastered = Object.entries(states || {})
-      .filter(([_, v]) => v && v.state === 5)
+    const grid    = document.getElementById('wm-grid');
+    const count   = document.getElementById('wm-tab-count');
+    const filter  = document.getElementById('wm-filter');
+
+    const counts = _wmCountByState(states);
+    const totalAcrossStates = counts[2] + counts[3] + counts[4] + counts[5];
+
+    // Tab pill count = total across all 4 tiers (the entire word library
+    // the user has accumulated, not just state-5).
+    if (count) count.textContent = `(${totalAcrossStates})`;
+
+    // Per-filter counts in the row — keep in sync on every paint.
+    if (filter) {
+      for (const s of [2, 3, 4, 5]) {
+        const el = filter.querySelector('.wm-filter-count[data-count="' + s + '"]');
+        if (el) el.textContent = String(counts[s]);
+      }
+      // Wire the filter buttons once per paint — idempotent because we
+      // overwrite onclick.
+      filter.querySelectorAll('.wm-filter-btn').forEach(btn => {
+        const s = parseInt(btn.dataset.state, 10);
+        btn.classList.toggle('active', s === _wmActiveState);
+        btn.onclick = () => {
+          if (_wmActiveState === s) return;
+          _wmActiveState = s;
+          paintWordMaster(states);          // re-render with new filter
+        };
+      });
+    }
+
+    // Pull the words at the currently-selected state, sorted alphabetically.
+    const words = Object.entries(states || {})
+      .filter(([_, v]) => v && v.state === _wmActiveState)
       .map(([w]) => w)
       .sort();
-    // Always show the parenthesised count — even (0) — on the tab pill.
-    if (count) count.textContent = `(${mastered.length})`;
-    if (!mastered.length) {
+
+    if (!words.length) {
+      const labelByState = {
+        2: '어디서 본 단어',
+        3: '어디서 많이 본 단어',
+        4: '익숙한 단어',
+        5: '완전히 아는 단어',
+      };
+      const lbl = labelByState[_wmActiveState] || '';
       grid.innerHTML = `<div class="empty">
-        <p>아직 완전히 아는 단어가 없어요.<br>레슨에서 단어를 ✓ 로 표시하면 여기에 모입니다.</p>
+        <p>아직 ${escapeHtml(lbl)}가 없어요.<br>레슨에서 단어 단계를 올리면 여기에 모입니다.</p>
       </div>`;
       return;
     }
-    // Small chip grid; each chip plays the word on click and shows meaning
-    // in a subtitle row that fills lazily from the translation cache.
+
+    // Toggle chip — shows the source word (EN/JP) by default. Tap once
+    // to play the word's pronunciation AND swap the visible text to its
+    // Korean meaning. Tap again to swap back to the source word. Korean
+    // is fetched lazily on first reveal and cached on the chip's
+    // dataset so subsequent toggles are instant.
     grid.innerHTML = '';
-    for (const w of mastered) {
+    for (const w of words) {
       const chip = document.createElement('button');
       chip.className = 'wm-chip';
-      chip.innerHTML =
-        `<span class="wm-en">${escapeHtml(w)}</span>` +
-        `<span class="wm-ko muted">…</span>`;
-      chip.onclick = () => {
+      chip.dataset.word    = w;
+      chip.dataset.showing = 'word';   // 'word' | 'ko'
+      chip.innerHTML = `<span class="wm-text">${escapeHtml(w)}</span>`;
+      const textEl = chip.querySelector('.wm-text');
+      chip.onclick = async () => {
+        // Always speak the source word — TTS doesn't change with the
+        // visible label (the user is learning the EN/JP pronunciation,
+        // not Korean readings of it).
         if (window.TTS && TTS.speak) TTS.speak(w);
+        if (chip.dataset.showing === 'word') {
+          if (chip.dataset.koLoaded === '1') {
+            textEl.textContent = chip.dataset.ko || '';
+          } else {
+            textEl.textContent = '…';
+            try {
+              const ko = await Translate.translate(w);
+              chip.dataset.ko = ko || '';
+              chip.dataset.koLoaded = '1';
+              // The user might have toggled back during the await — only
+              // paint Korean if we're still on the "ko" intent.
+              if (chip.dataset.showing === 'word') {
+                textEl.textContent = chip.dataset.ko || '';
+              }
+            } catch (_) {
+              textEl.textContent = w;          // give up — restore the word
+              return;
+            }
+          }
+          chip.classList.add('wm-chip-ko');
+          chip.dataset.showing = 'ko';
+        } else {
+          textEl.textContent = w;
+          chip.classList.remove('wm-chip-ko');
+          chip.dataset.showing = 'word';
+        }
       };
       grid.appendChild(chip);
-      // Lazy-fill Korean meaning (cache hit is instant).
-      Translate.translate(w).then(ko => {
-        const ko_el = chip.querySelector('.wm-ko');
-        if (ko_el) { ko_el.textContent = ko || ''; ko_el.classList.remove('muted'); }
-      }).catch(()=>{});
     }
   }
 
@@ -667,13 +778,25 @@
   // If GPT is unreachable (function not deployed, network blip, etc.) we
   // fall back to a small set of grammar-safe templates so the home page
   // never gets stuck.
-  const STORY_TEMPLATES = [
+  // Local fallback templates used when story-gpt is unreachable. Picked
+  // by language so JP fallback doesn't dump kanji-mixed words inside an
+  // English sentence (and vice versa).
+  const STORY_TEMPLATES_EN = [
     ws => `Today I practiced "${ws[0]}", "${ws[1]}", and "${ws[2]}". They are starting to feel familiar.`,
     ws => `Three words on my journey: "${ws[0]}", "${ws[1]}", and "${ws[2]}". Each one is a small step forward.`,
     ws => `I love how "${ws[0]}" and "${ws[1]}" sit together. "${ws[2]}" surprised me with its meaning.`,
     ws => `Words I'm holding close today: "${ws[0]}", "${ws[1]}", and "${ws[2]}". Reading them feels like remembering an old friend.`,
     ws => `"${ws[0]}", "${ws[1]}", "${ws[2]}" — three small victories I want to remember.`,
   ];
+  const STORY_TEMPLATES_JA = [
+    ws => `今日は「${ws[0]}」「${ws[1]}」「${ws[2]}」を練習した。少しずつ慣れてきた。`,
+    ws => `「${ws[0]}」と「${ws[1]}」、そして「${ws[2]}」。三つの小さな一歩。`,
+    ws => `「${ws[0]}」「${ws[1]}」「${ws[2]}」— 覚えておきたい三つの言葉。`,
+  ];
+  function _storyTemplatesForLang() {
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    return lang === 'ja' ? STORY_TEMPLATES_JA : STORY_TEMPLATES_EN;
+  }
 
   async function maybeGenerateStories(states) {
     const stories = DB.listStories();
@@ -730,7 +853,8 @@
     }
 
     // 2) Local template fallback (no network).
-    const tpl = STORY_TEMPLATES[indexHint % STORY_TEMPLATES.length];
+    const tpls = _storyTemplatesForLang();
+    const tpl = tpls[indexHint % tpls.length];
     return {
       id: 's_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       title: (picked[0] + ' ' + picked[1]),   // "두 단어로 요약"

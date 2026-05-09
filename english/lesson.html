@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no, maximum-scale=1">
-<title>레슨 · English</title>
+<title>또박또박</title>
 <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -734,13 +734,23 @@
   }
 
   async function renderLesson() {
+    // Helper — set both the on-page title and the browser tab title
+    // to the same string, with the language-aware "또박또박" suffix
+    // appended for the tab title only.
+    function _setTitles(headText) {
+      const el = document.getElementById('lesson-title');
+      if (el) el.textContent = headText;
+      const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+      const suffix = '또박또박 (' + (lang === 'ja' ? '일본어' : '영어') + ')';
+      document.title = (headText ? headText + ' · ' : '') + suffix;
+    }
     if (!lessonId) {
-      document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
+      _setTitles('레슨을 찾을 수 없습니다.');
       return;
     }
     LESSON = await DB.getLesson(lessonId);
     if (!LESSON) {
-      document.getElementById('lesson-title').textContent = '레슨을 찾을 수 없습니다.';
+      _setTitles('레슨을 찾을 수 없습니다.');
       return;
     }
     // Pull synced state (money, streak) from Supabase BEFORE we tick the
@@ -752,7 +762,10 @@
     try { DB.recordLessonVisit && DB.recordLessonVisit(); } catch (e) {}
     WORD_STATES = await DB.loadWordStates();
 
-    document.getElementById('lesson-title').textContent = LESSON.title || '제목 없음';
+    // Browser tab title — "<lesson title> · 또박또박 (영어/일본어)".
+    // Lesson name first so the most-distinguishing token survives
+    // truncation in pinned-tab / task-switcher previews.
+    _setTitles(LESSON.title || '제목 없음');
     // Lesson thumbnail. The element is now a div with a background image so
     // it can stretch across the entire header grid (title row + tools row).
     // Hidden if the lesson didn't upload a thumbnail.
@@ -3881,13 +3894,40 @@
         <div class="ls-manual">
           <h3 class="ls-manual-title">📖 레슨 사용법 <span class="muted">(일본어)</span></h3>
           <section class="ls-manual-sec">
-            <h4>단어 학습</h4>
+            <h4>⌨️ 단축키</h4>
             <ul>
-              <li>본문 단어 클릭 → 이 자리에 의미가 표시됩니다</li>
+              <li><kbd>Space</kbd> — 읽기 모드 전환</li>
+              <li><kbd>Enter</kbd> — TTS 재생 / 일시정지</li>
+              <li><kbd>←</kbd> <kbd>→</kbd> — 단어 이동 / 선택 확장</li>
+              <li><kbd>↑</kbd> <kbd>↓</kbd> — 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+              <li><kbd>,</kbd> <kbd>.</kbd> — 이전 / 다음 페이지</li>
+              <li><kbd>Esc</kbd> — 열린 팝업 / 사전 닫기</li>
+              <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> — 단어 학습 단계 (아래 ↓)</li>
+            </ul>
+          </section>
+          <section class="ls-manual-sec ls-manual-levels">
+            <h4>🎯 단어 학습 단계</h4>
+            <p class="ls-manual-level-row">
+              <span class="kbd-dot s0" aria-hidden="true"></span><kbd>0</kbd>
+              <span class="muted">→</span>
+              <span class="kbd-dot s1" aria-hidden="true"></span><kbd>1</kbd>
+              <span class="muted">→</span>
+              <span class="kbd-dot s2" aria-hidden="true"></span><kbd>2</kbd>
+              <span class="muted">→</span>
+              <span class="kbd-dot s3" aria-hidden="true"></span><kbd>3</kbd>
+              <span class="muted">→</span>
+              <span class="kbd-dot s4" aria-hidden="true"></span><kbd>4</kbd>
+              <span class="muted">→</span>
+              <span class="kbd-dot s5" aria-hidden="true"></span><kbd>V</kbd>
+            </p>
+            <p class="ls-manual-level-tip">
+              반복해서 읽으며 단어 색깔을 <strong>초록색</strong>에서 <strong>흰색</strong>으로 바꾸세요. 흰색 <kbd>V</kbd>가 되면 완전히 익힌 단어입니다.
+            </p>
+          </section>
+          <section class="ls-manual-sec">
+            <h4>일본어 단어 클릭</h4>
+            <ul>
               <li>활용형(예: <strong>食べた</strong>)을 클릭하면 사전형(<strong>食べる</strong>)으로 사전을 검색합니다</li>
-              <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
-              <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
-              <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
             </ul>
           </section>
           <section class="ls-manual-sec">
@@ -3896,7 +3936,6 @@
               <li>구문은 모두 <strong>히라가나</strong>로 표시 — 한자는 따로 보이지 않습니다</li>
               <li><u>밑줄</u>이 그어진 글자 = <strong>한자에서 온 발음</strong> (예: お<u>なまえ</u>は<u>なん</u>ですか)</li>
               <li>활용 어미는 색깔로 강조: <span style="color:#38bdf8;font-weight:800">하늘색</span> · <span style="color:#16a34a;font-weight:800">연두색</span> · <span style="color:#d946ef;font-weight:800">자홍색</span> 순환</li>
-              <li>예: <u>み</u>せ<span style="color:#38bdf8;font-weight:800">ませ</span><span style="color:#16a34a;font-weight:800">ん</span><span style="color:#d946ef;font-weight:800">でし</span><span style="color:#38bdf8;font-weight:800">た</span></li>
             </ul>
           </section>
           <section class="ls-manual-sec">
@@ -3908,18 +3947,10 @@
             </ul>
           </section>
           <section class="ls-manual-sec">
-            <h4>페이지 이동</h4>
-            <ul>
-              <li><kbd>,</kbd> <kbd>.</kbd> 키로 이전 / 다음 페이지</li>
-              <li><kbd>Esc</kbd> 키로 열린 팝업 / 사전 닫기</li>
-            </ul>
-          </section>
-          <section class="ls-manual-sec">
             <h4>부가 기능</h4>
             <ul>
               <li><strong>코퍼스</strong> — 같은 단어가 쓰인 다른 일본어 문장</li>
               <li><strong>사전</strong> — Naver 일본어 사전 (jakodict)</li>
-              <li><strong>TTS</strong> — Google 일본어 음성으로 본문 읽기</li>
               <li><strong>♡</strong> — 단어를 퀴즈 카드에 추가</li>
             </ul>
           </section>
@@ -3932,13 +3963,35 @@
       <div class="ls-manual">
         <h3 class="ls-manual-title">📖 레슨 사용법</h3>
         <section class="ls-manual-sec">
-          <h4>단어 학습</h4>
+          <h4>⌨️ 단축키</h4>
           <ul>
-            <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
-            <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
-            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
-            <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
+            <li><kbd>Space</kbd> — 읽기 모드 전환 <span class="muted">(단어 뜻 하나씩 / 여러개 이어서 / 이어서 아래)</span></li>
+            <li><kbd>Enter</kbd> — TTS 재생 / 일시정지</li>
+            <li><kbd>←</kbd> <kbd>→</kbd> — 단어 이동 / 선택 확장</li>
+            <li><kbd>↑</kbd> <kbd>↓</kbd> — 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+            <li><kbd>,</kbd> <kbd>.</kbd> — 이전 / 다음 페이지</li>
+            <li><kbd>Esc</kbd> — 열린 팝업 / 사전 닫기</li>
+            <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> — 단어 학습 단계 (아래 ↓)</li>
           </ul>
+        </section>
+        <section class="ls-manual-sec ls-manual-levels">
+          <h4>🎯 단어 학습 단계</h4>
+          <p class="ls-manual-level-row">
+            <span class="kbd-dot s0" aria-hidden="true"></span><kbd>0</kbd>
+            <span class="muted">→</span>
+            <span class="kbd-dot s1" aria-hidden="true"></span><kbd>1</kbd>
+            <span class="muted">→</span>
+            <span class="kbd-dot s2" aria-hidden="true"></span><kbd>2</kbd>
+            <span class="muted">→</span>
+            <span class="kbd-dot s3" aria-hidden="true"></span><kbd>3</kbd>
+            <span class="muted">→</span>
+            <span class="kbd-dot s4" aria-hidden="true"></span><kbd>4</kbd>
+            <span class="muted">→</span>
+            <span class="kbd-dot s5" aria-hidden="true"></span><kbd>V</kbd>
+          </p>
+          <p class="ls-manual-level-tip">
+            반복해서 읽으며 단어 색깔을 <strong>초록색</strong>에서 <strong>흰색</strong>으로 바꾸세요. 흰색 <kbd>V</kbd>가 되면 완전히 익힌 단어입니다.
+          </p>
         </section>
         <section class="ls-manual-sec">
           <h4>읽기 모드 <span class="muted">(하단 바)</span></h4>
@@ -3949,17 +4002,10 @@
           </ul>
         </section>
         <section class="ls-manual-sec">
-          <h4>페이지 이동</h4>
-          <ul>
-            <li><kbd>,</kbd> <kbd>.</kbd> 키로 이전 / 다음 페이지</li>
-            <li><kbd>Esc</kbd> 키로 열린 팝업 / 사전 닫기</li>
-          </ul>
-        </section>
-        <section class="ls-manual-sec">
           <h4>부가 기능</h4>
           <ul>
-            <li><strong>코퍼스</strong> 버튼 — 같은 단어가 쓰인 다른 문장</li>
-            <li><strong>사전</strong> 버튼 — Naver 영영/영한 사전</li>
+            <li><strong>코퍼스</strong> — 같은 단어가 쓰인 다른 문장</li>
+            <li><strong>사전</strong> — Naver 영영/영한 사전</li>
             <li><strong>♡</strong> — 단어를 퀴즈 카드에 추가</li>
           </ul>
         </section>
@@ -4483,7 +4529,36 @@
     });
     document.addEventListener('keydown', (e) => {
       if (overlay.hidden) return;
-      if (e.key === 'Escape') { e.preventDefault(); close(); }
+      if (/(INPUT|TEXTAREA)/.test((e.target.tagName || ''))) return;
+      if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+      // Quiz screen shortcuts — only active when the quiz UI is
+      // currently rendered inside the practice-overlay (the menu /
+      // word practice / sentence reorder screens won't have a
+      // .quiz-screen, so 1-4 / Space won't trigger there).
+      const quizScreen = overlay.querySelector('.quiz-screen');
+      if (!quizScreen) return;
+      // 1 / 2 / 3 / 4 → click the nth answer button. Uses .qz-option
+      // because feedback / finish screens have no .qz-option, so the
+      // shortcut is automatically inert outside the question phase.
+      if (e.key >= '1' && e.key <= '4') {
+        const idx = parseInt(e.key, 10) - 1;
+        const opts = quizScreen.querySelectorAll('.qz-option');
+        if (opts[idx]) {
+          e.preventDefault();
+          opts[idx].click();
+          return;
+        }
+      }
+      // Space → click Continue (only present on the feedback card
+      // between questions). Falls through harmlessly otherwise.
+      if (e.code === 'Space') {
+        const cont = quizScreen.querySelector('[data-continue]');
+        if (cont) {
+          e.preventDefault();
+          cont.click();
+          return;
+        }
+      }
     });
   }
 
@@ -6234,6 +6309,42 @@
     // arrow keys are reserved for the cont-mode selection grower/shrinker.
     if (e.key === ',' || e.key === '<') { e.preventDefault(); goPage(-1); return; }
     if (e.key === '.' || e.key === '>') { e.preventDefault(); goPage(+1); return; }
+
+    // Skip Space / Enter shortcuts when the word popup or practice
+    // overlay is up — both have their OWN bindings for these keys
+    // (popup: Enter→Naver, Space→Corpus; quiz: 1-4→option,
+    // Space→Continue) and we don't want the lesson-level shortcuts
+    // to fire on top of them.
+    const _popVisible = (typeof POP !== 'undefined') && POP && !POP.hidden;
+    const _practiceOverlay = document.getElementById('practice-overlay');
+    const _overlayVisible = _practiceOverlay && !_practiceOverlay.hidden;
+    if (!_popVisible && !_overlayVisible) {
+      // Spacebar — toggle the reading mode (단어 뜻 하나씩 → 여러개
+      // 이어서 → 이어서 아래 → loop). Only fires when the playbar is
+      // HIDDEN: the playbar's own Space handler (above) already owns
+      // play/pause when audio controls are showing.
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const mt = document.getElementById('lb-mode-toggle');
+        if (mt) mt.click();
+        return;
+      }
+      // Enter — TTS play/pause. If the playbar is closed, opening
+      // lb-play also auto-starts playback; if it's already open, this
+      // mirrors the playbar's Space behavior so either key works.
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const pb = document.getElementById('playbar');
+        if (pb && !pb.hidden) {
+          const playBtn = document.getElementById('play-btn');
+          if (playBtn) playBtn.click();
+        } else {
+          const lbPlay = document.getElementById('lb-play');
+          if (lbPlay) lbPlay.click();
+        }
+        return;
+      }
+    }
 
     // Arrow keys: ←/→ step the cursor (single mode) or grow/shrink the
     // selection (cont modes). ↑/↓ step vertically — only meaningful in

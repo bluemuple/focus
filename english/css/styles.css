@@ -335,26 +335,133 @@ a { color: inherit; }
 }
 .section-collapse .sect-body[hidden] { display: none; }
 
-/* ===== 워드 마스터 — chip grid of fully-mastered (state 5) words ===== */
+/* ===== 워드 마스터 — filterable view across states 2..5. =====
+   Top filter row picks ONE state at a time; chip grid below shows
+   the words at that state as toggle buttons. */
+.wm-filter {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+.wm-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .12s, border-color .12s, color .12s, transform .05s;
+}
+.wm-filter-btn:hover  { background: #f8f9fa; border-color: #cdd2d8; }
+.wm-filter-btn:active { transform: translateY(1px); }
+.wm-filter-btn .wm-filter-dot {
+  display: inline-grid; place-items: center;
+  width: 22px; height: 22px;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 800;
+  color: var(--ink);
+  border: 1px solid transparent;
+}
+.wm-filter-btn.s2 .wm-filter-dot { background: var(--word-2); }
+.wm-filter-btn.s3 .wm-filter-dot { background: var(--word-3); }
+.wm-filter-btn.s4 .wm-filter-dot { background: var(--word-4); }
+.wm-filter-btn.s5 .wm-filter-dot { background: #fff; border-color: var(--ink); }
+.wm-filter-btn .wm-filter-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Active filter — colored fill so it's obvious which tier is selected. */
+.wm-filter-btn.active {
+  border-color: var(--ink);
+  background: #f0f7ff;
+  color: var(--ink);
+}
+.wm-filter-btn.active .wm-filter-count { color: var(--ink); }
+
 .wm-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
 }
+
+/* === Mobile (≤ 600 px) — narrow viewport adjustments ===
+   The desktop filter row (4 long-labelled pills) doesn't fit on
+   phones at 360–390 px wide. Reflow as a 2 × 2 grid with smaller
+   padding / font so all four are reachable in the thumb zone, and
+   tighten the chip grid so two columns fit reliably down to 320 px. */
+@media (max-width: 600px) {
+  .wm-filter {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+  .wm-filter-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    gap: 6px;
+    /* Push the count to the far right so the row reads "[dot] label
+       … N" cleanly even when a long label squeezes the pill. */
+    justify-content: flex-start;
+  }
+  .wm-filter-btn .wm-filter-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .wm-filter-btn .wm-filter-dot {
+    width: 20px; height: 20px; font-size: 11px;
+    flex-shrink: 0;
+  }
+  .wm-grid {
+    /* 140 px floor → reliable 2 columns from 320 px (iPhone SE 1st)
+       up. Above ~700 px the auto-fill kicks back to 3+ columns. */
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
+}
+
+/* Toggle chip — shows ONE label at a time (the source word, or the
+   Korean meaning after the user taps). Single centered line so the
+   swap is visually obvious. The `.wm-chip-ko` modifier paints the
+   Korean state with a softer accent tint, giving the toggle a clear
+   "active" look that distinguishes it from the default word state. */
 .wm-chip {
-  text-align: left;
+  text-align: center;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   cursor: pointer;
-  display: flex; flex-direction: column; gap: 2px;
-  transition: background .12s, border-color .12s, transform .05s;
+  display: grid; place-items: center;
+  min-height: 44px;
+  transition: background .12s, border-color .12s, color .12s, transform .05s;
 }
 .wm-chip:hover  { background: #f8f9fa; border-color: #cdd2d8; }
 .wm-chip:active { transform: translateY(1px); }
-.wm-chip .wm-en { font-weight: 800; font-size: 14px; color: var(--ink); }
-.wm-chip .wm-ko { font-size: 12px; color: var(--muted); }
+.wm-chip .wm-text {
+  font-weight: 800; font-size: 14px; color: var(--ink);
+  line-height: 1.2;
+  word-break: keep-all;
+}
+/* Korean-revealed state — softer background + accent text so the
+   user sees instantly that this chip is currently flipped. */
+.wm-chip.wm-chip-ko {
+  background: #f0f7ff;
+  border-color: #c4dcf5;
+}
+.wm-chip.wm-chip-ko .wm-text {
+  color: #1d4ed8;
+}
 
 /* ===== 단어 스토리 — bar list ===== */
 .ws-list {
@@ -1447,6 +1554,59 @@ body:has(.lesson-page) {
 .lesson-sidebar .ls-manual-sec strong {
   color: #2563eb;
   font-weight: 700;
+}
+/* Inline level-color dots — small pills that pair with the level
+   number/letter (0/1/2/3/4/V) so the user can see in the sidebar
+   exactly which color each shortcut produces in the body. The
+   intent is reinforced visually: the green darkens at level 1
+   then fades through 2 → 3 → 4 → white(V), so "repeat the lesson
+   to fade green to white" reads at a glance. Used both in the
+   manual and (where useful) in tooltips / hint text. */
+.kbd-dot {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  vertical-align: middle;
+  margin: 0 2px 0 0;
+}
+.kbd-dot.s0 { background: #fff; }                          /* 새로운 단어 — 색 없음 */
+.kbd-dot.s1 { background: var(--word-1); border-color: var(--word-1); }
+.kbd-dot.s2 { background: var(--word-2); border-color: var(--word-2); }
+.kbd-dot.s3 { background: var(--word-3); border-color: var(--word-3); }
+.kbd-dot.s4 { background: var(--word-4); border-color: var(--word-4); }
+.kbd-dot.s5 { background: #fff; border: 1.5px solid var(--ink); }   /* V — 흰색 + 진한 테두리 */
+
+/* Word-level emphasis section in the sidebar manual. Highlighted
+   block so the progression and its meaning stand out from the
+   surrounding shortcut list. */
+.lesson-sidebar .ls-manual-sec.ls-manual-levels {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.lesson-sidebar .ls-manual-sec.ls-manual-levels h4 {
+  margin-top: 0;
+}
+.lesson-sidebar .ls-manual-level-row {
+  display: flex; flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.lesson-sidebar .ls-manual-level-row kbd {
+  margin: 0 2px 0 0;
+}
+.lesson-sidebar .ls-manual-level-tip {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink);
+  line-height: 1.5;
+}
+.lesson-sidebar .ls-manual-level-tip strong {
+  color: var(--ink);
 }
 /* Inline keyboard-key chips — used in the manual to mark shortcut keys
    (←, →, 0~4, V, Esc, ',', '.'). Subtle gray pill so the key reads as
