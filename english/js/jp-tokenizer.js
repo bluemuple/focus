@@ -737,9 +737,23 @@
                               /く$/.test(tk.surface_form || '');
       const isAdverbialNoun = isWord && tk.pos === '名詞' &&
                               tk.pos_detail_1 === '副詞可能';
+      // Verbs that DOUBLE as 連体詞 (a-certain modifier) — kuromoji
+      // sometimes tags these as 動詞 even when they're actually
+      // modifying the next noun:
+      //   ある日, ある夜, ある朝, ある人, ある時 (a-certain day/night/…)
+      //   いわゆる + noun (so-called X)
+      // Heuristic: surface is one of these adnominal verbs AND the
+      // very next token is a 名詞. If a particle / aux comes between,
+      // it's a real verb usage (本がある) and we don't override.
+      const ADNOMINAL_VERB_SURFACES = new Set([
+        'ある', 'あらゆる', 'いわゆる', 'たいした',
+      ]);
+      const isVerbAsAdnominal = isWord && tk.pos === '動詞' &&
+                                ADNOMINAL_VERB_SURFACES.has(tk.surface_form || '') &&
+                                next && next.pos === '名詞';
       const isBoundModifier = isWord && (
         tk.pos === '連体詞' || tk.pos === '接頭詞' || tk.pos === '副詞' ||
-        isAdjAdverbForm || isAdverbialNoun
+        isAdjAdverbForm || isAdverbialNoun || isVerbAsAdnominal
       );
       // SUFFIX-LIKE — these don't start a chunk either; they ATTACH
       // to the running chunk, like particles.
