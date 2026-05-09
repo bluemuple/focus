@@ -383,9 +383,27 @@
   //      but the source clearly wants なん). Override the token's
   //      reading with the inline kana and strip it.
   //
-  // Stops the lookahead at particles (助詞), auxiliaries (助動詞), and
-  // suffixes (接尾) so we don't accidentally absorb e.g. たち in 子供たち
-  // (which is a real plural suffix, not an inline reading).
+  // Stops the lookahead at:
+  //   • Particles (助詞) — always.
+  //   • MULTI-CHARACTER auxiliaries (助動詞 with surface length ≥ 2) —
+  //     these are real grammatical particles like です / ます / だっ.
+  //     SINGLE-CHAR 助動詞 like な, た, ら are usually kuromoji
+  //     tokenization artifacts (it splits unknown kana runs into
+  //     1-char tokens with shaky POS tags) and should NOT block our
+  //     lookahead — otherwise inline annotations like 名前なまえ get
+  //     missed because kuromoji tags the leading な as 助動詞.
+  //   • Suffixes (接尾) like たち in 子供たち — these are real plural
+  //     markers, not inline readings.
+  // Non-noun POS like フィラー (filler — kuromoji's catch-all for kana
+  // it can't analyze) flows through, which is exactly what we want for
+  // accumulating inline-reading runs.
+  //
+  // Multi-char known auxiliary safeguard: even if accum looks like an
+  // inline annotation by length, refuse to override when it equals
+  // (or starts with) a known copula/aux form — protects against e.g.
+  // 何 + です where my length-relaxed lookahead might otherwise
+  // accidentally absorb です as 何's "reading".
+  const AUX_DENY_RE = /^(です|でし|でしょ|でしょう|でした|だ|だっ|でも|である|であり|まし|ます|ません|ない|なかっ|たい|たく|たかっ|られ|れる|せる|させ|なら|ば)$/;
   function _stripDuplicateReadings(tokens) {
     const out = [];
     for (let i = 0; i < tokens.length; i++) {
@@ -393,7 +411,7 @@
       out.push(tk);
       const surf = tk.surface_form || '';
       if (!_hasKanji(surf)) continue;
-      // Accumulate the following pure-hiragana noun-ish run.
+      // Accumulate the following pure-hiragana run.
       let accum = '';
       let consumed = 0;
       let j = i + 1;
@@ -401,7 +419,8 @@
         const next = tokens[j];
         const nextSurf = next.surface_form || '';
         if (!/^[ぁ-ん]+$/.test(nextSurf)) break;
-        if (next.pos === '助詞' || next.pos === '助動詞') break;
+        if (next.pos === '助詞') break;
+        if (next.pos === '助動詞' && nextSurf.length >= 2) break;
         if (next.pos_detail_1 === '接尾') break;
         accum += nextSurf;
         consumed++;
@@ -414,11 +433,13 @@
       if (rd && accum === rd) {
         // Case 1: exact match — strip without touching reading.
         i += consumed;
-      } else if (isPureKanji) {
+      } else if (isPureKanji && accum.length >= 2 && !AUX_DENY_RE.test(accum)) {
         // Case 2: override reading with inline kana, then strip.
-        // Convert hiragana → katakana for the reading field (kuromoji
-        // stores readings in katakana; downstream code katakana-to-
-        // hiragana converts again at render time).
+        // Length ≥ 2 + AUX_DENY guard — single-char accum like で is
+        // too ambiguous (could be 助詞), and known aux forms like です
+        // would falsely absorb. Both checks keep "何 + で / です / だ"
+        // safe; _fixContextualReadings handles the contextual reading
+        // for those.
         const kata = accum.replace(/[ぁ-ん]/g, c =>
           String.fromCharCode(c.charCodeAt(0) + 0x60)
         );
@@ -426,8 +447,9 @@
         tk.pronunciation = kata;
         i += consumed;
       }
-      // Else: mixed kanji+kana surface with non-matching hiragana run
-      // — don't override (the next token is probably an unrelated word).
+      // Else: mixed kanji+kana surface with non-matching hiragana run,
+      // or accum too short / matches a real auxiliary — leave the
+      // tokens alone.
     }
     return out;
   }
