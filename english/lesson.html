@@ -3801,9 +3801,23 @@
     // repaintSidebarTitle() — that way the inflection suffix sky-blue
     // styling is in place from the very first paint. Set a textContent
     // fallback first so any code that reads .textContent for word
-    // identity (e.g. the staleness checks in the translate callbacks)
-    // still finds the literal word.
-    document.getElementById('ls-word').textContent = text;
+    // identity still finds the literal word.
+    //
+    // STALENESS KEY — `dataset.activeWord` carries the lemma identity
+    // independent of textContent. Once the title repaints to show the
+    // SURFACE form (e.g. textContent "住んでいました" while text="住む"),
+    // the textContent-based staleness checks the async translate /
+    // word-info / chunk callbacks used to do would always mismatch
+    // and silently drop their results. We compare against
+    // dataset.activeWord instead — set ONCE here and re-set only when
+    // a NEW word opens the sidebar.
+    {
+      const wEl0 = document.getElementById('ls-word');
+      if (wEl0) {
+        wEl0.textContent = text;
+        wEl0.dataset.activeWord = text;
+      }
+    }
 
     // Speaker icon was removed per spec — keep the auto-pronunciation
     // on sheet open (same as the mobile word-sheet flow). The user can
@@ -3965,7 +3979,7 @@
     // still tends to return faster than the contextual variant.
     Translate.translate(text).then(ko => {
       const cur = document.getElementById('ls-word');
-      if (!cur || cur.textContent !== text) return;
+      if (!cur || cur.dataset.activeWord !== text) return;
       if (!sbLatestWordKo) {
         sbLatestWordKo = (ko || '').trim();
         repaintSidebarMeaning();
@@ -3976,7 +3990,7 @@
     // Phase 2 — authoritative contextual Korean (DeepL).
     Translate.translate(text, sentence).then(ko => {
       const cur = document.getElementById('ls-word');
-      if (!cur || cur.textContent !== text) return;
+      if (!cur || cur.dataset.activeWord !== text) return;
       const next = (ko || '').trim();
       if (next) {
         sbLatestWordKo = next;
@@ -3999,7 +4013,7 @@
     if (Translate.translateGPT) {
       Translate.translateGPT(text, sentence).then(ko => {
         const cur = document.getElementById('ls-word');
-        if (!cur || cur.textContent !== text) return;
+        if (!cur || cur.dataset.activeWord !== text) return;
         const next = (ko || '').trim();
         if (next && next !== sbLatestWordKo) {
           sbLatestWordKo = next;
@@ -4017,7 +4031,7 @@
       Translate.getChunks(sentence).then(chunks => {
         if (!chunks) return;
         const cur = document.getElementById('ls-word');
-        if (!cur || cur.textContent !== text) return;
+        if (!cur || cur.dataset.activeWord !== text) return;
         const c = findChunkForWord(anchorEl, chunks);
         if (!c) return;
         applyChunkHighlight(anchorEl, c);
@@ -4026,7 +4040,7 @@
         repaintSidebarChunk();
         // DeepL pass for chunk Korean (fast).
         Translate.translate(c.text, sentence).then(ko => {
-          if (cur.textContent !== text) return;
+          if (cur.dataset.activeWord !== text) return;
           sbLatestChunkKo = ko || '';
           repaintSidebarChunk();
         }).catch(() => {});
@@ -4036,7 +4050,7 @@
         // 있다", not the chunk-isolated "개최 중").
         if (Translate.translateGPT) {
           Translate.translateGPT(c.text, sentence).then(ko => {
-            if (cur.textContent !== text) return;
+            if (cur.dataset.activeWord !== text) return;
             const next = (ko || '').trim();
             if (next && next !== sbLatestChunkKo) {
               sbLatestChunkKo = next;
@@ -4056,7 +4070,7 @@
         if (!info) return;
         // User may have moved on — bail if the displayed word changed.
         const cur = document.getElementById('ls-word');
-        if (!cur || cur.textContent !== text) return;
+        if (!cur || cur.dataset.activeWord !== text) return;
 
         if (info.ipa && ipaEl)   ipaEl.textContent  = info.ipa;
         if (info.level && lvlTag) lvlTag.textContent = info.level;
