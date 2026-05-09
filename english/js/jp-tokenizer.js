@@ -591,66 +591,14 @@
     return segs;
   }
 
-  // Per-char map: which kuromoji `_segment` does each surface char
-  // belong to? Used to apply cycling color classes (segment 0 = stem,
-  // uncolored; segments 1..N = inflections, color-cycled).
-  function _segmentIndexMap(tk) {
-    const surface = tk.surface_form || '';
-    const tkSegs = tk._segments || [surface];
-    const map = new Array(surface.length);
-    let pp = 0;
-    for (let s = 0; s < tkSegs.length; s++) {
-      const len = tkSegs[s].length;
-      for (let p = 0; p < len; p++) {
-        if (pp < surface.length) map[pp++] = s;
-      }
-    }
-    while (pp < surface.length) map[pp++] = 0;
-    return map;
-  }
-
-  // Render the inner HTML for one merged token. Lesson body shows
-  // plain surface text (NO furigana) — the user opted out of inline
-  // ruby because over-annotation cluttered the body. Furigana / kanji
-  // readings are now exposed only in the popup's chunk-explanation
-  // row (see renderChunkTx in lesson.html), where we re-render the
-  // chunk in all-hiragana with kanji-readings underlined.
-  //
-  // The post-stem kana still gets the inflection color cycle so a
-  // learner can see where one auxiliary ends and the next begins
-  // (持って**き**ました — segments cycle sky → green → magenta).
-  const _INFL_PALETTE = ['hl-infl', 'hl-infl-2', 'hl-infl-3'];
+  // Render the inner HTML for one merged token. Body chips render
+  // PLAIN BLACK TEXT — no furigana, no inflection coloring. Per spec
+  // the body should look uniform; the inflection-suffix color cycle
+  // is reserved for the SELECTED-WORD display in the popup / sidebar
+  // (handled by renderWordWithInflectionHTML in lesson.html, which
+  // reads `data-segments` off the chip we emit here).
   function _renderTokenInner(tk /*, rubySegs, tokenStart, tokenEnd */) {
-    const surface = tk.surface_form || '';
-    const segMap = _segmentIndexMap(tk);
-    return _colorizeRun(surface, 0, surface.length, segMap);
-  }
-
-  // Colorize a [startPos, endPos) slice of `surface` based on the
-  // per-char `segMap`. Segment 0 (stem) → uncolored; segments 1..N →
-  // cycling color classes. Adjacent same-class chars are coalesced
-  // into one <span> to keep the DOM compact.
-  function _colorizeRun(surface, startPos, endPos, segMap) {
-    let html = '';
-    let bufClass = null;
-    let buf = '';
-    const flush = () => {
-      if (!buf) return;
-      if (bufClass) html += '<span class="' + bufClass + '">' + _escapeHtml(buf) + '</span>';
-      else          html += _escapeHtml(buf);
-      buf = '';
-    };
-    for (let p = startPos; p < endPos; p++) {
-      const segIdx = (segMap && segMap[p]) || 0;
-      const cls = segIdx >= 1 ? _INFL_PALETTE[(segIdx - 1) % _INFL_PALETTE.length] : null;
-      if (cls !== bufClass) {
-        flush();
-        bufClass = cls;
-      }
-      buf += surface[p];
-    }
-    flush();
-    return html;
+    return _escapeHtml(tk.surface_form || '');
   }
 
   // Fetch GPT-generated furigana for one sentence via the
