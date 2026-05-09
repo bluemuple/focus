@@ -492,11 +492,19 @@
       const lastIsAdjNounStem = last && last.pos === '名詞' &&
                                 last.pos_detail_1 === '形容動詞語幹';
       const lastIsTeMerged = last && last._merged && last._absorbedTe;
+      // 形容詞 連用 (まるく, 大きく, 強く) + 動詞 (する, なる) →
+      // adverbial use of an adjective modifying a verb that follows.
+      // Merge into one token so まるくした / 大きくなった / 強くなる
+      // read as one word in TTS and select as one chip.
+      const lastIsAdjAdverbForm = last && last.pos === '形容詞' &&
+                                  /く$/.test(last.surface_form || '');
+      const isVerbAfterAdjAdverb = tk.pos === '動詞' && lastIsAdjAdverbForm;
       const shouldMerge =
         (isAux || isVerbSuffix) && (lastIsVerbish || lastIsAdjNounStem) ||
         isTeConn && lastIsVerbish ||
         isTeAuxVerb && lastIsTeMerged ||
-        isColloqNomin && (lastIsVerbish || (last && last._merged));
+        isColloqNomin && (lastIsVerbish || (last && last._merged)) ||
+        isVerbAfterAdjAdverb;
       if (shouldMerge) {
         last.surface_form  = (last.surface_form  || '') + (tk.surface_form  || '');
         last.reading       = (last.reading       || '') + (tk.reading       || '');
@@ -715,12 +723,11 @@
     let lastWasLinkingAux    = false;  // 助動詞 「な」 (幸せな気持ち)
     let lastWasNoLinker      = false;  // 助詞 「の」 (木の実)
     let lastParticleSurface  = '';     // surface of last 助詞 attached
-                                       // (used to gate subordinate-
-                                       // clause binding — topic
-                                       // markers は/も don't pull the
-                                       // following verb in: ぼくも /
-                                       // 食べても vs みんなで食べると)
     let lastWasAdjective     = false;  // 형용사 (甘いはちみつ)
+    let lastWasAdjNounStem   = false;  // 名詞,形容動詞語幹 (はるか,
+                                       // 元気) used as 連体修飾 directly
+                                       // attached to a following 名詞:
+                                       // はるかかなた, 静か森
     for (let ti = 0; ti < tokens.length; ti++) {
       const tk   = tokens[ti];
       const next = tokens[ti + 1];
@@ -742,17 +749,28 @@
       // modifying the next noun:
       //   ある日, ある夜, ある朝, ある人, ある時 (a-certain day/night/…)
       //   いわゆる + noun (so-called X)
-      // Heuristic: surface is one of these adnominal verbs AND the
-      // very next token is a 名詞. If a particle / aux comes between,
-      // it's a real verb usage (本がある) and we don't override.
       const ADNOMINAL_VERB_SURFACES = new Set([
         'ある', 'あらゆる', 'いわゆる', 'たいした',
       ]);
       const isVerbAsAdnominal = isWord && tk.pos === '動詞' &&
                                 ADNOMINAL_VERB_SURFACES.has(tk.surface_form || '') &&
                                 next && next.pos === '名詞';
+      // 副詞 binding is CONDITIONAL — only when the adverb modifies a
+      // small phrase that completes inside the next 1-2 tokens:
+      //   • 副詞 + 形容動詞語幹 (とても幸せ → 名詞 modifier)
+      //   • 副詞 + 動詞 ending in て/で (にっこり笑って → te-form chain)
+      // When the adverb is sentence-initial / modifies a predicate
+      // (なにせひとは, もっとおいしい), it stands alone — its chunk
+      // boundary signals "rhythmic pause" rather than tight binding.
+      const isAdverb = isWord && tk.pos === '副詞';
+      const nextIsAdjNounStem = next && next.pos === '名詞' &&
+                                next.pos_detail_1 === '形容動詞語幹';
+      const nextIsTeVerb = next && next.pos === '動詞' &&
+                           /[てで]$/.test(next.surface_form || '');
+      const isAdverbBound = isAdverb && (nextIsAdjNounStem || nextIsTeVerb);
       const isBoundModifier = isWord && (
-        tk.pos === '連体詞' || tk.pos === '接頭詞' || tk.pos === '副詞' ||
+        tk.pos === '連体詞' || tk.pos === '接頭詞' ||
+        isAdverbBound ||
         isAdjAdverbForm || isAdverbialNoun || isVerbAsAdnominal
       );
       // SUFFIX-LIKE — these don't start a chunk either; they ATTACH
@@ -766,7 +784,7 @@
       const isContent = isWord && !isBoundModifier && !isSuffix && (
         tk.pos === '名詞' || tk.pos === '動詞' ||
         tk.pos === '形容詞' || tk.pos === '形容動詞' ||
-        tk.pos === '感動詞'
+        tk.pos === '副詞' || tk.pos === '感動詞'
       );
       const isListConnector = isWord && tk.pos === '助詞' && (
         tk.surface_form === 'と' ||
@@ -809,8 +827,18 @@
         const lastWasNonTopicParticle = !!lastParticleSurface &&
           lastParticleSurface !== 'は' &&
           lastParticleSurface !== 'も';
+        // Some 接続助詞 connect TWO complete clauses rather than binding
+        // a subordinate clause to a head — they should NOT pull the
+        // verb into the preceding particle phrase. から / ので / のに
+        // / けど typically sit at the END of a clause and join the
+        // result/reason: 「いたんだから」 stands alone, doesn't glue
+        // back to 「はるかかなたに」.
+        const STANDALONE_CONNECTOR = new Set(['から', 'ので', 'のに', 'けど', 'けれど', 'けれども']);
+        const nextIsStandaloneConnector = next && next.pos === '助詞' &&
+          STANDALONE_CONNECTOR.has(next.surface_form || '');
         const verbContinuesClause =
-          tk.pos === '動詞' && lastWasNonTopicParticle && cur && (
+          tk.pos === '動詞' && lastWasNonTopicParticle && cur &&
+          !nextIsStandaloneConnector && (
             /[てで]$/.test(tk.surface_form || '') ||
             (next && next.pos === '助詞' && next.pos_detail_1 === '接続助詞') ||
             (next && next.pos === '名詞')
@@ -822,8 +850,15 @@
           // 形容動詞 + な + 名詞 (元気な人, 幸せな気持ち)
           cur.text += tk.surface_form;
           cur.indices[1] = wordIdx;
-        } else if (lastWasNoLinker && cur && tk.pos === '名詞') {
-          // 名詞 + の + 名詞 (genitive — 木の実, 森の中)
+        } else if (lastWasAdjNounStem && cur && tk.pos === '名詞') {
+          // 形容動詞語幹 + 名詞 directly, NO な (はるかかなた, 静か森)
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
+        } else if (lastWasNoLinker && cur && tk.pos === '名詞' &&
+                   tk.pos_detail_1 !== '形容動詞語幹') {
+          // 名詞 + の + 名詞 (genitive — 木の実, 森の中). 例외:
+          // の 다음이 形容動詞語幹 (はるか, 静か, 元気)이면 새 phrase
+          // 시작이라 binding하지 않음 (ところの / はるかかなた).
           cur.text += tk.surface_form;
           cur.indices[1] = wordIdx;
         } else if (lastWasAdjective && cur && tk.pos === '名詞') {
@@ -881,6 +916,7 @@
       lastWasNoLinker      = !!cur && tk.pos === '助詞'   && tk.surface_form === 'の';
       lastParticleSurface  = (!!cur && tk.pos === '助詞') ? (tk.surface_form || '') : '';
       lastWasAdjective     = !!cur && tk.pos === '形容詞';
+      lastWasAdjNounStem   = !!cur && tk.pos === '名詞' && tk.pos_detail_1 === '形容動詞語幹';
     }
     if (cur) chunks.push(cur);
     if (pendingModifier) {
