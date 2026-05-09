@@ -41,10 +41,60 @@
     });
   }
 
+  // KNOWN BUG WORKAROUND for kuromoji.js@0.1.2 ----------
+  // The bundled `path.join` (browserify shim) collapses `https://`
+  // into `https:/` (single slash), so a dicPath like
+  // 'https://cdn.jsdelivr.net/...' becomes
+  // 'https:/cdn.jsdelivr.net/...' inside the loader, which the
+  // browser then resolves as a RELATIVE path against the current
+  // origin → 404 "https://bluemuple.github.io/cdn.jsdelivr.net/...".
+  //
+  // Fix: monkey-patch the BrowserDictionaryLoader's loadArrayBuffer
+  // to re-insert the missing slash before issuing the XHR. We do
+  // this on the prototype so every dict file (12 of them) gets
+  // repaired without any per-call wiring.
+  function _patchKuromojiLoader() {
+    if (!window.kuromoji || _patchKuromojiLoader._done) return;
+    _patchKuromojiLoader._done = true;
+    try {
+      // Build a throwaway builder to grab the loader instance,
+      // then patch its prototype.
+      const tmp = window.kuromoji.builder({ dicPath: KUROMOJI_DICT });
+      const loader = tmp && tmp.loader;
+      if (!loader) return;
+      const proto = Object.getPrototypeOf(loader);
+      if (!proto || typeof proto.loadArrayBuffer !== 'function') return;
+      const original = proto.loadArrayBuffer;
+      proto.loadArrayBuffer = function(url, callback) {
+        let fixed = String(url);
+        // Case A: `https:/cdn...` (one slash, browserify path.join
+        // collapsed `://` → `:/`). The browser resolves this as
+        // scheme-relative against the current authority → 404 at
+        // /cdn.jsdelivr.net/...
+        fixed = fixed.replace(/^(https?):\/(?!\/)/, '$1://');
+        // Case B: `/cdn.jsdelivr.net/...` (protocol stripped fully) —
+        // some path normalizers do this. Re-prepend `https:`.
+        if (/^\/cdn\.jsdelivr\.net\//.test(fixed)) {
+          fixed = 'https:' + fixed;
+        }
+        // Case C: `cdn.jsdelivr.net/...` (no protocol, no leading
+        // slash) — relative-resolves to current page. Re-prepend
+        // `https://`.
+        if (/^cdn\.jsdelivr\.net\//.test(fixed)) {
+          fixed = 'https://' + fixed;
+        }
+        return original.call(this, fixed, callback);
+      };
+    } catch (e) {
+      console.warn('[jp-tokenizer] loader patch failed', e);
+    }
+  }
+
   function ready() {
     if (_readyPromise) return _readyPromise;
     _readyPromise = (async () => {
       await _loadScript();
+      _patchKuromojiLoader();
       return new Promise((resolve, reject) => {
         window.kuromoji.builder({ dicPath: KUROMOJI_DICT })
           .build((err, tokenizer) => {
@@ -187,6 +237,9 @@
   // particles independently.
   // Specifically merges: 助動詞 (たい/た/ます/ません/ない/etc.),
   //                       接尾 verbs (動詞,接尾 → 過ぎる etc.).
+  // Also stores `_segments` — the list of original surface chunks
+  // before merging — so the renderer can color each suffix piece
+  // independently (見せ + ませ + ん + でし + た → multi-tone).
   function _mergeAuxiliaries(tokens) {
     const out = [];
     for (const tk of tokens) {
@@ -202,10 +255,13 @@
         last.reading      = (last.reading      || '') + (tk.reading      || '');
         last.pronunciation = (last.pronunciation || '') + (tk.pronunciation || '');
         last._merged = true;
+        last._segments.push(tk.surface_form || '');
         continue;
       }
       // Clone so we don't mutate kuromoji's internal cache.
-      out.push(Object.assign({}, tk));
+      const cloned = Object.assign({}, tk);
+      cloned._segments = [tk.surface_form || ''];
+      out.push(cloned);
     }
     return out;
   }
@@ -229,9 +285,15 @@
       const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
       const reading = katakanaToHiragana(tk.reading || '');
       const inner = _renderWordInner(surface, reading);
+      // data-segments: JSON array of original (pre-merge) surface
+      // chunks. Empty/single-segment tokens have no suffix coloring;
+      // multi-segment ones get cycle-colored in the meaning row.
+      const segs = tk._segments || [surface];
+      const segsAttr = _escapeHtml(JSON.stringify(segs));
       out.push(
         '<span class="w" data-word="' + _escapeHtml(lemma) +
-        '" data-surface="' + _escapeHtml(surface) + '">' +
+        '" data-surface="' + _escapeHtml(surface) +
+        '" data-segments="' + segsAttr + '">' +
         inner + '</span>'
       );
     }

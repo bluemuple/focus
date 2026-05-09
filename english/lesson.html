@@ -163,52 +163,14 @@
          word card. -->
     <div class="ls-scroll" id="ls-scroll">
     <div class="ls-empty" id="ls-empty">
+      <!-- Manual content is now rendered by JS (renderSidebarManual)
+           so it can swap between EN- and JP-mode hints (e.g. JP mode
+           explains how clicking a 활용형 looks up the dictionary
+           form). Initial static fallback below covers the brief
+           moment before JS runs. -->
       <div class="ls-manual">
         <h3 class="ls-manual-title">📖 레슨 사용법</h3>
-
-        <section class="ls-manual-sec">
-          <h4>단어 학습</h4>
-          <ul>
-            <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
-            <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
-            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
-            <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
-          </ul>
-        </section>
-
-        <section class="ls-manual-sec">
-          <h4>읽기 모드 <span class="muted">(하단 바)</span></h4>
-          <ul>
-            <li><strong>단어 뜻 하나씩</strong> — 단어 단위 학습</li>
-            <li><strong>여러개 이어서</strong> — 구문으로 묶어 학습</li>
-            <li><strong>이어서 아래</strong> — 한국어를 본문 아래에 표시</li>
-          </ul>
-        </section>
-
-        <section class="ls-manual-sec">
-          <h4>페이지 이동</h4>
-          <ul>
-            <li><kbd>,</kbd> <kbd>.</kbd> 키로 이전 / 다음 페이지</li>
-            <li><kbd>Esc</kbd> 키로 열린 팝업 / 사전 닫기</li>
-          </ul>
-        </section>
-
-        <section class="ls-manual-sec">
-          <h4>부가 기능</h4>
-          <ul>
-            <li><strong>코퍼스</strong> 버튼 — 같은 단어가 쓰인 다른 문장</li>
-            <li><strong>사전</strong> 버튼 — Naver 영영/영한 사전</li>
-            <li><strong>♡</strong> — 단어를 퀴즈 카드에 추가</li>
-          </ul>
-        </section>
-
-        <section class="ls-manual-fontctl">
-          <h4>본문 글자 크기</h4>
-          <div class="ls-empty-fontctl">
-            <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
-            <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
-          </div>
-        </section>
+        <div class="ls-manual-loading muted">불러오는 중…</div>
       </div>
     </div>
     <div class="ls-card" id="ls-card" hidden>
@@ -797,9 +759,13 @@
     // line counts). Without this the mirror renders a single-blob
     // fallback paragraph and miscounts pages.
     if (DB.getLang && DB.getLang() === 'ja') {
+      // First-time JP load downloads kuromoji.js (~700 kB) + IPADIC
+      // dictionary (~13 MB raw, ~5 MB gzip) — show a splash so the
+      // user knows the page didn't freeze. Removed once tokens are
+      // ready. Subsequent JP lessons hit the browser cache and the
+      // splash flashes briefly or not at all.
+      const splash = _showJpLoadSplash();
       try {
-        // Pre-tokenize raw paragraphs of the lesson body so the
-        // mirror's renderParagraph can find tokens immediately.
         const rawParas = (LESSON.body || '').split(/\n{2,}|\r\n{2,}/)
           .map(s => s.trim()).filter(Boolean);
         const tokenizer = await window.JPT.ready();
@@ -810,7 +776,11 @@
             }
           }
         }
-      } catch (e) { console.warn('[jp-tokenize] preload failed', e); }
+      } catch (e) {
+        console.warn('[jp-tokenize] preload failed', e);
+      } finally {
+        splash.hide();
+      }
     }
     PAGES = paginateByHeight(LESSON.body || '');
     computePageCharCounts();
@@ -2489,9 +2459,29 @@
   //      "stretch out") is a clean prefix of the word → suffix = rest.
   //   2. Else fall back to spelling-based detection for irregular
   //      lemmas where the GPT lemma isn't a string prefix.
-  function renderWordWithInflectionHTML(word, lemma) {
+  function renderWordWithInflectionHTML(word, lemma, segments) {
     const w = String(word || '');
     if (!w) return '';
+    // Multi-segment JP path — when the .w span carries segments from
+    // kuromoji's pre-merge tokens, color each suffix segment
+    // independently with cycling palette (sky-blue → green → pink).
+    // Stem (first segment) stays the default ink color. Covers long
+    // inflections like 見せませんでした (見せ + ませ + ん + でし + た).
+    if (Array.isArray(segments) && segments.length > 1) {
+      const PALETTE = ['hl-infl', 'hl-infl-2', 'hl-infl-3'];
+      let html = '';
+      for (let i = 0; i < segments.length; i++) {
+        const seg = String(segments[i] || '');
+        if (!seg) continue;
+        if (i === 0) {
+          html += escapeHtml(seg);
+        } else {
+          const cls = PALETTE[(i - 1) % PALETTE.length];
+          html += '<span class="' + cls + '">' + escapeHtml(seg) + '</span>';
+        }
+      }
+      return html;
+    }
     const lo = w.toLowerCase();
     const lem = (lemma || '').toLowerCase();
     const firstLem = lem.split(/\s+/)[0] || '';
@@ -3253,8 +3243,16 @@
       // `word` is the lemma (食べる). Use the surface for the visible
       // title so the user sees their click, but keep the lemma for
       // inflection-suffix detection inside renderWordWithInflectionHTML.
+      // `data-segments` (set by jp-tokenizer.js) is the pre-merge
+      // segment list — drives multi-color suffix rendering for long
+      // inflections like 見せませんでした.
       const surface = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || word;
-      const wDisplay = renderWordWithInflectionHTML(surface, latestLemma);
+      let segments = null;
+      try {
+        const raw = anchorEl && anchorEl.dataset && anchorEl.dataset.segments;
+        if (raw) segments = JSON.parse(raw);
+      } catch (_) {}
+      const wDisplay = renderWordWithInflectionHTML(surface, latestLemma, segments);
       if (!latestWordKo) {
         meaningEl.innerHTML = wDisplay + ': …';
         return;
@@ -3541,32 +3539,48 @@
     main.style.transform = 'translateY(' + Math.round(newY) + 'px)';
   }
 
-  function renderSidebarWordList(host) {
-    // Pull every word state with state ≥ 1 (clicked at least twice).
-    const entries = Object.entries(WORD_STATES || {})
-      .filter(([w, v]) => v && v.state >= 1)
-      .map(([w, v]) => ({ word: w, state: v.state }));
-    if (!entries.length) {
-      // Same usage manual as the static #ls-empty in lesson.html — kept
-      // in sync so the user sees the same guidance on first open AND
-      // after clearSidebar runs (e.g. when they close the active card).
-      host.innerHTML = `
+  // Manual content per language. EN = original full guide. JA = a
+  // tightened version that adds JP-specific tips (활용형 클릭 →
+  // 사전형 검색, 후리가나, 일본어 사전) and drops English-only
+  // shortcuts. Both end with the font-size adjustment block.
+  function _sidebarManualHTML() {
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    const fontctl =
+      '<section class="ls-manual-fontctl">' +
+      '  <h4>본문 글자 크기</h4>' +
+      '  <div class="ls-empty-fontctl">' +
+      '    <button class="toggle-btn dict" id="font-down-btn" title="글자 작게">−</button>' +
+      '    <button class="toggle-btn dict" id="font-up-btn"   title="글자 크게">+</button>' +
+      '  </div>' +
+      '</section>';
+    if (lang === 'ja') {
+      return `
         <div class="ls-manual">
-          <h3 class="ls-manual-title">📖 레슨 사용법</h3>
+          <h3 class="ls-manual-title">📖 레슨 사용법 <span class="muted">(일본어)</span></h3>
           <section class="ls-manual-sec">
             <h4>단어 학습</h4>
             <ul>
-              <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
+              <li>본문 단어 클릭 → 이 자리에 의미가 표시됩니다</li>
+              <li>활용형(예: <strong>食べた</strong>)을 클릭하면 사전형(<strong>食べる</strong>)으로 사전을 검색합니다</li>
+              <li>한자 위 작은 글씨는 <strong>후리가나</strong>(읽는 법)</li>
               <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
-            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+              <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
               <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
+            </ul>
+          </section>
+          <section class="ls-manual-sec">
+            <h4>활용 어미 색상</h4>
+            <ul>
+              <li>식별을 돕기 위해 활용 어미를 색깔로 표시:</li>
+              <li><span style="color:#38bdf8;font-weight:800">하늘색</span> · <span style="color:#16a34a;font-weight:800">연두색</span> · <span style="color:#d946ef;font-weight:800">자홍색</span> 순환</li>
+              <li>예: <ruby>見<rt>み</rt></ruby>せ<span style="color:#38bdf8;font-weight:800">ませ</span><span style="color:#16a34a;font-weight:800">ん</span><span style="color:#d946ef;font-weight:800">でし</span><span style="color:#38bdf8;font-weight:800">た</span></li>
             </ul>
           </section>
           <section class="ls-manual-sec">
             <h4>읽기 모드 <span class="muted">(하단 바)</span></h4>
             <ul>
-              <li><strong>단어 뜻 하나씩</strong> — 단어 단위 학습</li>
-              <li><strong>여러개 이어서</strong> — 구문으로 묶어 학습</li>
+              <li><strong>단어 뜻 하나씩</strong> — 한 단어씩 학습</li>
+              <li><strong>여러개 이어서</strong> — 구문 단위로 묶어 학습</li>
               <li><strong>이어서 아래</strong> — 한국어를 본문 아래에 표시</li>
             </ul>
           </section>
@@ -3580,29 +3594,81 @@
           <section class="ls-manual-sec">
             <h4>부가 기능</h4>
             <ul>
-              <li><strong>코퍼스</strong> 버튼 — 같은 단어가 쓰인 다른 문장</li>
-              <li><strong>사전</strong> 버튼 — Naver 영영/영한 사전</li>
+              <li><strong>코퍼스</strong> — 같은 단어가 쓰인 다른 일본어 문장</li>
+              <li><strong>사전</strong> — Naver 일본어 사전 (jakodict)</li>
+              <li><strong>TTS</strong> — Google 일본어 음성으로 본문 읽기</li>
               <li><strong>♡</strong> — 단어를 퀴즈 카드에 추가</li>
             </ul>
           </section>
-          <section class="ls-manual-fontctl">
-            <h4>본문 글자 크기</h4>
-            <div class="ls-empty-fontctl">
-              <button class="toggle-btn dict" id="font-down-btn"  title="글자 작게">−</button>
-              <button class="toggle-btn dict" id="font-up-btn"    title="글자 크게">+</button>
-            </div>
-          </section>
+          ${fontctl}
         </div>
       `;
-      // Font-size buttons are wired by setupToggles via getElementById,
-      // but setupToggles only ran once at init — bind here so the
-      // dynamically-rendered empty state buttons also work.
-      host.querySelectorAll('#font-down-btn, #font-up-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const evtName = btn.id === 'font-up-btn' ? 'eng:bumpFont:+' : 'eng:bumpFont:-';
-          window.dispatchEvent(new CustomEvent(evtName));
-        });
+    }
+    // English (default)
+    return `
+      <div class="ls-manual">
+        <h3 class="ls-manual-title">📖 레슨 사용법</h3>
+        <section class="ls-manual-sec">
+          <h4>단어 학습</h4>
+          <ul>
+            <li>본문 영어 단어를 클릭 → 이 자리에 의미가 표시됩니다</li>
+            <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
+            <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 같은 가로 위치의 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+            <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
+          </ul>
+        </section>
+        <section class="ls-manual-sec">
+          <h4>읽기 모드 <span class="muted">(하단 바)</span></h4>
+          <ul>
+            <li><strong>단어 뜻 하나씩</strong> — 단어 단위 학습</li>
+            <li><strong>여러개 이어서</strong> — 구문으로 묶어 학습</li>
+            <li><strong>이어서 아래</strong> — 한국어를 본문 아래에 표시</li>
+          </ul>
+        </section>
+        <section class="ls-manual-sec">
+          <h4>페이지 이동</h4>
+          <ul>
+            <li><kbd>,</kbd> <kbd>.</kbd> 키로 이전 / 다음 페이지</li>
+            <li><kbd>Esc</kbd> 키로 열린 팝업 / 사전 닫기</li>
+          </ul>
+        </section>
+        <section class="ls-manual-sec">
+          <h4>부가 기능</h4>
+          <ul>
+            <li><strong>코퍼스</strong> 버튼 — 같은 단어가 쓰인 다른 문장</li>
+            <li><strong>사전</strong> 버튼 — Naver 영영/영한 사전</li>
+            <li><strong>♡</strong> — 단어를 퀴즈 카드에 추가</li>
+          </ul>
+        </section>
+        ${fontctl}
+      </div>
+    `;
+  }
+  function _wireSidebarFontButtons(host) {
+    host.querySelectorAll('#font-down-btn, #font-up-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const evtName = btn.id === 'font-up-btn' ? 'eng:bumpFont:+' : 'eng:bumpFont:-';
+        window.dispatchEvent(new CustomEvent(evtName));
       });
+    });
+  }
+  // Render the language-aware manual into the static empty-state node
+  // ASAP after page init so first-load JP users don't see the EN
+  // manual by default.
+  (function _initSidebarManual() {
+    const empty = document.getElementById('ls-empty');
+    if (!empty) return;
+    empty.innerHTML = _sidebarManualHTML();
+    _wireSidebarFontButtons(empty);
+  })();
+  function renderSidebarWordList(host) {
+    // Pull every word state with state ≥ 1 (clicked at least twice).
+    const entries = Object.entries(WORD_STATES || {})
+      .filter(([w, v]) => v && v.state >= 1)
+      .map(([w, v]) => ({ word: w, state: v.state }));
+    if (!entries.length) {
+      host.innerHTML = _sidebarManualHTML();
+      _wireSidebarFontButtons(host);
       return;
     }
     // Group by state, keep highest first (newest clicks usually).
@@ -3794,9 +3860,15 @@
       // Use the anchor's `data-surface` when present (JP: 食べた surface
       // vs 食べる lemma — `text` is the lemma, surface is what the
       // user clicked). Fall back to `text` for English where every
-      // .w has its surface form already in `text`.
+      // .w has its surface form already in `text`. `data-segments`
+      // drives multi-color suffix rendering for long JP inflections.
       const surface = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || text;
-      wEl.innerHTML = renderWordWithInflectionHTML(surface, sbLatestLemma);
+      let segments = null;
+      try {
+        const raw = anchorEl && anchorEl.dataset && anchorEl.dataset.segments;
+        if (raw) segments = JSON.parse(raw);
+      } catch (_) {}
+      wEl.innerHTML = renderWordWithInflectionHTML(surface, sbLatestLemma, segments);
     }
 
     // Seed the lemma with the heuristic guess so both the title and
@@ -4403,9 +4475,13 @@
             <div class="qz-prompt-word">${escapeHtml(q.prompt.text)}</div>
           </div>`;
       }
+      // Helper string adapts to the active target language so a JP
+      // quiz says "올바른 일본어 단어를 고르세요" instead of "영어".
+      const _qLang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+      const _qLangLabel = _qLang === 'ja' ? '일본어' : '영어';
       const helper = q.kind === 'ko-to-en'
-        ? '올바른 영어 단어를 고르세요.'
-        : 'Select the correct meaning.';
+        ? ('올바른 ' + _qLangLabel + ' 단어를 고르세요.')
+        : '한국어 의미를 고르세요.';
 
       stage.innerHTML = quizFrame(qi, questions.length, `
         ${promptHtml}
@@ -5368,6 +5444,30 @@
   // finishes; we just need the tokens to already be computed when
   // renderInto walks paragraphs in a slide animation).
   const _jpTokensByLine = new Map();
+
+  // Loading splash for the first JP lesson load — kuromoji + IPADIC
+  // ship as ~5 MB gzip, ~13 MB uncompressed. Shows a centered card
+  // with a Korean-language hint + small spinner so the user knows
+  // the page is working. Returns { hide: fn } so the caller can
+  // dismiss it whenever it's done (success or failure).
+  function _showJpLoadSplash() {
+    const overlay = document.createElement('div');
+    overlay.className = 'jp-load-splash';
+    overlay.innerHTML =
+      '<div class="jp-load-card">' +
+      '  <div class="jp-load-spinner" aria-hidden="true"></div>' +
+      '  <div class="jp-load-title">일본어 사전 불러오는 중…</div>' +
+      '  <div class="jp-load-sub">처음 한 번만 다운로드합니다 (약 5 MB).<br>' +
+      '       다음부턴 즉시 열립니다.</div>' +
+      '</div>';
+    document.body.appendChild(overlay);
+    return {
+      hide() {
+        overlay.classList.add('fade-out');
+        setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 220);
+      },
+    };
+  }
 
   // Pre-tokenize every line of every page when the lesson is in
   // Japanese mode. Awaited from renderLesson before the first
