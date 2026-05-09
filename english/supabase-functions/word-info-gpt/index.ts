@@ -84,12 +84,16 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const word = String(body?.word || "").trim();
-    // `sentence` is intentionally IGNORED — kept in the type only so old
-    // clients that still send it don't trigger a 400. The output is
-    // sentence-independent now.
+    // Phase 3c: clients pass `lang` ('en' | 'ja') so the prompt can
+    // adapt its dictionary style and the cache stays separated. Old
+    // clients that don't send `lang` default to 'en' for back-compat.
+    const lang = String(body?.lang || "en").toLowerCase();
     if (!word) return json({ error: "word required" }, 400);
 
-    const cacheKey = word.toLowerCase();
+    // Cache key includes language so EN ↔ JA entries don't collide.
+    // English keeps the legacy un-prefixed key for back-compat (every
+    // existing cached row was English).
+    const cacheKey = lang === "en" ? word.toLowerCase() : (lang + ":" + word.toLowerCase());
 
     // L2 cache check — any device/user seen this word? Skip GPT.
     const cached = await readCache(cacheKey);
@@ -98,8 +102,12 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
 
-    // Compact word-only prompt — sentence-dependent fields were dropped.
-    const sys = [
+    // Per-language prompt. EN: classic English dictionary entry.
+    // JA: Japanese dictionary entry — lemma is the basic_form, reading
+    // is hiragana, level uses JLPT (N5..N1), pos uses Japanese grammar
+    // labels (動詞/名詞/形容詞/副詞/...). Collocation `phrase` uses the
+    // bare lemma (verbs in 辞書形, no 〜ます / 〜た inflection).
+    const sysEn = [
       "Bilingual English→Korean dictionary for Korean learners. JSON only.",
       "PLAIN TEXT — never use markdown (no **bold**, no *italic*, no `code`).",
       "",
@@ -117,6 +125,40 @@ Deno.serve(async (req) => {
       "    • Input \"applies\" → \"apply for\", \"apply to\" (NEVER \"applies for\").",
       "- examples: 2 fresh [{en, ko}].",
     ].join("\n");
+
+    const sysJa = [
+      "Bilingual Japanese→Korean dictionary for Korean learners. JSON only.",
+      "PLAIN TEXT — never use markdown (no **bold**, no *italic*, no `code`).",
+      "",
+      "Keys:",
+      "- lemma (string): the dictionary form (辞書形 / basic_form). For",
+      "  verbs use the る/う ending; for adjectives the い/な form.",
+      "  Example: input 食べた → lemma 食べる. Input 行きました → lemma 行く.",
+      "- ipa (string): the LEMMA's hiragana reading (NOT katakana, NOT IPA).",
+      "  Example: lemma 食べる → ipa \"たべる\". Lemma 学校 → \"がっこう\".",
+      "- level: JLPT band as a string \"N5\" / \"N4\" / \"N3\" / \"N2\" / \"N1\".",
+      "- pos: Japanese POS — 動詞 / 名詞 / 形容詞 / 形容動詞 / 副詞 /",
+      "  助詞 / 助動詞 / 接続詞 / 感動詞 / 接頭辞 / 接尾辞.",
+      "- senses: 3-5 frequency-sorted [{pos, ko, example}]. The `example`",
+      "  is a short Japanese sentence using the lemma; `ko` is its",
+      "  Korean meaning of THAT specific sense.",
+      "- collocations: 4 frequent [{phrase, ko}]. STRICT RULES for `phrase`:",
+      "    • ALWAYS use the LEMMA form (辞書形), never an inflected form.",
+      "      Even if the input is 食べた / 食べました, every `phrase` uses",
+      "      the bare lemma 食べる.",
+      "    • Examples — input 食べた → phrases like \"食べ過ぎる\",",
+      "      \"食べ放題\", \"ご飯を食べる\" (NEVER \"食べた放題\").",
+      "    • Input 行きました → \"〜に行く\", \"行ってきます\"",
+      "      (NEVER \"行きました\").",
+      "    • Particle patterns are fine (〜を, 〜に, 〜と) when typical.",
+      "- examples: 2 fresh [{en, ko}] — `en` field holds the Japanese",
+      "  example sentence (the field name is kept as `en` for client",
+      "  compatibility; semantically it's the source-language sentence).",
+      "  Each sentence uses the lemma in a common context, paired with",
+      "  its Korean translation.",
+    ].join("\n");
+
+    const sys = lang === "ja" ? sysJa : sysEn;
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",

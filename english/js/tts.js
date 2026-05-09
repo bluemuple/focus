@@ -17,30 +17,54 @@
   // user can pick one that matches their target dialect (US / UK / NZ).
   // The "label" is what appears on the picker button — short letters /
   // accent badges so the row stays compact on mobile.
+  // Voices are tagged with `lang` so the picker can show only the
+  // relevant ones for the current target language ('en' or 'ja').
+  // The user's preferred voice is saved per-language so a JP-mode
+  // pick doesn't override their EN-mode pick and vice versa.
   const VOICES = [
-    { id: 'en-US-Neural2-F',     label: 'US',  gender: '여자', note: 'US 여성 — 활발한 톤 (기본)' },
-    { id: 'en-US-Neural2-H',     label: 'US+', gender: '여자', note: 'US 여성 — 밝은 톤' },
-    { id: 'en-US-Neural2-J',     label: 'US♂', gender: '남자', note: 'US 남성 — 편안한 톤' },
-    // UK + NZ go through Google's matching Neural2 voice IDs. UK Neural2-A
-    // is a clear British female; NZ Neural2 voices preserve Kiwi vowels.
-    { id: 'en-GB-Neural2-A',     label: 'UK',  gender: '여자', note: 'UK 영국 여성 — 밝은 톤' },
-    { id: 'en-AU-Neural2-A',     label: 'NZ',  gender: '여자', note: 'NZ/AU 여성' },
-    { id: 'en-AU-Neural2-B',     label: 'NZ♂', gender: '남자', note: 'NZ/AU 남성' },
+    // ---- English ----
+    { id: 'en-US-Neural2-F',     lang: 'en', label: 'US',  gender: '여자', note: 'US 여성 — 활발한 톤 (기본)' },
+    { id: 'en-US-Neural2-H',     lang: 'en', label: 'US+', gender: '여자', note: 'US 여성 — 밝은 톤' },
+    { id: 'en-US-Neural2-J',     lang: 'en', label: 'US♂', gender: '남자', note: 'US 남성 — 편안한 톤' },
+    { id: 'en-GB-Neural2-A',     lang: 'en', label: 'UK',  gender: '여자', note: 'UK 영국 여성 — 밝은 톤' },
+    { id: 'en-AU-Neural2-A',     lang: 'en', label: 'NZ',  gender: '여자', note: 'NZ/AU 여성' },
+    { id: 'en-AU-Neural2-B',     lang: 'en', label: 'NZ♂', gender: '남자', note: 'NZ/AU 남성' },
+    // ---- Japanese (Google Cloud TTS ja-JP-Neural2 family) ----
+    { id: 'ja-JP-Neural2-B',     lang: 'ja', label: 'JP',  gender: '여자', note: '일본어 여성 (기본)' },
+    { id: 'ja-JP-Neural2-C',     lang: 'ja', label: 'JP♂', gender: '남자', note: '일본어 남성' },
+    { id: 'ja-JP-Neural2-D',     lang: 'ja', label: 'JP+', gender: '남자', note: '일본어 남성 — 차분한 톤' },
   ];
-  const DEFAULT_VOICE = 'en-US-Neural2-F';
-  const VOICE_KEY = 'eng.v1.ttsVoice';
-
-  function listVoices() { return VOICES.slice(); }
+  const DEFAULT_VOICE_BY_LANG = {
+    en: 'en-US-Neural2-F',
+    ja: 'ja-JP-Neural2-B',
+  };
+  // Per-language stored preference so the user's JP voice doesn't clobber
+  // their EN voice on switch. English keeps the legacy un-suffixed key
+  // for back-compat; Japanese gets `eng.v1.ttsVoice.ja`.
+  function _voiceKey(lang) {
+    return lang === 'en' ? 'eng.v1.ttsVoice' : ('eng.v1.ttsVoice.' + lang);
+  }
+  function _curLang() {
+    return (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+  }
+  function listVoices() {
+    // Only voices for the current target language show up in the picker.
+    const lang = _curLang();
+    return VOICES.filter(v => v.lang === lang);
+  }
   function getVoice() {
+    const lang = _curLang();
     try {
-      const v = localStorage.getItem(VOICE_KEY);
-      if (v && VOICES.some(o => o.id === v)) return v;
+      const v = localStorage.getItem(_voiceKey(lang));
+      if (v && VOICES.some(o => o.id === v && o.lang === lang)) return v;
     } catch (e) {}
-    return DEFAULT_VOICE;
+    return DEFAULT_VOICE_BY_LANG[lang] || DEFAULT_VOICE_BY_LANG.en;
   }
   function setVoice(v) {
-    if (!v || !VOICES.some(o => o.id === v)) return;
-    try { localStorage.setItem(VOICE_KEY, v); } catch (e) {}
+    if (!v) return;
+    const meta = VOICES.find(o => o.id === v);
+    if (!meta) return;
+    try { localStorage.setItem(_voiceKey(meta.lang), v); } catch (e) {}
   }
 
   const audioCache = new Map();   // voice + '|' + text  →  objectURL

@@ -11,6 +11,26 @@
 <div class="behind">
   <header class="topbar">
     <a class="brand" href="index.html">또박또박</a>
+    <!-- Language switcher: green pill next to the brand. Shows the
+         current target language's flag; click to toggle the dropdown
+         with EN / JP options. Each option's flag is the country
+         flag emoji (🇬🇧 / 🇯🇵). State persists in localStorage as
+         `eng.v1.language` and namespaces all per-language data
+         (streak, money, mastered, lessons, word states, phrases). -->
+    <div class="lang-switch" id="lang-switch">
+      <button class="lang-switch-btn" id="lang-switch-btn" type="button" aria-haspopup="listbox" aria-expanded="false">
+        <span class="lang-flag" id="lang-flag-current">🇬🇧</span>
+        <span class="lang-caret" aria-hidden="true">▾</span>
+      </button>
+      <ul class="lang-menu" id="lang-menu" role="listbox" hidden>
+        <li><button class="lang-opt" data-lang="en" type="button" role="option">
+          <span class="lang-flag">🇬🇧</span><span class="lang-name">영어</span>
+        </button></li>
+        <li><button class="lang-opt" data-lang="ja" type="button" role="option">
+          <span class="lang-flag">🇯🇵</span><span class="lang-name">일본어</span>
+        </button></li>
+      </ul>
+    </div>
     <div class="spacer"></div>
     <a class="bidoro-tab" href="../index.html" title="비도로 사이트로 돌아가기">
       <span class="text">Bidoro</span><span class="ico" aria-hidden="true">ƒ</span>
@@ -107,6 +127,54 @@
       // gate-rendered modal didn't appear.
       Auth.showModal(() => location.reload());
     };
+  })();
+
+  // Language switcher (next to the brand). Drops down a 2-option list:
+  // 영어 (🇬🇧) / 일본어 (🇯🇵). Selecting a different language updates
+  // DB's stored language preference and reloads the page so all
+  // language-namespaced data (streak, money, lessons, …) re-fetches
+  // from the right slot. Phase 1: English fully supported, Japanese
+  // is scaffolding-only (a "준비 중" banner shows in Japanese mode
+  // until tokenizer / TTS / dictionary are wired up).
+  (function setupLangSwitcher() {
+    const wrap = document.getElementById('lang-switch');
+    const btn  = document.getElementById('lang-switch-btn');
+    const menu = document.getElementById('lang-menu');
+    const flagCur = document.getElementById('lang-flag-current');
+    if (!wrap || !btn || !menu) return;
+    const FLAGS = { en: '🇬🇧', ja: '🇯🇵' };
+    const cur = (DB && DB.getLang) ? DB.getLang() : 'en';
+    if (flagCur) flagCur.textContent = FLAGS[cur] || '🇬🇧';
+    menu.querySelectorAll('.lang-opt').forEach(opt => {
+      if (opt.dataset.lang === cur) opt.classList.add('active');
+      opt.addEventListener('click', () => {
+        const next = opt.dataset.lang;
+        if (!next || next === cur) { menu.hidden = true; return; }
+        if (next === 'ja' && !confirm(
+          '일본어 모드는 현재 준비 중입니다.\n' +
+          '현재는 UI만 전환됩니다 (TTS, 사전, 토크나이저는 다음 단계).\n' +
+          '계속하시겠습니까?'
+        )) {
+          menu.hidden = true;
+          return;
+        }
+        DB.setLang && DB.setLang(next);
+        location.reload();
+      });
+    });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = !menu.hidden;
+      menu.hidden = open;
+      btn.setAttribute('aria-expanded', open ? 'false' : 'true');
+    });
+    // Click outside closes the menu.
+    document.addEventListener('click', (e) => {
+      if (!wrap.contains(e.target)) {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
   })();
 
   // Show auth gate. After authed (or "체험하기"), render home.

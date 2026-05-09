@@ -1,0 +1,314 @@
+// =============================================================
+//   Japanese tokenizer + furigana helper.
+//
+//   Lazy-loads kuromoji.js (~700 kB gzip) + IPADIC dictionary
+//   (~13 MB raw, ~5 MB gzip; cached by the browser after first
+//   load) the FIRST time Japanese text needs to be tokenized.
+//   English-only sessions never pay this cost.
+//
+//   Public surface (window.JPT):
+//     • ready(): Promise<tokenizer>            — resolves when
+//       kuromoji finished building. Subsequent calls return the
+//       same cached promise.
+//     • tokenize(text): Promise<Token[]>       — same shape as
+//       kuromoji's own .tokenize() output (surface_form,
+//       basic_form, reading, pos, etc.).
+//     • renderTokens(tokens): string           — renders an HTML
+//       string of <span class="w"> chips, with <ruby> furigana
+//       above any token that contains kanji and whose reading
+//       differs from its surface form.
+//     • katakanaToHiragana(s)                  — utility.
+//     • splitSentencesJa(text): string[]       — sentence-
+//       segmentation for JP body text (uses 。！？ as breaks).
+// =============================================================
+(() => {
+  // CDN — kuromoji 0.1.2 ships its dictionary alongside the lib.
+  const KUROMOJI_SCRIPT = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/build/kuromoji.min.js';
+  const KUROMOJI_DICT   = 'https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/';
+
+  let _readyPromise = null;
+  let _tokenizer = null;
+
+  function _loadScript() {
+    if (window.kuromoji) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = KUROMOJI_SCRIPT;
+      s.async = true;
+      s.onload = () => resolve();
+      s.onerror = (e) => reject(new Error('kuromoji script load failed'));
+      document.head.appendChild(s);
+    });
+  }
+
+  function ready() {
+    if (_readyPromise) return _readyPromise;
+    _readyPromise = (async () => {
+      await _loadScript();
+      return new Promise((resolve, reject) => {
+        window.kuromoji.builder({ dicPath: KUROMOJI_DICT })
+          .build((err, tokenizer) => {
+            if (err) return reject(err);
+            _tokenizer = tokenizer;
+            resolve(tokenizer);
+          });
+      });
+    })().catch((e) => {
+      // Reset so a transient failure (offline first load) doesn't
+      // permanently disable JP tokenization for the session.
+      _readyPromise = null;
+      throw e;
+    });
+    return _readyPromise;
+  }
+
+  async function tokenize(text) {
+    const tk = await ready();
+    return tk.tokenize(String(text || ''));
+  }
+
+  // Katakana (U+30A1..U+30F6) → Hiragana (U+3041..U+3096) is a
+  // straight 0x60 offset shift. Anything outside that range
+  // (punctuation, kanji, etc.) passes through unchanged.
+  function katakanaToHiragana(s) {
+    return String(s || '').replace(/[ァ-ヶ]/g, c =>
+      String.fromCharCode(c.charCodeAt(0) - 0x60)
+    );
+  }
+
+  function _hasKanji(s) {
+    return /[一-鿿㐀-䶿豈-﫿]/.test(s || '');
+  }
+
+  function _escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // Whether a token represents a "selectable word" (vs pure
+  // whitespace / punctuation). kuromoji tags pos="記号" for symbols.
+  function _isWordToken(tk) {
+    const s = tk.surface_form || '';
+    if (!s.trim()) return false;
+    if (tk.pos === '記号') return false;
+    // Single-char punctuation that slipped through (rare).
+    if (/^[\s。、！？!?…・「」『』（）()\[\]【】〜\-—\.,]+$/.test(s)) return false;
+    return true;
+  }
+
+  function _isKanjiChar(c) {
+    return /[一-鿿㐀-䶿豈-﫿]/.test(c);
+  }
+
+  // Per-character furigana alignment. Walks `surface` and `reading`
+  // in lockstep — kana surface chars consume the same kana from the
+  // reading, and kanji runs consume the slice of reading up to (but
+  // not including) the next matching kana of the surface.
+  //   buildFurigana("食べる", "たべる")
+  //     → [{kanji:"食", reading:"た"}, {kana:"べる"}]
+  //   buildFurigana("学校", "がっこう")
+  //     → [{kanji:"学校", reading:"がっこう"}]
+  //   buildFurigana("食べました", "たべました")
+  //     → [{kanji:"食", reading:"た"}, {kana:"べました"}]
+  // Returns an array of segments. Pure-kana surfaces yield one
+  // {kana} segment; pure-kanji yield one {kanji, reading}.
+  function _buildFurigana(surface, reading) {
+    const out = [];
+    let si = 0;
+    let ri = 0;
+    while (si < surface.length) {
+      if (_isKanjiChar(surface[si])) {
+        // Eat the kanji run.
+        let runEnd = si;
+        while (runEnd < surface.length && _isKanjiChar(surface[runEnd])) runEnd++;
+        const kanjiRun = surface.slice(si, runEnd);
+        // Reading for this run = slice of `reading` up to the next
+        // matching kana char in the surface (or end of reading).
+        let readEnd;
+        if (runEnd < surface.length) {
+          const nextKana = surface[runEnd];
+          readEnd = reading.indexOf(nextKana, ri);
+          if (readEnd < 0) readEnd = reading.length;
+        } else {
+          readEnd = reading.length;
+        }
+        out.push({ kanji: kanjiRun, reading: reading.slice(ri, readEnd) });
+        si = runEnd;
+        ri = readEnd;
+      } else {
+        // Same kana char — copy through. Run as long as we keep
+        // matching to coalesce adjacent kana chars in one segment.
+        let runEnd = si;
+        while (runEnd < surface.length && !_isKanjiChar(surface[runEnd])) runEnd++;
+        const kanaRun = surface.slice(si, runEnd);
+        out.push({ kana: kanaRun });
+        // Reading should consume the same kana — advance `ri` by run length.
+        ri = Math.min(reading.length, ri + kanaRun.length);
+        si = runEnd;
+      }
+    }
+    return out;
+  }
+
+  // Build the inner-HTML for a single word token: <ruby> per kanji
+  // segment + plain text per kana segment. Falls back to a single
+  // whole-token <ruby> when alignment fails (e.g. reading shorter
+  // than expected from compound words).
+  function _renderWordInner(surface, reading) {
+    if (!_hasKanji(surface) || !reading || reading === surface) {
+      return _escapeHtml(surface);
+    }
+    const segs = _buildFurigana(surface, reading);
+    let html = '';
+    let coverage = 0;
+    for (const seg of segs) {
+      if (seg.kanji) {
+        if (!seg.reading) {
+          // Alignment failed for this run — use the whole-token
+          // fallback so the user still gets SOME furigana.
+          return '<ruby>' + _escapeHtml(surface) +
+                 '<rt>' + _escapeHtml(reading) + '</rt></ruby>';
+        }
+        html += '<ruby>' + _escapeHtml(seg.kanji) +
+                '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
+        coverage += seg.reading.length;
+      } else {
+        html += _escapeHtml(seg.kana || '');
+        coverage += (seg.kana || '').length;
+      }
+    }
+    return html;
+  }
+
+  // Post-process kuromoji output — fold auxiliary verbs (助動詞) and
+  // adjacent verb-suffix tokens into the preceding 動詞/形容詞 token
+  // so 食べました reads as ONE selectable word instead of three.
+  // Particles (助詞) stay separate — learners often want to look up
+  // particles independently.
+  // Specifically merges: 助動詞 (たい/た/ます/ません/ない/etc.),
+  //                       接尾 verbs (動詞,接尾 → 過ぎる etc.).
+  function _mergeAuxiliaries(tokens) {
+    const out = [];
+    for (const tk of tokens) {
+      const last = out[out.length - 1];
+      const isAux = tk.pos === '助動詞';
+      const isVerbSuffix = tk.pos === '動詞' && tk.pos_detail_1 === '接尾';
+      if (last && (isAux || isVerbSuffix) &&
+          (last.pos === '動詞' || last.pos === '形容詞' || last._merged)) {
+        // Merge into previous token. Surface/reading concatenate;
+        // basic_form / pos / lemma stay the lead token's so
+        // word_states still keys off the verb's dictionary form.
+        last.surface_form = (last.surface_form || '') + (tk.surface_form || '');
+        last.reading      = (last.reading      || '') + (tk.reading      || '');
+        last.pronunciation = (last.pronunciation || '') + (tk.pronunciation || '');
+        last._merged = true;
+        continue;
+      }
+      // Clone so we don't mutate kuromoji's internal cache.
+      out.push(Object.assign({}, tk));
+    }
+    return out;
+  }
+
+  // Render a tokenizer-output array into the same .w / .w.punct DOM
+  // shape the English path produces. Word tokens get a `data-word`
+  // (the BASIC FORM — kuromoji's lemma — so 食べた / 食べる / 食べて
+  // share one word_states entry across conjugations) and surface-
+  // form text wrapped in <ruby> when the token contains kanji.
+  // Auxiliary verbs are merged into the preceding verb so a learner
+  // sees 食べました as ONE clickable unit (not 3 separate chips).
+  function renderTokens(tokens) {
+    const merged = _mergeAuxiliaries(tokens);
+    const out = [];
+    for (const tk of merged) {
+      const surface = tk.surface_form || '';
+      if (!_isWordToken(tk)) {
+        out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
+        continue;
+      }
+      const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
+      const reading = katakanaToHiragana(tk.reading || '');
+      const inner = _renderWordInner(surface, reading);
+      out.push(
+        '<span class="w" data-word="' + _escapeHtml(lemma) +
+        '" data-surface="' + _escapeHtml(surface) + '">' +
+        inner + '</span>'
+      );
+    }
+    return out.join('');
+  }
+
+  // Sentence segmentation for Japanese — split on 。！？ keeping the
+  // terminator with its sentence. Falls back to the whole input as
+  // one sentence when there's no terminator.
+  function splitSentencesJa(text) {
+    const s = String(text || '');
+    if (!s.trim()) return [];
+    const re = /[^。！？!?]+[。！？!?]+|[^。！？!?]+$/g;
+    const out = (s.match(re) || []).map(x => x.trim()).filter(Boolean);
+    return out.length ? out : [s.trim()];
+  }
+
+  // Phrase chunker for Japanese, replacing the chunk-gpt path that's
+  // English-grammar specific. Uses kuromoji output (post-merged for
+  // auxiliaries) and groups tokens into bunsetsu-like phrases:
+  //   • A new chunk starts on each "content" token (名詞 / 動詞 /
+  //     形容詞 / 形容動詞 / 副詞 / 連体詞).
+  //   • Trailing 助詞 / 助動詞 / 接続助詞 attach to the preceding
+  //     chunk (this is the standard Japanese reading unit — a
+  //     content word + its particles is what learners process as
+  //     ONE meaning unit).
+  //
+  // Returns an array shaped like the chunk-gpt output:
+  //   [{ text, indices: [start, end] }]
+  // where `indices` are 0-based positions in the WHITESPACE-IGNORING
+  // word stream — i.e. counting only `_isWordToken` tokens, mirroring
+  // chunk-gpt's "ignoring punctuation" convention. The lesson page
+  // then highlights the .w children at those indices.
+  function chunkSentenceJa(sentence) {
+    const raw = String(sentence || '');
+    if (!raw.trim()) return [];
+    if (!_tokenizer) return null;            // caller should ensure ready()
+    const tokens = _mergeAuxiliaries(_tokenizer.tokenize(raw));
+    const chunks = [];
+    let cur = null;
+    let wordIdx = -1;       // index across non-punct tokens only
+    for (const tk of tokens) {
+      const isWord = _isWordToken(tk);
+      if (isWord) wordIdx++;
+      const isContent = isWord && (
+        tk.pos === '名詞' || tk.pos === '動詞' ||
+        tk.pos === '形容詞' || tk.pos === '形容動詞' ||
+        tk.pos === '副詞' || tk.pos === '連体詞' ||
+        tk.pos === '感動詞' || tk.pos === '接頭詞'
+      );
+      if (isContent) {
+        // Close the previous chunk and start a new one.
+        if (cur) chunks.push(cur);
+        cur = { text: tk.surface_form, indices: [wordIdx, wordIdx] };
+      } else if (cur && isWord) {
+        // Attach particle / auxiliary / unknown to the running chunk.
+        cur.text += tk.surface_form;
+        cur.indices[1] = wordIdx;
+      } else if (!isWord) {
+        // Punctuation closes the current chunk (don't include the
+        // punct in the chunk text — matches chunk-gpt convention).
+        if (cur) {
+          chunks.push(cur);
+          cur = null;
+        }
+      }
+    }
+    if (cur) chunks.push(cur);
+    return chunks;
+  }
+
+  window.JPT = {
+    ready,
+    tokenize,
+    renderTokens,
+    katakanaToHiragana,
+    splitSentencesJa,
+    chunkSentenceJa,
+  };
+})();

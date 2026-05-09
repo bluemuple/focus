@@ -67,7 +67,12 @@
     return Math.abs(h).toString(36);
   }
   function cacheKey(text, ctx, engineName) {
-    return (engineName || ENGINE) + ':' + text.trim().toLowerCase() + ':' + hashCtx(ctx);
+    // Include source language so the same word doesn't share a cache
+    // entry across EN ↔ JA modes. English keeps the legacy un-prefixed
+    // key shape so existing user caches aren't invalidated.
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    const langPrefix = lang === 'en' ? '' : (lang + ':');
+    return langPrefix + (engineName || ENGINE) + ':' + text.trim().toLowerCase() + ':' + hashCtx(ctx);
   }
 
   // ---------- known-tricky common words: hard-coded overrides ----------
@@ -130,12 +135,28 @@
     };
   }
 
+  // Resolve the current target-language so DeepL / GPT / Google
+  // requests pick the right `source` code. Defaults to 'en' when DB
+  // hasn't loaded yet (script ordering / very early call).
+  function _curLang() {
+    return (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+  }
+  function _sourceForLang(lang) {
+    // DeepL accepts 'EN' / 'JA' (uppercase 2-letter ISO).
+    return lang === 'ja' ? 'JA' : 'EN';
+  }
+  function _googleSlForLang(lang) {
+    // Google translate `sl` (source language) lowercase ISO.
+    return lang === 'ja' ? 'ja' : 'en';
+  }
+
   // ---------- DeepL (single, with optional context) ----------
   async function viaDeepL(text, context) {
+    const source = _sourceForLang(_curLang());
     const { url, headers } = supabaseUrl('/functions/v1/translate');
     const r = await fetch(url, {
       method: 'POST', headers,
-      body: JSON.stringify({ text, source: 'EN', target: 'KO', context: context || undefined }),
+      body: JSON.stringify({ text, source, target: 'KO', context: context || undefined }),
     });
     if (!r.ok) throw new Error('DeepL proxy ' + r.status);
     const j = await r.json();
@@ -147,10 +168,11 @@
 
   // ---------- DeepL batched (used by page prefetch) ----------
   async function viaDeepLBatch(texts, context) {
+    const source = _sourceForLang(_curLang());
     const { url, headers } = supabaseUrl('/functions/v1/translate');
     const r = await fetch(url, {
       method: 'POST', headers,
-      body: JSON.stringify({ texts, source: 'EN', target: 'KO', context: context || undefined }),
+      body: JSON.stringify({ texts, source, target: 'KO', context: context || undefined }),
     });
     if (!r.ok) throw new Error('DeepL proxy ' + r.status);
     const j = await r.json();
@@ -161,10 +183,11 @@
 
   // ---------- GPT (single, with context) ----------
   async function viaGPT(text, context) {
+    const source = _sourceForLang(_curLang());
     const { url, headers } = supabaseUrl('/functions/v1/translate-gpt');
     const r = await fetch(url, {
       method: 'POST', headers,
-      body: JSON.stringify({ text, context: context || '', target: 'KO' }),
+      body: JSON.stringify({ text, context: context || '', source, target: 'KO' }),
     });
     if (!r.ok) throw new Error('GPT proxy ' + r.status);
     const j = await r.json();
@@ -176,7 +199,8 @@
 
   // ---------- Google (public gtx) ----------
   async function viaGoogle(text /* context unused */) {
-    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ko&dt=t&q='
+    const sl = _googleSlForLang(_curLang());
+    const url = 'https://translate.googleapis.com/translate_a/single?client=gtx&sl=' + sl + '&tl=ko&dt=t&q='
               + encodeURIComponent(text);
     const r = await fetch(url);
     if (!r.ok) throw new Error('Google ' + r.status);
@@ -189,8 +213,9 @@
 
   // ---------- MyMemory ----------
   async function viaMyMemory(text) {
+    const sl = _googleSlForLang(_curLang());        // 'en' or 'ja'
     const url = 'https://api.mymemory.translated.net/get?q=' +
-                encodeURIComponent(text) + '&langpair=en|ko';
+                encodeURIComponent(text) + '&langpair=' + sl + '|ko';
     const r = await fetch(url);
     if (!r.ok) throw new Error('MyMemory ' + r.status);
     const j = await r.json();
@@ -352,11 +377,16 @@
     word = (word || '').trim();
     if (!word) return [];
     if (/\s/.test(word)) return [];
-    const key = word.toLowerCase();
+    // Cache key includes the source language so the same word doesn't
+    // clobber across language modes (e.g. JP "live" → ライブ vs EN
+    // "live" → 살다).
+    const lang = _curLang();
+    const key = lang + '|' + word.toLowerCase();
     if (senseCache[key]) return senseCache[key];
     try {
+      const sl = _googleSlForLang(lang);
       const url = 'https://translate.googleapis.com/translate_a/single' +
-                  '?client=gtx&sl=en&tl=ko&dt=bd&q=' + encodeURIComponent(word);
+                  '?client=gtx&sl=' + sl + '&tl=ko&dt=bd&q=' + encodeURIComponent(word);
       const r = await fetch(url);
       if (!r.ok) return [];
       const j = await r.json();
@@ -416,14 +446,20 @@
   async function getWordInfo(word /* sentence ignored */) {
     word = (word || '').trim();
     if (!word) return null;
-    const key = word.toLowerCase();
+    // Cache key includes the source language so EN ↔ JP entries
+    // don't collide (e.g. an ASCII word that exists in both modes).
+    // English keeps the legacy un-prefixed key for back-compat.
+    const lang = _curLang();
+    const key = lang === 'en' ? word.toLowerCase() : (lang + ':' + word.toLowerCase());
     if (wiCache[key]) return wiCache[key];
     if (wiLs[key])    { wiCache[key] = wiLs[key]; return wiLs[key]; }
     try {
       const { url, headers } = supabaseUrl('/functions/v1/word-info-gpt');
       const r = await fetch(url, {
         method: 'POST', headers,
-        body: JSON.stringify({ word }),
+        // Pass `lang` so the Edge Function picks JP-specific prompt
+        // rules in Phase 3c (currently no-op until that deploy).
+        body: JSON.stringify({ word, lang }),
       });
       if (!r.ok) {
         let detail = '';
@@ -504,6 +540,20 @@
   async function getChunks(sentence) {
     sentence = (sentence || '').trim();
     if (!sentence || sentence.length < 5) return null;
+    // Japanese: chunk via kuromoji (bunsetsu-style content-word +
+    // trailing particles). chunk-gpt's English-grammar prompt would
+    // produce nonsense, so we use a local morphological grouper
+    // instead — zero GPT cost, instant.
+    if (_curLang() === 'ja') {
+      if (!window.JPT || !window.JPT.chunkSentenceJa) return null;
+      try {
+        await window.JPT.ready();           // ensure tokenizer built
+        return window.JPT.chunkSentenceJa(sentence) || null;
+      } catch (e) {
+        console.warn('[chunkJa] failed', e);
+        return null;
+      }
+    }
     const key = _hashStr(sentence);
     // Even cached chunks pass through the clamp, so a localStorage entry
     // produced before client-side clamping still gets corrected on read.

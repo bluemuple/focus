@@ -48,6 +48,41 @@
   const uid = () => 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
   const today = () => new Date().toISOString().slice(0,10);
 
+  // ---------- target-language switching ----------
+  // 'en' (default) | 'ja'. The whole app's per-language data —
+  // streak, money, mastered, lessons, word states, phrases, corpora,
+  // quiz cards — is namespaced by this value so the same account can
+  // hold separate progress for each language. Persisted to
+  // localStorage; cloud rows carry a `language` column (added in the
+  // Phase 2 migration). Language-aware localStorage helpers below
+  // (lsLang) prefix keys with the current language so e.g.
+  //   eng.v1.ja.streak vs eng.v1.streak (legacy English value).
+  const LANG_KEY = 'language';
+  const SUPPORTED_LANGS = ['en', 'ja'];
+  function getLang() {
+    const raw = ls.get(LANG_KEY, 'en');
+    return SUPPORTED_LANGS.indexOf(raw) >= 0 ? raw : 'en';
+  }
+  function setLang(lang) {
+    if (SUPPORTED_LANGS.indexOf(lang) < 0) return;
+    ls.set(LANG_KEY, lang);
+    try { window.dispatchEvent(new CustomEvent('eng:lang-changed', { detail: { lang } })); } catch (e) {}
+  }
+  // Language-namespaced localStorage. English keeps the original
+  // un-prefixed keys (so existing user data isn't lost) — only
+  // non-English languages get a prefix. This means migrating to
+  // bilingual storage doesn't require any data move for current
+  // English-only users.
+  function langPrefix(k) {
+    const lang = getLang();
+    return lang === 'en' ? k : (lang + '.' + k);
+  }
+  const lsLang = {
+    get(k, d) { return ls.get(langPrefix(k), d); },
+    set(k, v) { return ls.set(langPrefix(k), v); },
+    del(k)    { return ls.del(langPrefix(k)); },
+  };
+
   // Try-it mode: user pressed "체험하기" — local only, no auth.
   function setTryMode(on) { ls.set('try_mode', !!on); }
   function isTryMode() { return !!ls.get('try_mode', false); }
@@ -139,11 +174,14 @@
     if (await useCloud()) {
       const u = await currentUser();
       const { data, error } = await sb.from('lessons')
-        .select('*').eq('user_id', u.id).order('created_at', { ascending: false });
-      if (error) { console.error(error); return ls.get('lessons', []); }
+        .select('*')
+        .eq('user_id', u.id)
+        .eq('language', getLang())          // bilingual separation (Phase 2)
+        .order('created_at', { ascending: false });
+      if (error) { console.error(error); return lsLang.get('lessons', []); }
       return data || [];
     }
-    return ls.get('lessons', []);
+    return lsLang.get('lessons', []);
   }
   // Like listLessons() but WITHOUT the user_id filter — pulls every
   // lesson visible to the current account (subject to RLS policies on
@@ -154,23 +192,29 @@
   async function listAllLessons() {
     if (await useCloud()) {
       const { data, error } = await sb.from('lessons')
-        .select('id,title,body').order('created_at', { ascending: false });
+        .select('id,title,body')
+        .eq('language', getLang())          // corpora is per-language too
+        .order('created_at', { ascending: false });
       if (error) {
         console.error(error);
         // Fallback: return whatever's locally cached (the user's own).
-        return ls.get('lessons', []);
+        return lsLang.get('lessons', []);
       }
       return data || [];
     }
-    return ls.get('lessons', []);
+    return lsLang.get('lessons', []);
   }
   async function getLesson(id) {
+    // Lesson IDs are globally unique, so no language filter needed —
+    // a JP lesson will simply have language='ja' on its returned row,
+    // and the lesson page can read that field if it ever needs to
+    // distinguish (e.g. to apply JP-specific tokenization).
     if (await useCloud()) {
       const { data, error } = await sb.from('lessons').select('*').eq('id', id).maybeSingle();
       if (error) { console.error(error); }
       if (data) return data;
     }
-    return (ls.get('lessons', []) || []).find(x => x.id === id) || null;
+    return (lsLang.get('lessons', []) || []).find(x => x.id === id) || null;
   }
   async function addLesson({ title, body, audioFile, thumbFile }) {
     let audio_url = null;
@@ -191,12 +235,16 @@
       if (audioFile) audio_url     = await uploadToAudioBucket(audioFile, 'audio');
       if (thumbFile) thumbnail_url = await uploadToAudioBucket(thumbFile, 'thumb');
       const u = await currentUser();
-      const row = { user_id: u.id, title, body, audio_url, thumbnail_url };
+      const row = {
+        user_id: u.id, title, body, audio_url, thumbnail_url,
+        language: getLang(),                // Phase 2: tag every new lesson
+      };
       const { data, error } = await sb.from('lessons').insert(row).select().single();
       if (error) {
-        // If the schema is missing thumbnail_url (user hasn't run the ALTER TABLE
-        // yet), retry without that column instead of breaking the whole flow.
-        if (/thumbnail_url|bookmarked/.test(String(error.message || ''))) {
+        // If the schema is missing thumbnail_url / bookmarked / language
+        // (user hasn't run the ALTER TABLE yet), retry without those
+        // columns instead of breaking the whole flow.
+        if (/thumbnail_url|bookmarked|language/.test(String(error.message || ''))) {
           const fallback = { user_id: u.id, title, body, audio_url };
           const r2 = await sb.from('lessons').insert(fallback).select().single();
           if (r2.error) { console.error(r2.error); throw r2.error; }
@@ -210,13 +258,14 @@
     // localStorage path
     if (audioFile) audio_url     = await fileToDataURL(audioFile);
     if (thumbFile) thumbnail_url = await fileToDataURL(thumbFile);
-    const list = ls.get('lessons', []);
+    const list = lsLang.get('lessons', []);
     const row = {
       id: uid(), title, body, audio_url, thumbnail_url,
       bookmarked: false,
+      language: getLang(),
       created_at: new Date().toISOString(),
     };
-    list.unshift(row); ls.set('lessons', list);
+    list.unshift(row); lsLang.set('lessons', list);
     return row;
   }
 
@@ -228,9 +277,9 @@
       if (error) console.error('setBookmark', error);
       return on;
     }
-    const list = ls.get('lessons', []);
+    const list = lsLang.get('lessons', []);
     const i = list.findIndex(x => x.id === lessonId);
-    if (i >= 0) { list[i].bookmarked = on; ls.set('lessons', list); }
+    if (i >= 0) { list[i].bookmarked = on; lsLang.set('lessons', list); }
     return on;
   }
   async function deleteLesson(id) {
@@ -239,7 +288,7 @@
       if (error) console.error(error);
       return;
     }
-    ls.set('lessons', ls.get('lessons', []).filter(x => x.id !== id));
+    lsLang.set('lessons', lsLang.get('lessons', []).filter(x => x.id !== id));
   }
 
   // Rename: just updates the title field. Used by the gallery card's
@@ -254,11 +303,11 @@
       if (error) { console.error(error); return false; }
       return true;
     }
-    const list = ls.get('lessons', []);
+    const list = lsLang.get('lessons', []);
     const i = list.findIndex(x => x.id === id);
     if (i < 0) return false;
     list[i].title = newTitle;
-    ls.set('lessons', list);
+    lsLang.set('lessons', list);
     return true;
   }
 
@@ -295,7 +344,7 @@
     }
 
     // localStorage path: encode files as data-URLs.
-    const list = ls.get('lessons', []);
+    const list = lsLang.get('lessons', []);
     const i = list.findIndex(x => x.id === id);
     if (i < 0) return false;
     if (opts.audioFile)        list[i].audio_url     = await fileToDataURL(opts.audioFile);
@@ -303,7 +352,7 @@
     if (opts.thumbFile)        list[i].thumbnail_url = await fileToDataURL(opts.thumbFile);
     else if (opts.clearThumbnail) list[i].thumbnail_url = null;
     Object.assign(list[i], patch);
-    ls.set('lessons', list);
+    lsLang.set('lessons', list);
     return true;
   }
 
@@ -325,19 +374,23 @@
   async function loadWordStates() {
     if (await useCloud()) {
       const u = await currentUser();
-      const { data, error } = await sb.from('word_states').select('*').eq('user_id', u.id);
-      if (error) { console.error(error); return ls.get('word_states', {}); }
+      const { data, error } = await sb.from('word_states')
+        .select('*')
+        .eq('user_id', u.id)
+        .eq('language', getLang());            // bilingual separation (Phase 2)
+      if (error) { console.error(error); return lsLang.get('word_states', {}); }
       const m = {};
       for (const r of data || []) m[r.word] = { state: r.state, last: r.last_clicked_date };
       return m;
     }
-    return ls.get('word_states', {});
+    return lsLang.get('word_states', {});
   }
 
   async function clickWord(word) {
     word = (word || '').toLowerCase();
     if (!word) return null;
     const t = today();
+    const lang = getLang();
 
     function decide(prevState) {
       if (prevState === undefined || prevState === null) {
@@ -352,20 +405,26 @@
     if (await useCloud()) {
       const u = await currentUser();
       const { data: existing } = await sb.from('word_states')
-        .select('*').eq('user_id', u.id).eq('word', word).maybeSingle();
+        .select('*')
+        .eq('user_id', u.id)
+        .eq('language', lang)
+        .eq('word', word)
+        .maybeSingle();
       const d = decide(existing ? existing.state : null);
-      const row = { user_id: u.id, word, state: d.state, last_clicked_date: t };
+      const row = { user_id: u.id, language: lang, word, state: d.state, last_clicked_date: t };
+      // Composite unique key changed in Phase 2: now (user_id, language, word)
+      // so the same word can hold separate state per language.
       const { error } = await sb.from('word_states')
-        .upsert(row, { onConflict: 'user_id,word' });
+        .upsert(row, { onConflict: 'user_id,language,word' });
       if (error) console.error(error);
       return { ...d, last: t };
     }
 
-    const map = ls.get('word_states', {});
+    const map = lsLang.get('word_states', {});
     const cur = map[word];
     const d = decide(cur ? cur.state : null);
     map[word] = { state: d.state, last: t };
-    ls.set('word_states', map);
+    lsLang.set('word_states', map);
     return { ...d, last: t };
   }
 
@@ -374,18 +433,19 @@
     word = (word || '').toLowerCase();
     if (!word) return null;
     const t = today();
+    const lang = getLang();
 
     if (await useCloud()) {
       const u = await currentUser();
-      const row = { user_id: u.id, word, state: newState, last_clicked_date: t };
+      const row = { user_id: u.id, language: lang, word, state: newState, last_clicked_date: t };
       const { error } = await sb.from('word_states')
-        .upsert(row, { onConflict: 'user_id,word' });
+        .upsert(row, { onConflict: 'user_id,language,word' });
       if (error) console.error(error);
       return { state: newState, last: t };
     }
-    const map = ls.get('word_states', {});
+    const map = lsLang.get('word_states', {});
     map[word] = { state: newState, last: t };
-    ls.set('word_states', map);
+    lsLang.set('word_states', map);
     return map[word];
   }
 
@@ -402,14 +462,14 @@
   // ---------- hearted words (for the quiz / word-practice deck) ----------
   // Stored locally for now; can sync via a Supabase column later if needed.
   function getHearted() {
-    return new Set(ls.get('hearted', []) || []);
+    return new Set(lsLang.get('hearted', []) || []);
   }
   function setHearted(word, on) {
     const s = getHearted();
     const k = (word || '').toLowerCase();
     if (!k) return false;
     if (on) s.add(k); else s.delete(k);
-    ls.set('hearted', [...s]);
+    lsLang.set('hearted', [...s]);
     return s.has(k);
   }
   function isHearted(word) {
@@ -417,7 +477,7 @@
   }
 
   // ---------- saved phrases (built up via the "이어서" mode add button) ----
-  function listPhrases() { return ls.get('phrases', []) || []; }
+  function listPhrases() { return lsLang.get('phrases', []) || []; }
   function addPhrase(phrase, koTranslation, lessonId) {
     if (!phrase) return null;
     const list = listPhrases();
@@ -426,12 +486,12 @@
       phrase, ko: koTranslation || '', lessonId: lessonId || null,
       created_at: new Date().toISOString(),
     });
-    ls.set('phrases', list);
+    lsLang.set('phrases', list);
     return list[0];
   }
   function deletePhrase(id) {
     const list = listPhrases().filter(p => p.id !== id);
-    ls.set('phrases', list);
+    lsLang.set('phrases', list);
   }
 
   // ---------- Word Master (state ≥ ?) + Word Stories ----------
@@ -483,8 +543,15 @@
   // overrides the previous.
   //
   // Keys are namespaced with "eng_" so we don't collide with any metadata
-  // a parent app (or future feature) writes to the same field.
-  function _mdKey(key) { return 'eng_' + key; }
+  // a parent app (or future feature) writes to the same field. ALSO
+  // namespaced by language so the same account can hold separate
+  // streak / money / mastered counts per language. English keeps the
+  // original un-suffixed keys to preserve every existing user's data;
+  // Japanese and any future language gets `eng_<lang>_<key>`.
+  function _mdKey(key) {
+    const lang = getLang();
+    return lang === 'en' ? ('eng_' + key) : ('eng_' + lang + '_' + key);
+  }
 
   async function _fetchUserState(key) {
     if (!(await useCloud())) return undefined;
@@ -539,8 +606,8 @@
       // transient failure (offline, RLS hiccup) doesn't permanently
       // disable sync for this tab.
       _bootstrapped = true;
-      if (money)  ls.set('money',  money);
-      if (streak) ls.set('streak', streak);
+      if (money)  lsLang.set('money',  money);
+      if (streak) lsLang.set('streak', streak);
       console.info('[user_state] synced down',
         money  ? ('money=' + JSON.stringify(money.daily || {})) : 'money=∅',
         streak ? ('streak=' + (streak.count || 0) + 'd')        : 'streak=∅');
@@ -577,7 +644,7 @@
     return _ymd(new Date(Date.now() - 86400000));
   }
   function getStreak() {
-    return ls.get('streak', { lastDay: '', count: 0, days: [] }) || { lastDay: '', count: 0, days: [] };
+    return lsLang.get('streak', { lastDay: '', count: 0, days: [] }) || { lastDay: '', count: 0, days: [] };
   }
   function recordLessonVisit() {
     const today = _ymd();
@@ -587,7 +654,7 @@
     else                            s.count = 1;
     s.lastDay = today;
     s.days = Array.from(new Set([...(s.days || []), today]));
-    ls.set('streak', s);
+    lsLang.set('streak', s);
     _pushUserState('streak', s);                  // fire-and-forget cloud sync
     return s;
   }
@@ -614,7 +681,7 @@
   // caller uses the return value to render the on-screen reward
   // indicator (small floater for 1-7¢, big bubble for 8-15¢).
   function _moneyData() {
-    return ls.get('money', {
+    return lsLang.get('money', {
       daily:    {},   // { 'YYYY-MM-DD': cents earned that day (max 200) }
       expenses: [],   // [{ date, cents, note }]
       runCount: 0,
@@ -672,7 +739,7 @@
       d.runCount = 0;
       d.nextThreshold = 1 + Math.floor(Math.random() * 9);
     }
-    ls.set('money', d);
+    lsLang.set('money', d);
     // Sync EVERY mutation to Supabase (debounced ~500ms so a flurry of
     // taps coalesces into a single upsert). Pushing on every mutation
     // (not just cent-earn) keeps runCount / nextThreshold / lastWord
@@ -721,7 +788,7 @@
     d.expenses = d.expenses || [];
     const e = { date: _ymd(), cents, note: (note || '').trim() };
     d.expenses.unshift(e);
-    ls.set('money', d);
+    lsLang.set('money', d);
     _pushUserState('money', d);                   // sync expense to cloud
     return e;
   }
@@ -730,23 +797,28 @@
   // Each reset blanks both the local cache AND the cloud copy so the same
   // user signed in on another device sees the cleared state on next sync.
   async function resetWordStates() {
+    // Reset is per-language: blow away the CURRENT language's word
+    // states only, leaving the other language's progress intact.
     if (await useCloud()) {
       try {
         const u = await currentUser();
-        const { error } = await sb.from('word_states').delete().eq('user_id', u.id);
+        const { error } = await sb.from('word_states')
+          .delete()
+          .eq('user_id', u.id)
+          .eq('language', getLang());
         if (error) console.warn('[reset] word_states', error.message || error);
       } catch (e) { console.warn('[reset] word_states', e); }
     }
-    ls.set('word_states', {});
+    lsLang.set('word_states', {});
   }
   async function resetStreak() {
     const blank = { lastDay: '', count: 0, days: [] };
-    ls.set('streak', blank);
+    lsLang.set('streak', blank);
     try { await _pushUserState('streak', blank); } catch (e) {}
   }
   async function resetMoney() {
     const blank = { daily: {}, expenses: [], runCount: 0, lastWord: '' };
-    ls.set('money', blank);
+    lsLang.set('money', blank);
     try { await _pushUserState('money', blank); } catch (e) {}
   }
 
@@ -812,6 +884,7 @@
   window.DB = {
     haveSupabase,
     isTryMode, setTryMode,
+    getLang, setLang, SUPPORTED_LANGS,
     currentUser, signIn, signUp, signOut,
     listLessons, listAllLessons, getLesson, addLesson, deleteLesson, setBookmark, renameLesson, updateLesson,
     loadWordStates, clickWord, setWordState,

@@ -492,6 +492,7 @@
 <script src="js/db.js"></script>
 <script src="js/tts.js"></script>
 <script src="js/translate.js"></script>
+<script src="js/jp-tokenizer.js"></script>
 <script src="js/auth.js"></script>
 <script>
 (async function () {
@@ -557,6 +558,11 @@
   function isSentenceBreakPunct(punctEl, prevWordEl) {
     if (!punctEl || !punctEl.classList || !punctEl.classList.contains('punct')) return false;
     const txt = punctEl.textContent || '';
+    // Japanese sentence terminators (。！？) end the sentence
+    // unconditionally — no whitespace check needed (JP doesn't use
+    // inter-sentence spaces). Handle these BEFORE the EN logic so
+    // mixed-script content (rare) still works.
+    if (/[。！？]/.test(txt)) return true;
     if (!/[.!?]/.test(txt)) return false;
     // ! and ? always end a sentence; periods need extra checks.
     if (/[!?]/.test(txt)) return true;
@@ -786,6 +792,26 @@
     setupLessonBar();
     sizeLessonMain();
     await new Promise(r => requestAnimationFrame(r));
+    // Japanese mode: kuromoji must be ready before paginateByHeight
+    // (which calls renderParagraph in its hidden mirror to measure
+    // line counts). Without this the mirror renders a single-blob
+    // fallback paragraph and miscounts pages.
+    if (DB.getLang && DB.getLang() === 'ja') {
+      try {
+        // Pre-tokenize raw paragraphs of the lesson body so the
+        // mirror's renderParagraph can find tokens immediately.
+        const rawParas = (LESSON.body || '').split(/\n{2,}|\r\n{2,}/)
+          .map(s => s.trim()).filter(Boolean);
+        const tokenizer = await window.JPT.ready();
+        for (const para of rawParas) {
+          for (const line of String(para).split(/\n/)) {
+            if (line.trim() && !_jpTokensByLine.has(line)) {
+              _jpTokensByLine.set(line, tokenizer.tokenize(line));
+            }
+          }
+        }
+      } catch (e) { console.warn('[jp-tokenize] preload failed', e); }
+    }
     PAGES = paginateByHeight(LESSON.body || '');
     computePageCharCounts();
     pageIdx = 0;
@@ -1055,8 +1081,10 @@
 
     const wEls = Array.from(root.querySelectorAll('.w'));
     if (!wEls.length) return;
+    // Use `data-surface` (when present) so the JP surface form is
+    // matched without the furigana reading getting concatenated in.
     const concatLower = wEls
-      .map(el => (el.textContent || '').toLowerCase())
+      .map(el => ((el.dataset && el.dataset.surface) || el.textContent || '').toLowerCase())
       .join('');
     let startIdx = concatLower.indexOf(tPrefix);
     if (startIdx < 0) {
@@ -1078,11 +1106,12 @@
     }
 
     // Walk again, summing element widths, collecting overlaps with
-    // [startIdx, endIdx).
+    // [startIdx, endIdx). Same data-surface preference as above so the
+    // position arithmetic matches what concatLower was built from.
     let pos = 0;
     const toMark = [];
     for (const el of wEls) {
-      const txt = (el.textContent || '');
+      const txt = ((el.dataset && el.dataset.surface) || el.textContent || '');
       const elStart = pos;
       const elEnd   = pos + txt.length;
       if (elEnd > startIdx && elStart < endIdx) {
@@ -1420,6 +1449,14 @@
   //   Mobile: full-card popup, opened by drag-down on the word-sheet row.
   // =============================================================
   function naverDictUrl(word) {
+    // Per-language dictionary surface:
+    //   en → Naver English dictionary (English-Korean)
+    //   ja → Naver Japanese dictionary (Japanese-Korean), uses the
+    //        legacy `jakodict` host as requested.
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    if (lang === 'ja') {
+      return 'https://dict.naver.com/jakodict/#/search?query=' + encodeURIComponent(word);
+    }
     return 'https://en.dict.naver.com/#/search?range=word&query=' + encodeURIComponent(word);
   }
 
@@ -2378,9 +2415,15 @@
 
   // Highlight occurrences of `lemma` (and inflections like lemmaS, lemmaED)
   // inside an English sentence by wrapping them in <span class="hl-lemma">.
+  // For Japanese the `\b` word-boundary doesn't apply (JP has no word
+  // separators), so we dispatch to a separate matcher that finds the
+  // lemma's stem (kanji portion) and highlights stem + up to 4 trailing
+  // kana — covering the common conjugations (食べる → 食べる/食べた/
+  // 食べました all get highlighted in the example sentence).
   function highlightLemma(text, lemma) {
     if (!text) return '';
     if (!lemma) return escapeHtml(text);
+    if (/[一-鿿ぁ-んァ-ヶ]/.test(lemma)) return _highlightLemmaJa(text, lemma);
     const escaped = lemma.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp('\\b(' + escaped + '\\w*)\\b', 'gi');
     let out = '';
@@ -2392,6 +2435,43 @@
       last = m.index + m[0].length;
     }
     out += escapeHtml(text.slice(last));
+    return out;
+  }
+  // Japanese lemma highlighter. Strategy:
+  //   • Find the lemma's KANJI STEM (longest leading run of kanji
+  //     chars). For 食べる the stem is 食; for 学校 the stem is 学校.
+  //     Kana-only lemmas (e.g. する → する) use the lemma itself
+  //     as the stem.
+  //   • Find every occurrence of the stem in `text`. After each hit,
+  //     greedily extend up to 4 more hiragana chars to cover the
+  //     conjugation suffix (食べた / 食べました / 食べたい / etc.).
+  //     Stop extending at any non-hiragana char (kanji, punct, space).
+  function _highlightLemmaJa(text, lemma) {
+    const t = String(text || '');
+    if (!t) return '';
+    const m0 = String(lemma || '').match(/^[一-鿿㐀-䶿豈-﫿]+/);
+    const stem = m0 ? m0[0] : String(lemma || '');
+    if (!stem) return escapeHtml(t);
+    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escaped, 'g');
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      out += escapeHtml(t.slice(last, m.index));
+      let endIdx = m.index + m[0].length;
+      // Extend up to 4 trailing hiragana chars (the conjugation suffix).
+      let extra = 0;
+      while (extra < 4 && endIdx + extra < t.length && /[ぁ-ん]/.test(t[endIdx + extra])) {
+        extra++;
+      }
+      const matched = t.slice(m.index, endIdx + extra);
+      out += '<span class="hl-lemma">' + escapeHtml(matched) + '</span>';
+      last = endIdx + extra;
+      // Advance regex lastIndex past the extension so we don't double-match.
+      re.lastIndex = last;
+    }
+    out += escapeHtml(t.slice(last));
     return out;
   }
   // For the bottom-sheet's TOP MEANING ROW: render the user's clicked
@@ -2419,6 +2499,23 @@
     if (firstLem && firstLem.length < lo.length && lo.startsWith(firstLem)) {
       return escapeHtml(w.slice(0, firstLem.length)) +
              '<span class="hl-infl">' + escapeHtml(w.slice(firstLem.length)) + '</span>';
+    }
+    // Japanese inflection — verbs / adjectives share a stem with their
+    // dictionary form but diverge in the ending. Use longest-common-
+    // prefix between surface and lemma, then color the surface suffix:
+    //   食べた + 食べる → 食べ + た
+    //   行きました + 行く → 行 + きました
+    //   寒くて + 寒い → 寒 + くて
+    // Restricted to inputs containing kanji (一-鿿) or hiragana (ぁ-ん)
+    // so English irregulars like "ran"/"run" don't accidentally match
+    // here (they fall through to the regex fallback below).
+    if (firstLem && /[一-鿿ぁ-ん]/.test(w)) {
+      let i = 0;
+      while (i < firstLem.length && i < lo.length && firstLem[i] === lo[i]) i++;
+      if (i >= 1 && i < lo.length) {
+        return escapeHtml(w.slice(0, i)) +
+               '<span class="hl-infl">' + escapeHtml(w.slice(i)) + '</span>';
+      }
     }
     // Doubled-consonant comparatives / superlatives:
     //   "bigger"  → big + "ger"
@@ -2501,6 +2598,7 @@
   function highlightLemmaWithInflection(text, lemma) {
     if (!text) return '';
     if (!lemma) return escapeHtml(text);
+    if (/[一-鿿ぁ-んァ-ヶ]/.test(lemma)) return _highlightLemmaWithInflJa(text, lemma);
     const escaped = lemma.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Match lemma followed by an OPTIONAL 1-3-letter alpha suffix.
     // 1-3 chars covers s/es/ed/ing/ies/ied without false-matching
@@ -2517,6 +2615,48 @@
       last = m.index + m[0].length;
     }
     out += escapeHtml(text.slice(last));
+    return out;
+  }
+  // Two-tone JP lemma highlighter: kanji STEM in pink, optional
+  // trailing hiragana SUFFIX (up to 4 chars — covers 〜ます /
+  // 〜ました / 〜ない / 〜たい / 〜られる etc.) in sky-blue.
+  // When the matched stem+suffix happens to equal the lemma exactly
+  // (i.e. dictionary form 食べる, NOT inflected), we color the whole
+  // thing pink — there's no inflection to mark.
+  function _highlightLemmaWithInflJa(text, lemma) {
+    const t = String(text || '');
+    if (!t) return '';
+    const m0 = String(lemma || '').match(/^[一-鿿㐀-䶿豈-﫿]+/);
+    const stem = m0 ? m0[0] : String(lemma || '');
+    if (!stem) return escapeHtml(t);
+    const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escaped, 'g');
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      out += escapeHtml(t.slice(last, m.index));
+      let endIdx = m.index + m[0].length;
+      let extra = 0;
+      while (extra < 4 && endIdx + extra < t.length && /[ぁ-ん]/.test(t[endIdx + extra])) {
+        extra++;
+      }
+      const stemPart = m[0];
+      const suffix = t.slice(endIdx, endIdx + extra);
+      const matched = stemPart + suffix;
+      if (matched === lemma) {
+        // Exact lemma form — all pink, no inflection split.
+        out += '<span class="hl-lemma">' + escapeHtml(matched) + '</span>';
+      } else {
+        out += '<span class="hl-lemma">' + escapeHtml(stemPart) + '</span>';
+        if (suffix) {
+          out += '<span class="hl-infl">' + escapeHtml(suffix) + '</span>';
+        }
+      }
+      last = endIdx + extra;
+      re.lastIndex = last;
+    }
+    out += escapeHtml(t.slice(last));
     return out;
   }
   // Renders the chunk that contains the focused word — the English chunk
@@ -3108,7 +3248,13 @@
     // user immediately sees which word the sheet belongs to.
     function repaintMeaning() {
       if (!meaningEl) return;
-      const wDisplay = renderWordWithInflectionHTML(word, latestLemma);
+      // For JP the body's .w span carries `data-surface` (the inflected
+      // form the user actually saw and clicked, e.g. 食べた) while
+      // `word` is the lemma (食べる). Use the surface for the visible
+      // title so the user sees their click, but keep the lemma for
+      // inflection-suffix detection inside renderWordWithInflectionHTML.
+      const surface = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || word;
+      const wDisplay = renderWordWithInflectionHTML(surface, latestLemma);
       if (!latestWordKo) {
         meaningEl.innerHTML = wDisplay + ': …';
         return;
@@ -3645,7 +3791,12 @@
         wEl.textContent = text;
         return;
       }
-      wEl.innerHTML = renderWordWithInflectionHTML(text, sbLatestLemma);
+      // Use the anchor's `data-surface` when present (JP: 食べた surface
+      // vs 食べる lemma — `text` is the lemma, surface is what the
+      // user clicked). Fall back to `text` for English where every
+      // .w has its surface form already in `text`.
+      const surface = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || text;
+      wEl.innerHTML = renderWordWithInflectionHTML(surface, sbLatestLemma);
     }
 
     // Seed the lemma with the heuristic guess so both the title and
@@ -4603,13 +4754,24 @@
     });
   }
   // ---- sentence map for the rendered page (used by playback underline) ----
+  // Surface text of a .w element. For JP word tokens this is
+  // `data-surface` (the kanji-mixed surface form WITHOUT the furigana
+  // reading) — `el.textContent` would otherwise include both the
+  // surface and the <rt> reading text and corrupt every downstream
+  // sentence/chunk match. Punct chips and EN words have no
+  // data-surface; their textContent is already the surface.
+  function _wText(el) {
+    if (!el) return '';
+    if (el.dataset && el.dataset.surface) return el.dataset.surface;
+    return el.textContent || '';
+  }
   function buildSentenceMap(root) {
     SENTENCE_MAP = [];
     if (!root) return;
     let curr = { text: '', words: [] };
     let prevWord = null;
     for (const el of root.querySelectorAll('.w')) {
-      curr.text += el.textContent;
+      curr.text += _wText(el);
       curr.words.push(el);
       if (!el.classList.contains('punct')) {
         prevWord = el;
@@ -5063,6 +5225,12 @@
   // sentence-level paginator below.
   function splitIntoSentences(text) {
     if (!text) return [];
+    // Japanese mode: dispatch to JPT.splitSentencesJa which segments on
+    // 。！？ instead of the abbreviation-aware EN logic below.
+    const _curLang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    if (_curLang === 'ja' && window.JPT && window.JPT.splitSentencesJa) {
+      return window.JPT.splitSentencesJa(text);
+    }
     const out = [];
     let buf = '';
     let i = 0;
@@ -5194,7 +5362,47 @@
     return pages.length ? pages : [paragraphs];
   }
 
+  // Cache of kuromoji token arrays keyed by raw line text. Populated
+  // up-front by `pretokenizeJpPages()` so renderParagraph can stay
+  // synchronous (kuromoji's `.tokenize()` is sync once the builder
+  // finishes; we just need the tokens to already be computed when
+  // renderInto walks paragraphs in a slide animation).
+  const _jpTokensByLine = new Map();
+
+  // Pre-tokenize every line of every page when the lesson is in
+  // Japanese mode. Awaited from renderLesson before the first
+  // renderInto so the very first frame has correct tokens — and
+  // from onModeChanged / page repaginate paths so subsequent
+  // renders pick up tokens for any newly-flowed lines.
+  async function pretokenizeJpPages() {
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    if (lang !== 'ja' || !window.JPT) return;
+    const all = new Set();
+    for (const page of (PAGES || [])) {
+      for (const para of (page || [])) {
+        for (const line of String(para).split(/\n/)) {
+          if (line.trim() && !_jpTokensByLine.has(line)) all.add(line);
+        }
+      }
+    }
+    if (!all.size) return;
+    try {
+      const tokenizer = await window.JPT.ready();
+      for (const line of all) {
+        _jpTokensByLine.set(line, tokenizer.tokenize(line));
+      }
+    } catch (e) {
+      console.warn('[jp-tokenize] builder failed', e);
+    }
+  }
+
   function renderParagraph(par) {
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    if (lang === 'ja') return _renderParagraphJa(par);
+    return _renderParagraphEn(par);
+  }
+
+  function _renderParagraphEn(par) {
     const p = document.createElement('p');
     p.className = 'para';
     const lines = par.split(/\n/);
@@ -5227,6 +5435,51 @@
           sp.textContent = tk;
           p.appendChild(sp);
         }
+      }
+      if (li < lines.length - 1) p.appendChild(document.createElement('br'));
+    });
+    return p;
+  }
+
+  // Japanese paragraph renderer — uses kuromoji tokens from the
+  // pre-built cache. Word tokens render with optional <ruby>
+  // furigana on top when the surface form contains kanji and the
+  // reading differs. data-word is the LEMMA (basic_form) so
+  // different conjugations of the same verb share state.
+  function _renderParagraphJa(par) {
+    const p = document.createElement('p');
+    p.className = 'para';
+    const lines = String(par).split(/\n/);
+    lines.forEach((line, li) => {
+      const tokens = _jpTokensByLine.get(line);
+      if (tokens && tokens.length) {
+        // Build chips via JPT.renderTokens (HTML string), then
+        // mount into a temp container and move the .w children
+        // over so we can apply per-element WORD_STATES classes.
+        const tmp = document.createElement('span');
+        tmp.innerHTML = window.JPT.renderTokens(tokens);
+        while (tmp.firstChild) {
+          const child = tmp.firstChild;
+          if (child.classList && child.classList.contains('w') &&
+              !child.classList.contains('punct')) {
+            const w = (child.dataset.word || '').toLowerCase();
+            const st = w && WORD_STATES[w];
+            if (st) {
+              const cls = classFor(st.state);
+              if (cls) child.classList.add(cls);
+            }
+          }
+          p.appendChild(child);
+        }
+      } else if (line) {
+        // Tokenizer not ready yet for this line — render the line
+        // as a single punct chip so paginate still measures the
+        // right text height. The line will get re-rendered with
+        // proper tokens as soon as pretokenizeJpPages resolves.
+        const sp = document.createElement('span');
+        sp.className = 'w punct';
+        sp.textContent = line;
+        p.appendChild(sp);
       }
       if (li < lines.length - 1) p.appendChild(document.createElement('br'));
     });
@@ -6120,9 +6373,16 @@
       if (fallback) fallback.style.display = 'none';
       renderCorpus(word, corpus);
     } else {
-      // N: Naver English Dictionary (definitions)
-      const naverUrl = 'https://en.dict.naver.com/#/search?query=' + encodeURIComponent(word);
-      const naverAlt = 'https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word);
+      // N: Naver dictionary (definitions). Per-language host —
+      // English mode uses the EN dict, Japanese mode uses the
+      // legacy jakodict host. naverDictUrl() handles both; the
+      // alt-fallback URL stays English-only since there's no
+      // direct equivalent for JA.
+      const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+      const naverUrl = naverDictUrl(word);
+      const naverAlt = lang === 'ja'
+        ? naverUrl
+        : ('https://endic.naver.com/search.nhn?query=' + encodeURIComponent(word));
       iframe.style.display = '';
       corpus.hidden = true;
       headLink.style.display = '';
