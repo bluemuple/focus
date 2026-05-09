@@ -3851,18 +3851,18 @@
             <ul>
               <li>본문 단어 클릭 → 이 자리에 의미가 표시됩니다</li>
               <li>활용형(예: <strong>食べた</strong>)을 클릭하면 사전형(<strong>食べる</strong>)으로 사전을 검색합니다</li>
-              <li>한자 위 작은 글씨는 <strong>후리가나</strong>(읽는 법)</li>
               <li><kbd>←</kbd> <kbd>→</kbd> 키 또는 하단 화살표로 단어 이동</li>
               <li><kbd>↑</kbd> <kbd>↓</kbd> 키로 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
               <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> 키로 단어 학습 단계 설정</li>
             </ul>
           </section>
           <section class="ls-manual-sec">
-            <h4>활용 어미 색상</h4>
+            <h4>구문 풀이 표시 <span class="muted">(사이드바 · 하단 시트)</span></h4>
             <ul>
-              <li>식별을 돕기 위해 활용 어미를 색깔로 표시:</li>
-              <li><span style="color:#38bdf8;font-weight:800">하늘색</span> · <span style="color:#16a34a;font-weight:800">연두색</span> · <span style="color:#d946ef;font-weight:800">자홍색</span> 순환</li>
-              <li>예: <ruby>見<rt>み</rt></ruby>せ<span style="color:#38bdf8;font-weight:800">ませ</span><span style="color:#16a34a;font-weight:800">ん</span><span style="color:#d946ef;font-weight:800">でし</span><span style="color:#38bdf8;font-weight:800">た</span></li>
+              <li>구문은 모두 <strong>히라가나</strong>로 표시 — 한자는 따로 보이지 않습니다</li>
+              <li><u>밑줄</u>이 그어진 글자 = <strong>한자에서 온 발음</strong> (예: お<u>なまえ</u>は<u>なん</u>ですか)</li>
+              <li>활용 어미는 색깔로 강조: <span style="color:#38bdf8;font-weight:800">하늘색</span> · <span style="color:#16a34a;font-weight:800">연두색</span> · <span style="color:#d946ef;font-weight:800">자홍색</span> 순환</li>
+              <li>예: <u>み</u>せ<span style="color:#38bdf8;font-weight:800">ませ</span><span style="color:#16a34a;font-weight:800">ん</span><span style="color:#d946ef;font-weight:800">でし</span><span style="color:#38bdf8;font-weight:800">た</span></li>
             </ul>
           </section>
           <section class="ls-manual-sec">
@@ -5822,10 +5822,10 @@
   // when a word is clicked, and the cloud cache de-dupes repeats.)
 
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
-  // ship as ~5 MB gzip, ~13 MB uncompressed across 12 files. Shows a
-  // progress counter (n/12) + percentage bar that ticks in real time
-  // as each dict file completes, so the user sees forward motion
-  // instead of an indefinite spinner. Subsequent lessons hit the
+  // ship as ~5 MB gzip across 12 files. The progress hook in
+  // jp-tokenizer.js streams bytes via `fetch()` + ReadableStream,
+  // so the bar moves smoothly per-chunk instead of jumping in 12
+  // discrete file-complete steps. Subsequent lessons hit the
   // browser's HTTP cache and the splash flashes briefly or skips.
   function _showJpLoadSplash() {
     const overlay = document.createElement('div');
@@ -5837,19 +5837,35 @@
       '  <div class="jp-load-progress-wrap">' +
       '    <div class="jp-load-progress-bar" id="jp-load-bar"></div>' +
       '  </div>' +
-      '  <div class="jp-load-counter" id="jp-load-counter">0 / 12 파일</div>' +
+      '  <div class="jp-load-counter" id="jp-load-counter">0%</div>' +
       '  <div class="jp-load-sub">처음 한 번만 다운로드합니다 (약 5 MB).<br>' +
       '       다음 진입부턴 캐시되어 즉시 열립니다.</div>' +
       '</div>';
     document.body.appendChild(overlay);
     const bar = overlay.querySelector('#jp-load-bar');
     const ctr = overlay.querySelector('#jp-load-counter');
-    // Wire kuromoji's per-file completion callback to our UI so
-    // each XHR finishing the dict download bumps the bar.
+    // Wire kuromoji's streaming progress callback to our UI. The
+    // payload now carries actual bytes so the bar advances every
+    // chunk read off the wire, not just on file completions.
     if (window.JPT && window.JPT.setProgressHandler) {
-      window.JPT.setProgressHandler((done, total) => {
-        if (bar) bar.style.width = Math.round((done / total) * 100) + '%';
-        if (ctr) ctr.textContent = done + ' / ' + total + ' 파일';
+      const fmtMB = b => (b / 1048576).toFixed(1);
+      window.JPT.setProgressHandler(p => {
+        // p: { filesDone, filesTotal, bytesReceived, bytesTotal }
+        // bytesTotal is already floored to a 5 MB guess in the
+        // tokenizer so the percentage starts low and climbs, even
+        // before any Content-Length header lands.
+        const recv  = p.bytesReceived || 0;
+        const total = p.bytesTotal    || (5 * 1048576);
+        // Cap at 99% until ALL files report complete — keeps the
+        // bar from sitting at 100% while the last bytes still
+        // stream through the gzip decoder.
+        const rawPct = Math.min(100, Math.round((recv / total) * 100));
+        const pct = (p.filesDone >= p.filesTotal) ? 100 : Math.min(99, rawPct);
+        if (bar) bar.style.width = pct + '%';
+        if (ctr) {
+          ctr.textContent = pct + '%  ('
+            + fmtMB(recv) + ' / ' + fmtMB(total) + ' MB)';
+        }
       });
     }
     return {

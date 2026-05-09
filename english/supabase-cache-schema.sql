@@ -47,6 +47,30 @@ CREATE TABLE IF NOT EXISTS public.furigana_gpt_cache (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- 4) Word-translation cache (translate-gpt) — keyed by SHA-256 prefix of
+--    "<source>:<target>:<context>:<text>". Same (text, context) tuple
+--    translated by ANY device / user before → cached row → zero GPT
+--    call. Massive savings for word-clicks since the same lesson body
+--    is read by many users and the same word in the same sentence
+--    yields the same Korean translation.
+CREATE TABLE IF NOT EXISTS public.translate_gpt_cache (
+  cache_key   TEXT PRIMARY KEY,
+  translation TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- 5) DeepL translation cache (translate) — same shape as #4 but for the
+--    DeepL-backed `translate` Edge Function, which is the DEFAULT
+--    engine for both EN and JP word clicks (only ✨ toggle uses GPT).
+--    DeepL is the highest-volume external call in the whole app, so
+--    caching it cuts the most cost. Key includes source language so
+--    EN→KO and JA→KO never collide.
+CREATE TABLE IF NOT EXISTS public.translate_deepl_cache (
+  cache_key   TEXT PRIMARY KEY,
+  translation TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- RLS: lock these tables down. Service-role (used by Edge Functions)
 -- bypasses RLS automatically; clients with anon/authenticated keys get
 -- nothing — which is what we want, since the Edge Functions are the
@@ -54,6 +78,8 @@ CREATE TABLE IF NOT EXISTS public.furigana_gpt_cache (
 ALTER TABLE public.chunk_gpt_cache       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.word_info_gpt_cache   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.furigana_gpt_cache    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.translate_gpt_cache   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.translate_deepl_cache ENABLE ROW LEVEL SECURITY;
 
 -- (No policies = deny by default for non-service-role roles.)
 

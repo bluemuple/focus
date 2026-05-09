@@ -7,6 +7,12 @@
 //   words ("holding" → "유지되고 있다" in cease-fire context, vs
 //   DeepL's chunk-isolated "개최 중").
 //
+//   Cloud cache: identical (text, context, source) tuples cache in
+//   `translate_gpt_cache`. First user pays, every other device /
+//   user thereafter hits the cache for free. Hash key is short
+//   SHA-256 of the canonicalized tuple — no PII stored, just the
+//   text that was translated.
+//
 //   Phase 3 update: accepts a `source` param ('EN' | 'JA') so the
 //   same function can serve both English and Japanese learning
 //   modes. Prompt adapts accordingly — JP mode also asks GPT to
@@ -17,6 +23,8 @@
 //     1. Edge Functions → New function → name "translate-gpt"
 //     2. Paste this whole file as the body
 //     3. Secret OPENAI_API_KEY (shared with chunk-gpt etc.)
+//     4. SQL once: ensure `translate_gpt_cache` table exists
+//        (see supabase-cache-schema.sql).
 //
 //   Request:  { text: "holding", context: "the cease-fire was holding",
 //               source: "EN", target: "KO" }
@@ -30,6 +38,56 @@ const cors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+
+// Cache key — SHA-256 of "<source>:<target>:<context>:<text>". Includes
+// language pair so EN→KO and JA→KO of the same string never collide,
+// and includes context so different sentences of the same word cache
+// independently (a polysemic word's translation depends on context).
+async function cacheKey(text: string, context: string, source: string, target: string): Promise<string> {
+  const norm = source + ":" + target + ":" + (context || "").normalize("NFKC").trim() + ":::" + text.normalize("NFKC").trim();
+  const buf = new TextEncoder().encode(norm);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 32);
+}
+
+async function readCache(key: string): Promise<string | null> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return null;
+  try {
+    const url = `${SUPABASE_URL}/rest/v1/translate_gpt_cache`
+              + `?cache_key=eq.${encodeURIComponent(key)}&select=translation`;
+    const r = await fetch(url, {
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+      },
+    });
+    if (!r.ok) return null;
+    const arr = await r.json();
+    return arr?.[0]?.translation || null;
+  } catch { return null; }
+}
+
+async function writeCache(key: string, translation: string): Promise<void> {
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/translate_gpt_cache`, {
+      method: "POST",
+      headers: {
+        apikey: SUPABASE_SERVICE_ROLE,
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
+        "Content-Type": "application/json",
+        Prefer: "resolution=merge-duplicates",
+      },
+      body: JSON.stringify({ cache_key: key, translation }),
+    });
+  } catch {}
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -39,6 +97,13 @@ Deno.serve(async (req) => {
     const source  = String(body?.source || "EN").toUpperCase();   // 'EN' | 'JA'
     const target  = String(body?.target || "KO").toUpperCase();   // always 'KO' for now
     if (!text) return json({ error: "text required" }, 400);
+
+    // Cloud cache check — same (text, context, source, target) tuple
+    // already translated by ANY device / user → return cached value,
+    // no GPT call. Cache key spans languages so EN↔JA can't collide.
+    const ck = await cacheKey(text, context, source, target);
+    const cached = await readCache(ck);
+    if (cached) return json({ translation: cached });
 
     const apiKey = Deno.env.get("OPENAI_API_KEY");
     if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
@@ -114,6 +179,8 @@ Deno.serve(async (req) => {
     if (!parsed) return json({ error: "Bad GPT output", raw: raw.slice(0, 400) }, 502);
     const translation = String(parsed.translation || "").trim();
     if (!translation) return json({ error: "empty translation" }, 502);
+    // Fire-and-forget cache write.
+    writeCache(ck, translation);
     return json({ translation });
   } catch (e: any) {
     return json({ error: String(e?.message || e) }, 500);

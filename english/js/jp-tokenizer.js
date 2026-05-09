@@ -107,12 +107,77 @@
   // repaired without any per-call wiring.
   //
   // ALSO: the patch surfaces a progress callback (set via
-  // setProgressHandler) so the loading splash can show a "n/12"
-  // counter as each dict file completes.
+  // setProgressHandler) so the loading splash can show a real-time
+  // byte counter + percentage as the dict files stream in.
+  //
+  // The original kuromoji loader uses XHR with no progress events,
+  // so the splash could only update once per file (12 jumpy steps).
+  // We replace it with a streaming `fetch()` that tracks bytes per
+  // chunk and emits aggregate `{ bytesReceived, bytesTotal,
+  // filesDone, filesTotal }` to the splash. The IPADIC `.dat.gz`
+  // files are served PRE-compressed (no `Content-Encoding: gzip`),
+  // so streamed chunk lengths line up with Content-Length headers
+  // and the byte counter is precise.
   let _progressHandler = null;
-  let _progressDone = 0;
-  let _progressTotal = 12;          // kuromoji dict file count
+  let _filesDone   = 0;
+  const _filesTotal  = 12;
+  let _bytesReceived = 0;
+  let _bytesTotal    = 0;
+  // Best-guess total (~5 MB gzip across 12 IPADIC files). Used as a
+  // floor for the denominator until real Content-Length headers come
+  // in, so the bar starts moving immediately on first byte instead
+  // of jumping to 100% if the first response is small.
+  const _BYTES_GUESS = 5 * 1024 * 1024;
   function setProgressHandler(fn) { _progressHandler = fn; }
+  function _emitProgress() {
+    if (typeof _progressHandler !== 'function') return;
+    try {
+      _progressHandler({
+        filesDone:     _filesDone,
+        filesTotal:    _filesTotal,
+        bytesReceived: _bytesReceived,
+        bytesTotal:    Math.max(_bytesTotal, _BYTES_GUESS),
+      });
+    } catch (e) {}
+  }
+  function _resetProgress() {
+    _filesDone     = 0;
+    _bytesReceived = 0;
+    _bytesTotal    = 0;
+  }
+  // Stream-fetch one dict file with per-chunk byte progress.
+  async function _streamFetchArrayBuffer(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('http ' + r.status);
+    const len = parseInt(r.headers.get('content-length') || '0', 10);
+    if (len > 0) { _bytesTotal += len; _emitProgress(); }
+    // Body streaming requires ReadableStream — falls back to a
+    // single .arrayBuffer() on legacy browsers (no per-byte ticks
+    // there, but the loader still works).
+    if (!r.body || !r.body.getReader) {
+      const buf = await r.arrayBuffer();
+      _bytesReceived += buf.byteLength;
+      if (len === 0) _bytesTotal += buf.byteLength;
+      _emitProgress();
+      return buf;
+    }
+    const reader = r.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      _bytesReceived += value.length;
+      _emitProgress();
+    }
+    if (len === 0) _bytesTotal += received;
+    const out = new Uint8Array(received);
+    let off = 0;
+    for (const c of chunks) { out.set(c, off); off += c.length; }
+    return out.buffer;
+  }
   function _patchKuromojiLoader() {
     if (!window.kuromoji || _patchKuromojiLoader._done) return;
     _patchKuromojiLoader._done = true;
@@ -124,7 +189,6 @@
       if (!loader) return;
       const proto = Object.getPrototypeOf(loader);
       if (!proto || typeof proto.loadArrayBuffer !== 'function') return;
-      const original = proto.loadArrayBuffer;
       proto.loadArrayBuffer = function(url, callback) {
         let fixed = String(url);
         // Case A: `https:/cdn...` (one slash, browserify path.join
@@ -143,18 +207,23 @@
         if (/^cdn\.jsdelivr\.net\//.test(fixed)) {
           fixed = 'https://' + fixed;
         }
-        return original.call(this, fixed, function(err, buf) {
-          // Fire the progress callback whenever a file finishes
-          // (success or error — kuromoji aborts the build on error
-          // anyway, but we tick so the UI isn't stuck).
-          _progressDone++;
-          try {
-            if (typeof _progressHandler === 'function') {
-              _progressHandler(_progressDone, _progressTotal);
-            }
-          } catch (e) {}
-          callback(err, buf);
-        });
+        // Stream-fetch with per-chunk byte progress. We've replaced
+        // kuromoji's XHR entirely — it just wants an ArrayBuffer
+        // back through the callback, which fetch() provides.
+        _streamFetchArrayBuffer(fixed)
+          .then(buf => {
+            _filesDone++;
+            _emitProgress();
+            callback(null, buf);
+          })
+          .catch(err => {
+            // Bump file count even on error so the UI can't stick
+            // forever on a bad download (kuromoji aborts the build
+            // anyway).
+            _filesDone++;
+            _emitProgress();
+            callback(err);
+          });
       };
     } catch (e) {
       console.warn('[jp-tokenizer] loader patch failed', e);
@@ -163,8 +232,8 @@
 
   function ready() {
     if (_readyPromise) return _readyPromise;
-    // Reset progress counter for a fresh build attempt.
-    _progressDone = 0;
+    // Reset byte/file counters for a fresh build attempt.
+    _resetProgress();
     _readyPromise = (async () => {
       await _loadScript();
       _patchKuromojiLoader();
