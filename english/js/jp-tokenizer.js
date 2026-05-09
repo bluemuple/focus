@@ -709,19 +709,43 @@
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
+    let pendingModifier = null;   // 連体詞 / 接頭詞 awaiting a head noun
     for (const tk of tokens) {
       const isWord = _isWordToken(tk);
       if (isWord) wordIdx++;
-      const isContent = isWord && (
+      // 連体詞 (ある, この, etc.) and 接頭詞 (お, ご, etc.) are bound
+      // modifiers — they always attach to the FOLLOWING content word.
+      // Treat them as "pending" rather than starting their own chunk.
+      const isBoundModifier = isWord && (
+        tk.pos === '連体詞' || tk.pos === '接頭詞'
+      );
+      const isContent = isWord && !isBoundModifier && (
         tk.pos === '名詞' || tk.pos === '動詞' ||
         tk.pos === '形容詞' || tk.pos === '形容動詞' ||
-        tk.pos === '副詞' || tk.pos === '連体詞' ||
-        tk.pos === '感動詞' || tk.pos === '接頭詞'
+        tk.pos === '副詞' || tk.pos === '感動詞'
       );
+      if (isBoundModifier) {
+        // Buffer the modifier — its char positions will join the next
+        // content chunk's range.
+        if (!pendingModifier) {
+          pendingModifier = { text: tk.surface_form, idxStart: wordIdx };
+        } else {
+          pendingModifier.text += tk.surface_form;
+        }
+        continue;
+      }
       if (isContent) {
         // Close the previous chunk and start a new one.
         if (cur) chunks.push(cur);
-        cur = { text: tk.surface_form, indices: [wordIdx, wordIdx] };
+        if (pendingModifier) {
+          cur = {
+            text: pendingModifier.text + tk.surface_form,
+            indices: [pendingModifier.idxStart, wordIdx],
+          };
+          pendingModifier = null;
+        } else {
+          cur = { text: tk.surface_form, indices: [wordIdx, wordIdx] };
+        }
       } else if (cur && isWord) {
         // Attach particle / auxiliary / unknown to the running chunk.
         cur.text += tk.surface_form;
@@ -733,9 +757,43 @@
           chunks.push(cur);
           cur = null;
         }
+        // A modifier orphaned at sentence boundary becomes its own
+        // chunk so its char positions still get tracked.
+        if (pendingModifier) {
+          chunks.push({
+            text: pendingModifier.text,
+            indices: [pendingModifier.idxStart, pendingModifier.idxStart],
+          });
+          pendingModifier = null;
+        }
       }
     }
     if (cur) chunks.push(cur);
+    if (pendingModifier) {
+      chunks.push({
+        text: pendingModifier.text,
+        indices: [pendingModifier.idxStart, pendingModifier.idxStart],
+      });
+    }
+
+    // SHORT-SENTENCE COLLAPSE: when the whole sentence is ≤ 7 visual
+    // chars (kanji + kana combined, ignoring punctuation), the user
+    // wants just a 주부/술부 split — i.e. everything except the final
+    // verb/predicate folded into a single "subject side" chunk. This
+    // matches how a learner reads a tiny sentence: SUBJECT | VERB.
+    // Longer sentences keep the bunsetsu-level granularity above so
+    // adverbial / time / place phrases each stand on their own.
+    const visibleLen = chunks.reduce((n, c) => n + c.text.length, 0);
+    if (visibleLen <= 7 && chunks.length > 2) {
+      const last = chunks[chunks.length - 1];
+      const headText = chunks.slice(0, -1).map(c => c.text).join('');
+      const headStart = chunks[0].indices[0];
+      const headEnd   = chunks[chunks.length - 2].indices[1];
+      return [
+        { text: headText, indices: [headStart, headEnd] },
+        last,
+      ];
+    }
     return chunks;
   }
 
