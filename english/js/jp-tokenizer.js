@@ -522,16 +522,95 @@
     return out;
   }
 
-  // Cleans raw kuromoji tokens through the standard pipeline (fix
-  // contextual readings → strip inline-furigana duplicates → merge
-  // auxiliaries) and returns the pre-merged result. Exposed because
-  // the lesson page needs the cleaned surface as a CACHE KEY for the
-  // GPT-furigana lookup (so the same line tokenized at preload time
-  // and again at paginate-reflow time both hit the same ruby entry).
+  // Kuromoji + IPADIC's Viterbi analyzer fails on long all-hiragana
+  // stretches (no kanji to anchor word boundaries) — it sometimes
+  // emits a single 18+ char 名詞 token covering an entire phrase like
+  //   "むところのはるかかなたにいたんだから"
+  // which makes everything downstream (chunker, ruby alignment, click
+  // selection) treat it as ONE word. Best-effort recovery: scan such
+  // suspicious tokens for common particle substrings (の/に/が/を/で/
+  // から/まで) and split at those positions, emitting alternating
+  // 名詞 / 助詞 synthesized tokens.
+  //
+  // Imperfect: words like 「もの」 contain a "の" that's NOT a particle
+  // and would mis-split. But the input only ever reaches this code
+  // path when kuromoji has ALREADY failed to find proper boundaries,
+  // so over-splitting beats one-giant-token in practice.
+  const _SUSPICIOUS_KANA_RE = /^[ぁ-ん]+$/;
+  // Conservative particle list — only split on patterns that are
+  // overwhelmingly particles (rare inside words). Excluded:
+  //   と, や, か (often inside words: ところ, はや, なか)
+  //   へ        (often word-final or part of compounds)
+  //   は, も    (frequent in word middles: はじめ, ものすごい)
+  // Multi-char checked first (longest match wins).
+  const _PARTICLE_PATTERNS = [
+    'から', 'まで', 'のに', 'けど', 'けれど',
+    'が', 'を', 'に', 'で', 'の',
+  ];
+  function _splitGiantKanaNouns(tokens) {
+    const out = [];
+    for (const tk of tokens) {
+      const s = tk.surface_form || '';
+      if (tk.pos !== '名詞' || s.length <= 5 || !_SUSPICIOUS_KANA_RE.test(s)) {
+        out.push(tk);
+        continue;
+      }
+      // Walk the surface, splitting at particle boundaries.
+      const parts = [];
+      let buf = '';
+      let i = 0;
+      while (i < s.length) {
+        let matched = '';
+        for (const p of _PARTICLE_PATTERNS) {
+          if (s.substring(i, i + p.length) === p && buf.length > 0) {
+            matched = p;
+            break;
+          }
+        }
+        if (matched) {
+          parts.push({ text: buf, isParticle: false });
+          parts.push({ text: matched, isParticle: true });
+          buf = '';
+          i += matched.length;
+        } else {
+          buf += s[i];
+          i++;
+        }
+      }
+      if (buf) parts.push({ text: buf, isParticle: false });
+      // No splits found → keep original token.
+      if (parts.length <= 1) { out.push(tk); continue; }
+      // Emit synthesized tokens. Mark with `_synthesized` so callers
+      // can debug / treat them more cautiously if needed.
+      for (const p of parts) {
+        if (!p.text) continue;
+        out.push({
+          surface_form:   p.text,
+          pos:            p.isParticle ? '助詞' : '名詞',
+          pos_detail_1:   p.isParticle ? '格助詞' : '一般',
+          pos_detail_2:   '*',
+          pos_detail_3:   '*',
+          conjugated_type:'*',
+          conjugated_form:'*',
+          basic_form:     p.text,
+          reading:        p.text,
+          pronunciation:  p.text,
+          _synthesized:   true,
+        });
+      }
+    }
+    return out;
+  }
+
+  // Cleans raw kuromoji tokens through the standard pipeline (split
+  // giant kana nouns → fix contextual readings → strip inline-furigana
+  // duplicates → merge auxiliaries) and returns the pre-merged result.
   function processTokens(rawTokens) {
     return _mergeAuxiliaries(
       _stripDuplicateReadings(
-        _fixContextualReadings(rawTokens)
+        _fixContextualReadings(
+          _splitGiantKanaNouns(rawTokens)
+        )
       )
     );
   }
@@ -711,7 +790,7 @@
     const raw = String(sentence || '');
     if (!raw.trim()) return [];
     if (!_tokenizer) return null;            // caller should ensure ready()
-    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(_tokenizer.tokenize(raw))));
+    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(_splitGiantKanaNouns(_tokenizer.tokenize(raw)))));
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
