@@ -578,6 +578,7 @@
           ${list.map(e => `
             <button class="mw-pill" data-w="${escapeAttr(e.word)}">
               <span class="mw-en">${escapeHtml(e.word)}</span>
+              <span class="mw-ko muted" hidden></span>
             </button>
           `).join('')}
         </div>
@@ -589,7 +590,26 @@
       overlay.querySelectorAll('.mw-pill').forEach(b => {
         b.onclick = () => {
           const w = b.getAttribute('data-w');
+          // 1. TTS — speak the word.
           if (window.TTS && TTS.speak) TTS.speak(w);
+          // 2. Reveal the Korean meaning on the button itself. Cached
+          // after the first fetch so subsequent clicks are instant.
+          const koEl = b.querySelector('.mw-ko');
+          if (!koEl) return;
+          if (b.dataset.koLoaded) {
+            // Already loaded — just toggle visibility (or keep visible).
+            koEl.hidden = false;
+            return;
+          }
+          koEl.hidden = false;
+          koEl.textContent = '…';
+          window.Translate && Translate.translate(w).then(ko => {
+            koEl.textContent = ko || '';
+            koEl.classList.remove('muted');
+            b.dataset.koLoaded = '1';
+          }).catch(() => {
+            koEl.textContent = '';
+          });
         };
       });
     }});
