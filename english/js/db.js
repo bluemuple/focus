@@ -593,36 +593,92 @@
   }
 
   // ---------- money (NZD earned per word click) ----------
-  // Rule: every 3 *unique-in-a-row* clicks earns 1 cent. Daily cap = 200 c.
-  // Same word clicked twice in a row → counts as one. Pattern A→B→A → 3.
+  // RANDOMIZED reward system (replaces the old deterministic
+  // "1¢ per 3 unique clicks" rule):
+  //
+  //   • Each unique-in-a-row word click increments runCount.
+  //   • A reward fires when runCount reaches `nextThreshold` — itself
+  //     a fresh uniform random integer in [1, 9] each time.
+  //   • Reward amount is drawn from a heavy-tail weighted distribution
+  //     over [1¢, 15¢]; small amounts (1-7¢) are common, large
+  //     amounts (8-15¢) are rare jackpots.
+  //   • Expected value: ≈ 1.72¢ per trigger × (1 trigger / 5 clicks) ≈
+  //     0.34¢ / click — preserves the long-run average of the old
+  //     "1¢ per 3 clicks" rule (1/3 ≈ 0.33¢ / click).
+  //   • Daily cap remains 200 c (overflow truncated to 0 for that
+  //     trigger).
+  //   • Same word clicked twice in a row → counts as one.
+  //
+  // recordMoneyClick(word) RETURNS the cent amount actually credited
+  // for THIS click (0 if no reward fired or daily cap was hit). The
+  // caller uses the return value to render the on-screen reward
+  // indicator (small floater for 1-7¢, big bubble for 8-15¢).
   function _moneyData() {
     return ls.get('money', {
       daily:    {},   // { 'YYYY-MM-DD': cents earned that day (max 200) }
       expenses: [],   // [{ date, cents, note }]
-      runCount: 0,    // 0..2; on each unique click ++; at 3 → +1c then reset
+      runCount: 0,
+      nextThreshold: 1 + Math.floor(Math.random() * 9),  // 1..9 inclusive
       lastWord: '',   // dedupes consecutive same-word clicks
     }) || {};
+  }
+  function _drawRewardAmount() {
+    // Weights tuned so the per-trigger expectation lands at ~1.72¢
+    // (combined with avg threshold 5 → ~0.34¢ / click). Common: 1-3¢.
+    // Mid: 4-7¢. Rare jackpots: 8-15¢ with steady decay.
+    const weights = [
+      1.000,   // 1¢
+      0.400,   // 2¢
+      0.160,   // 3¢
+      0.064,   // 4¢
+      0.026,   // 5¢
+      0.010,   // 6¢
+      0.004,   // 7¢
+      0.0030,  // 8¢
+      0.0024,  // 9¢
+      0.0019,  // 10¢
+      0.0015,  // 11¢
+      0.0012,  // 12¢
+      0.0009,  // 13¢
+      0.0007,  // 14¢
+      0.0005,  // 15¢
+    ];
+    let total = 0;
+    for (let i = 0; i < weights.length; i++) total += weights[i];
+    let r = Math.random() * total;
+    for (let i = 0; i < weights.length; i++) {
+      r -= weights[i];
+      if (r <= 0) return i + 1;
+    }
+    return 1;
   }
   function recordMoneyClick(word) {
     word = (word || '').toLowerCase();
     const d = _moneyData();
-    if (!word) return d;
-    if (word === d.lastWord) return d;            // same word twice → skip
+    if (!word) return 0;
+    if (word === d.lastWord) return 0;            // same word twice → skip
     d.lastWord = word;
     d.runCount = (d.runCount || 0) + 1;
-    if (d.runCount >= 3) {
-      d.runCount = 0;
+    if (!d.nextThreshold || d.nextThreshold < 1 || d.nextThreshold > 9) {
+      d.nextThreshold = 1 + Math.floor(Math.random() * 9);
+    }
+    let earned = 0;
+    if (d.runCount >= d.nextThreshold) {
+      const rolled = _drawRewardAmount();
       const t = _ymd();
-      d.daily[t] = Math.min(200, (d.daily[t] || 0) + 1);
+      const room = Math.max(0, 200 - (d.daily[t] || 0));
+      earned = Math.min(rolled, room);
+      d.daily[t] = (d.daily[t] || 0) + earned;
+      d.runCount = 0;
+      d.nextThreshold = 1 + Math.floor(Math.random() * 9);
     }
     ls.set('money', d);
     // Sync EVERY mutation to Supabase (debounced ~500ms so a flurry of
-    // taps coalesces into a single upsert). Earlier we only pushed on
-    // cent-earn, but that meant the runCount / lastWord state diverged
-    // between devices and the daily total occasionally lagged. Pushing
-    // every change keeps PC and mobile perfectly in sync.
+    // taps coalesces into a single upsert). Pushing on every mutation
+    // (not just cent-earn) keeps runCount / nextThreshold / lastWord
+    // in sync across devices.
     _scheduleMoneyPush(d);
-    return d;
+    return earned;
   }
   // Debounced push so a sequence of clicks doesn't fire one upsert per click.
   let _moneyPushT = null;

@@ -1866,84 +1866,53 @@
   }
 
   // ============== motivation feedback (per-tap rewards) ==============
-  // 1) Tiny scale-pulse on the tapped word so taps feel ALIVE.
+  // Tiny scale-pulse on the tapped word so taps feel ALIVE. Keeps even
+  // when the click doesn't trigger a coin reward.
   function pulseWord(wEl) {
     if (!wEl) return;
     wEl.classList.add('tap-pulse');
     setTimeout(() => wEl.classList.remove('tap-pulse'), 320);
   }
-  // 2) Streak floater. Within a 1-minute rolling window the counter ticks
-  //    up: first tap = +1, the second tap inside 60 s on a DIFFERENT word
-  //    = +2, +3, … The counter resets to 1 after 60 s of inactivity, and
-  //    repeating the same word twice in a row never bumps the counter.
-  let _plusCount = 0;
-  let _plusLastT = 0;
-  let _plusLastWord = '';
-  function showPlusOne(wEl) {
-    if (!wEl) return;
-    const now = Date.now();
-    const key = (wEl.dataset.word || wEl.textContent || '').toLowerCase();
-    // Skip when the user re-tapped the SAME word as the previous click —
-    // counter shouldn't move and the +N bubble shouldn't appear.
-    if (key && key === _plusLastWord) return;
-    if (now - _plusLastT > 60 * 1000) _plusCount = 0;
-    _plusCount++;
-    _plusLastT = now;
-    _plusLastWord = key;
+  // Reward visualization (replaces the old +N counter / 콤보 bubble /
+  // 보너스 toast). DB.recordMoneyClick now returns the cent amount
+  // earned for the current click — the caller picks the right display:
+  //   • 1¢-7¢  → showCoinFloater: small floater that drifts up from
+  //              the word, like the old +N indicator but with the
+  //              actual cent amount ("3¢").
+  //   • 8¢-15¢ → showCoinBubble: bottom-right pill (reuses the
+  //              streak-bubble.milestone styling) showing just the
+  //              cent amount ("12¢"), no combo / 잘했어 text.
+  function showCoinFloater(wEl, amount) {
+    if (!wEl || amount <= 0) return;
     const r = wEl.getBoundingClientRect();
     const div = document.createElement('div');
     div.className = 'plus-one';
-    div.textContent = '+' + _plusCount;
+    div.textContent = amount + '¢';
     div.style.top  = (r.top  + window.scrollY - 4) + 'px';
     div.style.left = (r.left + window.scrollX + r.width / 2) + 'px';
     document.body.appendChild(div);
     requestAnimationFrame(() => div.classList.add('go'));
     setTimeout(() => div.remove(), 900);
   }
-
-  // 3) Bottom-right combo bubble. Stays silent for the first two clicks,
-  //    then shows "🔥 콤보 ×N" once the rolling count crosses 3. At every
-  //    multiple of 10 (10, 20, 30, …) it pops a bigger celebratory variant
-  //    for an extra dopamine hit.
-  let _comboTimes = [];
-  let _comboBubble = null;
-  let _comboFadeT = null;
-  function recordCombo() {
-    const now = Date.now();
-    _comboTimes = _comboTimes.filter(t => now - t < 8000);
-    _comboTimes.push(now);
-    const n = _comboTimes.length;
-    if (n >= 3) showBubble('🔥 콤보 ×' + n, n % 10 === 0 ? 'milestone' : 'combo');
-  }
-  function showBubble(text, kind) {
-    if (!_comboBubble) {
-      _comboBubble = document.createElement('div');
-      _comboBubble.className = 'streak-bubble';
-      document.body.appendChild(_comboBubble);
+  let _coinBubble = null;
+  let _coinBubbleFadeT = null;
+  function showCoinBubble(amount) {
+    if (amount <= 0) return;
+    if (!_coinBubble) {
+      _coinBubble = document.createElement('div');
+      _coinBubble.className = 'streak-bubble';
+      document.body.appendChild(_coinBubble);
     }
-    _comboBubble.classList.remove('combo', 'milestone');
-    _comboBubble.classList.add(kind);
-    _comboBubble.textContent = text;
-    _comboBubble.classList.add('show');
-    clearTimeout(_comboFadeT);
-    // Combos linger; milestones linger longer.
-    const dur = kind === 'milestone' ? 3500 : 2200;
-    _comboFadeT = setTimeout(() => {
-      _comboBubble && _comboBubble.classList.remove('show');
-    }, dur);
-  }
-  // 4) Variable-reinforcement: ~1/30 chance of a tiny celebratory toast.
-  function maybeBonus() {
-    if (Math.random() >= 1 / 30) return;
-    const div = document.createElement('div');
-    div.className = 'bonus-toast';
-    div.innerHTML = '🌟 보너스!<br><span class="bt-sub">잘하고 있어요</span>';
-    document.body.appendChild(div);
-    requestAnimationFrame(() => div.classList.add('show'));
-    setTimeout(() => {
-      div.classList.remove('show');
-      setTimeout(() => div.remove(), 360);
-    }, 1700);
+    _coinBubble.classList.remove('combo', 'milestone');
+    // Reuse the milestone styling (bigger / more celebratory) — the
+    // 8¢-15¢ tier is a rare event and deserves the full visual punch.
+    _coinBubble.classList.add('milestone');
+    _coinBubble.textContent = amount + '¢';
+    _coinBubble.classList.add('show');
+    clearTimeout(_coinBubbleFadeT);
+    _coinBubbleFadeT = setTimeout(() => {
+      _coinBubble && _coinBubble.classList.remove('show');
+    }, 2500);
   }
 
   // ---- arrow-key selection helpers ----
@@ -5638,12 +5607,18 @@
 
       // ===== Motivation feedback =====
       pulseWord(w);                    // micro scale-pulse on the tapped word
-      showPlusOne(w);                  // floating "+1" near the word
-      recordCombo();                   // rolling 5-second click streak badge
-      maybeBonus();                    // ~1/30 surprise reward toast
-      // ===== NZD piggy bank: 1¢ per 3 unique-in-a-row word clicks =====
-      // Capped at $2/day inside DB.recordMoneyClick.
-      try { DB.recordMoneyClick && DB.recordMoneyClick(word); } catch (e) {}
+      // Randomized coin reward — DB.recordMoneyClick rolls the trigger
+      // (every 1-9 unique clicks) AND the amount (1-15¢ weighted) and
+      // returns the cents actually credited for this specific click
+      // (0 when the click didn't fire a reward, or daily $2 cap was hit).
+      // 1-7¢ → small floater near the word; 8-15¢ → big bottom-right pill.
+      try {
+        const reward = DB.recordMoneyClick && DB.recordMoneyClick(word);
+        if (reward && reward > 0) {
+          if (reward <= 7) showCoinFloater(w, reward);
+          else             showCoinBubble(reward);
+        }
+      } catch (e) {}
 
       // Predict the new state from the local cache so we can recolour the
       // word + open the sheet IMMEDIATELY, then reconcile in the background
