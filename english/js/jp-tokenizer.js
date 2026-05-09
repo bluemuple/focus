@@ -653,10 +653,33 @@
         matched = len;
         break;
       }
-      if (!matched) {
-        out.push(tokens[i]);
-        i++;
+      if (matched) continue;
+      // RULE — reduplicated onomatopoeia: two adjacent IDENTICAL
+      // pure-hiragana tokens of length 2 (びく+びく, どき+どき,
+      // わく+わく, きら+きら, ぐる+ぐる, …) almost always belong to
+      // ONE 擬態語/擬声語 word. Kuromoji often splits them because the
+      // base form isn't in IPADIC. Auto-merge here without a hardcoded
+      // list — covers any new reduplication the user runs into.
+      if (i + 1 < tokens.length) {
+        const a = tokens[i].surface_form || '';
+        const b = tokens[i + 1].surface_form || '';
+        if (a === b && a.length === 2 && /^[ぁ-んー]+$/.test(a)) {
+          const lead = Object.assign({}, tokens[i]);
+          lead.surface_form  = a + b;
+          lead.basic_form    = a + b;
+          lead.reading       = (tokens[i].reading || '') + (tokens[i + 1].reading || '');
+          lead.pronunciation = (tokens[i].pronunciation || '') + (tokens[i + 1].pronunciation || '');
+          lead.pos           = '副詞';      // most reduplicated mimetic words
+                                           // function adverbially
+          lead.pos_detail_1  = '一般';
+          lead._mergedCompound = true;
+          out.push(lead);
+          i += 2;
+          continue;
+        }
       }
+      out.push(tokens[i]);
+      i++;
     }
     return out;
   }

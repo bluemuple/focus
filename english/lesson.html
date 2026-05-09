@@ -6540,6 +6540,18 @@
     return getSentenceIdxOf(wEl) === selectionSentenceIdx();
   }
   function selectionToPhrase() {
+    // Use the SURFACE form (data-surface) over the lemma (data-word).
+    // For JP, the lemma can be a different word entirely (e.g. chip
+    // surface "はら" with kuromoji's basic_form "はる" — translating
+    // "はる" returns the wrong meaning). Surface is what the user
+    // actually saw and clicked, so it's the source of truth for the
+    // selection's literal text. EN chips have surface == lemma so the
+    // change is a no-op there.
+    //
+    // Joiner: spaces for EN (preserves multi-word phrasing), empty
+    // string for JP (no inter-word spaces in Japanese script).
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    const sep = lang === 'ja' ? '' : ' ';
     return Array.from(CONT_SELECTED)
       .sort((a, b) => {
         const cmp = a.compareDocumentPosition(b);
@@ -6547,8 +6559,8 @@
         if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
         return 0;
       })
-      .map(el => el.dataset.word)
-      .join(' ');
+      .map(el => (el.dataset && el.dataset.surface) || el.dataset.word || el.textContent || '')
+      .join(sep);
   }
 
   async function handleContClick(wEl, word) {
