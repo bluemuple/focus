@@ -5446,10 +5446,11 @@
   const _jpTokensByLine = new Map();
 
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
-  // ship as ~5 MB gzip, ~13 MB uncompressed. Shows a centered card
-  // with a Korean-language hint + small spinner so the user knows
-  // the page is working. Returns { hide: fn } so the caller can
-  // dismiss it whenever it's done (success or failure).
+  // ship as ~5 MB gzip, ~13 MB uncompressed across 12 files. Shows a
+  // progress counter (n/12) + percentage bar that ticks in real time
+  // as each dict file completes, so the user sees forward motion
+  // instead of an indefinite spinner. Subsequent lessons hit the
+  // browser's HTTP cache and the splash flashes briefly or skips.
   function _showJpLoadSplash() {
     const overlay = document.createElement('div');
     overlay.className = 'jp-load-splash';
@@ -5457,12 +5458,31 @@
       '<div class="jp-load-card">' +
       '  <div class="jp-load-spinner" aria-hidden="true"></div>' +
       '  <div class="jp-load-title">일본어 사전 불러오는 중…</div>' +
+      '  <div class="jp-load-progress-wrap">' +
+      '    <div class="jp-load-progress-bar" id="jp-load-bar"></div>' +
+      '  </div>' +
+      '  <div class="jp-load-counter" id="jp-load-counter">0 / 12 파일</div>' +
       '  <div class="jp-load-sub">처음 한 번만 다운로드합니다 (약 5 MB).<br>' +
-      '       다음부턴 즉시 열립니다.</div>' +
+      '       다음 진입부턴 캐시되어 즉시 열립니다.</div>' +
       '</div>';
     document.body.appendChild(overlay);
+    const bar = overlay.querySelector('#jp-load-bar');
+    const ctr = overlay.querySelector('#jp-load-counter');
+    // Wire kuromoji's per-file completion callback to our UI so
+    // each XHR finishing the dict download bumps the bar.
+    if (window.JPT && window.JPT.setProgressHandler) {
+      window.JPT.setProgressHandler((done, total) => {
+        if (bar) bar.style.width = Math.round((done / total) * 100) + '%';
+        if (ctr) ctr.textContent = done + ' / ' + total + ' 파일';
+      });
+    }
     return {
       hide() {
+        // Detach the progress hook so a stale handler can't fire
+        // after the splash is gone.
+        if (window.JPT && window.JPT.setProgressHandler) {
+          window.JPT.setProgressHandler(null);
+        }
         overlay.classList.add('fade-out');
         setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 220);
       },

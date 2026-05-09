@@ -53,6 +53,14 @@
   // to re-insert the missing slash before issuing the XHR. We do
   // this on the prototype so every dict file (12 of them) gets
   // repaired without any per-call wiring.
+  //
+  // ALSO: the patch surfaces a progress callback (set via
+  // setProgressHandler) so the loading splash can show a "n/12"
+  // counter as each dict file completes.
+  let _progressHandler = null;
+  let _progressDone = 0;
+  let _progressTotal = 12;          // kuromoji dict file count
+  function setProgressHandler(fn) { _progressHandler = fn; }
   function _patchKuromojiLoader() {
     if (!window.kuromoji || _patchKuromojiLoader._done) return;
     _patchKuromojiLoader._done = true;
@@ -83,7 +91,18 @@
         if (/^cdn\.jsdelivr\.net\//.test(fixed)) {
           fixed = 'https://' + fixed;
         }
-        return original.call(this, fixed, callback);
+        return original.call(this, fixed, function(err, buf) {
+          // Fire the progress callback whenever a file finishes
+          // (success or error — kuromoji aborts the build on error
+          // anyway, but we tick so the UI isn't stuck).
+          _progressDone++;
+          try {
+            if (typeof _progressHandler === 'function') {
+              _progressHandler(_progressDone, _progressTotal);
+            }
+          } catch (e) {}
+          callback(err, buf);
+        });
       };
     } catch (e) {
       console.warn('[jp-tokenizer] loader patch failed', e);
@@ -92,6 +111,8 @@
 
   function ready() {
     if (_readyPromise) return _readyPromise;
+    // Reset progress counter for a fresh build attempt.
+    _progressDone = 0;
     _readyPromise = (async () => {
       await _loadScript();
       _patchKuromojiLoader();
@@ -372,5 +393,6 @@
     katakanaToHiragana,
     splitSentencesJa,
     chunkSentenceJa,
+    setProgressHandler,
   };
 })();
