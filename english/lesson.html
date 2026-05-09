@@ -2924,19 +2924,33 @@
     if (!sentenceWords.length) return;
     const wIdx = sentenceWords.indexOf(wEl);
 
-    // PRIMARY: text-based matching. GPT's `indices` field has been observed
-    // to drift by one (off-by-one when a hyphenated/punctuation-adjacent
-    // token is counted differently), which makes the body glow extend one
-    // word past the chunk's actual boundary. Walking sentenceWords looking
-    // for an exact match against chunk.text's word sequence is robust.
-    // Pass `wIdx` so the matcher prefers the occurrence containing the
-    // clicked word — fixes a bug where a duplicate phrase elsewhere in
-    // the sentence (or GPT's text not actually overlapping wEl) caused
-    // every word before the clicked one to glow.
-    let span = chunk.text ? findChunkSpanByText(sentenceWords, chunk.text, wIdx) : null;
-
-    // FALLBACK: indices, when the text didn't match (e.g. GPT returned a
-    // paraphrase rather than the literal sentence substring).
+    // PRIMARY for EN — text-based matching. chunk-gpt's `indices`
+    // field has been observed to drift by one (off-by-one when a
+    // hyphenated / punctuation-adjacent token is counted differently),
+    // which made the body glow extend a word past the chunk boundary.
+    // Walking sentenceWords looking for the chunk's word sequence as
+    // a literal sub-array is robust. Pass `wIdx` so the matcher prefers
+    // the occurrence containing the clicked word.
+    //
+    // PRIMARY for JP — indices first, text-match second. Japanese has
+    // no inter-word spaces so the regex inside findChunkSpanByText
+    // collapses the whole chunk text into ONE token, which never
+    // matches the multi-token sentNorms — text-match always returns
+    // null for JP. The chunker (window.JPT.chunkSentenceJa) computes
+    // indices CLIENT-SIDE off the same kuromoji token stream the body
+    // is rendered from, so they're exact (not GPT-drift-prone).
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    let span = null;
+    if (lang === 'ja' && Array.isArray(chunk.indices)) {
+      const start = Math.max(0, chunk.indices[0] | 0);
+      const end   = Math.min(sentenceWords.length - 1,
+                             (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
+      if (end >= start) span = { start, end };
+    }
+    if (!span && chunk.text) {
+      span = findChunkSpanByText(sentenceWords, chunk.text, wIdx);
+    }
+    // Fallback to indices for the EN path that hit text-match miss.
     if (!span && Array.isArray(chunk.indices)) {
       const start = Math.max(0, chunk.indices[0] | 0);
       const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
