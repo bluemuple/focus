@@ -285,35 +285,9 @@
     return out;
   }
 
-  // Build the inner-HTML for a single word token: <ruby> per kanji
-  // segment + plain text per kana segment. Falls back to a single
-  // whole-token <ruby> when alignment fails (e.g. reading shorter
-  // than expected from compound words).
-  function _renderWordInner(surface, reading) {
-    if (!_hasKanji(surface) || !reading || reading === surface) {
-      return _escapeHtml(surface);
-    }
-    const segs = _buildFurigana(surface, reading);
-    let html = '';
-    let coverage = 0;
-    for (const seg of segs) {
-      if (seg.kanji) {
-        if (!seg.reading) {
-          // Alignment failed for this run — use the whole-token
-          // fallback so the user still gets SOME furigana.
-          return '<ruby>' + _escapeHtml(surface) +
-                 '<rt>' + _escapeHtml(reading) + '</rt></ruby>';
-        }
-        html += '<ruby>' + _escapeHtml(seg.kanji) +
-                '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
-        coverage += seg.reading.length;
-      } else {
-        html += _escapeHtml(seg.kana || '');
-        coverage += (seg.kana || '').length;
-      }
-    }
-    return html;
-  }
+  // (Removed: _renderWordInner. The unified `_renderTokenInner`
+  //  further down replaces it — same kanji-ruby + kana-plain layout
+  //  but with optional GPT ruby overlay AND inflection color cycling.)
 
   // Post-process kuromoji output — fold auxiliary verbs (助動詞) and
   // adjacent verb-suffix tokens into the preceding 動詞/形容詞 token
@@ -471,21 +445,47 @@
   // Also stores `_segments` — the list of original surface chunks
   // before merging — so the renderer can color each suffix piece
   // independently (見せ + ませ + ん + でし + た → multi-tone).
+  //
+  // EXTENDED merge for compound verb forms — beyond plain
+  // 動詞 + 助動詞, we also absorb:
+  //   • Te-form connectors (助詞,接続助詞 て/で) into the preceding
+  //     verb. Without this, 持って / 住んで break into two chips at
+  //     the て/で boundary.
+  //   • Auxiliary verbs after a te-form merge (いる, ある, くる,
+  //     おく, しまう, みる, やる, あげる, くれる, もらう). These
+  //     attach to the verb as semantic "doing/being" markers and are
+  //     read as one inflection unit by learners (持ってきました,
+  //     住んでいました, etc.).
+  // The merged chip's lemma stays the LEAD verb's basic_form so
+  // word_states keys off the dictionary form (持つ, 住む).
+  const TE_AUX_VERBS = new Set([
+    'いる','ある','くる','行く','来る','おく','置く','しまう',
+    'みる','見る','やる','あげる','くれる','もらう',
+  ]);
   function _mergeAuxiliaries(tokens) {
     const out = [];
     for (const tk of tokens) {
       const last = out[out.length - 1];
-      const isAux = tk.pos === '助動詞';
+      const isAux        = tk.pos === '助動詞';
       const isVerbSuffix = tk.pos === '動詞' && tk.pos_detail_1 === '接尾';
-      if (last && (isAux || isVerbSuffix) &&
-          (last.pos === '動詞' || last.pos === '形容詞' || last._merged)) {
-        // Merge into previous token. Surface/reading concatenate;
-        // basic_form / pos / lemma stay the lead token's so
-        // word_states still keys off the verb's dictionary form.
-        last.surface_form = (last.surface_form || '') + (tk.surface_form || '');
-        last.reading      = (last.reading      || '') + (tk.reading      || '');
+      const isTeConn     = tk.pos === '助詞' &&
+                           tk.pos_detail_1 === '接続助詞' &&
+                           (tk.surface_form === 'て' || tk.surface_form === 'で');
+      const isTeAuxVerb  = tk.pos === '動詞' &&
+                           TE_AUX_VERBS.has(tk.basic_form || '');
+      const lastIsVerbish = last &&
+        (last.pos === '動詞' || last.pos === '形容詞' || last._merged);
+      const lastIsTeMerged = last && last._merged && last._absorbedTe;
+      const shouldMerge =
+        (isAux || isVerbSuffix) && lastIsVerbish ||
+        isTeConn && lastIsVerbish ||
+        isTeAuxVerb && lastIsTeMerged;
+      if (shouldMerge) {
+        last.surface_form  = (last.surface_form  || '') + (tk.surface_form  || '');
+        last.reading       = (last.reading       || '') + (tk.reading       || '');
         last.pronunciation = (last.pronunciation || '') + (tk.pronunciation || '');
         last._merged = true;
+        if (isTeConn || isTeAuxVerb) last._absorbedTe = true;
         last._segments.push(tk.surface_form || '');
         continue;
       }
@@ -532,13 +532,42 @@
   // single-entry default. Concatenated `t` values must equal the
   // cleaned surface; otherwise we fall back to the kuromoji-only path
   // for that whole sentence.
+  //
+  // INFLECTION COLORING — for merged tokens (verb + auxiliary chains
+  // like 持ってきました, 住んでいました), each post-stem `_segment`
+  // gets a cycling color class (.hl-infl → .hl-infl-2 → .hl-infl-3 →
+  // loop). The kanji STEM stays uncolored under its <ruby>; only the
+  // kana inflection tail gets cycle-colored, so a learner instantly
+  // sees where one inflection ends and the next begins.
   function renderTokens(tokens, ruby) {
     const merged = processTokens(tokens);
-    if (Array.isArray(ruby) && ruby.length &&
-        _rubyMatchesSurface(ruby, surfaceOf(merged))) {
-      return _renderTokensWithRuby(merged, ruby);
+    const useRuby = Array.isArray(ruby) && ruby.length &&
+                    _rubyMatchesSurface(ruby, surfaceOf(merged));
+    const rubySegs = useRuby ? _indexRubySegs(ruby) : null;
+    const out = [];
+    let tokenStart = 0;
+    for (const tk of merged) {
+      const surface = tk.surface_form || '';
+      const tokenEnd = tokenStart + surface.length;
+      if (!_isWordToken(tk)) {
+        out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
+        tokenStart = tokenEnd;
+        continue;
+      }
+      const inner = _renderTokenInner(tk, rubySegs, tokenStart, tokenEnd);
+      const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
+      const tkSegs = tk._segments || [surface];
+      const segsAttr = _escapeHtml(JSON.stringify(tkSegs));
+      out.push(
+        '<span class="w" data-word="' + _escapeHtml(lemma) +
+        '" data-surface="' + _escapeHtml(surface) +
+        '" data-segments="' + segsAttr + '">' +
+        (inner || _escapeHtml(surface)) +
+        '</span>'
+      );
+      tokenStart = tokenEnd;
     }
-    return _renderTokensKuromoji(merged);
+    return out.join('');
   }
 
   // Position-bookkeeping check: does the ruby annotation cover EXACTLY
@@ -551,48 +580,8 @@
     return s === surface;
   }
 
-  // Kuromoji-readings-only renderer (the original code path). Used
-  // when no GPT ruby is available, when ruby is malformed, or when
-  // the ruby cache hasn't loaded yet for a freshly reflowed line.
-  function _renderTokensKuromoji(merged) {
-    const out = [];
-    for (const tk of merged) {
-      const surface = tk.surface_form || '';
-      if (!_isWordToken(tk)) {
-        out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
-        continue;
-      }
-      const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
-      const reading = katakanaToHiragana(tk.reading || '');
-      const inner = _renderWordInner(surface, reading);
-      const segs = tk._segments || [surface];
-      const segsAttr = _escapeHtml(JSON.stringify(segs));
-      out.push(
-        '<span class="w" data-word="' + _escapeHtml(lemma) +
-        '" data-surface="' + _escapeHtml(surface) +
-        '" data-segments="' + segsAttr + '">' +
-        inner + '</span>'
-      );
-    }
-    return out.join('');
-  }
-
-  // GPT-furigana renderer — overlays per-segment readings from the
-  // sentence-level ruby annotation onto each kuromoji token's chip.
-  //
-  // Algorithm: walk tokens in surface order, tracking the running char
-  // offset. For each token, find the ruby segments that overlap its
-  // [start, end) char range. Render each overlapped segment:
-  //   • Fully-covered kanji segment → <ruby>kanji<rt>reading</rt></ruby>
-  //   • Fully-covered non-kanji segment → plain text
-  //   • Partial overlap (token boundary cuts a kanji compound) →
-  //     fallback to plain text for that fragment, since slicing a
-  //     hiragana reading by raw kanji-char count isn't safe (今日 is
-  //     2 kanji ↔ 3 kana — no per-char correspondence).
-  // Tokens with no ruby coverage at all (empty surface, e.g.) get an
-  // empty chip.
-  function _renderTokensWithRuby(merged, ruby) {
-    // Pre-index ruby segments with absolute char positions.
+  // Pre-index sentence-level ruby segments with absolute char ranges.
+  function _indexRubySegs(ruby) {
     const segs = [];
     let pos = 0;
     for (const r of ruby) {
@@ -601,48 +590,118 @@
       segs.push({ start: pos, end: pos + text.length, text, reading });
       pos += text.length;
     }
+    return segs;
+  }
 
-    const out = [];
-    let tokenStart = 0;
-    for (const tk of merged) {
-      const surface = tk.surface_form || '';
-      const tokenEnd = tokenStart + surface.length;
-
-      if (!_isWordToken(tk)) {
-        out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
-        tokenStart = tokenEnd;
-        continue;
+  // Per-char map: which kuromoji `_segment` does each surface char
+  // belong to? Used to apply cycling color classes (segment 0 = stem,
+  // uncolored; segments 1..N = inflections, color-cycled).
+  function _segmentIndexMap(tk) {
+    const surface = tk.surface_form || '';
+    const tkSegs = tk._segments || [surface];
+    const map = new Array(surface.length);
+    let pp = 0;
+    for (let s = 0; s < tkSegs.length; s++) {
+      const len = tkSegs[s].length;
+      for (let p = 0; p < len; p++) {
+        if (pp < surface.length) map[pp++] = s;
       }
+    }
+    while (pp < surface.length) map[pp++] = 0;
+    return map;
+  }
 
-      let inner = '';
-      for (const seg of segs) {
+  // Render the inner HTML for one merged token. Either GPT ruby
+  // (rubySegs != null) or kuromoji's per-token reading drives the
+  // <ruby> placement; in BOTH paths the post-stem kana gets the
+  // inflection color cycle.
+  const _INFL_PALETTE = ['hl-infl', 'hl-infl-2', 'hl-infl-3'];
+  function _renderTokenInner(tk, rubySegs, tokenStart, tokenEnd) {
+    const surface = tk.surface_form || '';
+    const segMap = _segmentIndexMap(tk);
+
+    if (rubySegs) {
+      // GPT-ruby path: walk overlapping ruby segments. Kanji segments
+      // (with reading) become <ruby>; non-kanji segments get the
+      // plain-text colorize pass.
+      let html = '';
+      for (const seg of rubySegs) {
         if (seg.end <= tokenStart) continue;
         if (seg.start >= tokenEnd) break;
-        const sliceStart = Math.max(seg.start, tokenStart);
-        const sliceEnd   = Math.min(seg.end,   tokenEnd);
-        const sliceText  = seg.text.slice(sliceStart - seg.start, sliceEnd - seg.start);
-        const fullyInsideToken = (seg.start >= tokenStart && seg.end <= tokenEnd);
-        if (seg.reading && fullyInsideToken) {
-          inner += '<ruby>' + _escapeHtml(sliceText) +
-                   '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
+        const fullyInside = (seg.start >= tokenStart && seg.end <= tokenEnd);
+        const localStart = Math.max(seg.start, tokenStart) - tokenStart;
+        const localEnd   = Math.min(seg.end,   tokenEnd)   - tokenStart;
+        if (seg.reading && fullyInside) {
+          // Kanji segment with contextual reading. Stem rendering —
+          // not colored, even if technically inside an inflection
+          // _segment (the kanji "anchor" reads cleaner without color).
+          html += '<ruby>' +
+                  _escapeHtml(seg.text) +
+                  '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
         } else {
-          inner += _escapeHtml(sliceText);
+          // Non-kanji or partial overlap — plain text with color cycle.
+          html += _colorizeRun(surface, localStart, localEnd, segMap);
         }
       }
-      if (!inner) inner = _escapeHtml(surface);
-
-      const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
-      const tkSegs = tk._segments || [surface];
-      const segsAttr = _escapeHtml(JSON.stringify(tkSegs));
-      out.push(
-        '<span class="w" data-word="' + _escapeHtml(lemma) +
-        '" data-surface="' + _escapeHtml(surface) +
-        '" data-segments="' + segsAttr + '">' +
-        inner + '</span>'
-      );
-      tokenStart = tokenEnd;
+      return html;
     }
-    return out.join('');
+
+    // Kuromoji-only fallback — use kuromoji's per-token reading via
+    // _buildFurigana to lay <ruby> over kanji runs. Kana runs go
+    // through the same color-cycling pass.
+    const reading = katakanaToHiragana(tk.reading || '');
+    if (!_hasKanji(surface) || !reading || reading === surface) {
+      return _colorizeRun(surface, 0, surface.length, segMap);
+    }
+    const fSegs = _buildFurigana(surface, reading);
+    let html = '';
+    let charPos = 0;
+    let alignmentFailed = false;
+    for (const fs of fSegs) {
+      if (fs.kanji) {
+        if (!fs.reading) { alignmentFailed = true; break; }
+        html += '<ruby>' + _escapeHtml(fs.kanji) +
+                '<rt>' + _escapeHtml(fs.reading) + '</rt></ruby>';
+        charPos += fs.kanji.length;
+      } else {
+        const kanaText = fs.kana || '';
+        html += _colorizeRun(surface, charPos, charPos + kanaText.length, segMap);
+        charPos += kanaText.length;
+      }
+    }
+    if (alignmentFailed) {
+      // Fallback: whole-token ruby + plain colorized surface.
+      return '<ruby>' + _escapeHtml(surface) +
+             '<rt>' + _escapeHtml(reading) + '</rt></ruby>';
+    }
+    return html;
+  }
+
+  // Colorize a [startPos, endPos) slice of `surface` based on the
+  // per-char `segMap`. Segment 0 (stem) → uncolored; segments 1..N →
+  // cycling color classes. Adjacent same-class chars are coalesced
+  // into one <span> to keep the DOM compact.
+  function _colorizeRun(surface, startPos, endPos, segMap) {
+    let html = '';
+    let bufClass = null;
+    let buf = '';
+    const flush = () => {
+      if (!buf) return;
+      if (bufClass) html += '<span class="' + bufClass + '">' + _escapeHtml(buf) + '</span>';
+      else          html += _escapeHtml(buf);
+      buf = '';
+    };
+    for (let p = startPos; p < endPos; p++) {
+      const segIdx = (segMap && segMap[p]) || 0;
+      const cls = segIdx >= 1 ? _INFL_PALETTE[(segIdx - 1) % _INFL_PALETTE.length] : null;
+      if (cls !== bufClass) {
+        flush();
+        bufClass = cls;
+      }
+      buf += surface[p];
+    }
+    flush();
+    return html;
   }
 
   // Fetch GPT-generated furigana for one sentence via the
