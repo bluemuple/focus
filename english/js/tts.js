@@ -163,6 +163,7 @@
   async function prefetch(text, opts = {}) {
     text = stripQuotes((text || '').toString()).trim();
     if (!text) return;
+    if (_curLang() === 'ja') text = _jpTtsPreprocess(text);
     const voice = opts.voice || getVoice();
     const rate  = opts.rate  ?? 1.0;
     const ck    = cacheKey(voice, rate, text);
@@ -192,9 +193,44 @@
     return String(text || '').replace(/[“”„‟"‘’‚‛']/g, '');
   }
 
+  // Returns the current target language ('en' / 'ja' / …). Falls back
+  // to 'en' when DB hasn't loaded yet (script ordering / very early
+  // call), which keeps the EN path's behaviour unchanged.
+  function _curLang() {
+    return (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+  }
+
+  // Japanese-specific TTS preprocessor. Google Neural2 ja-JP handles
+  // contextual particle readings correctly inside a sentence (e.g.
+  // 「うさぎは森に住む」 reads は as わ), but if the user clicks a
+  // STANDALONE particle chip we send just the kana to TTS and Google
+  // reads it literally — は as "ha", へ as "he" — which is wrong for
+  // particle usage. Same for the verb-form lemma issue: when the
+  // caller passes the dictionary form (食べる, 住む) instead of the
+  // surface (食べました, 住んでいました), Google still reads it OK
+  // because the verb in dictionary form is a real word; that side
+  // is handled in the lesson page by preferring data-surface over
+  // data-word at the call site, not here.
+  //
+  // Rules — applied ONLY when the input is the EXACT particle (no
+  // surrounding context to disambiguate):
+  //   • は → わ  (topic marker)
+  //   • へ → え  (direction marker)
+  //   • を → お  (object marker — Google sometimes reads "wo")
+  // Multi-character text passes through unchanged so 「うさぎは」
+  // keeps its proper Tokyo-dialect rendering of は as わ via Google
+  // TTS's own context.
+  function _jpTtsPreprocess(text) {
+    if (text === 'は') return 'わ';
+    if (text === 'へ') return 'え';
+    if (text === 'を') return 'お';
+    return text;
+  }
+
   async function speak(text, opts = {}) {
     text = stripQuotes((text || '').toString()).trim();
     if (!text) return;
+    if (_curLang() === 'ja') text = _jpTtsPreprocess(text);
     stop();
 
     // Use the explicit `opts.voice` if the caller asked for one; otherwise
