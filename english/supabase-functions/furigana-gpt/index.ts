@@ -23,6 +23,13 @@
 //   contiguous run of NON-kanji characters (kana, punctuation, ASCII)
 //   with empty reading.
 //
+//   Strict server-side validation: any GPT response that violates the
+//   schema (mixed kanji+kana segment, reading on a kana segment, or
+//   round-trip mismatch) is rejected with 502 and NOT cached, so the
+//   next request retries. This protects the client renderer from ever
+//   seeing a segment like {t:"見つけたこのみ", r:"みつけたこのみ"} —
+//   which would render as one big run-on ruby block.
+//
 //   Deploy:
 //     1. Edge Functions → New function → name "furigana-gpt"
 //     2. Paste this whole file as the body
@@ -46,11 +53,6 @@ const cors = {
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-// Stable hash of the input sentence — same approach as chunk-gpt.
-// We don't aggressively normalize (no lowercase / whitespace collapse)
-// because Japanese is whitespace-free and the EXACT character sequence
-// matters: "今日" vs "今日 " (trailing space) might genuinely render
-// differently depending on how the author included punctuation.
 async function hashSentence(s: string): Promise<string> {
   const norm = s.normalize("NFKC").trim();
   const buf = new TextEncoder().encode(norm);
@@ -94,15 +96,17 @@ async function writeCache(hash: string, ruby: any): Promise<void> {
   } catch {}
 }
 
-// Unicode kanji ranges — same as the client's _isKanjiChar regex so
-// validation here matches what the renderer will look for.
-const KANJI_RE = /[一-鿿㐀-䶿豈-﫿]/;
-const ALL_KANJI_RE = /^[一-鿿㐀-䶿豈-﫿]+$/;
-const ALL_HIRAGANA_RE = /^[ぁ-ゖ]+$/;
+const KANJI_RE        = /[一-鿿㐀-䶿豈-﫿]/;
+const ALL_KANJI_RE    = /^[一-鿿㐀-䶿豈-﫿]+$/;
+const ALL_HIRAGANA_RE = /^[ぁ-ゖー]+$/;
 
-// Validate that `ruby` segments concatenate to the input sentence and
-// that each segment is either ALL kanji (with reading) or NO kanji
-// (without reading). Returns true if valid, false if malformed.
+// Strict schema validation. Each segment must be EITHER:
+//   • All-kanji surface with non-empty hiragana reading, OR
+//   • No-kanji surface with empty reading.
+// AND the concat of all `t` values equals the input. Anything else
+// (mixed surfaces, reading-on-kana, partial chars) is rejected — the
+// renderer can't safely place ruby over a mixed surface, and we'd
+// rather pay one more GPT call next time than serve corrupt data.
 function validateRuby(ruby: any[], sentence: string): boolean {
   if (!Array.isArray(ruby) || ruby.length === 0) return false;
   let recon = "";
@@ -112,12 +116,9 @@ function validateRuby(ruby: any[], sentence: string): boolean {
     if (!t) return false;
     const hasKanji = KANJI_RE.test(t);
     if (hasKanji) {
-      // Kanji segment: every char must be kanji, reading must be hiragana.
       if (!ALL_KANJI_RE.test(t)) return false;
       if (!r || !ALL_HIRAGANA_RE.test(r)) return false;
     } else {
-      // Non-kanji segment: must be empty reading. Reading != "" is
-      // either GPT padding or schema misuse.
       if (r) return false;
     }
     recon += t;
@@ -132,7 +133,6 @@ Deno.serve(async (req) => {
     const sentence = String(body?.sentence || "").trim();
     if (!sentence) return json({ error: "sentence required" }, 400);
 
-    // Cloud cache check.
     const hash = await hashSentence(sentence);
     const cached = await readCache(hash);
     if (cached) return json({ ruby: cached });
@@ -148,17 +148,23 @@ Deno.serve(async (req) => {
       "OUTPUT SCHEMA — return EXACTLY this shape:",
       '  {"ruby":[{"t":"<chars>","r":"<hiragana or empty>"}, ...]}',
       "",
-      "RULES:",
-      "1. Each segment is EITHER all-kanji OR no-kanji. Never mix.",
+      "RULES (STRICT — violations cause hard failure on the server):",
+      "1. EACH SEGMENT IS EITHER ALL-KANJI OR NO-KANJI. NEVER MIX.",
+      "   • Verbs/adjectives like 食べる, 持ってきました, 甘い, 見つけた",
+      "     MUST be split: { 食 + べる }, { 持 + ってきました },",
+      "     { 甘 + い }, { 見 + つけた }. The kanji segment carries the",
+      "     reading; the trailing-kana segment has r=\"\".",
       "2. For kanji segments, `r` is the contextually-correct hiragana",
-      "   reading (NOT katakana, NOT romaji, NOT spaces).",
-      "3. For non-kanji segments (kana, punctuation, ASCII), `r` is \"\".",
+      "   reading of THAT kanji-only segment (NOT katakana, NOT romaji,",
+      "   NOT the reading of the whole word). e.g. for 食べる split as",
+      "   食/べる: r for 食 is \"た\", NOT \"たべる\".",
+      "3. For non-kanji segments (kana, punctuation, ASCII), r=\"\".",
       "4. Concatenating all `t` values must reproduce the input EXACTLY",
       "   character-for-character — every kana, punctuation, space",
       "   preserved.",
       "5. Adjacent kanji chars usually belong in ONE segment when they",
-      "   form a compound word (今日 → きょう, 学校 → がっこう). Split",
-      "   only when they're separate words.",
+      "   form a compound word (今日 → きょう, 学校 → がっこう, 木実 →",
+      "   このみ). Split only when they're separate words.",
       "6. Common context-dependent readings:",
       "   • 何 + です/だ/の/counter → なん;  何 + bare → なに",
       "   • 今日 → きょう (vs 今 + 日);  今年 → ことし",
@@ -174,9 +180,13 @@ Deno.serve(async (req) => {
       "Input:  今日は学校で日本語を勉強しました。",
       'Output: {"ruby":[{"t":"今日","r":"きょう"},{"t":"は","r":""},{"t":"学校","r":"がっこう"},{"t":"で","r":""},{"t":"日本語","r":"にほんご"},{"t":"を","r":""},{"t":"勉強","r":"べんきょう"},{"t":"しました。","r":""}]}',
       "",
-      "EXAMPLE 3",
-      "Input:  食べることが好きだ。",
-      'Output: {"ruby":[{"t":"食","r":"た"},{"t":"べることが","r":""},{"t":"好","r":"す"},{"t":"きだ。","r":""}]}',
+      "EXAMPLE 3 (verb + adjective splitting — CRITICAL)",
+      "Input:  熊は、甘いはちみつを持ってきました。",
+      'Output: {"ruby":[{"t":"熊","r":"くま"},{"t":"は、","r":""},{"t":"甘","r":"あま"},{"t":"いはちみつを","r":""},{"t":"持","r":"も"},{"t":"ってきました。","r":""}]}',
+      "",
+      "EXAMPLE 4 (multi-kanji compound)",
+      "Input:  りすは森で見つけた木実を持ってきました。",
+      'Output: {"ruby":[{"t":"りすは","r":""},{"t":"森","r":"もり"},{"t":"で","r":""},{"t":"見","r":"み"},{"t":"つけた","r":""},{"t":"木実","r":"このみ"},{"t":"を","r":""},{"t":"持","r":"も"},{"t":"ってきました。","r":""}]}',
     ].join("\n");
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -187,10 +197,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: "gpt-4o-mini",
-        // 0 → identical splits for the same sentence every time.
         temperature: 0,
-        // ~3 tokens per output segment + sentence text. 800 covers
-        // long news-style sentences with plenty of headroom.
         max_tokens: 800,
         response_format: { type: "json_object" },
         messages: [
@@ -223,7 +230,6 @@ Deno.serve(async (req) => {
         sentence,
       }, 502);
     }
-    // Fire-and-forget cache write.
     writeCache(hash, parsed.ruby);
     return json({ ruby: parsed.ruby });
   } catch (e: any) {

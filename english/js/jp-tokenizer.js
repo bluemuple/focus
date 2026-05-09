@@ -433,13 +433,27 @@
       if (rd && accum === rd) {
         // Case 1: exact match — strip without touching reading.
         i += consumed;
-      } else if (isPureKanji && accum.length >= 2 && !AUX_DENY_RE.test(accum)) {
+      } else if (
+        isPureKanji &&
+        accum.length >= 2 &&
+        accum.length <= surf.length * 3 &&    // sanity: reading per
+                                              // kanji ≤ 3 kana (covers
+                                              // 学校→がっこう, あい→愛
+                                              // etc.; rejects absorbing
+                                              // 「もりでみつけた…」 as
+                                              // 森's reading)
+        !AUX_DENY_RE.test(accum)
+      ) {
         // Case 2: override reading with inline kana, then strip.
-        // Length ≥ 2 + AUX_DENY guard — single-char accum like で is
-        // too ambiguous (could be 助詞), and known aux forms like です
-        // would falsely absorb. Both checks keep "何 + で / です / だ"
-        // safe; _fixContextualReadings handles the contextual reading
-        // for those.
+        // Length ≥ 2 + ≤ kanji×3 + AUX_DENY guard:
+        //   • Single-char accum like で is too ambiguous (could be 助詞)
+        //   • Long accum (e.g. 11 chars after a single-kanji 森) is
+        //     almost certainly a separate word run, NOT an inline
+        //     reading annotation — overriding here would corrupt the
+        //     ruby (a long fake reading rendered above one kanji).
+        //   • Known aux forms like です would falsely absorb.
+        // _fixContextualReadings handles the legit contextual readings
+        // for cases this guard rejects.
         const kata = accum.replace(/[ぁ-ん]/g, c =>
           String.fromCharCode(c.charCodeAt(0) + 0x60)
         );

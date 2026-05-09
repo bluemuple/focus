@@ -770,9 +770,19 @@
     //     current page so the user sees correct furigana.
     let _jpBgPrefetchPromise = null;
     if (DB.getLang && DB.getLang() === 'ja') {
+      // Splash policy: show ONLY on the very first JP-mode load ever
+      // for this browser. After that, localStorage flag permanently
+      // suppresses it — the kuromoji dict is HTTP-cached for ~1 year
+      // by jsdelivr, so subsequent loads are <100 ms even though the
+      // request fires (browser serves from disk cache, no network).
+      // The user explicitly asked to never see this splash on repeat
+      // visits, so we honor that even if the load is somehow slow.
       let splash = null;
-      const splashDelayMs = 250;
-      const splashTimer = setTimeout(() => { splash = _showJpLoadSplash(); }, splashDelayMs);
+      const SPLASH_SHOWN_KEY = 'eng.v1.jpDictLoaded';
+      const alreadyLoadedOnce = !!localStorage.getItem(SPLASH_SHOWN_KEY);
+      const splashTimer = setTimeout(() => {
+        if (!alreadyLoadedOnce) splash = _showJpLoadSplash();
+      }, 250);
       try {
         const rawParas = (LESSON.body || '').split(/\n{2,}|\r\n{2,}/)
           .map(s => s.trim()).filter(Boolean);
@@ -816,6 +826,8 @@
       } finally {
         clearTimeout(splashTimer);
         if (splash) splash.hide();
+        // Mark first-load complete so future entries skip the splash.
+        try { localStorage.setItem(SPLASH_SHOWN_KEY, '1'); } catch (_) {}
       }
     }
     PAGES = paginateByHeight(LESSON.body || '');
