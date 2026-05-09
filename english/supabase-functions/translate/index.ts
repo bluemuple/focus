@@ -1,99 +1,54 @@
 // =============================================================
 //   Supabase Edge Function: translate
 //
-//   DeepL-backed translation proxy. This is the PRIMARY translation
-//   engine for both English and Japanese lesson pages — every word
-//   click in default mode hits this function (the GPT engine only
-//   runs when ✨ is toggled on). It accepts either a single text or
-//   a batch and returns Korean.
+//   DeepL 무료 API 프록시. 단일 또는 배치 + context 지원.
+//   ↓↓↓ 클라우드 캐시 추가 (translate_deepl_cache) ↓↓↓
+//   같은 (text, context, source, target) 튜플은 한 번 받으면 모든
+//   사용자/디바이스가 공유. EN 레슨 페이지 단어 클릭의 1차 엔진이라
+//   여기 캐시가 가장 큰 비용 절감 효과.
 //
-//   Cloud cache: identical (source, target, context, text) tuples
-//   are stored in `translate_deepl_cache`. First user pays DeepL,
-//   every other device / user thereafter hits the cache for free.
-//   This is the biggest cost saver on the EN page since DeepL is
-//   the default engine and the same word in the same lesson is
-//   re-translated by every visitor.
+//   Body 형식 (변경 없음):
+//     { text: string,    context?: string }   // 단일
+//     { texts: string[], context?: string }   // 배치
 //
-//   Request (single):
-//     { text: string, source: 'EN'|'JA', target: 'KO', context?: string }
-//   Response (single):
+//   응답 (변경 없음):
 //     { translation: string }
-//
-//   Request (batch — used by page prefetch):
-//     { texts: string[], source, target: 'KO', context? }
-//   Response (batch):
 //     { translations: string[] }
 //
-//   Deploy:
-//     1. Edge Functions → translate (already exists; replace body)
-//     2. Secrets DEEPL_API_KEY (existing) and DEEPL_API_URL (optional;
-//        defaults to free endpoint).
-//     3. SQL once: ensure `translate_deepl_cache` exists (see
-//        supabase-cache-schema.sql).
-//
-//   ⚠️ This file was reconstructed from the client API contract —
-//   double-check it matches the existing deployed function before
-//   replacing. The cache logic is the only NEW behaviour; everything
-//   else is a clean DeepL proxy.
+//   환경 변수:
+//     DEEPL_KEY                  (필수, 기존)
+//     SUPABASE_URL               (자동 주입)
+//     SUPABASE_SERVICE_ROLE_KEY  (자동 주입)
 // =============================================================
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 
-const cors = {
-  "Access-Control-Allow-Origin":  "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+const CORS = {
+  'Access-Control-Allow-Origin':  '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
-const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 
-// DeepL endpoint — defaults to free tier. Pro accounts can override
-// via the DEEPL_API_URL secret (e.g. "https://api.deepl.com/v2/translate").
-const DEEPL_API_URL = Deno.env.get("DEEPL_API_URL") || "https://api-free.deepl.com/v2/translate";
-
-// ---------- cache helpers ----------
-// Key shape mirrors translate-gpt: SHA-256 prefix of
-// "<source>:<target>:<context>:::<text>". Same (text, context) tuple
-// translated before by ANY user → cache hit.
+// ---------- 캐시 헬퍼 ----------
+// 키 = SHA-256 prefix of "<source>:<target>:<context>:::<text>"
 async function cacheKey(text: string, context: string, source: string, target: string): Promise<string> {
-  const norm = source + ":" + target + ":" + (context || "").normalize("NFKC").trim() + ":::" + text.normalize("NFKC").trim();
+  const norm = source + ':' + target + ':' + (context || '').normalize('NFKC').trim()
+             + ':::' + text.normalize('NFKC').trim();
   const buf = new TextEncoder().encode(norm);
-  const digest = await crypto.subtle.digest("SHA-256", buf);
+  const digest = await crypto.subtle.digest('SHA-256', buf);
   return Array.from(new Uint8Array(digest))
-    .map(b => b.toString(16).padStart(2, "0"))
-    .join("")
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
     .slice(0, 32);
 }
 
-async function readCacheOne(key: string): Promise<string | null> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return null;
-  try {
-    const url = `${SUPABASE_URL}/rest/v1/translate_deepl_cache`
-              + `?cache_key=eq.${encodeURIComponent(key)}&select=translation`;
-    const r = await fetch(url, {
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-      },
-    });
-    if (!r.ok) return null;
-    const arr = await r.json();
-    return arr?.[0]?.translation || null;
-  } catch { return null; }
-}
-
-// Batch read — single PostgREST call with `cache_key=in.(...)` so the
-// page prefetch's 30-item batch costs ONE round trip, not 30. Returns
-// a Map<key, translation> with the rows that were found; missing keys
-// are simply absent (callers must check).
+// 배치 read — 한 번의 PostgREST 호출로 여러 키 동시 조회.
 async function readCacheMany(keys: string[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE || !keys.length) return map;
   try {
-    // PostgREST `in` syntax: cache_key=in.(k1,k2,k3). Quote each key in
-    // case it contains commas/parens (cache keys are hex but safer to
-    // quote regardless).
-    const list = keys.map(k => `"${k.replace(/"/g, '\\"')}"`).join(",");
+    const list = keys.map(k => `"${k.replace(/"/g, '\\"')}"`).join(',');
     const url = `${SUPABASE_URL}/rest/v1/translate_deepl_cache`
               + `?cache_key=in.(${encodeURIComponent(list)})&select=cache_key,translation`;
     const r = await fetch(url, {
@@ -111,139 +66,113 @@ async function readCacheMany(keys: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-async function writeCacheOne(key: string, translation: string): Promise<void> {
-  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) return;
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/translate_deepl_cache`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_SERVICE_ROLE,
-        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
-      },
-      body: JSON.stringify({ cache_key: key, translation }),
-    });
-  } catch {}
-}
-
-// Batch write — one POST with an array of rows. PostgREST accepts a
-// JSON array body and applies the `Prefer: resolution=merge-duplicates`
-// upsert to all of them at once.
+// 배치 write — fire-and-forget. 실패해도 다음 호출이 한 번 더 DeepL 칠 뿐.
 async function writeCacheMany(rows: { cache_key: string; translation: string }[]): Promise<void> {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE || !rows.length) return;
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/translate_deepl_cache`, {
-      method: "POST",
+      method: 'POST',
       headers: {
         apikey: SUPABASE_SERVICE_ROLE,
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE}`,
-        "Content-Type": "application/json",
-        Prefer: "resolution=merge-duplicates",
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
       },
       body: JSON.stringify(rows),
     });
   } catch {}
 }
 
-// ---------- DeepL helpers ----------
-// DeepL accepts `text` as a repeated form param. We POST form-urlencoded
-// since DeepL's JSON support is Pro-only on some plans — form is the
-// universally supported shape.
-async function callDeepL(texts: string[], source: string, target: string, context: string): Promise<string[]> {
-  const apiKey = Deno.env.get("DEEPL_API_KEY");
-  if (!apiKey) throw new Error("DEEPL_API_KEY not set");
-
-  const form = new URLSearchParams();
-  for (const t of texts) form.append("text", t);
-  form.append("target_lang", target.toUpperCase());
-  if (source) form.append("source_lang", source.toUpperCase());
-  if (context) form.append("context", context);
-
-  const r = await fetch(DEEPL_API_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": "DeepL-Auth-Key " + apiKey,
-      "Content-Type":  "application/x-www-form-urlencoded",
-    },
-    body: form.toString(),
-  });
-  if (!r.ok) {
-    const txt = await r.text().catch(() => "");
-    throw new Error("DeepL " + r.status + ": " + txt.slice(0, 200));
-  }
-  const j = await r.json();
-  const arr = (j?.translations || []) as { text: string }[];
-  return arr.map(x => String(x?.text || "").trim());
-}
-
-// ---------- request handler ----------
+// ---------- 메인 핸들러 ----------
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
-  try {
-    const body = await req.json();
-    const source  = String(body?.source || "EN").toUpperCase();
-    const target  = String(body?.target || "KO").toUpperCase();
-    const context = String(body?.context || "").trim();
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
 
-    // ----- batch path -----
-    // Client sends `texts: string[]` (page prefetch). Cache lookup is
-    // batched in ONE PostgREST call, then any misses go to DeepL in
-    // ONE form-encoded POST, then misses are written back in ONE
-    // upsert. So a 30-item batch costs at most 3 round trips total
-    // even on a cold cache.
-    if (Array.isArray(body?.texts)) {
-      const texts: string[] = body.texts.map((t: any) => String(t || "").trim());
-      const keys: string[] = await Promise.all(
-        texts.map(t => t ? cacheKey(t, context, source, target) : Promise.resolve(""))
-      );
-      const cached = await readCacheMany(keys.filter(k => k));
-      const out: string[] = new Array(texts.length).fill("");
-      const missIdx: number[] = [];
-      const missTexts: string[] = [];
-      for (let i = 0; i < texts.length; i++) {
-        if (!texts[i]) continue;
-        const hit = cached.get(keys[i]);
-        if (hit) { out[i] = hit; continue; }
-        missIdx.push(i);
-        missTexts.push(texts[i]);
-      }
-      if (missTexts.length) {
-        const fresh = await callDeepL(missTexts, source, target, context);
-        const rows: { cache_key: string; translation: string }[] = [];
-        for (let k = 0; k < missIdx.length; k++) {
-          const i = missIdx[k];
-          const tr = fresh[k] || "";
-          out[i] = tr;
-          if (tr) rows.push({ cache_key: keys[i], translation: tr });
-        }
-        // Fire-and-forget upsert.
-        writeCacheMany(rows);
-      }
-      return json({ translations: out });
+  let body: any;
+  try { body = await req.json(); } catch { body = {}; }
+
+  const target  = (body.target || 'KO').toString();
+  const source  = (body.source || 'EN').toString();
+  const context = body.context ? String(body.context) : '';
+
+  // 단일 vs 배치 — 기존 로직 그대로.
+  const isBatch = Array.isArray(body.texts);
+  const items: string[] = isBatch
+    ? body.texts.map((s: any) => String(s || '').trim()).filter(Boolean)
+    : (body.text ? [String(body.text).trim()].filter(Boolean) : []);
+
+  if (!items.length) {
+    return new Response(JSON.stringify({ error: 'no text' }), {
+      status: 400, headers: { ...CORS, 'content-type': 'application/json' },
+    });
+  }
+
+  // ---------- 캐시 체크 ----------
+  // 모든 입력에 대해 키 계산 → 한 번의 PostgREST 호출로 일괄 조회.
+  const keys = await Promise.all(items.map(t => cacheKey(t, context, source, target)));
+  const cached = await readCacheMany(keys);
+
+  // 미스만 골라서 DeepL에 한 번에 보냄. 풀 cache hit이면 DeepL 호출
+  // 자체가 일어나지 않음.
+  const out: string[] = new Array(items.length).fill('');
+  const missIdx: number[] = [];
+  const missTexts: string[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const hit = cached.get(keys[i]);
+    if (hit) { out[i] = hit; continue; }
+    missIdx.push(i);
+    missTexts.push(items[i]);
+  }
+
+  if (missTexts.length) {
+    const key = Deno.env.get('DEEPL_KEY');
+    if (!key) {
+      return new Response(JSON.stringify({ error: 'DEEPL_KEY not set' }), {
+        status: 500, headers: { ...CORS, 'content-type': 'application/json' },
+      });
     }
 
-    // ----- single path -----
-    const text = String(body?.text || "").trim();
-    if (!text) return json({ error: "text required" }, 400);
+    // ---- DeepL 호출 부분: 기존과 동일 (JSON body, free endpoint) ----
+    const r = await fetch('https://api-free.deepl.com/v2/translate', {
+      method: 'POST',
+      headers: {
+        'Authorization': `DeepL-Auth-Key ${key}`,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        text: missTexts,
+        source_lang: source,
+        target_lang: target,
+        ...(context ? { context } : {}),
+      }),
+    });
 
-    const ck = await cacheKey(text, context, source, target);
-    const cached = await readCacheOne(ck);
-    if (cached) return json({ translation: cached });
+    if (!r.ok) {
+      const errText = await r.text();
+      return new Response(JSON.stringify({ error: 'deepl ' + r.status, detail: errText }), {
+        status: 502, headers: { ...CORS, 'content-type': 'application/json' },
+      });
+    }
+    const j = await r.json();
+    const fresh: string[] = (j.translations || []).map((t: any) => String(t?.text || ''));
 
-    const arr = await callDeepL([text], source, target, context);
-    const translation = (arr[0] || "").trim();
-    if (!translation) return json({ error: "DeepL empty" }, 502);
-    writeCacheOne(ck, translation);
-    return json({ translation });
-  } catch (e: any) {
-    return json({ error: String(e?.message || e) }, 500);
+    // 결과를 원래 순서대로 out 배열에 끼워넣고, 캐시에 적재.
+    const rows: { cache_key: string; translation: string }[] = [];
+    for (let k = 0; k < missIdx.length; k++) {
+      const i = missIdx[k];
+      const tr = fresh[k] || '';
+      out[i] = tr;
+      if (tr) rows.push({ cache_key: keys[i], translation: tr });
+    }
+    // Fire-and-forget upsert. 응답 지연 없음.
+    writeCacheMany(rows);
   }
-});
 
-function json(obj: unknown, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { ...cors, "Content-Type": "application/json" },
+  // ---- 응답 형식: 기존과 동일 ----
+  const payload = isBatch
+    ? { translations: out }
+    : { translation: out[0] || '' };
+
+  return new Response(JSON.stringify(payload), {
+    headers: { ...CORS, 'content-type': 'application/json' },
   });
-}
+});

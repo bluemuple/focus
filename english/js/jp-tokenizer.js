@@ -110,14 +110,15 @@
   // setProgressHandler) so the loading splash can show a real-time
   // byte counter + percentage as the dict files stream in.
   //
-  // The original kuromoji loader uses XHR with no progress events,
-  // so the splash could only update once per file (12 jumpy steps).
-  // We replace it with a streaming `fetch()` that tracks bytes per
-  // chunk and emits aggregate `{ bytesReceived, bytesTotal,
-  // filesDone, filesTotal }` to the splash. The IPADIC `.dat.gz`
-  // files are served PRE-compressed (no `Content-Encoding: gzip`),
-  // so streamed chunk lengths line up with Content-Length headers
-  // and the byte counter is precise.
+  // The original kuromoji loader uses XHR but discards progress.
+  // We replace it with XHR + onprogress (the most reliable byte-
+  // level progress mechanism in browsers — `fetch() + ReadableStream`
+  // can buffer chunks under HTTP/2 or fast CDNs and emit them all
+  // at once, defeating real-time progress). Each `xhr.onprogress`
+  // fires repeatedly during download with `e.loaded` and `e.total`,
+  // so the bar moves smoothly chunk-by-chunk regardless of network
+  // conditions. The IPADIC `.dat.gz` files are served pre-compressed
+  // (no `Content-Encoding: gzip`), so byte counts match exactly.
   let _progressHandler = null;
   let _filesDone   = 0;
   const _filesTotal  = 12;
@@ -128,8 +129,18 @@
   // in, so the bar starts moving immediately on first byte instead
   // of jumping to 100% if the first response is small.
   const _BYTES_GUESS = 5 * 1024 * 1024;
+  // Set window.JPT_DEBUG_PROGRESS = true in the console to see
+  // every progress event logged — handy for verifying real-time
+  // delivery on a given browser/network.
   function setProgressHandler(fn) { _progressHandler = fn; }
   function _emitProgress() {
+    if (window.JPT_DEBUG_PROGRESS) {
+      try {
+        console.log('[jpt-progress]',
+          _bytesReceived, '/', _bytesTotal,
+          '| files', _filesDone, '/', _filesTotal);
+      } catch (e) {}
+    }
     if (typeof _progressHandler !== 'function') return;
     try {
       _progressHandler({
@@ -145,38 +156,52 @@
     _bytesReceived = 0;
     _bytesTotal    = 0;
   }
-  // Stream-fetch one dict file with per-chunk byte progress.
-  async function _streamFetchArrayBuffer(url) {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('http ' + r.status);
-    const len = parseInt(r.headers.get('content-length') || '0', 10);
-    if (len > 0) { _bytesTotal += len; _emitProgress(); }
-    // Body streaming requires ReadableStream — falls back to a
-    // single .arrayBuffer() on legacy browsers (no per-byte ticks
-    // there, but the loader still works).
-    if (!r.body || !r.body.getReader) {
-      const buf = await r.arrayBuffer();
-      _bytesReceived += buf.byteLength;
-      if (len === 0) _bytesTotal += buf.byteLength;
-      _emitProgress();
-      return buf;
-    }
-    const reader = r.body.getReader();
-    const chunks = [];
-    let received = 0;
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      received += value.length;
-      _bytesReceived += value.length;
-      _emitProgress();
-    }
-    if (len === 0) _bytesTotal += received;
-    const out = new Uint8Array(received);
-    let off = 0;
-    for (const c of chunks) { out.set(c, off); off += c.length; }
-    return out.buffer;
+  // XHR-based loader with onprogress events. Per-file `prevLoaded`
+  // tracks the last reported byte count for THIS file so we only
+  // accumulate the delta into the global `_bytesReceived` (otherwise
+  // we'd double-count).
+  function _xhrLoadArrayBuffer(url) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+      let prevLoaded = 0;
+      let totalAdded = false;
+      xhr.onprogress = function(e) {
+        // First progress event with a known total → contribute to
+        // the global denominator (only once per file).
+        if (!totalAdded && e.lengthComputable && e.total > 0) {
+          _bytesTotal += e.total;
+          totalAdded = true;
+        }
+        const delta = e.loaded - prevLoaded;
+        if (delta > 0) {
+          _bytesReceived += delta;
+          prevLoaded = e.loaded;
+          _emitProgress();
+        }
+      };
+      xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const buf = xhr.response;
+          // Some browsers skip the final progress event — catch up
+          // here so the bar reaches 100% before the file is marked
+          // complete.
+          if (!totalAdded) _bytesTotal += buf.byteLength;
+          const finalDelta = buf.byteLength - prevLoaded;
+          if (finalDelta > 0) {
+            _bytesReceived += finalDelta;
+            _emitProgress();
+          }
+          resolve(buf);
+        } else {
+          reject(new Error('http ' + xhr.status));
+        }
+      };
+      xhr.onerror = function() { reject(new Error('xhr error')); };
+      xhr.onabort = function() { reject(new Error('xhr abort')); };
+      xhr.send();
+    });
   }
   function _patchKuromojiLoader() {
     if (!window.kuromoji || _patchKuromojiLoader._done) return;
@@ -207,10 +232,8 @@
         if (/^cdn\.jsdelivr\.net\//.test(fixed)) {
           fixed = 'https://' + fixed;
         }
-        // Stream-fetch with per-chunk byte progress. We've replaced
-        // kuromoji's XHR entirely — it just wants an ArrayBuffer
-        // back through the callback, which fetch() provides.
-        _streamFetchArrayBuffer(fixed)
+        // XHR with onprogress for byte-level real-time progress.
+        _xhrLoadArrayBuffer(fixed)
           .then(buf => {
             _filesDone++;
             _emitProgress();

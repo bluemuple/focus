@@ -5844,27 +5844,43 @@
     document.body.appendChild(overlay);
     const bar = overlay.querySelector('#jp-load-bar');
     const ctr = overlay.querySelector('#jp-load-counter');
-    // Wire kuromoji's streaming progress callback to our UI. The
-    // payload now carries actual bytes so the bar advances every
-    // chunk read off the wire, not just on file completions.
+    // Wire kuromoji's progress callback to our UI. XHR onprogress
+    // can fire dozens of times per second, so we throttle the DOM
+    // writes to one per animation frame — the bar still appears to
+    // move smoothly (60 fps) but we don't thrash layout. Without
+    // rAF gating, fast networks would queue a hundred style writes
+    // in one task and the browser would only paint once at the
+    // end, defeating the "real-time" goal.
     if (window.JPT && window.JPT.setProgressHandler) {
       const fmtMB = b => (b / 1048576).toFixed(1);
-      window.JPT.setProgressHandler(p => {
-        // p: { filesDone, filesTotal, bytesReceived, bytesTotal }
-        // bytesTotal is already floored to a 5 MB guess in the
-        // tokenizer so the percentage starts low and climbs, even
-        // before any Content-Length header lands.
+      let pending = null;
+      let rafScheduled = false;
+      function _flush() {
+        rafScheduled = false;
+        if (!pending) return;
+        const p = pending;
+        pending = null;
         const recv  = p.bytesReceived || 0;
         const total = p.bytesTotal    || (5 * 1048576);
-        // Cap at 99% until ALL files report complete — keeps the
-        // bar from sitting at 100% while the last bytes still
-        // stream through the gzip decoder.
         const rawPct = Math.min(100, Math.round((recv / total) * 100));
+        // Cap at 99% until ALL files report complete — keeps the
+        // bar from sitting at 100% while kuromoji still pakos out
+        // the last gzip stream.
         const pct = (p.filesDone >= p.filesTotal) ? 100 : Math.min(99, rawPct);
         if (bar) bar.style.width = pct + '%';
         if (ctr) {
           ctr.textContent = pct + '%  ('
             + fmtMB(recv) + ' / ' + fmtMB(total) + ' MB)';
+        }
+      }
+      window.JPT.setProgressHandler(p => {
+        pending = p;
+        if (!rafScheduled) {
+          rafScheduled = true;
+          // requestAnimationFrame schedules `_flush` to run right
+          // before the next paint — guarantees the bar's new width
+          // is visible to the user.
+          requestAnimationFrame(_flush);
         }
       });
     }
