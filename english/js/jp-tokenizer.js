@@ -780,9 +780,10 @@
           // would absorb the next phrase: 動物たちは + 毎週 would
           // glue together).
           if (cur) { chunks.push(cur); cur = null; }
-          pendingModifier = { text: tk.surface_form, idxStart: wordIdx };
+          pendingModifier = { text: tk.surface_form, idxStart: wordIdx, idxEnd: wordIdx };
         } else {
           pendingModifier.text += tk.surface_form;
+          pendingModifier.idxEnd = wordIdx;
         }
         continue;
       }
@@ -854,6 +855,7 @@
         // emit it as its own chunk so the next content word starts
         // fresh instead of being glued onto the modifier.
         pendingModifier.text += tk.surface_form;
+        pendingModifier.idxEnd = wordIdx;
         if (tk.pos === '助詞') {
           chunks.push({
             text: pendingModifier.text,
@@ -866,7 +868,7 @@
         if (pendingModifier) {
           chunks.push({
             text: pendingModifier.text,
-            indices: [pendingModifier.idxStart, pendingModifier.idxStart],
+            indices: [pendingModifier.idxStart, pendingModifier.idxEnd],
           });
           pendingModifier = null;
         }
@@ -884,7 +886,7 @@
     if (pendingModifier) {
       chunks.push({
         text: pendingModifier.text,
-        indices: [pendingModifier.idxStart, pendingModifier.idxStart],
+        indices: [pendingModifier.idxStart, pendingModifier.idxEnd],
       });
     }
 
