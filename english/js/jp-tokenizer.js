@@ -609,16 +609,34 @@
   // them. (For kanji-bearing compounds kuromoji is reliable; this
   // list is purely for hiragana-only words it misanalyzes.)
   const COMMON_COMPOUND_WORDS = new Set([
+    // family & address terms
     'ぼうや',
     'おとうさん', 'おかあさん', 'おにいさん', 'おねえさん',
     'おじいさん', 'おばあさん', 'おじいちゃん', 'おばあちゃん',
     'おとうと', 'いもうと',
+    // greetings / set phrases
     'ありがとう', 'ありがとうございます',
     'おはよう', 'おはようございます',
     'こんにちは', 'こんばんは',
     'さようなら', 'さよなら',
     'ごめんなさい', 'すみません',
-    'だいじょうぶ', 'もちろん',
+    // discourse connectors / sentence-initial expressions kuromoji
+    // tends to split (そう / いえ / ば — they often form a single
+    // idiomatic chunk a beginner reads as ONE word)
+    'そういえば', 'そうすると', 'そうしたら', 'そうだったら',
+    'それでは', 'それじゃ', 'それから', 'それでも', 'それなら',
+    'けれども', 'だけれど', 'だけれども',
+    'なるほど', 'もちろん', 'やっぱり', 'やはり',
+    'しかし', 'しかしながら', 'だから', 'ですから',
+    'ところで', 'とにかく', 'とりあえず',
+    'もしかして', 'もしかしたら', 'もしも',
+    'なんとなく', 'なんとか', 'なんでも',
+    'いつのまにか', 'いつのまに', 'いつでも', 'どこでも',
+    'どうしても', 'どうやら', 'どうして',
+    'いずれにしても',
+    // common adverbs / state expressions
+    'だいじょうぶ', 'いっしょに', 'いっぱい', 'たくさん',
+    'いつまでも', 'なるべく', 'ぜったい',
     'もんく',
   ]);
   function _mergeCommonCompounds(tokens) {
@@ -628,7 +646,7 @@
       let matched = 0;
       // Try longest first so e.g. ありがとうございます matches before
       // collapsing to ありがとう alone.
-      for (const len of [4, 3, 2]) {
+      for (const len of [5, 4, 3, 2]) {
         if (i + len > tokens.length) continue;
         const combined = tokens.slice(i, i + len)
                                .map(t => t.surface_form || '').join('');
