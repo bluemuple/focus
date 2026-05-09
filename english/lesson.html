@@ -758,21 +758,26 @@
     // (which calls renderParagraph in its hidden mirror to measure
     // line counts). Without this the mirror renders a single-blob
     // fallback paragraph and miscounts pages.
+    //
+    // Splash policy:
+    //   • Show ONLY while kuromoji's dict is downloading (~5 MB gzip on
+    //     first load; <50 ms on browser cache). A delayed-show timer
+    //     means cached loads never flash a splash at all.
+    //   • GPT-furigana prefetch runs in the BACKGROUND after kuromoji
+    //     is ready — don't block the lesson render. Page shows up
+    //     instantly with kuromoji's default readings; once each line's
+    //     accurate ruby arrives we trigger a soft re-render of the
+    //     current page so the user sees correct furigana.
+    let _jpBgPrefetchPromise = null;
     if (DB.getLang && DB.getLang() === 'ja') {
-      // First-time JP load downloads kuromoji.js (~700 kB) + IPADIC
-      // dictionary (~13 MB raw, ~5 MB gzip) — show a splash so the
-      // user knows the page didn't freeze. Removed once tokens are
-      // ready. Subsequent JP lessons hit the browser cache and the
-      // splash flashes briefly or not at all.
-      const splash = _showJpLoadSplash();
+      let splash = null;
+      const splashDelayMs = 250;
+      const splashTimer = setTimeout(() => { splash = _showJpLoadSplash(); }, splashDelayMs);
       try {
         const rawParas = (LESSON.body || '').split(/\n{2,}|\r\n{2,}/)
           .map(s => s.trim()).filter(Boolean);
         const tokenizer = await window.JPT.ready();
-        // Pass 1 — tokenize every line and build the cleaned-surface
-        // set we'll fetch GPT furigana for. The cleaned surface is the
-        // canonical cache key (matches what paginate-reflowed text
-        // collapses to after our strip pipeline runs again).
+        // Tokenize every line synchronously — fast, no network.
         const cleanLines = new Set();
         for (const para of rawParas) {
           for (const line of String(para).split(/\n/)) {
@@ -786,29 +791,31 @@
             }
           }
         }
-        // Pass 2 — fetch GPT furigana with bounded concurrency. Cache
-        // hit on the server side returns instantly; the slow path is
-        // first-uncached fetches (1-2 s each). 4 workers keep the
-        // splash short on cold lessons without thrashing the OpenAI
-        // rate limit. Failures are silent — render falls back to
-        // kuromoji readings, the lesson still works.
+        // Kick off GPT furigana fetches in the BACKGROUND. We capture
+        // the promise so a post-render `await` can soft-refresh the
+        // current page once readings arrive — but this `await` is
+        // outside the splash try/finally, so the splash can hide as
+        // soon as kuromoji is ready.
         const lineList = Array.from(cleanLines);
-        let nextIdx = 0;
-        const CONCURRENCY = 4;
-        const workers = Array.from({ length: CONCURRENCY }, async () => {
-          while (true) {
-            const i = nextIdx++;
-            if (i >= lineList.length) return;
-            const line = lineList[i];
-            const ruby = await window.JPT.getFurigana(line);
-            if (ruby) _jpFuriganaByCleanLine.set(line, ruby);
-          }
-        });
-        await Promise.all(workers);
+        if (lineList.length) {
+          let nextIdx = 0;
+          const CONCURRENCY = 4;
+          _jpBgPrefetchPromise = Promise.all(
+            Array.from({ length: CONCURRENCY }, async () => {
+              while (true) {
+                const i = nextIdx++;
+                if (i >= lineList.length) return;
+                const ruby = await window.JPT.getFurigana(lineList[i]);
+                if (ruby) _jpFuriganaByCleanLine.set(lineList[i], ruby);
+              }
+            })
+          );
+        }
       } catch (e) {
         console.warn('[jp-tokenize] preload failed', e);
       } finally {
-        splash.hide();
+        clearTimeout(splashTimer);
+        if (splash) splash.hide();
       }
     }
     PAGES = paginateByHeight(LESSON.body || '');
@@ -857,6 +864,33 @@
     setupCorporaAndNaverPopups();
     applySidebarVisibility();
     applyMobileContBar();
+
+    // Background GPT furigana — when the prefetch promise (started
+    // during the JP preload block above) resolves, the cache is now
+    // populated for every line of the body. Re-render the current
+    // page so the user sees ACCURATE readings (なん instead of なに,
+    // きょう instead of こんにち, etc.) without having seen a splash.
+    // Pagination doesn't need to re-run because line heights are the
+    // same regardless of which reading sits in the <rt> (kuromoji vs
+    // GPT both use the same ruby HTML structure).
+    if (_jpBgPrefetchPromise) {
+      _jpBgPrefetchPromise.then(() => {
+        const root = document.getElementById('lesson-text');
+        if (!root) return;
+        // Bail if the user navigated away mid-fetch (different lesson,
+        // different language, etc.).
+        if (DB.getLang && DB.getLang() !== 'ja') return;
+        renderInto(root, PAGES[pageIdx] || []);
+        // Re-bind interactions and rebuild the sentence map — the
+        // root keeps the same .w spans but with refreshed inner ruby,
+        // so dataset.bound on the root still reflects the bindings.
+        // We need to clear the flag so bindWordInteractions actually
+        // re-runs against the freshly-rendered children.
+        root.dataset.bound = '';
+        bindWordInteractions(root);
+        buildSentenceMap(root);
+      }).catch(() => {});
+    }
   }
 
   // ============== PC sidebar ==============
