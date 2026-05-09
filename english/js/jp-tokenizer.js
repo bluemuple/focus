@@ -602,14 +602,78 @@
     return out;
   }
 
-  // Cleans raw kuromoji tokens through the standard pipeline (split
-  // giant kana nouns → fix contextual readings → strip inline-furigana
-  // duplicates → merge auxiliaries) and returns the pre-merged result.
+  // Whitelist of common all-hiragana compound words that kuromoji's
+  // IPADIC mistakenly splits into 2-3 separate tokens. The morpheme
+  // analyzer doesn't recognize them as single dictionary entries, so
+  // we merge them post-tokenization. Add new entries as users report
+  // them. (For kanji-bearing compounds kuromoji is reliable; this
+  // list is purely for hiragana-only words it misanalyzes.)
+  const COMMON_COMPOUND_WORDS = new Set([
+    'ぼうや',
+    'おとうさん', 'おかあさん', 'おにいさん', 'おねえさん',
+    'おじいさん', 'おばあさん', 'おじいちゃん', 'おばあちゃん',
+    'おとうと', 'いもうと',
+    'ありがとう', 'ありがとうございます',
+    'おはよう', 'おはようございます',
+    'こんにちは', 'こんばんは',
+    'さようなら', 'さよなら',
+    'ごめんなさい', 'すみません',
+    'だいじょうぶ', 'もちろん',
+    'もんく',
+  ]);
+  function _mergeCommonCompounds(tokens) {
+    const out = [];
+    let i = 0;
+    while (i < tokens.length) {
+      let matched = 0;
+      // Try longest first so e.g. ありがとうございます matches before
+      // collapsing to ありがとう alone.
+      for (const len of [4, 3, 2]) {
+        if (i + len > tokens.length) continue;
+        const combined = tokens.slice(i, i + len)
+                               .map(t => t.surface_form || '').join('');
+        if (!COMMON_COMPOUND_WORDS.has(combined)) continue;
+        // Merge len tokens → one synthesized 名詞 token.
+        const lead = Object.assign({}, tokens[i]);
+        let reading = '';
+        let pron = '';
+        for (let j = 0; j < len; j++) {
+          reading += (tokens[i + j].reading       || '');
+          pron    += (tokens[i + j].pronunciation || '');
+        }
+        lead.surface_form  = combined;
+        lead.basic_form    = combined;
+        lead.reading       = reading;
+        lead.pronunciation = pron;
+        lead.pos           = '名詞';
+        lead.pos_detail_1  = '一般';
+        lead._mergedCompound = true;
+        out.push(lead);
+        i += len;
+        matched = len;
+        break;
+      }
+      if (!matched) {
+        out.push(tokens[i]);
+        i++;
+      }
+    }
+    return out;
+  }
+
+  // Cleans raw kuromoji tokens through the standard pipeline:
+  //   merge common compounds → split giant kana nouns → fix contextual
+  //   readings → strip inline-furigana duplicates → merge auxiliaries
+  // Order matters: compound merge first so ぼう+や → ぼうや BEFORE
+  // the giant-kana splitter scans long tokens, and the rest of the
+  // pipeline sees ぼうや as one token.
   function processTokens(rawTokens) {
     return _mergeAuxiliaries(
       _stripDuplicateReadings(
         _fixContextualReadings(
-          _splitGiantKanaNouns(rawTokens)
+          _splitGiantKanaNouns(
+            _mergeCommonCompounds(rawTokens)
+          )
         )
       )
     );
@@ -790,7 +854,7 @@
     const raw = String(sentence || '');
     if (!raw.trim()) return [];
     if (!_tokenizer) return null;            // caller should ensure ready()
-    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(_splitGiantKanaNouns(_tokenizer.tokenize(raw)))));
+    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_fixContextualReadings(_splitGiantKanaNouns(_mergeCommonCompounds(_tokenizer.tokenize(raw))))));
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
