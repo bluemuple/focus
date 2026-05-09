@@ -45,24 +45,40 @@ Deno.serve(async (req) => {
 
     const sourceName = source === "JA" ? "Japanese" : "English";
     const sys = [
-      `You translate ${sourceName} to Korean for a Korean learner. JSON only.`,
-      "PLAIN TEXT — no markdown, no quotes around the value.",
+      `You translate a single ${sourceName} WORD or PHRASE into Korean for`,
+      `a Korean learner. The "Sentence" field is provided ONLY as context`,
+      `for disambiguation — DO NOT translate the whole sentence.`,
       "",
-      "Return: { translation: string }",
+      "Return JSON ONLY (no markdown, no quotes around value):",
+      "  { translation: string }",
       "",
       "Rules:",
+      "- Translate the Word/Phrase ONLY. The output should be a short",
+      "  Korean rendering of the SAME word/phrase as it functions in the",
+      "  given sentence — typically 1–6 syllables long. NEVER return a",
+      "  translation of the whole Sentence.",
       "- The translation must contain at least one Hangul character.",
       "- Pick the meaning that fits the SENTENCE context, not the most",
       "  frequent dictionary sense.",
       "- For short polysemic words, the surrounding sentence is the",
       "  source of truth — never echo the source-language word back.",
       source === "JA"
-        ? '- For Japanese: respect inflection (動詞活用形) — translate the form as it appears, not just the dictionary form.'
+        ? '- For Japanese: respect inflection (動詞活用形) — translate the form as it appears, not just the dictionary form. Examples:\n  ・"する" → "하다", "している" → "하고 있다 / 있는", "した" → "했다"\n  ・"見る" → "보다", "見えなかった" → "보이지 않았다"'
         : '- For English: respect tense and number — "was holding" ≠ "holds".',
+      "",
+      "EXAMPLE",
+      'Sentence: "The cease-fire was holding."',
+      'Word/Phrase: "holding"',
+      'Output: { "translation": "유지되고 있다" }',
+      "",
+      "EXAMPLE (JP — short word, long sentence)",
+      'Sentence: "へとへとにも、はらぺこにも、びくびくしているようにも見えなかった。"',
+      'Word/Phrase: "している"',
+      'Output: { "translation": "하고 있는" }',
     ].join("\n");
 
     const user = context
-      ? `Sentence: ${JSON.stringify(context)}\nWord/Phrase: ${JSON.stringify(text)}`
+      ? `Sentence: ${JSON.stringify(context)}\nWord/Phrase: ${JSON.stringify(text)}\n\nReturn the Korean translation of the Word/Phrase ONLY (not the sentence).`
       : `Word/Phrase: ${JSON.stringify(text)}`;
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {

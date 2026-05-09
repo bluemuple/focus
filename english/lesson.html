@@ -352,6 +352,10 @@
       <button class="cb-add"   id="cb-add"   aria-label="구문에 추가" title="구문에 추가">＋</button>
     </div>
     <div class="cb-trans" id="cb-trans"><span class="tx-loading">번역 중...</span></div>
+    <!-- Tiny gray chevron at the bottom edge — matches the
+         word-sheet's `ws-edge-down` so 이어서 mode's bar has the
+         same visual swipe-down hint. -->
+    <span class="cb-edge cb-edge-down" aria-hidden="true">›</span>
   </div>
 
   <!-- Audio playback bar (hidden until the play button on the lesson bar
@@ -1516,13 +1520,17 @@
       popup.hidden = true;
       const fr = document.getElementById('np-iframe');
       if (fr) fr.src = 'about:blank';
-      // Restore the bottom sheet that was animated out by the
-      // sheet-down-then-Naver-down choreography. The sheet's DOM
-      // stayed put with `_sheetWord` intact, so re-adding `.show`
-      // brings it back with the same word's data.
+      // Restore whichever bottom panel was hidden by the swipe-down →
+      // Naver choreography. Single mode → word-sheet; 이어서 mode →
+      // cont-bar. Both panels keep their internal state (word / phrase)
+      // so re-adding `.show` brings them back unchanged.
       const sheetEl = document.getElementById('word-sheet');
       if (sheetEl && _sheetWord && !sheetEl.hidden) {
         sheetEl.classList.add('show');
+      }
+      const barEl = document.getElementById('cont-bar');
+      if (barEl && !barEl.hidden && CONT_BAR_PHRASE && CONT_BAR_PHRASE.text) {
+        barEl.classList.add('show');
       }
     }, 280);
   }
@@ -2351,6 +2359,50 @@
       clearContSelection();
       hideContBar();
     });
+
+    // Swipe-down on the cont-bar — same gesture as the single-mode
+    // word-sheet's swipe-down: bar slides out of view, then the Naver
+    // dictionary popup enters from the top with the current phrase.
+    // Mirrors the single-mode flow at line ~1665, just on the
+    // continuous selection's phrase instead of a single word.
+    const bar = document.getElementById('cont-bar');
+    if (bar) {
+      let dragStart = null;
+      bar.addEventListener('touchstart', (e) => {
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        dragStart = { x: t.clientX, y: t.clientY };
+        bar.style.transition = 'none';
+      }, { passive: true });
+      bar.addEventListener('touchmove', (e) => {
+        if (!dragStart) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        const dy = t.clientY - dragStart.y;
+        const dx = t.clientX - dragStart.x;
+        // Only react to vertical-dominant down-drags. Horizontal drags
+        // pass through unchanged so text-selection / button taps still
+        // work normally.
+        if (Math.abs(dy) <= Math.abs(dx)) return;
+        if (dy <= 0) return;
+        bar.style.transform = 'translateY(' + (dy * 0.6) + 'px)';
+      }, { passive: true });
+      bar.addEventListener('touchend', (e) => {
+        if (!dragStart) return;
+        const t = (e.changedTouches && e.changedTouches[0]) || null;
+        const dy = t ? t.clientY - dragStart.y : 0;
+        dragStart = null;
+        bar.style.transition = '';
+        bar.style.transform = '';
+        if (dy > 50) {
+          // Commit: slide bar out, open Naver with the selected phrase.
+          const phrase = (CONT_BAR_PHRASE && CONT_BAR_PHRASE.text) || '';
+          if (!phrase) return;
+          bar.classList.remove('show');
+          setTimeout(() => openMobileNaver(phrase), 180);
+        }
+      });
+    }
   }
   function showInContBar(phrase) {
     const bar     = document.getElementById('cont-bar');
