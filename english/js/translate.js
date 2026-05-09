@@ -541,14 +541,36 @@
     sentence = (sentence || '').trim();
     if (!sentence || sentence.length < 5) return null;
     // Japanese: chunk via kuromoji (bunsetsu-style content-word +
-    // trailing particles). chunk-gpt's English-grammar prompt would
-    // produce nonsense, so we use a local morphological grouper
-    // instead — zero GPT cost, instant.
+    // trailing particles). For sentences with kanji this is instant
+    // and free. When kuromoji's IPADIC analyzer fails (typical for
+    // long all-hiragana stretches) we fall back to a GPT chunker
+    // whose result is cached cloud-side — first user pays $0.0002,
+    // every other device hits the cache.
     if (_curLang() === 'ja') {
       if (!window.JPT || !window.JPT.chunkSentenceJa) return null;
       try {
-        await window.JPT.ready();           // ensure tokenizer built
-        return window.JPT.chunkSentenceJa(sentence) || null;
+        await window.JPT.ready();
+        const local = window.JPT.chunkSentenceJa(sentence) || [];
+        // GPT-fallback triggers — either signals kuromoji can't reliably
+        // chunk this sentence:
+        //   (a) Any chunk > 10 chars — kuromoji likely emitted a giant
+        //       all-kana token because IPADIC couldn't find boundaries.
+        //   (b) Kanji ratio too low — 한자 anchor가 적어서 kuromoji's
+        //       Viterbi가 헤매는 케이스. >= 8 chars sentence, < 10%
+        //       kanji content density → fall back to GPT.
+        // Sentences with healthy kanji density take the kuromoji path
+        // (instant, $0).
+        const hasGiantChunk = local.some(c => (c.text || '').length > 10);
+        const KANJI_RE = /[一-鿿㐀-䶿豈-﫿]/g;
+        const PUNCT_RE = /[、。！？「」『』（）\(\)\[\]\s]/g;
+        const kanjiCount  = (sentence.match(KANJI_RE) || []).length;
+        const contentLen  = sentence.replace(PUNCT_RE, '').length;
+        const kanjiRatio  = contentLen > 0 ? kanjiCount / contentLen : 0;
+        const tooFewKanji = sentence.length >= 8 && kanjiRatio < 0.10;
+        if (!hasGiantChunk && !tooFewKanji) return local;
+        const gpt = await _fetchJaChunksGPT(sentence);
+        if (gpt && gpt.length) return gpt;
+        return local;
       } catch (e) {
         console.warn('[chunkJa] failed', e);
         return null;
@@ -590,6 +612,43 @@
       return clamped;
     } catch (e) {
       console.warn('[chunk-gpt]', e && e.message || e);
+      return null;
+    }
+  }
+
+  // JP fallback: chunk a sentence via the chunk-ja-gpt Edge Function
+  // (cloud-cached by sentence hash). Used only when local kuromoji
+  // chunking failed — cost is ~$0.0002 per first-uncached sentence,
+  // $0 for every cache hit thereafter (other devices / users / future
+  // visits to the same lesson).
+  //
+  // Returns chunks shaped like [{text}] — NO `indices` field. The
+  // caller (applyChunkHighlight in lesson.html) does text-based
+  // matching against the body's chip elements to find the chip range
+  // each chunk covers.
+  const _jaChunkMemCache = {};      // session memory cache (per page load)
+  async function _fetchJaChunksGPT(sentence) {
+    const key = _hashStr(sentence);
+    if (_jaChunkMemCache[key]) return _jaChunkMemCache[key];
+    try {
+      const { url, headers } = supabaseUrl('/functions/v1/chunk-ja-gpt');
+      const r = await fetch(url, {
+        method: 'POST', headers,
+        body: JSON.stringify({ sentence }),
+      });
+      if (!r.ok) {
+        console.warn('[chunk-ja-gpt] HTTP', r.status);
+        return null;
+      }
+      const data = await r.json();
+      if (!data || !Array.isArray(data.chunks)) {
+        console.warn('[chunk-ja-gpt] bad response', data);
+        return null;
+      }
+      _jaChunkMemCache[key] = data.chunks;
+      return data.chunks;
+    } catch (e) {
+      console.warn('[chunk-ja-gpt]', e && e.message || e);
       return null;
     }
   }

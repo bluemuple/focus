@@ -3007,20 +3007,30 @@
     // is rendered from, so they're exact (not GPT-drift-prone).
     const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
     let span = null;
-    if (lang === 'ja' && Array.isArray(chunk.indices)) {
-      const start = Math.max(0, chunk.indices[0] | 0);
-      const end   = Math.min(sentenceWords.length - 1,
-                             (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
-      if (end >= start) span = { start, end };
-    }
-    if (!span && chunk.text) {
-      span = findChunkSpanByText(sentenceWords, chunk.text, wIdx);
-    }
-    // Fallback to indices for the EN path that hit text-match miss.
-    if (!span && Array.isArray(chunk.indices)) {
-      const start = Math.max(0, chunk.indices[0] | 0);
-      const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
-      if (end >= start) span = { start, end };
+    if (lang === 'ja') {
+      // JP path priority: indices first when present (kuromoji-based
+      // chunks), text-concat match second (GPT-based chunks have no
+      // indices and use whatever chip range matches the text).
+      if (Array.isArray(chunk.indices)) {
+        const start = Math.max(0, chunk.indices[0] | 0);
+        const end   = Math.min(sentenceWords.length - 1,
+                               (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
+        if (end >= start) span = { start, end };
+      }
+      if (!span && chunk.text) {
+        span = findChunkSpanByJaText(sentenceWords, chunk.text, wIdx);
+      }
+    } else {
+      // EN path: text-match primary (chunk-gpt indices have drift),
+      // indices fallback for cross-page text-match misses.
+      if (chunk.text) {
+        span = findChunkSpanByText(sentenceWords, chunk.text, wIdx);
+      }
+      if (!span && Array.isArray(chunk.indices)) {
+        const start = Math.max(0, chunk.indices[0] | 0);
+        const end   = Math.min(sentenceWords.length - 1, (chunk.indices[1] !== undefined ? chunk.indices[1] : start) | 0);
+        if (end >= start) span = { start, end };
+      }
     }
     if (!span) return;
 
@@ -3067,6 +3077,44 @@
   // `preferIdx` (optional) — if set, prefer a match that CONTAINS this
   // index. Useful when the same chunk text appears multiple times in the
   // sentence and we want the occurrence around the clicked word.
+  // JP-aware chunk → chip range matcher. Japanese has no inter-word
+  // spaces, so the regex-based `findChunkSpanByText` collapses the
+  // chunk into one giant token and never matches the multi-token
+  // body. This walker concatenates chip textContent (or data-surface
+  // when present) across a sliding window and returns the first
+  // contiguous range whose join equals the chunk text.
+  //
+  // Used for GPT-derived JP chunks (which carry text but no indices)
+  // and as a fallback when kuromoji's index-based chunks resolve into
+  // a span that doesn't contain the clicked word.
+  function findChunkSpanByJaText(sentenceWords, chunkText, preferIdx) {
+    if (!chunkText) return null;
+    const target = String(chunkText);
+    const chipText = (el) =>
+      (el && el.dataset && el.dataset.surface) || (el && el.textContent) || '';
+    let best = null;
+    for (let i = 0; i < sentenceWords.length; i++) {
+      let acc = '';
+      for (let j = i; j < sentenceWords.length; j++) {
+        acc += chipText(sentenceWords[j]);
+        if (acc.length > target.length) break;
+        if (acc === target) {
+          const span = { start: i, end: j };
+          // Prefer the occurrence containing `preferIdx` (the clicked
+          // chip). Stop early on a hit; otherwise remember the first
+          // match as fallback.
+          if (preferIdx == null || (preferIdx >= span.start && preferIdx <= span.end)) {
+            return span;
+          }
+          if (!best) best = span;
+          break;
+        }
+        if (target.indexOf(acc, 0) !== 0) break; // diverged from target
+      }
+    }
+    return best;
+  }
+
   function findChunkSpanByText(sentenceWords, chunkText, preferIdx) {
     if (!chunkText) return null;
     const norm = (s) => String(s || '')
@@ -3146,10 +3194,13 @@
     const sentenceWords = getSentenceWordsOf(wEl);
     const idx = sentenceWords.indexOf(wEl);
     if (idx < 0) return null;
-    // PRIMARY: text-based.
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    // PRIMARY: text-based. JP uses chip-concat matching; EN uses
+    // regex-token matching.
+    const matcher = lang === 'ja' ? findChunkSpanByJaText : findChunkSpanByText;
     for (const c of chunks) {
       if (!c || !c.text) continue;
-      const span = findChunkSpanByText(sentenceWords, c.text, idx);
+      const span = matcher(sentenceWords, c.text, idx);
       if (span && idx >= span.start && idx <= span.end) return c;
     }
     // FALLBACK: indices.
