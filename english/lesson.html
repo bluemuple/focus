@@ -5822,11 +5822,15 @@
   // when a word is clicked, and the cloud cache de-dupes repeats.)
 
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
-  // ship as ~5 MB gzip across 12 files. The progress hook in
-  // jp-tokenizer.js streams bytes via `fetch()` + ReadableStream,
-  // so the bar moves smoothly per-chunk instead of jumping in 12
-  // discrete file-complete steps. Subsequent lessons hit the
-  // browser's HTTP cache and the splash flashes briefly or skips.
+  // ship as ~5 MB gzip across 12 files.
+  //
+  // The progress bar / percentage were removed — on fast networks
+  // they snapped to 100% too quickly to be useful, and on networks
+  // where XHR onprogress doesn't tick smoothly they looked stuck.
+  // What we DO show now is two raw numbers: MB downloaded so far
+  // and N / 12 files complete. As long as either ticks up the user
+  // can tell the download is alive. Both are sourced from
+  // `JPT.setProgressHandler` (XHR-based, see jp-tokenizer.js).
   function _showJpLoadSplash() {
     const overlay = document.createElement('div');
     overlay.className = 'jp-load-splash';
@@ -5834,23 +5838,16 @@
       '<div class="jp-load-card">' +
       '  <div class="jp-load-spinner" aria-hidden="true"></div>' +
       '  <div class="jp-load-title">일본어 사전 불러오는 중…</div>' +
-      '  <div class="jp-load-progress-wrap">' +
-      '    <div class="jp-load-progress-bar" id="jp-load-bar"></div>' +
-      '  </div>' +
-      '  <div class="jp-load-counter" id="jp-load-counter">0%</div>' +
+      '  <div class="jp-load-counter" id="jp-load-counter">0.0 MB · 0 / 12 파일</div>' +
       '  <div class="jp-load-sub">처음 한 번만 다운로드합니다 (약 5 MB).<br>' +
       '       다음 진입부턴 캐시되어 즉시 열립니다.</div>' +
       '</div>';
     document.body.appendChild(overlay);
-    const bar = overlay.querySelector('#jp-load-bar');
     const ctr = overlay.querySelector('#jp-load-counter');
-    // Wire kuromoji's progress callback to our UI. XHR onprogress
-    // can fire dozens of times per second, so we throttle the DOM
-    // writes to one per animation frame — the bar still appears to
-    // move smoothly (60 fps) but we don't thrash layout. Without
-    // rAF gating, fast networks would queue a hundred style writes
-    // in one task and the browser would only paint once at the
-    // end, defeating the "real-time" goal.
+    // Wire kuromoji's progress callback. XHR onprogress can fire
+    // dozens of times per second on a fast network — we coalesce
+    // updates with requestAnimationFrame so the DOM only writes
+    // once per paint (60 fps).
     if (window.JPT && window.JPT.setProgressHandler) {
       const fmtMB = b => (b / 1048576).toFixed(1);
       let pending = null;
@@ -5860,26 +5857,16 @@
         if (!pending) return;
         const p = pending;
         pending = null;
-        const recv  = p.bytesReceived || 0;
-        const total = p.bytesTotal    || (5 * 1048576);
-        const rawPct = Math.min(100, Math.round((recv / total) * 100));
-        // Cap at 99% until ALL files report complete — keeps the
-        // bar from sitting at 100% while kuromoji still pakos out
-        // the last gzip stream.
-        const pct = (p.filesDone >= p.filesTotal) ? 100 : Math.min(99, rawPct);
-        if (bar) bar.style.width = pct + '%';
+        const recv = p.bytesReceived || 0;
         if (ctr) {
-          ctr.textContent = pct + '%  ('
-            + fmtMB(recv) + ' / ' + fmtMB(total) + ' MB)';
+          ctr.textContent =
+            fmtMB(recv) + ' MB · ' + p.filesDone + ' / ' + p.filesTotal + ' 파일';
         }
       }
       window.JPT.setProgressHandler(p => {
         pending = p;
         if (!rafScheduled) {
           rafScheduled = true;
-          // requestAnimationFrame schedules `_flush` to run right
-          // before the next paint — guarantees the bar's new width
-          // is visible to the user.
           requestAnimationFrame(_flush);
         }
       });
