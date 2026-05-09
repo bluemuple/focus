@@ -3718,39 +3718,46 @@
     // Mobile only — the PC sidebar is the surface there, not the sheet.
     if (window.matchMedia('(min-width: 1024px)').matches) return;
 
-    // Compute the sheet's FINAL top position. We can't trust
-    // getBoundingClientRect().top here because the sheet may still be
-    // mid-transition (translateY(110%) → translateY(0)) when this
-    // function runs from inside the open RAF. Layout height (offsetHeight)
-    // and the CSS-known bottom offset are stable through the animation.
+    // Compute the sheet's FINAL top position. Layout height + the
+    // CSS-known bottom offset stay stable through the open animation,
+    // unlike getBoundingClientRect().top which lags during the
+    // translateY(110%) → translateY(0) transition.
     const SHEET_BOTTOM_PX = 64;     // matches .word-sheet { bottom: 64px }
     const sheetHeight = sheet.offsetHeight || 0;
     if (!sheetHeight) return;       // sheet not laid out yet
     const sheetTopFinal = window.innerHeight - SHEET_BOTTOM_PX - sheetHeight;
 
-    // Desired: word's bottom edge sits at MOST (sheetTopFinal - MARGIN).
-    // If it's already there or above, no shift needed. Otherwise shift
-    // by exactly the overlap so the word lands right above the sheet.
     const MARGIN = 27;              // breathing room between word and sheet
-                                    // (was 12; +15 per user spec — gives
-                                    // a noticeable gap so the focused chip
-                                    // sits clearly above the sheet's top
-                                    // edge instead of right against it).
+
+    // RECOMPUTE FROM SCRATCH on every call — important for arrow-key
+    // navigation. The previous design was accumulative ("shift MORE
+    // if next word still hidden"), which got stuck when the user
+    // navigated to a word that didn't need the previous shift's full
+    // height (e.g., stepping LEFT to a word a row higher up while the
+    // body is already lifted). Snap transform to 0, measure where the
+    // new word actually sits, then apply exactly the lift it needs.
+    // Net effect: each arrow press gets the body to lift just enough
+    // for THIS word, no more, no less.
+    const oldTransform = main.style.transform;
+    const oldTransition = main.style.transition;
+    main.style.transition = 'none';
+    main.style.transform  = 'translateY(0px)';
+    // Force layout so the rect reflects the un-shifted geometry.
+    void main.offsetHeight;
     const wRect = wEl.getBoundingClientRect();
     const desiredBottom = sheetTopFinal - MARGIN;
-    if (wRect.bottom <= desiredBottom) return;
-
-    const additional = Math.ceil(wRect.bottom - desiredBottom);
-    // Drive the shift via INLINE transform on .lesson-main. Inline beats
-    // any class-rule transform (cont-bar-open, etc.) and is immune to
-    // CSS-variable race conditions. Stack onto any existing translateY
-    // so a SECOND tap on a word still further down can shift even more
-    // (and hideWordSheet → clearWordFocus animates back to 0 on close).
-    const m = (main.style.transform || '').match(/translateY\(\s*(-?\d+(?:\.\d+)?)px\s*\)/);
-    const currentY = m ? parseFloat(m[1]) : 0;
-    const newY = currentY - additional;
+    let neededLift = 0;
+    if (wRect.bottom > desiredBottom) {
+      neededLift = Math.ceil(wRect.bottom - desiredBottom);
+    }
+    // Restore the smooth transition for the actual move.
     main.style.transition = 'transform .22s cubic-bezier(.22,.6,.36,1)';
-    main.style.transform = 'translateY(' + Math.round(newY) + 'px)';
+    if (neededLift === 0) {
+      // Word already fits above the sheet without any lift.
+      main.style.transform = '';
+    } else {
+      main.style.transform = 'translateY(' + (-neededLift) + 'px)';
+    }
   }
 
   // Manual content per language. EN = original full guide. JA = a
