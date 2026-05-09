@@ -351,43 +351,65 @@
   }
 
   // Strip "inline-furigana" duplicates: when a kanji-bearing token is
-  // immediately followed by hiragana tokens whose concatenated surface
-  // equals the kanji token's reading, those hiragana tokens are a
-  // redundant inline reading (a common Japanese learning-text format
-  // like "名前なまえ"). Drop them — the kanji token already gets a
-  // <ruby> furigana rendered above, so showing the same kana inline
-  // is duplicate visual noise.
+  // immediately followed by hiragana tokens that form an inline
+  // reading annotation, drop them so only the <ruby> furigana shows.
   //
-  // Handles multi-token splits: if "なまえ" got tokenized as ["な",
-  // "まえ"], we still consume both because their concatenation equals
-  // the kanji's reading.
+  // Two sub-cases:
+  //   1. EXACT match — concatenated hiragana run equals the kanji's
+  //      kuromoji reading (e.g. 名前 reading なまえ + inline なまえ).
+  //      Just strip the duplicates; reading is already correct.
+  //   2. PURE-KANJI override — kanji surface is all-kanji (no kana
+  //      mixed in) and the inline hiragana run doesn't match
+  //      kuromoji's default reading. Treat the inline kana as the
+  //      author's intended reading (e.g. 何なん — kuromoji says なに,
+  //      but the source clearly wants なん). Override the token's
+  //      reading with the inline kana and strip it.
+  //
+  // Stops the lookahead at particles (助詞), auxiliaries (助動詞), and
+  // suffixes (接尾) so we don't accidentally absorb e.g. たち in 子供たち
+  // (which is a real plural suffix, not an inline reading).
   function _stripDuplicateReadings(tokens) {
     const out = [];
     for (let i = 0; i < tokens.length; i++) {
       const tk = tokens[i];
       out.push(tk);
       const surf = tk.surface_form || '';
-      const rd = tk.reading ? katakanaToHiragana(tk.reading) : '';
-      if (!rd || !_hasKanji(surf)) continue;
-      // Look ahead — accumulate pure-hiragana surfaces while they
-      // form a prefix of the kanji's reading. If we exactly cover
-      // the reading, skip those tokens.
+      if (!_hasKanji(surf)) continue;
+      // Accumulate the following pure-hiragana noun-ish run.
       let accum = '';
       let consumed = 0;
       let j = i + 1;
       while (j < tokens.length) {
-        const nextSurf = tokens[j].surface_form || '';
+        const next = tokens[j];
+        const nextSurf = next.surface_form || '';
         if (!/^[ぁ-ん]+$/.test(nextSurf)) break;
-        const tryAccum = accum + nextSurf;
-        if (rd.indexOf(tryAccum) !== 0) break;     // not a prefix
-        accum = tryAccum;
+        if (next.pos === '助詞' || next.pos === '助動詞') break;
+        if (next.pos_detail_1 === '接尾') break;
+        accum += nextSurf;
         consumed++;
         j++;
-        if (accum === rd) break;                   // full match
+        if (accum.length >= 8) break;              // safety cap
       }
-      if (consumed > 0 && accum === rd) {
-        i += consumed;                             // skip the duplicate run
+      if (consumed === 0) continue;
+      const rd = tk.reading ? katakanaToHiragana(tk.reading) : '';
+      const isPureKanji = /^[一-鿿㐀-䶿豈-﫿]+$/.test(surf);
+      if (rd && accum === rd) {
+        // Case 1: exact match — strip without touching reading.
+        i += consumed;
+      } else if (isPureKanji) {
+        // Case 2: override reading with inline kana, then strip.
+        // Convert hiragana → katakana for the reading field (kuromoji
+        // stores readings in katakana; downstream code katakana-to-
+        // hiragana converts again at render time).
+        const kata = accum.replace(/[ぁ-ん]/g, c =>
+          String.fromCharCode(c.charCodeAt(0) + 0x60)
+        );
+        tk.reading = kata;
+        tk.pronunciation = kata;
+        i += consumed;
       }
+      // Else: mixed kanji+kana surface with non-matching hiragana run
+      // — don't override (the next token is probably an unrelated word).
     }
     return out;
   }
