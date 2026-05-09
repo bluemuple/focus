@@ -5824,13 +5824,12 @@
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
   // ship as ~5 MB gzip across 12 files.
   //
-  // The progress bar / percentage were removed — on fast networks
-  // they snapped to 100% too quickly to be useful, and on networks
-  // where XHR onprogress doesn't tick smoothly they looked stuck.
-  // What we DO show now is two raw numbers: MB downloaded so far
-  // and N / 12 files complete. As long as either ticks up the user
-  // can tell the download is alive. Both are sourced from
-  // `JPT.setProgressHandler` (XHR-based, see jp-tokenizer.js).
+  // No progress bar / counter. Multiple attempts at byte-level
+  // progress (file count, fetch streaming, XHR onprogress) all
+  // ended up jumpy or stuck depending on network/browser. A
+  // simple spinner + explanatory text is honest: it tells the user
+  // the download is happening and how long to expect, without
+  // pretending to give a precise estimate.
   function _showJpLoadSplash() {
     const overlay = document.createElement('div');
     overlay.className = 'jp-load-splash';
@@ -5838,46 +5837,12 @@
       '<div class="jp-load-card">' +
       '  <div class="jp-load-spinner" aria-hidden="true"></div>' +
       '  <div class="jp-load-title">일본어 사전 불러오는 중…</div>' +
-      '  <div class="jp-load-counter" id="jp-load-counter">0.0 MB · 0 / 12 파일</div>' +
       '  <div class="jp-load-sub">처음 한 번만 다운로드합니다 (약 5 MB).<br>' +
-      '       다음 진입부턴 캐시되어 즉시 열립니다.</div>' +
+      '       잠시만 기다려 주세요. 다음 진입부턴 캐시되어 즉시 열립니다.</div>' +
       '</div>';
     document.body.appendChild(overlay);
-    const ctr = overlay.querySelector('#jp-load-counter');
-    // Wire kuromoji's progress callback. XHR onprogress can fire
-    // dozens of times per second on a fast network — we coalesce
-    // updates with requestAnimationFrame so the DOM only writes
-    // once per paint (60 fps).
-    if (window.JPT && window.JPT.setProgressHandler) {
-      const fmtMB = b => (b / 1048576).toFixed(1);
-      let pending = null;
-      let rafScheduled = false;
-      function _flush() {
-        rafScheduled = false;
-        if (!pending) return;
-        const p = pending;
-        pending = null;
-        const recv = p.bytesReceived || 0;
-        if (ctr) {
-          ctr.textContent =
-            fmtMB(recv) + ' MB · ' + p.filesDone + ' / ' + p.filesTotal + ' 파일';
-        }
-      }
-      window.JPT.setProgressHandler(p => {
-        pending = p;
-        if (!rafScheduled) {
-          rafScheduled = true;
-          requestAnimationFrame(_flush);
-        }
-      });
-    }
     return {
       hide() {
-        // Detach the progress hook so a stale handler can't fire
-        // after the splash is gone.
-        if (window.JPT && window.JPT.setProgressHandler) {
-          window.JPT.setProgressHandler(null);
-        }
         overlay.classList.add('fade-out');
         setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 220);
       },
