@@ -640,7 +640,13 @@
   // matching against the body's chip elements to find the chip range
   // each chunk covers.
   const _jaChunkMemCache = {};      // session memory cache (per page load)
+  let _jaChunkGptUnavailable = false; // set true after first hard failure
+                                      // (function not deployed, network
+                                      // unreachable, etc.) so we stop
+                                      // retrying every chunk and silence
+                                      // console spam. Resets on reload.
   async function _fetchJaChunksGPT(sentence) {
+    if (_jaChunkGptUnavailable) return null;
     const key = _hashStr(sentence);
     if (_jaChunkMemCache[key]) return _jaChunkMemCache[key];
     try {
@@ -650,18 +656,23 @@
         body: JSON.stringify({ sentence }),
       });
       if (!r.ok) {
-        console.warn('[chunk-ja-gpt] HTTP', r.status);
+        // 404 / 401 / 5xx → function isn't deployed or is misconfigured.
+        // Mark it unavailable for the session so we don't keep firing.
+        if (r.status === 404 || r.status === 401 || r.status >= 500) {
+          _jaChunkGptUnavailable = true;
+          console.warn('[chunk-ja-gpt] disabled for this session (HTTP ' + r.status + '). Deploy the Edge Function to enable GPT fallback for all-kana sentences.');
+        }
         return null;
       }
       const data = await r.json();
-      if (!data || !Array.isArray(data.chunks)) {
-        console.warn('[chunk-ja-gpt] bad response', data);
-        return null;
-      }
+      if (!data || !Array.isArray(data.chunks)) return null;
       _jaChunkMemCache[key] = data.chunks;
       return data.chunks;
     } catch (e) {
-      console.warn('[chunk-ja-gpt]', e && e.message || e);
+      // Network / CORS / DNS — function probably not deployed.
+      // Suppress further attempts in this session.
+      _jaChunkGptUnavailable = true;
+      console.warn('[chunk-ja-gpt] unreachable, disabled for this session. Deploy the chunk-ja-gpt Edge Function on Supabase to enable.');
       return null;
     }
   }

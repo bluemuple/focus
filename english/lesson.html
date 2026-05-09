@@ -4248,25 +4248,34 @@
           repaintSidebarChunk();
         }
         // Sense-specific word-info upgrade.
+        // Only REPLACE existing senses / examples / collocations when
+        // the sense-specific response has AT LEAST AS MANY entries
+        // as what's currently shown — otherwise the user sees an
+        // example mysteriously vanish (and assumes their click
+        // caused it). Keeps the visible count steady; trades some
+        // sense-strictness for visual stability.
         if (next && !isPhrase && Translate.getWordInfo) {
           Translate.getWordInfo(text, next).then(senseInfo => {
             if (!senseInfo) return;
             const cur2 = document.getElementById('ls-word');
             if (!cur2 || cur2.dataset.activeWord !== text) return;
             const lemma = senseInfo.lemma || text;
-            if (senseInfo.senses && senseInfo.senses.length) {
+            const curExCount = exUl ? exUl.children.length : 0;
+            const curSnCount = sUl  ? sUl.children.length  : 0;
+            const curCoCount = coUl ? coUl.children.length : 0;
+            if (senseInfo.senses && senseInfo.senses.length >= Math.min(curSnCount, 2)) {
               renderSenseList(sUl, senseInfo.senses, lemma);
               const cnt = document.getElementById('ls-senses-count');
               if (cnt) cnt.textContent = '(' + senseInfo.senses.length + ')';
               if (sBlock) { sBlock.hidden = false; sBlock.open = true; }
             }
-            if (senseInfo.examples && senseInfo.examples.length) {
+            if (senseInfo.examples && senseInfo.examples.length >= Math.max(curExCount, 1)) {
               renderExamples(exUl, senseInfo.examples, lemma);
               const cnt = document.getElementById('ls-examples-count');
               if (cnt) cnt.textContent = '(' + senseInfo.examples.length + ')';
               if (exBlock) { exBlock.hidden = false; exBlock.open = true; }
             }
-            if (senseInfo.collocations && senseInfo.collocations.length) {
+            if (senseInfo.collocations && senseInfo.collocations.length >= Math.min(curCoCount, 2)) {
               renderCollocations(coUl, senseInfo.collocations, lemma);
               const cnt = document.getElementById('ls-collocs-count');
               if (cnt) cnt.textContent = '(' + senseInfo.collocations.length + ')';
