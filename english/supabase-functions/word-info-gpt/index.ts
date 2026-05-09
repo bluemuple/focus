@@ -175,29 +175,47 @@ Deno.serve(async (req) => {
     ].join("\n");
 
     const sysBase = lang === "ja" ? sysJa : sysEn;
-    // When the caller supplies a contextual Korean meaning we APPEND a
-    // strict sense-binding rule. Senses are reordered with the user's
-    // sense first; ALL examples must illustrate THAT sense (not a
-    // different one of the word's meanings).
-    const sys = senseKo
-      ? sysBase + "\n\n" + [
-          "SENSE BINDING — the user is asking about this word in the",
-          "specific meaning '" + senseKo + "'. STRICT requirements:",
-          "- The FIRST entry of `senses` MUST have ko === '" + senseKo + "'",
-          "  (or a near-paraphrase that conveys the same meaning).",
-          "- Always return EXACTLY 2 `examples` (the [{en, ko}] pairs).",
-          "  Both MUST use the word in the meaning '" + senseKo + "',",
-          "  not a different sense. If two natural sentences are hard,",
-          "  vary tense / particle / subject — but the SENSE is fixed.",
-          "- For Japanese particles / auxiliaries (と, へ, に, から, ば, …)",
-          "  whose senses look identical on the surface, the example",
-          "  sentence's grammar must reproduce the SAME pattern as the",
-          "  source meaning '" + senseKo + "'.",
-          "  e.g. と meaning '~하려고' → examples must use the volitional",
-          "  + と pattern (V-よう/おう + と): 食べようと, 行こうと, …",
-          "  NOT citation と (~라고) or coordination と (and).",
-        ].join("\n")
-      : sysBase;
+    // SENSE BINDING — when the caller supplies a contextual Korean
+    // meaning, we APPEND a strict rule reordering senses with that
+    // meaning first and forcing examples to illustrate THAT sense.
+    //
+    // Two variants. The EN variant is purely English — never mention
+    // Japanese particles, otherwise GPT mixes JP examples into its
+    // English output (this was a real bug: clicking an English word
+    // returned 食べようと-style examples). The JP variant has the
+    // particle/auxiliary nuance because that's where it actually
+    // matters.
+    const senseBindingEn = senseKo
+      ? "\n\nSENSE BINDING — the user is asking about this word in the"
+        + " specific meaning '" + senseKo + "'. STRICT requirements:\n"
+        + "- The FIRST entry of `senses` MUST have ko === '" + senseKo + "'\n"
+        + "  (or a near-paraphrase that conveys the same meaning).\n"
+        + "- Return EXACTLY 2 `examples` (the [{en, ko}] pairs).\n"
+        + "  Both MUST be ENGLISH sentences using the word in the meaning\n"
+        + "  '" + senseKo + "', not a different sense. Vary tense / subject\n"
+        + "  / construction — but the SENSE is fixed.\n"
+        + "- The `en` field MUST contain only English. NEVER include\n"
+        + "  Japanese, kanji, or hiragana — this is an English dictionary."
+      : "";
+    const senseBindingJa = senseKo
+      ? "\n\nSENSE BINDING — the user is asking about this word in the"
+        + " specific meaning '" + senseKo + "'. STRICT requirements:\n"
+        + "- The FIRST entry of `senses` MUST have ko === '" + senseKo + "'\n"
+        + "  (or a near-paraphrase that conveys the same meaning).\n"
+        + "- Return EXACTLY 2 `examples` (the [{en, ko}] pairs — `en` is\n"
+        + "  the JP example sentence, kept as `en` for client compat).\n"
+        + "  Both MUST use the word in the meaning '" + senseKo + "',\n"
+        + "  not a different sense. Vary tense / particle / subject —\n"
+        + "  but the SENSE is fixed.\n"
+        + "- For Japanese particles / auxiliaries (と, へ, に, から, ば, …)\n"
+        + "  whose senses look identical on the surface, the example\n"
+        + "  sentence's grammar must reproduce the SAME pattern as the\n"
+        + "  source meaning '" + senseKo + "'.\n"
+        + "  e.g. と meaning '~하려고' → examples must use the volitional\n"
+        + "  + と pattern (V-よう/おう + と): 食べようと, 行こうと, …\n"
+        + "  NOT citation と (~라고) or coordination と (and)."
+      : "";
+    const sys = sysBase + (lang === "ja" ? senseBindingJa : senseBindingEn);
 
     const userContent = senseKo
       ? `Word: ${JSON.stringify(word)}\nFocus sense (Korean): ${JSON.stringify(senseKo)}`

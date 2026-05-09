@@ -427,14 +427,18 @@
   // both in localStorage AND in the cloud-shared Supabase cache the
   // Edge Function reads/writes — drastically lower GPT call volume.
   const wiCache = {};                          // L1: in-memory
-  // v5 — schema change (no sentence in key, no `ko`/`phraseChunk` in
-  // value) invalidates v4 entries.
-  const WI_LS = 'eng.v5.wordInfo';
+  // v6 — invalidates v5 sense-bound EN entries that were poisoned
+  // by a JP-flavored prompt addendum (since fixed in word-info-gpt).
+  // Bare-key entries were unaffected, but bumping the version is the
+  // simplest way to force every browser to re-fetch from the cloud
+  // (which has also been purged of bad rows).
+  const WI_LS = 'eng.v6.wordInfo';
   let wiLs = {};
   try {
     wiLs = JSON.parse(localStorage.getItem(WI_LS) || '{}') || {};
     localStorage.removeItem('eng.v3.wordInfo');
     localStorage.removeItem('eng.v4.wordInfo');     // drop per-sentence keys
+    localStorage.removeItem('eng.v5.wordInfo');     // drop poisoned sense-bound EN
   } catch (e) { wiLs = {}; }
   function persistWi() { try { localStorage.setItem(WI_LS, JSON.stringify(wiLs)); } catch (e) {} }
   function _hashStr(s) {
