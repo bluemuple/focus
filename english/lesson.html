@@ -5579,7 +5579,19 @@
     p.className = 'para';
     const lines = String(par).split(/\n/);
     lines.forEach((line, li) => {
-      const tokens = _jpTokensByLine.get(line);
+      // Cache lookup first (populated by the upfront pretokenize pass).
+      // Fall back to live sync tokenize when the line wasn't pre-cached
+      // — happens after paginateByHeight which reflows paragraphs by
+      // concatenating .w textContent (newlines stripped), so the page
+      // text passed to renderInto no longer matches the pre-tokenize
+      // cache keys. JPT.tokenizeSync uses the already-built tokenizer
+      // so it's just a function call, no extra network/build cost.
+      let tokens = _jpTokensByLine.get(line);
+      if ((!tokens || !tokens.length) && line.trim() &&
+          window.JPT && window.JPT.tokenizeSync) {
+        tokens = window.JPT.tokenizeSync(line);
+        if (tokens && tokens.length) _jpTokensByLine.set(line, tokens);
+      }
       if (tokens && tokens.length) {
         // Build chips via JPT.renderTokens (HTML string), then
         // mount into a temp container and move the .w children
@@ -5600,10 +5612,10 @@
           p.appendChild(child);
         }
       } else if (line) {
-        // Tokenizer not ready yet for this line — render the line
-        // as a single punct chip so paginate still measures the
-        // right text height. The line will get re-rendered with
-        // proper tokens as soon as pretokenizeJpPages resolves.
+        // Tokenizer not ready at all yet — render the line as a
+        // single punct chip so paginate still measures the right
+        // text height. The line will get re-rendered with proper
+        // tokens as soon as pretokenizeJpPages / JPT.ready resolves.
         const sp = document.createElement('span');
         sp.className = 'w punct';
         sp.textContent = line;

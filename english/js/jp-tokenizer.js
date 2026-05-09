@@ -190,6 +190,18 @@
     return tk.tokenize(String(text || ''));
   }
 
+  // Sync tokenize — returns tokens immediately if the tokenizer is
+  // already built, else null. Used by the lesson renderer to handle
+  // pagination reflow: paginateByHeight rebuilds paragraph text by
+  // concatenating .w textContent (no newlines preserved), so the
+  // line-level token cache misses and we need to re-tokenize the
+  // reflowed string on the spot. Once `ready()` has resolved once,
+  // this is just a wrapper over the cached tokenizer.
+  function tokenizeSync(text) {
+    if (!_tokenizer) return null;
+    return _tokenizer.tokenize(String(text || ''));
+  }
+
   // Katakana (U+30A1..U+30F6) → Hiragana (U+3041..U+3096) is a
   // straight 0x60 offset shift. Anything outside that range
   // (punctuation, kanji, etc.) passes through unchanged.
@@ -441,6 +453,7 @@
   window.JPT = {
     ready,
     tokenize,
+    tokenizeSync,
     renderTokens,
     katakanaToHiragana,
     splitSentencesJa,
