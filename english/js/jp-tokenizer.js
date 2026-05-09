@@ -322,6 +322,48 @@
   // particles independently.
   // Specifically merges: 助動詞 (たい/た/ます/ません/ない/etc.),
   //                       接尾 verbs (動詞,接尾 → 過ぎる etc.).
+  // Strip "inline-furigana" duplicates: when a kanji-bearing token is
+  // immediately followed by hiragana tokens whose concatenated surface
+  // equals the kanji token's reading, those hiragana tokens are a
+  // redundant inline reading (a common Japanese learning-text format
+  // like "名前なまえ"). Drop them — the kanji token already gets a
+  // <ruby> furigana rendered above, so showing the same kana inline
+  // is duplicate visual noise.
+  //
+  // Handles multi-token splits: if "なまえ" got tokenized as ["な",
+  // "まえ"], we still consume both because their concatenation equals
+  // the kanji's reading.
+  function _stripDuplicateReadings(tokens) {
+    const out = [];
+    for (let i = 0; i < tokens.length; i++) {
+      const tk = tokens[i];
+      out.push(tk);
+      const surf = tk.surface_form || '';
+      const rd = tk.reading ? katakanaToHiragana(tk.reading) : '';
+      if (!rd || !_hasKanji(surf)) continue;
+      // Look ahead — accumulate pure-hiragana surfaces while they
+      // form a prefix of the kanji's reading. If we exactly cover
+      // the reading, skip those tokens.
+      let accum = '';
+      let consumed = 0;
+      let j = i + 1;
+      while (j < tokens.length) {
+        const nextSurf = tokens[j].surface_form || '';
+        if (!/^[ぁ-ん]+$/.test(nextSurf)) break;
+        const tryAccum = accum + nextSurf;
+        if (rd.indexOf(tryAccum) !== 0) break;     // not a prefix
+        accum = tryAccum;
+        consumed++;
+        j++;
+        if (accum === rd) break;                   // full match
+      }
+      if (consumed > 0 && accum === rd) {
+        i += consumed;                             // skip the duplicate run
+      }
+    }
+    return out;
+  }
+
   // Also stores `_segments` — the list of original surface chunks
   // before merging — so the renderer can color each suffix piece
   // independently (見せ + ませ + ん + でし + た → multi-tone).
@@ -359,7 +401,7 @@
   // Auxiliary verbs are merged into the preceding verb so a learner
   // sees 食べました as ONE clickable unit (not 3 separate chips).
   function renderTokens(tokens) {
-    const merged = _mergeAuxiliaries(tokens);
+    const merged = _mergeAuxiliaries(_stripDuplicateReadings(tokens));
     const out = [];
     for (const tk of merged) {
       const surface = tk.surface_form || '';
@@ -416,7 +458,7 @@
     const raw = String(sentence || '');
     if (!raw.trim()) return [];
     if (!_tokenizer) return null;            // caller should ensure ready()
-    const tokens = _mergeAuxiliaries(_tokenizer.tokenize(raw));
+    const tokens = _mergeAuxiliaries(_stripDuplicateReadings(_tokenizer.tokenize(raw)));
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
