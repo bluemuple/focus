@@ -709,6 +709,31 @@
   // word stream — i.e. counting only `_isWordToken` tokens, mirroring
   // chunk-gpt's "ignoring punctuation" convention. The lesson page
   // then highlights the .w children at those indices.
+  // Beginner-friendly bunsetsu chunking. Modeled on the user's
+  // reference for the 動物の森のケーキ story:
+  //
+  //   ある森に、/ うさぎと熊とりすが / 住んでいました。
+  //   ある朝、/ うさぎが / 言いました。
+  //   熊は、/ 甘いはちみつを / 持ってきました。
+  //   りすは、/ 森で見つけた / 木の実を / 持ってきました。
+  //   うさぎは、/ 大きな人参を / 持ってきました。
+  //   熊も、/ りすも、/ 狐も、/ うさぎも、/ とても幸せな気持ちに / なりました。
+  //
+  // Rules pieced together from those examples:
+  //   • 連体詞 / 接頭詞 / 副詞 are ALL bound modifiers → glue to the
+  //     next content word (ある森, お名前, とても幸せ, にっこり笑って).
+  //   • 形容動詞語幹 + 助動詞「な」 + 名詞 stays as one chunk
+  //     (元気な人, 幸せな気持ち).
+  //   • Coordinator particles と / や / か connect coordinated nouns
+  //     (うさぎと熊とりすが — one chunk).
+  //   • Topic / case particles は も が を に で ends a chunk (the
+  //     next content word starts a new one). Punctuation always ends
+  //     a chunk.
+  //   • Te-form connector + 보조동사 chains stay merged inside ONE
+  //     verb token by _mergeAuxiliaries (持ってきました, 住んでいました),
+  //     so the chunker sees them as a single content word already.
+  //   • Final 7-char collapse for very short sentences (subject /
+  //     predicate split when the whole thing fits in two breaths).
   function chunkSentenceJa(sentence) {
     const raw = String(sentence || '');
     if (!raw.trim()) return [];
@@ -717,30 +742,53 @@
     const chunks = [];
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
-    let pendingModifier = null;   // 連体詞 / 接頭詞 awaiting a head noun
-    let lastWasListConnector = false;  // previous particle was と / や / か
-                                       // → coordinate the upcoming noun
-                                       // into the same chunk
-    for (const tk of tokens) {
+    let pendingModifier = null;
+    // Cross-iteration "bind into the next content word" hints. Set at
+    // end of each iter based on the token just attached; consumed at
+    // the start of the next isContent decision.
+    let lastWasListConnector = false;  // と / や / か (coordinated nouns)
+    let lastWasLinkingAux    = false;  // 助動詞 「な」 (幸せな気持ち)
+    let lastWasNoLinker      = false;  // 助詞 「の」 (木の実)
+    let lastParticleSurface  = '';     // surface of last 助詞 attached
+                                       // (used to gate subordinate-
+                                       // clause binding — topic
+                                       // markers は/も don't pull the
+                                       // following verb in: ぼくも /
+                                       // 食べても vs みんなで食べると)
+    let lastWasAdjective     = false;  // 형용사 (甘いはちみつ)
+    for (let ti = 0; ti < tokens.length; ti++) {
+      const tk   = tokens[ti];
+      const next = tokens[ti + 1];
       const isWord = _isWordToken(tk);
       if (isWord) wordIdx++;
-      // 連体詞 (ある, この, etc.) and 接頭詞 (お, ご, etc.) are bound
-      // modifiers — they always attach to the FOLLOWING content word.
-      // Treat them as "pending" rather than starting their own chunk.
+      // BOUND MODIFIERS — these don't start a chunk; they attach to
+      // the FOLLOWING content word.
+      //   • 連体詞    — ある, この, その
+      //   • 接頭詞    — お, ご
+      //   • 副詞      — とても, にっこり, もっと
+      //   • 形容詞 連用 — 小さく, 大きく (functions as adverb here)
+      //   • 名詞,副詞可能 — 毎週, 今日, 一緒 (time / manner adverbials)
+      const isAdjAdverbForm = isWord && tk.pos === '形容詞' &&
+                              /く$/.test(tk.surface_form || '');
+      const isAdverbialNoun = isWord && tk.pos === '名詞' &&
+                              tk.pos_detail_1 === '副詞可能';
       const isBoundModifier = isWord && (
-        tk.pos === '連体詞' || tk.pos === '接頭詞'
+        tk.pos === '連体詞' || tk.pos === '接頭詞' || tk.pos === '副詞' ||
+        isAdjAdverbForm || isAdverbialNoun
       );
-      const isContent = isWord && !isBoundModifier && (
+      // SUFFIX-LIKE — these don't start a chunk either; they ATTACH
+      // to the running chunk, like particles.
+      //   • 接尾    — 〜たち, 〜じゅう, 〜さん
+      //   • 名詞,非自立 — こと, もの, ところ (nominalizers)
+      const isSuffix = isWord && (
+        tk.pos_detail_1 === '接尾' ||
+        (tk.pos === '名詞' && tk.pos_detail_1 === '非自立')
+      );
+      const isContent = isWord && !isBoundModifier && !isSuffix && (
         tk.pos === '名詞' || tk.pos === '動詞' ||
         tk.pos === '形容詞' || tk.pos === '形容動詞' ||
-        tk.pos === '副詞' || tk.pos === '感動詞'
+        tk.pos === '感動詞'
       );
-      // Coordinate-list particles: と / や / か link two nouns at the
-      // same syntactic level (うさぎと熊とりすが…). Treat them as
-      // "the next content word should JOIN this chunk, not start a
-      // new one." This stops "うさぎ / と / 熊 / と / りす / が" from
-      // exploding into 5 chunks — beginners read コーディネート lists
-      // as ONE noun-phrase.
       const isListConnector = isWord && tk.pos === '助詞' && (
         tk.surface_form === 'と' ||
         tk.surface_form === 'や' ||
@@ -748,6 +796,11 @@
       );
       if (isBoundModifier) {
         if (!pendingModifier) {
+          // A new bound-modifier phrase signals the start of a new
+          // chunk → close any running chunk first (otherwise "は"
+          // would absorb the next phrase: 動物たちは + 毎週 would
+          // glue together).
+          if (cur) { chunks.push(cur); cur = null; }
           pendingModifier = { text: tk.surface_form, idxStart: wordIdx };
         } else {
           pendingModifier.text += tk.surface_form;
@@ -755,12 +808,52 @@
         continue;
       }
       if (isContent) {
+        // SUBORDINATE-CLAUSE / RELATIVE-CLAUSE binding for 動詞:
+        // 名詞 + 助詞 + 動詞 stays together in ONE chunk when the
+        // verb continues into another clause (forming a subordinate
+        // unit) rather than acting as the final predicate. Heuristics
+        // (we can't always confirm without GPT-level analysis):
+        //   • verb surface ends in て / で (te-form) — subordinate
+        //     to the next clause (材料を混ぜて、ケーキを焼きました)
+        //   • next token is 接続助詞 と / ば / たら / ても (subordinate
+        //     conjunction — みんなで食べると、もっとおいしい)
+        //   • next token is a 名詞 (relative clause modifying it —
+        //     森で見つけた木の実)
+        // Otherwise the verb is a terminal predicate → split before
+        // it (ケーキを焼きました — ケーキを / 焼きました).
+        // Subordinate-clause binding gated to NON-TOPIC particles —
+        // topic markers は/も signal a phrase boundary in user's
+        // chunking style (ぼくも / 食べても), while case markers
+        // が/を/に/で/から/へ/まで pull the next verb into the same
+        // clause (みんなで食べると、).
+        const lastWasNonTopicParticle = !!lastParticleSurface &&
+          lastParticleSurface !== 'は' &&
+          lastParticleSurface !== 'も';
+        const verbContinuesClause =
+          tk.pos === '動詞' && lastWasNonTopicParticle && cur && (
+            /[てで]$/.test(tk.surface_form || '') ||
+            (next && next.pos === '助詞' && next.pos_detail_1 === '接続助詞') ||
+            (next && next.pos === '名詞')
+          );
         if (lastWasListConnector && cur) {
-          // Coordinated noun — attach to the running chunk.
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
+        } else if (lastWasLinkingAux && cur && tk.pos === '名詞') {
+          // 形容動詞 + な + 名詞 (元気な人, 幸せな気持ち)
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
+        } else if (lastWasNoLinker && cur && tk.pos === '名詞') {
+          // 名詞 + の + 名詞 (genitive — 木の実, 森の中)
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
+        } else if (lastWasAdjective && cur && tk.pos === '名詞') {
+          // 形容詞 + 名詞 (i-adjective + noun — 甘いはちみつ, 大きい家)
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
+        } else if (verbContinuesClause) {
           cur.text += tk.surface_form;
           cur.indices[1] = wordIdx;
         } else {
-          // Close the previous chunk and start a new one.
           if (cur) chunks.push(cur);
           if (pendingModifier) {
             cur = {
@@ -773,18 +866,24 @@
           }
         }
       } else if (cur && isWord) {
-        // Attach particle / auxiliary / unknown to the running chunk.
         cur.text += tk.surface_form;
         cur.indices[1] = wordIdx;
-      } else if (!isWord) {
-        // Punctuation closes the current chunk (don't include the
-        // punct in the chunk text — matches chunk-gpt convention).
-        if (cur) {
-          chunks.push(cur);
-          cur = null;
+      } else if (pendingModifier && isWord) {
+        // No running chunk but a pending modifier exists — particles
+        // / suffixes attach to the modifier phrase. When a 助詞
+        // closes the modifier (毎週いっしょ + に → 毎週いっしょに),
+        // emit it as its own chunk so the next content word starts
+        // fresh instead of being glued onto the modifier.
+        pendingModifier.text += tk.surface_form;
+        if (tk.pos === '助詞') {
+          chunks.push({
+            text: pendingModifier.text,
+            indices: [pendingModifier.idxStart, wordIdx],
+          });
+          pendingModifier = null;
         }
-        // A modifier orphaned at sentence boundary becomes its own
-        // chunk so its char positions still get tracked.
+      } else if (!isWord) {
+        if (cur) { chunks.push(cur); cur = null; }
         if (pendingModifier) {
           chunks.push({
             text: pendingModifier.text,
@@ -793,7 +892,14 @@
           pendingModifier = null;
         }
       }
-      lastWasListConnector = isListConnector;
+      // Update look-back flags. Each requires `cur` to still exist —
+      // a punct-closed chunk shouldn't leak its trailing-particle
+      // hint into the next chunk.
+      lastWasListConnector = !!cur && isListConnector;
+      lastWasLinkingAux    = !!cur && tk.pos === '助動詞' && tk.surface_form === 'な';
+      lastWasNoLinker      = !!cur && tk.pos === '助詞'   && tk.surface_form === 'の';
+      lastParticleSurface  = (!!cur && tk.pos === '助詞') ? (tk.surface_form || '') : '';
+      lastWasAdjective     = !!cur && tk.pos === '形容詞';
     }
     if (cur) chunks.push(cur);
     if (pendingModifier) {
@@ -803,13 +909,9 @@
       });
     }
 
-    // SHORT-SENTENCE COLLAPSE: when the whole sentence is ≤ 7 visual
-    // chars (kanji + kana combined, ignoring punctuation), the user
-    // wants just a 주부/술부 split — i.e. everything except the final
-    // verb/predicate folded into a single "subject side" chunk. This
-    // matches how a learner reads a tiny sentence: SUBJECT | VERB.
-    // Longer sentences keep the bunsetsu-level granularity above so
-    // adverbial / time / place phrases each stand on their own.
+    // SHORT-SENTENCE COLLAPSE: ≤ 7 visual chars and >2 chunks → fold
+    // everything except the predicate into one "subject side" chunk.
+    // Matches how a beginner reads a tiny sentence: SUBJECT | VERB.
     const visibleLen = chunks.reduce((n, c) => n + c.text.length, 0);
     if (visibleLen <= 7 && chunks.length > 2) {
       const last = chunks[chunks.length - 1];
