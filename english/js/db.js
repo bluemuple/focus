@@ -20,11 +20,22 @@
   const SUPABASE_ANON = (window.SUPABASE_CONFIG && window.SUPABASE_CONFIG.anon) || '';
 
   const haveSupabase = !!(SUPABASE_URL && SUPABASE_ANON && window.supabase);
-  // No custom storageKey — we want to share the auth session with the parent
-  // Focus app, which uses Supabase's default storage key. One sign-in covers both.
+  // EXPLICIT storageKey — separates this app's auth session from the
+  // parent Bidoro app (which uses 'sb-bidoro-auth'). When both apps shared
+  // the default `sb-<projectRef>-auth-token` key, simultaneous auto-
+  // refresh attempts from the two tabs would race and one would get
+  // an "invalid_grant" error → SIGNED_OUT cascade that wiped the shared
+  // storage and logged BOTH apps out. Independent keys = independent
+  // refresh cycles, no race. Trade-off: the user signs in to each app
+  // separately (no SSO), which the user explicitly opted into for
+  // stability over convenience.
   const sb = haveSupabase
     ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
-        auth: { persistSession: true, autoRefreshToken: true }
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+          storageKey: 'sb-tobaktobak-auth',
+        }
       })
     : null;
 

@@ -3618,7 +3618,20 @@ async function getSupabaseClient() {
   if (!url || !key) return null;
   if (supabaseClient) return supabaseClient;
   const lib = await loadSupabaseLib();
-  supabaseClient = lib.createClient(url, key);
+  // Use a Bidoro-specific storageKey so this app keeps its own auth session in
+  // localStorage, separate from any sister site (e.g. 또박또박) that shares
+  // the same origin (bluemuple.github.io) and the same Supabase project.
+  // Without this, both apps would write to the default `sb-<projectRef>-auth-token`
+  // key and step on each other's token-refresh cycle, causing intermittent
+  // SIGNED_OUT events when one tab beats the other to a refresh.
+  supabaseClient = lib.createClient(url, key, {
+    auth: {
+      storageKey: 'sb-bidoro-auth',
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  });
   return supabaseClient;
 }
 function resetSupabaseClient() { supabaseClient = null; _currentAuthUserId = null; }

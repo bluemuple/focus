@@ -130,7 +130,14 @@
         submitBtn.disabled = false;
         submitBtn.textContent = mode === 'signup' ? '계정 만들기' : '로그인';
       } finally {
-        _submittingForm = false;
+        // Hold the flag for a bit longer than the await — covers the
+        // brief window after teardown+onAuthed where another tab
+        // (Bidoro statistics page (E) button → navigates here →
+        // its background processes can fire spurious SIGNED_OUT
+        // through the shared Supabase storage) might race-fire a
+        // SIGNED_OUT that we don't want to translate into a modal
+        // pop-up. After 1.2 s normal logout detection resumes.
+        setTimeout(() => { _submittingForm = false; }, 1200);
       }
     });
 
@@ -181,9 +188,29 @@
   // Mid-session sign-out (token refresh failure, another tab signing
   // out, iOS storage wipe, parent Bidoro app signing out): re-show the
   // login modal so the user can re-authenticate without a broken page.
-  window.addEventListener('eng:signed-out', () => {
+  // SKIPPED during/just-after our own form submit so a spurious
+  // SIGNED_OUT event (e.g. from a background Bidoro tab reacting to
+  // our storage write) doesn't snap the modal back up immediately
+  // after a successful login.
+  //
+  // Verify-before-modal: a SIGNED_OUT in this app can be triggered by a
+  // cross-tab refresh-token race (Bidoro and us both auto-refresh, one
+  // wins, the other gets "invalid_grant" and fires SIGNED_OUT) even
+  // though the WINNING tab has already written a fresh session to
+  // localStorage. Re-check the session before showing the modal — if
+  // it's still valid, the SIGNED_OUT was a false alarm.
+  window.addEventListener('eng:signed-out', async () => {
+    if (_submittingForm) return;
     if (DB.isTryMode()) return;          // try-mode bypasses the modal
     if (modalIsUp()) return;             // already up — leave it
+    // Wait one event-loop tick so the winning tab's session-write has
+    // a moment to flush, then re-check.
+    await new Promise(r => setTimeout(r, 60));
+    try {
+      const u = await DB.currentUser();
+      if (u) return;                     // session still valid, false alarm
+    } catch (_) {}
+    if (modalIsUp()) return;
     renderModal(_lastOnAuthed || (() => location.reload()));
   });
 
