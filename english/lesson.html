@@ -4963,18 +4963,35 @@
     if (!root) return;
     let curr = { text: '', words: [] };
     let prevWord = null;
-    for (const el of root.querySelectorAll('.w')) {
-      curr.text += _wText(el);
-      curr.words.push(el);
-      if (!el.classList.contains('punct')) {
-        prevWord = el;
-        continue;
+    // Walk paragraph by paragraph so a missing terminal punctuation
+    // (like the lesson title 「動物の森のケーキ」 with no 。) doesn't
+    // bleed the title into the first body sentence. Each <p> boundary
+    // is treated as a hard sentence break — the chunker then sees the
+    // body sentence without the title prepended, and the per-sentence
+    // word indices align with what getSentenceWordsOf(wEl) returns.
+    const paragraphs = root.querySelectorAll('p');
+    for (const para of paragraphs) {
+      for (const el of para.querySelectorAll('.w')) {
+        curr.text += _wText(el);
+        curr.words.push(el);
+        if (!el.classList.contains('punct')) {
+          prevWord = el;
+          continue;
+        }
+        // It's a punct token. Only break if it's a real sentence-ending
+        // mark and not a period inside an abbreviation like "Mr." / "Dr.".
+        if (isSentenceBreakPunct(el, prevWord)) {
+          if (curr.text.trim()) SENTENCE_MAP.push(curr);
+          curr = { text: '', words: [] };
+        }
       }
-      // It's a punct token. Only break if it's a real sentence-ending mark
-      // and not a period inside an abbreviation like "Mr." / "Dr.".
-      if (isSentenceBreakPunct(el, prevWord)) {
-        if (curr.text.trim()) SENTENCE_MAP.push(curr);
+      // Force a sentence break at the end of every paragraph, even if
+      // it didn't end with 。/!/? — titles, headings, and bullet items
+      // shouldn't merge with the next paragraph's content.
+      if (curr.text.trim()) {
+        SENTENCE_MAP.push(curr);
         curr = { text: '', words: [] };
+        prevWord = null;
       }
     }
     if (curr.text.trim()) SENTENCE_MAP.push(curr);
