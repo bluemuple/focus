@@ -2557,6 +2557,19 @@
   //      "stretch out") is a clean prefix of the word → suffix = rest.
   //   2. Else fall back to spelling-based detection for irregular
   //      lemmas where the GPT lemma isn't a string prefix.
+  // Whitelist of stems that genuinely take doubled-consonant
+  // comparative / superlative endings. Without this guard, the
+  // regex `/([bcdfghjklmnpqrstvwxz])\1(er|est)$/` would falsely
+  // match common 2-syllable nouns / verbs that happen to end in
+  // CVCCer — "matter" → "mat+ter", "letter" → "let+ter",
+  // "summer", "dinner", "manner", etc. — and color the trailing
+  // "ter"/"ner" sky-blue as if it were an inflection. Only short
+  // CVC adjectives that genuinely double their final consonant
+  // before -er/-est belong here.
+  const COMP_STEMS = new Set([
+    'big', 'hot', 'thin', 'wet', 'red', 'fit', 'fat', 'sad', 'mad',
+    'glad', 'flat', 'slim', 'dim', 'snug', 'tan', 'wan', 'fab',
+  ]);
   function renderWordWithInflectionHTML(word, lemma, segments) {
     const w = String(word || '');
     if (!w) return '';
@@ -2583,6 +2596,12 @@
     const lo = w.toLowerCase();
     const lem = (lemma || '').toLowerCase();
     const firstLem = lem.split(/\s+/)[0] || '';
+    // Word equals its own lemma → no inflection to mark. This guard
+    // catches "matter" with lemma "matter" (and similar words like
+    // "letter", "summer", "manner") so they don't fall through to
+    // the doubled-consonant comparative regex below and falsely get
+    // their tail colored as if it were an -er suffix.
+    if (firstLem && firstLem === lo) return escapeHtml(w);
     // Lemma's first word is a clean prefix → color the suffix only.
     if (firstLem && firstLem.length < lo.length && lo.startsWith(firstLem)) {
       return escapeHtml(w.slice(0, firstLem.length)) +
@@ -2611,13 +2630,19 @@
     //   "hottest" → hot + "test"
     // The doubled letter visually belongs to the inflected suffix, so
     // we color "ger" / "gest" / "test" (not just "er" / "est").
+    // Guarded by COMP_STEMS so words like "matter"/"letter"/"summer"
+    // (where the would-be stem "mat"/"let"/"sum" isn't a real
+    // adjective) skip this branch and render as plain text.
     const dblComp = lo.match(/([bcdfghjklmnpqrstvwxz])\1(er|est)$/);
     if (dblComp) {
       const sufLen = 1 + dblComp[2].length;        // doubled letter + er/est
       const stemLen = lo.length - sufLen;
       if (stemLen >= 2) {
-        return escapeHtml(w.slice(0, stemLen)) +
-               '<span class="hl-infl">' + escapeHtml(w.slice(stemLen)) + '</span>';
+        const stem = lo.slice(0, stemLen);
+        if (COMP_STEMS.has(stem)) {
+          return escapeHtml(w.slice(0, stemLen)) +
+                 '<span class="hl-infl">' + escapeHtml(w.slice(stemLen)) + '</span>';
+        }
       }
     }
     // Spelling-based fallback for irregular lemmas (e.g. lemma "study"
@@ -2652,12 +2677,21 @@
     if (/([bcdfghjklmnpqrstvwxz])\1ed$/.test(lo) && lo.length > 4) {
       return lo.slice(0, -3);
     }
-    // doubled-consonant + er / est (bigger → big, hottest → hot)
+    // doubled-consonant + er / est (bigger → big, hottest → hot).
+    // GUARD: only strip when the resulting stem is a known
+    // CVC-doubling adjective in COMP_STEMS. Without this, "matter"
+    // would lose its "ter" → "mat", "letter" → "let", "summer" →
+    // "sum", etc., poisoning the heuristic lemma BEFORE GPT arrives
+    // and making renderWordWithInflectionHTML color the tail
+    // sky-blue. The whitelist is tight (big/hot/thin/...), so most
+    // false positives are kept whole.
     if (/([bcdfghjklmnpqrstvwxz])\1est$/.test(lo) && lo.length > 5) {
-      return lo.slice(0, -4);
+      const stem = lo.slice(0, -4);
+      if (COMP_STEMS.has(stem)) return stem;
     }
     if (/([bcdfghjklmnpqrstvwxz])\1er$/.test(lo) && lo.length > 4) {
-      return lo.slice(0, -3);
+      const stem = lo.slice(0, -3);
+      if (COMP_STEMS.has(stem)) return stem;
     }
     // -ing  (going → go, making → make)
     if (/ing$/.test(lo) && lo.length > 4) {
