@@ -129,7 +129,7 @@
       <button class="lb-arrow" id="lb-arrow-left"  aria-label="←">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 6 9 12 15 18"/></svg>
       </button>
-      <button class="toggle-btn lb-mode" id="lb-mode-toggle" title="읽기 모드 전환">하나씩</button>
+      <button class="toggle-btn lb-mode" id="lb-mode-toggle" title="읽기 모드 전환">단어 뜻 하나씩</button>
       <button class="lb-arrow" id="lb-arrow-right" aria-label="→">
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
       </button>
@@ -2777,14 +2777,11 @@
     if (!ul) return;
     ul.innerHTML = '';
     const list = (examples || []).slice(0, 3);
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
     for (const ex of list) {
       const en = ex && ex.en || '';
       const ko = ex && ex.ko || '';
       const li = document.createElement('li');
-      // Pink lemma stem + sky-blue inflection — matches the
-      // "단어 뜻 하나씩" word title and the body's word-tap card so the
-      // user sees a consistent two-tone treatment everywhere a target
-      // word appears (mobile sheet, PC sidebar, examples, collocations).
       li.innerHTML =
         '<span class="ex-en">' + highlightLemmaWithInflection(en, lemma) + '</span> ' +
         '<button class="ex-ko-toggle" type="button">[한글]</button>' +
@@ -2796,6 +2793,19 @@
         koEl.hidden = !koEl.hidden;
         toggle.classList.toggle('open', !koEl.hidden);
       };
+      // JP mode: tapping the example sentence speaks the WHOLE line
+      // (not just the headword). EN keeps its current behavior of no
+      // tap-to-speak on examples.
+      if (lang === 'ja') {
+        const exEnEl = li.querySelector('.ex-en');
+        if (exEnEl && en) {
+          exEnEl.style.cursor = 'pointer';
+          exEnEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            try { TTS.speak(en); } catch (_) {}
+          });
+        }
+      }
       ul.appendChild(li);
     }
   }
@@ -2803,16 +2813,24 @@
     if (!ul) return;
     ul.innerHTML = '';
     const list = (collocs || []).slice(0, 6);
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
     for (const c of list) {
       const li = document.createElement('li');
-      // Same two-tone treatment for collocations — pink stem + sky-blue
-      // inflection. Per spec the `phrase` arrives in lemma form
-      // ("stretch out", not "stretched out") so the inflection split is
-      // usually a no-op there, but keeping the function symmetric means
-      // any inflected variant rendered later still gets the right color.
+      const phrase = c.phrase || '';
       li.innerHTML =
-        '<span class="co-en">' + highlightLemmaWithInflection(c.phrase || '', lemma) + '</span>' +
+        '<span class="co-en">' + highlightLemmaWithInflection(phrase, lemma) + '</span>' +
         '<span class="co-ko muted">' + escapeHtml(c.ko || '') + '</span>';
+      // JP mode: tapping the collocation phrase speaks it.
+      if (lang === 'ja') {
+        const coEnEl = li.querySelector('.co-en');
+        if (coEnEl && phrase) {
+          coEnEl.style.cursor = 'pointer';
+          coEnEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            try { TTS.speak(phrase); } catch (_) {}
+          });
+        }
+      }
       ul.appendChild(li);
     }
   }
@@ -2838,13 +2856,18 @@
         '<div class="ws-pm-ex-ko" hidden></div>';
       const exEl  = li.querySelector('.ws-pm-ex');
       const exKoEl = li.querySelector('.ws-pm-ex-ko');
+      const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
       if (exEl && exKoEl) {
         exEl.style.cursor = 'pointer';
         exEl.addEventListener('click', async (e) => {
           e.stopPropagation();
+          // JP: speak the whole example line on every tap (the toggle
+          // semantics still expand/collapse the Korean below).
+          if (lang === 'ja' && s.example) {
+            try { TTS.speak(s.example); } catch (_) {}
+          }
           if (!exKoEl.hidden) { exKoEl.hidden = true; return; }
-          // Lazy-translate on first expand. Cache the result on the
-          // element via dataset.
+          // Lazy-translate on first expand.
           if (!exKoEl.dataset.loaded) {
             exKoEl.textContent = '번역 중...';
             exKoEl.hidden = false;
@@ -2867,16 +2890,59 @@
     if (!ul) return;
     ul.innerHTML = '';
     const list = (senses || []).slice(0, 6);
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
     for (const s of list) {
       const li = document.createElement('li');
       // Per spec: Korean meaning + POS pill on ONE line (POS in
       // gray-button style); example sentence on the line below with
       // the headword pink and any inflection suffix (-ed/-ing/-s)
-      // in sky-blue.
+      // in sky-blue. Each example also gets a [한글] toggle that
+      // reveals the example's Korean translation below — same
+      // affordance as the 예문 panel.
       let html = '<span class="ls-sense-ko">' + escapeHtml(s.ko || '') + '</span>';
       if (s.pos)     html += '<span class="ls-sense-pos ls-pos-tag">' + escapeHtml(s.pos) + '</span>';
-      if (s.example) html += '<span class="ls-sense-ex">' + highlightLemmaWithInflection(s.example, lemma || '') + '</span>';
+      if (s.example) {
+        html += '<span class="ls-sense-ex">' + highlightLemmaWithInflection(s.example, lemma || '') + '</span>' +
+                '<button class="ex-ko-toggle" type="button">[한글]</button>' +
+                '<div class="ex-ko" hidden></div>';
+      }
       li.innerHTML = html;
+      const exEnEl = li.querySelector('.ls-sense-ex');
+      const toggle = li.querySelector('.ex-ko-toggle');
+      const koEl   = li.querySelector('.ex-ko');
+      if (toggle && koEl && s.example) {
+        toggle.onclick = async (e) => {
+          e.stopPropagation();
+          if (!koEl.hidden) {
+            koEl.hidden = true;
+            toggle.classList.remove('open');
+            return;
+          }
+          if (!koEl.dataset.loaded) {
+            koEl.textContent = '번역 중...';
+            koEl.hidden = false;
+            toggle.classList.add('open');
+            try {
+              const ko = await Translate.translate(s.example, s.example);
+              koEl.textContent = ko || '';
+              koEl.dataset.loaded = '1';
+            } catch (_) {
+              koEl.textContent = '—';
+            }
+          } else {
+            koEl.hidden = false;
+            toggle.classList.add('open');
+          }
+        };
+      }
+      // JP: tap example → speak the whole sentence.
+      if (lang === 'ja' && exEnEl && s.example) {
+        exEnEl.style.cursor = 'pointer';
+        exEnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          try { TTS.speak(s.example); } catch (_) {}
+        });
+      }
       ul.appendChild(li);
     }
   }

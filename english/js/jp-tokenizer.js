@@ -462,6 +462,11 @@
     'いる','ある','くる','行く','来る','おく','置く','しまう',
     'みる','見る','やる','あげる','くれる','もらう',
   ]);
+  // Colloquial nominalizers — when ん / の attach to a merged verb
+  // chain (動けない**ん**だ, 行く**の**です), they're not real nouns;
+  // they're a particle-like explanatory marker. Absorb them into the
+  // verb so 動けないんだ reads as ONE word, not three chips.
+  const COLLOQUIAL_NOMINALIZER = new Set(['ん', 'の']);
   function _mergeAuxiliaries(tokens) {
     const out = [];
     for (const tk of tokens) {
@@ -473,13 +478,25 @@
                            (tk.surface_form === 'て' || tk.surface_form === 'で');
       const isTeAuxVerb  = tk.pos === '動詞' &&
                            TE_AUX_VERBS.has(tk.basic_form || '');
+      // Colloquial の-equivalent ん appearing after a verb / merged
+      // chain (動けない + ん + だ, 行く + の + です).
+      const isColloqNomin = tk.pos === '名詞' &&
+                            tk.pos_detail_1 === '非自立' &&
+                            COLLOQUIAL_NOMINALIZER.has(tk.surface_form || '');
       const lastIsVerbish = last &&
         (last.pos === '動詞' || last.pos === '形容詞' || last._merged);
+      // 形容動詞語幹 (好き, 元気, 静か, 大切) — pos is 名詞 but it
+      // behaves like an adjective when followed by 助動詞 だ / でし
+      // / です. Treat as verbish for merge purposes so 好きでした
+      // becomes ONE chip.
+      const lastIsAdjNounStem = last && last.pos === '名詞' &&
+                                last.pos_detail_1 === '形容動詞語幹';
       const lastIsTeMerged = last && last._merged && last._absorbedTe;
       const shouldMerge =
-        (isAux || isVerbSuffix) && lastIsVerbish ||
+        (isAux || isVerbSuffix) && (lastIsVerbish || lastIsAdjNounStem) ||
         isTeConn && lastIsVerbish ||
-        isTeAuxVerb && lastIsTeMerged;
+        isTeAuxVerb && lastIsTeMerged ||
+        isColloqNomin && (lastIsVerbish || (last && last._merged));
       if (shouldMerge) {
         last.surface_form  = (last.surface_form  || '') + (tk.surface_form  || '');
         last.reading       = (last.reading       || '') + (tk.reading       || '');
