@@ -79,6 +79,15 @@ async function writeCache(key: string, data: any): Promise<void> {
   } catch {}
 }
 
+async function senseHash(s: string): Promise<string> {
+  const buf = new TextEncoder().encode(s);
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map(b => b.toString(16).padStart(2, "0"))
+    .join("")
+    .slice(0, 12);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -88,14 +97,21 @@ Deno.serve(async (req) => {
     // adapt its dictionary style and the cache stays separated. Old
     // clients that don't send `lang` default to 'en' for back-compat.
     const lang = String(body?.lang || "en").toLowerCase();
+    // OPTIONAL: contextual Korean meaning of the word in the user's
+    // sentence. When supplied the response biases senses and examples
+    // toward that specific meaning, so polysemous words (JP と, へ,
+    // EN "run", etc.) return examples USING THE SAME SENSE the user
+    // is reading — not generic dictionary examples that pick a
+    // different sense. Cache splits on senseKo so each meaning has
+    // its own row.
+    const senseKo = String(body?.senseKo || "").trim();
     if (!word) return json({ error: "word required" }, 400);
 
-    // Cache key includes language so EN ↔ JA entries don't collide.
-    // English keeps the legacy un-prefixed key for back-compat (every
-    // existing cached row was English).
-    const cacheKey = lang === "en" ? word.toLowerCase() : (lang + ":" + word.toLowerCase());
+    // Cache key — language + word (+ sense hash when supplied).
+    let cacheKey = lang === "en" ? word.toLowerCase() : (lang + ":" + word.toLowerCase());
+    if (senseKo) cacheKey += ":" + await senseHash(senseKo);
 
-    // L2 cache check — any device/user seen this word? Skip GPT.
+    // L2 cache check — any device/user seen this word/sense? Skip GPT.
     const cached = await readCache(cacheKey);
     if (cached) return json(cached);
 
@@ -158,7 +174,34 @@ Deno.serve(async (req) => {
       "  its Korean translation.",
     ].join("\n");
 
-    const sys = lang === "ja" ? sysJa : sysEn;
+    const sysBase = lang === "ja" ? sysJa : sysEn;
+    // When the caller supplies a contextual Korean meaning we APPEND a
+    // strict sense-binding rule. Senses are reordered with the user's
+    // sense first; ALL examples must illustrate THAT sense (not a
+    // different one of the word's meanings).
+    const sys = senseKo
+      ? sysBase + "\n\n" + [
+          "SENSE BINDING — the user is asking about this word in the",
+          "specific meaning '" + senseKo + "'. STRICT requirements:",
+          "- The FIRST entry of `senses` MUST have ko === '" + senseKo + "'",
+          "  (or a near-paraphrase that conveys the same meaning).",
+          "- ALL `examples` (the [{en, ko}] pairs at the end) MUST use the",
+          "  word in this exact sense. If a sense doesn't yield natural",
+          "  example sentences, return fewer (1) rather than examples that",
+          "  illustrate a DIFFERENT meaning of the word.",
+          "- For Japanese particles / auxiliaries (と, へ, に, から, ば, …)",
+          "  whose senses look identical on the surface, the example",
+          "  sentence's grammar must reproduce the SAME pattern as the",
+          "  source meaning '" + senseKo + "'.",
+          "  e.g. と meaning '~하려고' → examples must use the volitional",
+          "  + と pattern (V-よう/おう + と): 食べようと, 行こうと, …",
+          "  NOT citation と (~라고) or coordination と (and).",
+        ].join("\n")
+      : sysBase;
+
+    const userContent = senseKo
+      ? `Word: ${JSON.stringify(word)}\nFocus sense (Korean): ${JSON.stringify(senseKo)}`
+      : `Word: ${JSON.stringify(word)}`;
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -169,13 +212,11 @@ Deno.serve(async (req) => {
       body: JSON.stringify({
         model: "gpt-4o-mini",
         temperature: 0.4,
-        // 350 caps the response just above what the trimmed schema needs
-        // (no ko, no phraseChunk, no mnemonic).
-        max_tokens: 350,
+        max_tokens: 380,
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: sys },
-          { role: "user",   content: `Word: ${JSON.stringify(word)}` },
+          { role: "user",   content: userContent },
         ],
       }),
     });

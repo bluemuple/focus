@@ -443,23 +443,36 @@
     for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
     return h.toString(36);
   }
-  async function getWordInfo(word /* sentence ignored */) {
+  // getWordInfo(word, senseKo?)
+  //   word    — the lemma / dictionary form
+  //   senseKo — OPTIONAL. The contextual Korean meaning of the word in
+  //             the sentence the user clicked. When supplied, the Edge
+  //             Function biases its `senses` and `examples` toward
+  //             this specific meaning, so the sidebar's 예문 panel
+  //             shows examples that use the word in the SAME sense.
+  //             Useful for polysemous JP particles like と (which has
+  //             "citation", "and", "conditional", "intent" senses):
+  //             clicking と in 「つたえようと」 (intent) returns
+  //             intent-meaning examples, not random と examples.
+  // Cache keys split on senseKo so different meanings cache independently.
+  async function getWordInfo(word, senseKo) {
     word = (word || '').trim();
     if (!word) return null;
-    // Cache key includes the source language so EN ↔ JP entries
-    // don't collide (e.g. an ASCII word that exists in both modes).
-    // English keeps the legacy un-prefixed key for back-compat.
+    senseKo = (senseKo || '').trim();
     const lang = _curLang();
-    const key = lang === 'en' ? word.toLowerCase() : (lang + ':' + word.toLowerCase());
+    const baseKey = lang === 'en' ? word.toLowerCase() : (lang + ':' + word.toLowerCase());
+    const key = senseKo ? (baseKey + ':' + _hashStr(senseKo)) : baseKey;
     if (wiCache[key]) return wiCache[key];
     if (wiLs[key])    { wiCache[key] = wiLs[key]; return wiLs[key]; }
     try {
       const { url, headers } = supabaseUrl('/functions/v1/word-info-gpt');
       const r = await fetch(url, {
         method: 'POST', headers,
-        // Pass `lang` so the Edge Function picks JP-specific prompt
-        // rules in Phase 3c (currently no-op until that deploy).
-        body: JSON.stringify({ word, lang }),
+        body: JSON.stringify({
+          word,
+          lang,
+          senseKo: senseKo || undefined,
+        }),
       });
       if (!r.ok) {
         let detail = '';

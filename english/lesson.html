@@ -4222,6 +4222,12 @@
     // the right sense ("the cease-fire was holding" → "유지되고 있다",
     // not "개최 중"). Runs AFTER DeepL so the user sees a fast first
     // paint, then GPT silently upgrades it when it differs.
+    //
+    // After the GPT meaning lands we ALSO re-fetch word-info passing
+    // the contextual Korean as `senseKo` — that returns senses /
+    // examples specifically about THIS sense of the word (critical
+    // for polysemous JP particles と / へ / に whose generic examples
+    // hit a different meaning than the user is reading).
     if (Translate.translateGPT) {
       Translate.translateGPT(text, sentence).then(ko => {
         const cur = document.getElementById('ls-word');
@@ -4232,6 +4238,33 @@
           SIDEBAR_PHRASE = { text, ko: next };
           repaintSidebarMeaning();
           repaintSidebarChunk();
+        }
+        // Sense-specific word-info upgrade.
+        if (next && !isPhrase && Translate.getWordInfo) {
+          Translate.getWordInfo(text, next).then(senseInfo => {
+            if (!senseInfo) return;
+            const cur2 = document.getElementById('ls-word');
+            if (!cur2 || cur2.dataset.activeWord !== text) return;
+            const lemma = senseInfo.lemma || text;
+            if (senseInfo.senses && senseInfo.senses.length) {
+              renderSenseList(sUl, senseInfo.senses, lemma);
+              const cnt = document.getElementById('ls-senses-count');
+              if (cnt) cnt.textContent = '(' + senseInfo.senses.length + ')';
+              if (sBlock) { sBlock.hidden = false; sBlock.open = true; }
+            }
+            if (senseInfo.examples && senseInfo.examples.length) {
+              renderExamples(exUl, senseInfo.examples, lemma);
+              const cnt = document.getElementById('ls-examples-count');
+              if (cnt) cnt.textContent = '(' + senseInfo.examples.length + ')';
+              if (exBlock) { exBlock.hidden = false; exBlock.open = true; }
+            }
+            if (senseInfo.collocations && senseInfo.collocations.length) {
+              renderCollocations(coUl, senseInfo.collocations, lemma);
+              const cnt = document.getElementById('ls-collocs-count');
+              if (cnt) cnt.textContent = '(' + senseInfo.collocations.length + ')';
+              if (coBlock) { coBlock.hidden = false; coBlock.open = true; }
+            }
+          }).catch(() => {});
         }
       }).catch(() => {});
     }
