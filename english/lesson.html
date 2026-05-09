@@ -458,6 +458,20 @@
 <script src="js/auth.js"></script>
 <script>
 (async function () {
+  // Stamp the current target language onto <html> as `lang-en` /
+  // `lang-ja` so language-specific CSS (e.g. larger headword font on
+  // the JP word-sheet) can apply without bleeding into the EN side.
+  // Re-stamps on `eng:lang-changed` so a mid-session language switch
+  // updates the styling immediately.
+  const _stampLangClass = () => {
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    const html = document.documentElement;
+    html.classList.remove('lang-en', 'lang-ja');
+    html.classList.add('lang-' + lang);
+  };
+  _stampLangClass();
+  window.addEventListener('eng:lang-changed', _stampLangClass);
+
   Auth.gate(async () => {
     await renderHeader();
     await renderLesson();
@@ -763,20 +777,14 @@
     //   • Show ONLY while kuromoji's dict is downloading (~5 MB gzip on
     //     first load; <50 ms on browser cache). A delayed-show timer
     //     means cached loads never flash a splash at all.
-    //   • GPT-furigana prefetch runs in the BACKGROUND after kuromoji
-    //     is ready — don't block the lesson render. Page shows up
-    //     instantly with kuromoji's default readings; once each line's
-    //     accurate ruby arrives we trigger a soft re-render of the
-    //     current page so the user sees correct furigana.
+    //   • GPT furigana is now fetched ON-DEMAND for the chunk-
+    //     explanation row in the popup (not for the body itself —
+    //     body shows plain text). So we no longer prefetch sentence-
+    //     level ruby up front — it'd be wasted OpenAI cost since the
+    //     chunk-level cache key differs.
     let _jpBgPrefetchPromise = null;
     if (DB.getLang && DB.getLang() === 'ja') {
-      // Splash policy: show ONLY on the very first JP-mode load ever
-      // for this browser. After that, localStorage flag permanently
-      // suppresses it — the kuromoji dict is HTTP-cached for ~1 year
-      // by jsdelivr, so subsequent loads are <100 ms even though the
-      // request fires (browser serves from disk cache, no network).
-      // The user explicitly asked to never see this splash on repeat
-      // visits, so we honor that even if the load is somehow slow.
+      // Splash: show only on first-ever JP load (localStorage flag).
       let splash = null;
       const SPLASH_SHOWN_KEY = 'eng.v1.jpDictLoaded';
       const alreadyLoadedOnce = !!localStorage.getItem(SPLASH_SHOWN_KEY);
@@ -788,39 +796,15 @@
           .map(s => s.trim()).filter(Boolean);
         const tokenizer = await window.JPT.ready();
         // Tokenize every line synchronously — fast, no network.
-        const cleanLines = new Set();
         for (const para of rawParas) {
           for (const line of String(para).split(/\n/)) {
             if (!line.trim() || _jpTokensByLine.has(line)) continue;
-            const raw = tokenizer.tokenize(line);
-            _jpTokensByLine.set(line, raw);
-            const processed = window.JPT.processTokens(raw);
-            const clean = window.JPT.surfaceOf(processed);
-            if (clean && !_jpFuriganaByCleanLine.has(clean)) {
-              cleanLines.add(clean);
-            }
+            _jpTokensByLine.set(line, tokenizer.tokenize(line));
           }
         }
-        // Kick off GPT furigana fetches in the BACKGROUND. We capture
-        // the promise so a post-render `await` can soft-refresh the
-        // current page once readings arrive — but this `await` is
-        // outside the splash try/finally, so the splash can hide as
-        // soon as kuromoji is ready.
-        const lineList = Array.from(cleanLines);
-        if (lineList.length) {
-          let nextIdx = 0;
-          const CONCURRENCY = 4;
-          _jpBgPrefetchPromise = Promise.all(
-            Array.from({ length: CONCURRENCY }, async () => {
-              while (true) {
-                const i = nextIdx++;
-                if (i >= lineList.length) return;
-                const ruby = await window.JPT.getFurigana(lineList[i]);
-                if (ruby) _jpFuriganaByCleanLine.set(lineList[i], ruby);
-              }
-            })
-          );
-        }
+        // (No GPT prefetch — see comment above. The body renders
+        // synchronously from kuromoji; chunk hiragana fetches on
+        // word click and caches in the cloud for next time.)
       } catch (e) {
         console.warn('[jp-tokenize] preload failed', e);
       } finally {
@@ -876,33 +860,9 @@
     setupCorporaAndNaverPopups();
     applySidebarVisibility();
     applyMobileContBar();
-
-    // Background GPT furigana — when the prefetch promise (started
-    // during the JP preload block above) resolves, the cache is now
-    // populated for every line of the body. Re-render the current
-    // page so the user sees ACCURATE readings (なん instead of なに,
-    // きょう instead of こんにち, etc.) without having seen a splash.
-    // Pagination doesn't need to re-run because line heights are the
-    // same regardless of which reading sits in the <rt> (kuromoji vs
-    // GPT both use the same ruby HTML structure).
-    if (_jpBgPrefetchPromise) {
-      _jpBgPrefetchPromise.then(() => {
-        const root = document.getElementById('lesson-text');
-        if (!root) return;
-        // Bail if the user navigated away mid-fetch (different lesson,
-        // different language, etc.).
-        if (DB.getLang && DB.getLang() !== 'ja') return;
-        renderInto(root, PAGES[pageIdx] || []);
-        // Re-bind interactions and rebuild the sentence map — the
-        // root keeps the same .w spans but with refreshed inner ruby,
-        // so dataset.bound on the root still reflects the bindings.
-        // We need to clear the flag so bindWordInteractions actually
-        // re-runs against the freshly-rendered children.
-        root.dataset.bound = '';
-        bindWordInteractions(root);
-        buildSentenceMap(root);
-      }).catch(() => {});
-    }
+    // (Removed: post-render soft refresh on GPT-furigana arrival —
+    // the body now renders plain text, no ruby. Chunk furigana is
+    // fetched on-demand when a word is tapped.)
   }
 
   // ============== PC sidebar ==============
@@ -2752,6 +2712,40 @@
     } else {
       koHtml = escapeHtml(chunkKo);
     }
+
+    const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    if (lang === 'ja' && window.JPT && window.JPT.getFurigana &&
+        window.JPT.rubyToHiraganaWithUnderlines) {
+      // JP mode — re-render the chunk in ALL HIRAGANA with kanji-derived
+      // hiragana underlined. NO kanji shown in the chunk row (per spec).
+      // The Korean meaning sits below.
+      //
+      // Two-stage render to keep the row instant:
+      //   1) Synchronous kuromoji rendering — already-tokenized, no
+      //      network. Kanji-free immediately, so the user never sees
+      //      kanji even for the briefest moment.
+      //   2) Async upgrade to GPT-derived ruby once it arrives —
+      //      replaces kuromoji's per-entry default reading with the
+      //      contextually-correct one (何ですか kuromoji=なに → GPT=なん).
+      host.dataset.chunkText = chunkText;
+      const initialHtml = window.JPT.toHiraganaWithUnderlinesSync
+        ? window.JPT.toHiraganaWithUnderlinesSync(chunkText)
+        : escapeHtml(chunkText);
+      host.innerHTML =
+        '<div class="ck-en ck-en-ja">' + initialHtml + '</div>' +
+        '<div class="ck-ko">' + koHtml + '</div>';
+      window.JPT.getFurigana(chunkText).then(ruby => {
+        // Bail if the host is now showing a different chunk (user
+        // jumped to another word while ruby was in flight).
+        if (host.dataset.chunkText !== chunkText) return;
+        if (!Array.isArray(ruby) || !ruby.length) return;
+        const ckEn = host.querySelector('.ck-en');
+        if (ckEn) ckEn.innerHTML = window.JPT.rubyToHiraganaWithUnderlines(ruby);
+      }).catch(() => {});
+      return;
+    }
+
+    // EN path — original behavior.
     host.innerHTML =
       '<div class="ck-en">' + highlightLemma(chunkText, lemma || '') + '</div>' +
       '<div class="ck-ko">' + koHtml + '</div>';
@@ -5522,13 +5516,10 @@
   // finishes; we just need the tokens to already be computed when
   // renderInto walks paragraphs in a slide animation).
   const _jpTokensByLine = new Map();
-  // Cache of GPT-generated furigana annotations keyed by the CLEANED
-  // surface of a line (= concatenation of processed-token surfaces,
-  // i.e. with inline-furigana duplicates stripped). The same cleaned
-  // surface is what we send to `furigana-gpt`, so a renderer call —
-  // whether it gets the original line or a paginate-reflowed copy —
-  // hits the same key after running JPT.processTokens once.
-  const _jpFuriganaByCleanLine = new Map();
+  // (Removed: _jpFuriganaByCleanLine — sentence-level GPT furigana
+  // is no longer used. The body renders plain text; per-chunk
+  // hiragana annotations are fetched on-demand by renderChunkTx
+  // when a word is clicked, and the cloud cache de-dupes repeats.)
 
   // Loading splash for the first JP lesson load — kuromoji + IPADIC
   // ship as ~5 MB gzip, ~13 MB uncompressed across 12 files. Shows a
@@ -5593,35 +5584,11 @@
     if (!all.size) return;
     try {
       const tokenizer = await window.JPT.ready();
-      const cleanLines = new Set();
       for (const line of all) {
-        const raw = tokenizer.tokenize(line);
-        _jpTokensByLine.set(line, raw);
-        if (window.JPT.processTokens && window.JPT.surfaceOf) {
-          const clean = window.JPT.surfaceOf(window.JPT.processTokens(raw));
-          if (clean && !_jpFuriganaByCleanLine.has(clean)) cleanLines.add(clean);
-        }
+        _jpTokensByLine.set(line, tokenizer.tokenize(line));
       }
-      // Background furigana fetch — this path runs on mode changes
-      // and resize repaginate, where the user is already looking at
-      // the page. Don't block; the next render-after-await picks up
-      // whatever finished and falls back gracefully on still-pending
-      // entries (which then get the GPT readings on the following
-      // repaint when the page next re-renders).
-      const list = Array.from(cleanLines);
-      if (list.length && window.JPT.getFurigana) {
-        let nextIdx = 0;
-        const CONCURRENCY = 4;
-        const workers = Array.from({ length: CONCURRENCY }, async () => {
-          while (true) {
-            const i = nextIdx++;
-            if (i >= list.length) return;
-            const ruby = await window.JPT.getFurigana(list[i]);
-            if (ruby) _jpFuriganaByCleanLine.set(list[i], ruby);
-          }
-        });
-        Promise.all(workers).catch(() => {});
-      }
+      // (No GPT prefetch — body uses plain text; chunks fetch
+      // ruby on-demand at click time.)
     } catch (e) {
       console.warn('[jp-tokenize] builder failed', e);
     }
@@ -5696,22 +5663,12 @@
         if (tokens && tokens.length) _jpTokensByLine.set(line, tokens);
       }
       if (tokens && tokens.length) {
-        // GPT furigana lookup — keyed by the CLEANED surface (post-
-        // strip / post-merge), which is the same form cached during
-        // preload. Falls back to null (kuromoji readings) on miss; the
-        // lesson still renders, just with kuromoji's default reading
-        // per kanji entry.
-        let ruby = null;
-        if (window.JPT && window.JPT.processTokens && window.JPT.surfaceOf) {
-          const processed = window.JPT.processTokens(tokens);
-          const clean = window.JPT.surfaceOf(processed);
-          ruby = _jpFuriganaByCleanLine.get(clean) || null;
-        }
-        // Build chips via JPT.renderTokens (HTML string), then
-        // mount into a temp container and move the .w children
-        // over so we can apply per-element WORD_STATES classes.
+        // Body chips render plain text (no <ruby>) — furigana is
+        // shown only in the popup's chunk-explanation row, where
+        // chunks are converted to all-hiragana with kanji-readings
+        // underlined. So renderTokens here is called without ruby.
         const tmp = document.createElement('span');
-        tmp.innerHTML = window.JPT.renderTokens(tokens, ruby);
+        tmp.innerHTML = window.JPT.renderTokens(tokens);
         while (tmp.firstChild) {
           const child = tmp.firstChild;
           if (child.classList && child.classList.contains('w') &&

@@ -536,25 +536,24 @@
   // INFLECTION COLORING — for merged tokens (verb + auxiliary chains
   // like 持ってきました, 住んでいました), each post-stem `_segment`
   // gets a cycling color class (.hl-infl → .hl-infl-2 → .hl-infl-3 →
-  // loop). The kanji STEM stays uncolored under its <ruby>; only the
-  // kana inflection tail gets cycle-colored, so a learner instantly
-  // sees where one inflection ends and the next begins.
-  function renderTokens(tokens, ruby) {
+  // loop). The STEM (segment 0) stays uncolored; only the inflection
+  // tail gets cycle-colored.
+  //
+  // The `ruby` parameter is now ignored at the body level — body
+  // chips render plain (no furigana). We keep the parameter for
+  // API stability and use the same `ruby` data in the popup chunk-
+  // explanation row, where chunks are re-rendered all-hiragana with
+  // kanji-readings underlined.
+  function renderTokens(tokens, _unusedRuby) {
     const merged = processTokens(tokens);
-    const useRuby = Array.isArray(ruby) && ruby.length &&
-                    _rubyMatchesSurface(ruby, surfaceOf(merged));
-    const rubySegs = useRuby ? _indexRubySegs(ruby) : null;
     const out = [];
-    let tokenStart = 0;
     for (const tk of merged) {
       const surface = tk.surface_form || '';
-      const tokenEnd = tokenStart + surface.length;
       if (!_isWordToken(tk)) {
         out.push('<span class="w punct">' + _escapeHtml(surface) + '</span>');
-        tokenStart = tokenEnd;
         continue;
       }
-      const inner = _renderTokenInner(tk, rubySegs, tokenStart, tokenEnd);
+      const inner = _renderTokenInner(tk);
       const lemma = (tk.basic_form && tk.basic_form !== '*') ? tk.basic_form : surface;
       const tkSegs = tk._segments || [surface];
       const segsAttr = _escapeHtml(JSON.stringify(tkSegs));
@@ -565,7 +564,6 @@
         (inner || _escapeHtml(surface)) +
         '</span>'
       );
-      tokenStart = tokenEnd;
     }
     return out.join('');
   }
@@ -611,70 +609,21 @@
     return map;
   }
 
-  // Render the inner HTML for one merged token. Either GPT ruby
-  // (rubySegs != null) or kuromoji's per-token reading drives the
-  // <ruby> placement; in BOTH paths the post-stem kana gets the
-  // inflection color cycle.
+  // Render the inner HTML for one merged token. Lesson body shows
+  // plain surface text (NO furigana) — the user opted out of inline
+  // ruby because over-annotation cluttered the body. Furigana / kanji
+  // readings are now exposed only in the popup's chunk-explanation
+  // row (see renderChunkTx in lesson.html), where we re-render the
+  // chunk in all-hiragana with kanji-readings underlined.
+  //
+  // The post-stem kana still gets the inflection color cycle so a
+  // learner can see where one auxiliary ends and the next begins
+  // (持って**き**ました — segments cycle sky → green → magenta).
   const _INFL_PALETTE = ['hl-infl', 'hl-infl-2', 'hl-infl-3'];
-  function _renderTokenInner(tk, rubySegs, tokenStart, tokenEnd) {
+  function _renderTokenInner(tk /*, rubySegs, tokenStart, tokenEnd */) {
     const surface = tk.surface_form || '';
     const segMap = _segmentIndexMap(tk);
-
-    if (rubySegs) {
-      // GPT-ruby path: walk overlapping ruby segments. Kanji segments
-      // (with reading) become <ruby>; non-kanji segments get the
-      // plain-text colorize pass.
-      let html = '';
-      for (const seg of rubySegs) {
-        if (seg.end <= tokenStart) continue;
-        if (seg.start >= tokenEnd) break;
-        const fullyInside = (seg.start >= tokenStart && seg.end <= tokenEnd);
-        const localStart = Math.max(seg.start, tokenStart) - tokenStart;
-        const localEnd   = Math.min(seg.end,   tokenEnd)   - tokenStart;
-        if (seg.reading && fullyInside) {
-          // Kanji segment with contextual reading. Stem rendering —
-          // not colored, even if technically inside an inflection
-          // _segment (the kanji "anchor" reads cleaner without color).
-          html += '<ruby>' +
-                  _escapeHtml(seg.text) +
-                  '<rt>' + _escapeHtml(seg.reading) + '</rt></ruby>';
-        } else {
-          // Non-kanji or partial overlap — plain text with color cycle.
-          html += _colorizeRun(surface, localStart, localEnd, segMap);
-        }
-      }
-      return html;
-    }
-
-    // Kuromoji-only fallback — use kuromoji's per-token reading via
-    // _buildFurigana to lay <ruby> over kanji runs. Kana runs go
-    // through the same color-cycling pass.
-    const reading = katakanaToHiragana(tk.reading || '');
-    if (!_hasKanji(surface) || !reading || reading === surface) {
-      return _colorizeRun(surface, 0, surface.length, segMap);
-    }
-    const fSegs = _buildFurigana(surface, reading);
-    let html = '';
-    let charPos = 0;
-    let alignmentFailed = false;
-    for (const fs of fSegs) {
-      if (fs.kanji) {
-        if (!fs.reading) { alignmentFailed = true; break; }
-        html += '<ruby>' + _escapeHtml(fs.kanji) +
-                '<rt>' + _escapeHtml(fs.reading) + '</rt></ruby>';
-        charPos += fs.kanji.length;
-      } else {
-        const kanaText = fs.kana || '';
-        html += _colorizeRun(surface, charPos, charPos + kanaText.length, segMap);
-        charPos += kanaText.length;
-      }
-    }
-    if (alignmentFailed) {
-      // Fallback: whole-token ruby + plain colorized surface.
-      return '<ruby>' + _escapeHtml(surface) +
-             '<rt>' + _escapeHtml(reading) + '</rt></ruby>';
-    }
-    return html;
+    return _colorizeRun(surface, 0, surface.length, segMap);
   }
 
   // Colorize a [startPos, endPos) slice of `surface` based on the
@@ -769,6 +718,9 @@
     let cur = null;
     let wordIdx = -1;       // index across non-punct tokens only
     let pendingModifier = null;   // 連体詞 / 接頭詞 awaiting a head noun
+    let lastWasListConnector = false;  // previous particle was と / や / か
+                                       // → coordinate the upcoming noun
+                                       // into the same chunk
     for (const tk of tokens) {
       const isWord = _isWordToken(tk);
       if (isWord) wordIdx++;
@@ -783,9 +735,18 @@
         tk.pos === '形容詞' || tk.pos === '形容動詞' ||
         tk.pos === '副詞' || tk.pos === '感動詞'
       );
+      // Coordinate-list particles: と / や / か link two nouns at the
+      // same syntactic level (うさぎと熊とりすが…). Treat them as
+      // "the next content word should JOIN this chunk, not start a
+      // new one." This stops "うさぎ / と / 熊 / と / りす / が" from
+      // exploding into 5 chunks — beginners read コーディネート lists
+      // as ONE noun-phrase.
+      const isListConnector = isWord && tk.pos === '助詞' && (
+        tk.surface_form === 'と' ||
+        tk.surface_form === 'や' ||
+        tk.surface_form === 'か'
+      );
       if (isBoundModifier) {
-        // Buffer the modifier — its char positions will join the next
-        // content chunk's range.
         if (!pendingModifier) {
           pendingModifier = { text: tk.surface_form, idxStart: wordIdx };
         } else {
@@ -794,16 +755,22 @@
         continue;
       }
       if (isContent) {
-        // Close the previous chunk and start a new one.
-        if (cur) chunks.push(cur);
-        if (pendingModifier) {
-          cur = {
-            text: pendingModifier.text + tk.surface_form,
-            indices: [pendingModifier.idxStart, wordIdx],
-          };
-          pendingModifier = null;
+        if (lastWasListConnector && cur) {
+          // Coordinated noun — attach to the running chunk.
+          cur.text += tk.surface_form;
+          cur.indices[1] = wordIdx;
         } else {
-          cur = { text: tk.surface_form, indices: [wordIdx, wordIdx] };
+          // Close the previous chunk and start a new one.
+          if (cur) chunks.push(cur);
+          if (pendingModifier) {
+            cur = {
+              text: pendingModifier.text + tk.surface_form,
+              indices: [pendingModifier.idxStart, wordIdx],
+            };
+            pendingModifier = null;
+          } else {
+            cur = { text: tk.surface_form, indices: [wordIdx, wordIdx] };
+          }
         }
       } else if (cur && isWord) {
         // Attach particle / auxiliary / unknown to the running chunk.
@@ -826,6 +793,7 @@
           pendingModifier = null;
         }
       }
+      lastWasListConnector = isListConnector;
     }
     if (cur) chunks.push(cur);
     if (pendingModifier) {
@@ -856,6 +824,61 @@
     return chunks;
   }
 
+  // Convert ruby segments → all-hiragana HTML with kanji-readings
+  // underlined. Used by the popup's chunk-explanation row to show
+  // 「お<u>なまえ</u>は<u>なん</u>ですか。」 from the input segments
+  // [{t:"お",r:""},{t:"名前",r:"なまえ"},…]. Original kana stays plain
+  // so a learner can visually distinguish "kanji-derived hiragana"
+  // (underlined) from "natively hiragana" (plain).
+  function rubyToHiraganaWithUnderlines(ruby) {
+    if (!Array.isArray(ruby)) return '';
+    let html = '';
+    for (const seg of ruby) {
+      const t = (seg && seg.t) || '';
+      const r = (seg && seg.r) || '';
+      if (r) html += '<u>' + _escapeHtml(r) + '</u>';
+      else   html += _escapeHtml(t);
+    }
+    return html;
+  }
+
+  // Synchronous kuromoji-only version of the above — used as the
+  // instant initial render for the chunk-explanation row while the
+  // GPT furigana fetch is in flight. Less accurate for context-
+  // dependent readings (何ですか reads as なに here, GPT would say
+  // なん) but ALWAYS kanji-free, so it satisfies the spec's "no
+  // kanji in the chunk row" rule even before the network round-trip.
+  function toHiraganaWithUnderlinesSync(text) {
+    const s = String(text || '');
+    if (!s) return '';
+    if (!_tokenizer) return _escapeHtml(s);   // builder not ready yet
+    const tokens = _tokenizer.tokenize(s);
+    let html = '';
+    for (const tk of tokens) {
+      const surf = tk.surface_form || '';
+      const reading = tk.reading ? katakanaToHiragana(tk.reading) : '';
+      if (!_hasKanji(surf) || !reading || reading === surf) {
+        html += _escapeHtml(surf);
+        continue;
+      }
+      const segs = _buildFurigana(surf, reading);
+      let alignmentFailed = false;
+      let buf = '';
+      for (const seg of segs) {
+        if (seg.kanji) {
+          if (!seg.reading) { alignmentFailed = true; break; }
+          buf += '<u>' + _escapeHtml(seg.reading) + '</u>';
+        } else {
+          buf += _escapeHtml(seg.kana || '');
+        }
+      }
+      html += alignmentFailed
+        ? '<u>' + _escapeHtml(reading) + '</u>'
+        : buf;
+    }
+    return html;
+  }
+
   window.JPT = {
     ready,
     tokenize,
@@ -864,6 +887,8 @@
     surfaceOf,
     renderTokens,
     getFurigana,
+    rubyToHiraganaWithUnderlines,
+    toHiraganaWithUnderlinesSync,
     katakanaToHiragana,
     splitSentencesJa,
     chunkSentenceJa,
