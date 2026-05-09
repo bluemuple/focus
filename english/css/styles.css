@@ -1012,7 +1012,9 @@ body:has(.lesson-page) {
   transform-origin: center;
 }
 
-/* Floating "+1" near the tapped word. */
+/* Floating coin amount (e.g. "3¢") near the tapped word. Lifetime
+   tuned to 1.5 s per spec — long enough for the user to read the
+   number without losing the connection to the source word. */
 .plus-one {
   position: absolute;
   z-index: 220;
@@ -1022,17 +1024,17 @@ body:has(.lesson-page) {
   text-shadow: 0 1px 2px rgba(0,0,0,0.08);
   transform: translate(-50%, 0);
   opacity: 0;
-  transition: transform .85s ease, opacity .85s ease;
+  transition: transform 1.5s ease, opacity 1.5s ease;
 }
 .plus-one.go {
   transform: translate(-50%, -28px);
   opacity: 1;
 }
-/* The fade-out begins after the upward motion peaks. */
-.plus-one.go { animation: plus-one-fade .85s forwards; }
+.plus-one.go { animation: plus-one-fade 1.5s forwards; }
 @keyframes plus-one-fade {
   0%   { opacity: 0; transform: translate(-50%, 0); }
-  20%  { opacity: 1; }
+  15%  { opacity: 1; transform: translate(-50%, -8px); }
+  70%  { opacity: 1; transform: translate(-50%, -22px); }
   100% { opacity: 0; transform: translate(-50%, -32px); }
 }
 
@@ -1216,11 +1218,67 @@ body:has(.lesson-page) {
   background: #fff;
   border-left: 1px solid var(--line);
   box-shadow: -8px 0 24px rgba(0,0,0,0.06);
-  padding: 56px 22px 80px;
-  overflow-y: auto;
+  /* Two-row flex layout: scrollable .ls-scroll fills the top, the
+     fixed .ls-bottom-fixed strip pins to the bottom (level buttons
+     always visible regardless of scroll position). Padding moved to
+     the inner .ls-scroll so the bottom strip sits flush against the
+     sidebar's bottom edge. */
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;             /* inner .ls-scroll handles scrolling */
   z-index: 90;
   transform: translateX(0);
   transition: transform .28s cubic-bezier(.22,.6,.36,1);
+}
+.lesson-sidebar .ls-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 56px 22px 16px;
+}
+/* Bottom-fixed strip: matches the lesson-bar's 64 px height so the
+   sidebar's bottom row visually aligns with the bar (when present).
+   Always visible whenever a word card is shown — never scrolls. */
+.lesson-sidebar .ls-bottom-fixed {
+  flex-shrink: 0;
+  height: 64px;
+  border-top: 1px solid var(--line);
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 14px;
+}
+.lesson-sidebar .ls-bottom-fixed[hidden] { display: none; }
+.lesson-sidebar .ls-bottom-fixed .level-bar {
+  display: flex; align-items: center; gap: 8px;
+}
+/* Tooltip on hover for level buttons inside the bottom-fixed strip.
+   Pops above the button so the user sees the stage's full Korean
+   label without obscuring the body text below. */
+.lesson-sidebar .ls-bottom-fixed .lv-btn {
+  position: relative;
+}
+.lesson-sidebar .ls-bottom-fixed .lv-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #1f2937;
+  color: #fff;
+  padding: 5px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease;
+  z-index: 5;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.lesson-sidebar .ls-bottom-fixed .lv-btn[data-tip]:hover::after {
+  opacity: 1;
 }
 .lesson-sidebar[hidden] { display: block; transform: translateX(100%); }
 .lesson-sidebar .ls-close {
@@ -1400,10 +1458,10 @@ body:has(.lesson-page) {
     margin-right: 360px;
     margin-left: 0;
   }
-  /* Also shrink the bottom lesson-bar so its right edge sits at the
-     sidebar's LEFT edge — the practice button on the bar's right end stays
-     fully visible instead of being hidden under the sidebar. */
-  body.sidebar-open .lesson-bar,
+  /* Playbar still uses right: 360 to match the sidebar's left edge.
+     The lesson-bar uses the newer margin-based centering scheme (see
+     the .lesson-bar block further down) so the floating-buttons
+     layout stays inside the lesson-main card's horizontal bounds. */
   body.sidebar-open .playbar {
     right: 360px;
     transition: right .28s;
@@ -2224,6 +2282,40 @@ body:has(.lesson-page) {
   height: 64px;
 }
 .lesson-bar[hidden] { display: none; }
+@media (min-width: 1024px) {
+  /* PC layout — the white lesson-bar background is removed per spec.
+     The bar element stays (so its buttons keep working) but it
+     becomes a transparent strip whose horizontal bounds match the
+     lesson-main card; the buttons inside appear to "float" in front
+     of the page background. Each button gets its own drop-shadow
+     (added per-button below) so the floating effect reads cleanly. */
+  .lesson-bar {
+    background: transparent;
+    border-top: none;
+    box-shadow: none;
+    /* Mirror lesson-main's horizontal positioning so the buttons sit
+       within the white text card's width — both when the sidebar is
+       closed (centered) and when it's open (margin-right: 360). */
+    left: 0; right: 0;
+    max-width: calc(100% - 360px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+  body.sidebar-open .lesson-bar {
+    margin-left: 0;
+    margin-right: 360px;
+  }
+  /* Drop-shadow on every button in the bar so each one reads as a
+     floating pill against the page background (no longer a row of
+     pills sitting on a white plate). */
+  .lesson-bar .lb-play,
+  .lesson-bar .lb-arrow,
+  .lesson-bar .lb-mode,
+  .lesson-bar .lb-practice {
+    box-shadow: 0 2px 8px rgba(15, 20, 28, 0.12),
+                0 1px 2px rgba(15, 20, 28, 0.08);
+  }
+}
 .lesson-bar .lb-play {
   /* Match the adjacent arrow button's size + border on mobile so the
      bottom bar reads as a row of similarly-sized circular controls
@@ -2860,11 +2952,12 @@ body:has(.lesson-page) {
 /* Per-button optical centering: the serif glyphs render with a
    left-leaning optical center, so text-align: center alone leaves
    them looking pushed to the left edge. The "A−"/"A+" pair (글자 크기)
-   needs a 4 px nudge — the wide "A" already pulls the centroid
-   somewhat right. The bare "−"/"+" pair (행간) needs a larger
-   10 px nudge because the glyphs are visually narrow on the right. */
+   needs a 6 px nudge — the wide "A" already pulls the centroid
+   somewhat right but not enough. The bare "−"/"+" pair (행간) needs
+   a larger 10 px nudge because the glyphs are visually narrow on
+   the right. */
 .settings-card #set-font-down,
-.settings-card #set-font-up   { text-indent: 4px; }
+.settings-card #set-font-up   { text-indent: 6px; }
 .settings-card #set-lh-down,
 .settings-card #set-lh-up     { text-indent: 10px; }
 .settings-card .set-stepper-val {

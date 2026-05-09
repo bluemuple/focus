@@ -157,6 +157,11 @@
     <button class="ls-close" id="ls-close" aria-label="사이드바 닫기" title="사이드바 닫기">
       <img src="images/closeside.png" alt="" onerror="this.style.display='none';this.parentNode.textContent='›';">
     </button>
+    <!-- Scrollable inner column. Kept separate from .ls-bottom-fixed
+         below so the level buttons stay anchored to the visible
+         bottom of the sidebar even when the user scrolls a long
+         word card. -->
+    <div class="ls-scroll" id="ls-scroll">
     <div class="ls-empty" id="ls-empty">
       <div class="ls-manual">
         <h3 class="ls-manual-title">📖 레슨 사용법</h3>
@@ -270,8 +275,14 @@
         </svg>
         <span>구문에 추가</span>
       </button>
-
-      <div class="ls-section-label">단계</div>
+    </div>
+    </div>
+    <!-- Bottom-fixed area inside the sidebar — sized to match the
+         lesson-bar's height so the visual rhythm is consistent.
+         Always visible regardless of scroll position. Hidden when
+         no word is selected (empty state). Hovering a level button
+         pops a tooltip with the descriptive label of that stage. -->
+    <div class="ls-bottom-fixed" id="ls-bottom-fixed" hidden>
       <div class="level-bar" id="ls-level"></div>
     </div>
   </aside>
@@ -1892,7 +1903,10 @@
     div.style.left = (r.left + window.scrollX + r.width / 2) + 'px';
     document.body.appendChild(div);
     requestAnimationFrame(() => div.classList.add('go'));
-    setTimeout(() => div.remove(), 900);
+    // Lifetime 1.5 s per spec (was 0.9 s) — matches the
+    // plus-one-fade keyframe duration so the element is removed
+    // exactly as the fade completes.
+    setTimeout(() => div.remove(), 1500);
   }
   let _coinBubble = null;
   let _coinBubbleFadeT = null;
@@ -1910,9 +1924,11 @@
     _coinBubble.textContent = amount + '¢';
     _coinBubble.classList.add('show');
     clearTimeout(_coinBubbleFadeT);
+    // 1.5 s per spec — matches the floater so both reward tiers feel
+    // consistent in lifetime.
     _coinBubbleFadeT = setTimeout(() => {
       _coinBubble && _coinBubble.classList.remove('show');
-    }, 2500);
+    }, 1500);
   }
 
   // ---- arrow-key selection helpers ----
@@ -2247,6 +2263,7 @@
   function clearSidebar() {
     const card  = document.getElementById('ls-card');
     const empty = document.getElementById('ls-empty');
+    const bottomFixed = document.getElementById('ls-bottom-fixed');
     if (card)  card.hidden = true;
     if (empty) {
       empty.hidden = false;
@@ -2255,6 +2272,9 @@
       // we have one. Keeps the sidebar useful even with no active selection.
       renderSidebarWordList(empty);
     }
+    // Hide the bottom-fixed level strip — no word selected = no
+    // level to set. Keeps the empty state visually clean.
+    if (bottomFixed) bottomFixed.hidden = true;
     SIDEBAR_PHRASE = null;
     // Drop the focus glow + chunk highlight on the body too — sidebar
     // empty state means no active selection.
@@ -3122,8 +3142,9 @@
       }
     }).catch(() => {});
 
-    // Authoritative contextual translation — replaces the fast Korean
-    // (if any) with the meaning that actually fits this sentence.
+    // Authoritative contextual translation — DeepL with sentence
+    // context. Replaces the fast Korean (if any) with the meaning
+    // that fits this sentence. GPT below may override this further.
     Translate.translate(word, sentence).then(ko => {
       if (_sheetWord !== word) return;
       const next = (ko || '').trim();
@@ -3137,6 +3158,26 @@
       // also failed). Otherwise the fast path's value stays visible.
       if (!latestWordKo && meaningEl) meaningEl.textContent = '—';
     });
+
+    // Phase 3 — GPT with full-sentence context. DeepL is fast but for
+    // short polysemic words like "holding" / "running" / "be" it
+    // sometimes ignores the surrounding sentence and returns a generic
+    // dictionary sense (e.g. "holding" → "개최 중" instead of the
+    // contextually-correct "유지되고 있다" in "the cease-fire was
+    // holding"). GPT reads the whole sentence and picks the right
+    // sense. This call costs more so we run it AFTER DeepL — the
+    // DeepL result paints first, then GPT overrides if it differs.
+    if (Translate.translateGPT) {
+      Translate.translateGPT(word, sentence).then(ko => {
+        if (_sheetWord !== word) return;
+        const next = (ko || '').trim();
+        if (next && next !== latestWordKo) {
+          latestWordKo = next;
+          repaintMeaning();
+          repaintChunkPanel();
+        }
+      }).catch(() => {});
+    }
 
     // Chunk = words around the clicked word that form one syntactic unit.
     // Renders chunk text immediately, then chunk Korean when it resolves.
@@ -3158,6 +3199,18 @@
           latestChunkKo = chunkKo || '';
           repaintChunkPanel();  // re-render with chunk Korean + pink
         }).catch(() => {});
+        // GPT override for the chunk Korean — same reasoning as the
+        // word's GPT phase: better whole-sentence context handling.
+        if (Translate.translateGPT) {
+          Translate.translateGPT(c.text, sentence).then(chunkKo => {
+            if (_sheetWord !== word) return;
+            const next = (chunkKo || '').trim();
+            if (next && next !== latestChunkKo) {
+              latestChunkKo = next;
+              repaintChunkPanel();
+            }
+          }).catch(() => {});
+        }
       }).catch(() => {});
     }
 
@@ -3481,11 +3534,20 @@
       }
     }
 
-    // Level picker (single word only)
+    // Level picker (single word only) — lives inside the bottom-fixed
+    // strip of the sidebar. Show the strip for single words, hide it
+    // for phrases (the level picker is per-word and meaningless on
+    // multi-word selections).
     const levelHost = document.getElementById('ls-level');
+    const bottomFixed = document.getElementById('ls-bottom-fixed');
     if (levelHost) {
-      if (isPhrase) levelHost.innerHTML = '';
-      else          mountLevelBar(levelHost, text);
+      if (isPhrase) {
+        levelHost.innerHTML = '';
+        if (bottomFixed) bottomFixed.hidden = true;
+      } else {
+        mountLevelBar(levelHost, text);
+        if (bottomFixed) bottomFixed.hidden = false;
+      }
     }
 
     // Add-phrase button (multi-word selection only). If the phrase is
@@ -3609,8 +3671,7 @@
       }
     }).catch(() => {});
 
-    // Phase 2 — authoritative contextual Korean. Replaces the fast
-    // value if a different (sentence-aware) translation comes back.
+    // Phase 2 — authoritative contextual Korean (DeepL).
     Translate.translate(text, sentence).then(ko => {
       const cur = document.getElementById('ls-word');
       if (!cur || cur.textContent !== text) return;
@@ -3626,6 +3687,27 @@
         transEl.innerHTML = '<span class="muted">번역을 불러오지 못했습니다.</span>';
     });
 
+    // Phase 3 — GPT with full-sentence context. DeepL handles short
+    // polysemic words ("holding" / "running" / "be") by reaching for
+    // the most-frequent dictionary sense even when the sentence
+    // disambiguates clearly. GPT reads the entire sentence and picks
+    // the right sense ("the cease-fire was holding" → "유지되고 있다",
+    // not "개최 중"). Runs AFTER DeepL so the user sees a fast first
+    // paint, then GPT silently upgrades it when it differs.
+    if (Translate.translateGPT) {
+      Translate.translateGPT(text, sentence).then(ko => {
+        const cur = document.getElementById('ls-word');
+        if (!cur || cur.textContent !== text) return;
+        const next = (ko || '').trim();
+        if (next && next !== sbLatestWordKo) {
+          sbLatestWordKo = next;
+          SIDEBAR_PHRASE = { text, ko: next };
+          repaintSidebarMeaning();
+          repaintSidebarChunk();
+        }
+      }).catch(() => {});
+    }
+
     // Chunk highlight + translation — single words only. Pulls the cached
     // chunk for this sentence and shows the chunk text + Korean in the
     // mnemonic slot (which now serves as the "구문 풀이" panel).
@@ -3640,11 +3722,26 @@
         if (mnBlock) mnBlock.hidden = false;
         sbLatestChunk = c;
         repaintSidebarChunk();
+        // DeepL pass for chunk Korean (fast).
         Translate.translate(c.text, sentence).then(ko => {
           if (cur.textContent !== text) return;
           sbLatestChunkKo = ko || '';
           repaintSidebarChunk();
         }).catch(() => {});
+        // GPT override for the chunk Korean — same reasoning as the
+        // word's GPT phase: GPT understands whole-sentence context
+        // (e.g. "was holding" in a cease-fire sentence → "유지되고
+        // 있다", not the chunk-isolated "개최 중").
+        if (Translate.translateGPT) {
+          Translate.translateGPT(c.text, sentence).then(ko => {
+            if (cur.textContent !== text) return;
+            const next = (ko || '').trim();
+            if (next && next !== sbLatestChunkKo) {
+              sbLatestChunkKo = next;
+              repaintSidebarChunk();
+            }
+          }).catch(() => {});
+        }
       }).catch(() => {});
     }
 
@@ -4270,9 +4367,20 @@
     if (!host || !word) return;
     const lower = word.toLowerCase();
     const cur = (WORD_STATES[lower] && WORD_STATES[lower].state) || 0;
+    // Hover tooltip text per stage — surfaced via [data-tip] which
+    // CSS picks up to render a dark pill above the button.
+    const TIPS = {
+      '-1': '무시',
+      '1':  '처음 본 단어',
+      '2':  '어디서 본 단어',
+      '3':  '어디서 많이 본 단어',
+      '4':  '익숙한 단어',
+      '5':  '완전히 아는 단어',
+    };
     function btn(s, label, cls) {
       const active = (cur === s);
-      return `<button class="lv-btn ${cls || ''} ${active ? 'active' : ''}" data-lv="${s}" aria-label="단계 ${label}">${label}</button>`;
+      const tip = TIPS[String(s)] || '';
+      return `<button class="lv-btn ${cls || ''} ${active ? 'active' : ''}" data-lv="${s}" data-tip="${tip}" aria-label="단계 ${label} - ${tip}" title="${tip}">${label}</button>`;
     }
     host.innerHTML =
       btn(-1, '🗑', 'ignore') +
@@ -5607,18 +5715,22 @@
 
       // ===== Motivation feedback =====
       pulseWord(w);                    // micro scale-pulse on the tapped word
-      // Randomized coin reward — DB.recordMoneyClick rolls the trigger
-      // (every 1-9 unique clicks) AND the amount (1-15¢ weighted) and
-      // returns the cents actually credited for this specific click
-      // (0 when the click didn't fire a reward, or daily $2 cap was hit).
-      // 1-7¢ → small floater near the word; 8-15¢ → big bottom-right pill.
-      try {
-        const reward = DB.recordMoneyClick && DB.recordMoneyClick(word);
-        if (reward && reward > 0) {
-          if (reward <= 7) showCoinFloater(w, reward);
-          else             showCoinBubble(reward);
-        }
-      } catch (e) {}
+      // Randomized coin reward — only on a real WORD CLICK in
+      // 단어 뜻 하나씩 (single) mode. Cont/contU mode clicks add to
+      // a multi-word selection rather than "studying a single word",
+      // and arrow-key/button navigation goes through trySingleStep
+      // (not this handler) so it already bypasses the reward path.
+      // Restricting to single-mode-direct-click keeps the reward
+      // tied to the act of LEARNING a word.
+      if (MODE === 'single') {
+        try {
+          const reward = DB.recordMoneyClick && DB.recordMoneyClick(word);
+          if (reward && reward > 0) {
+            if (reward <= 7) showCoinFloater(w, reward);
+            else             showCoinBubble(reward);
+          }
+        } catch (e) {}
+      }
 
       // Predict the new state from the local cache so we can recolour the
       // word + open the sheet IMMEDIATELY, then reconcile in the background
