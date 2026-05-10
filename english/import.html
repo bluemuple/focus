@@ -47,20 +47,16 @@
           <img id="f-thumb-preview" alt="썸네일 미리보기" style="display:none">
           <input id="f-thumb" type="file" accept="image/*" style="display:none">
         </div>
-        <!-- Paste-zone — feeds setThumb() so all four input paths
-             (file pick / drop / image bytes / image URL) end at the
-             same upload pipeline.
-               • Desktop  — focus, then ⌘/Ctrl+V (image bytes).
-               • Mobile   — TAP. Async Clipboard API reads the system
-                 clipboard. iOS asks for permission the first time.
-               • iOS Safari "Copy image" sometimes only puts the image
-                 URL on the clipboard (not bytes). We detect that and
-                 fetch the URL automatically. -->
+        <!-- Paste-zone — three input paths:
+             • PC: click to focus, then ⌘/Ctrl+V (image bytes or URL).
+             • Mobile: tap. Async Clipboard API reads the image, OR
+               detects a text URL and fetches it (handles iOS Safari
+               "Copy image from web" producing a URL only). -->
         <div class="thumb-paste-zone" id="f-thumb-paste" tabindex="0"
              aria-label="클립보드 이미지 붙여넣기">
           <span class="tp-icon" aria-hidden="true">📋</span>
           <span class="tp-text">
-            <strong>탭</strong> (모바일) · 클릭 후 <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> (PC) — 클립보드 이미지 또는 이미지 URL 붙여넣기
+            <strong>탭</strong>(모바일) · 클릭 후 <kbd>⌘V</kbd>/<kbd>Ctrl+V</kbd>(PC) — 이미지 또는 이미지 URL 붙여넣기
           </span>
         </div>
         <button type="button" id="f-thumb-clear" class="btn ghost"
@@ -239,21 +235,18 @@
     }
 
     // ---- thumbnail PASTE zone ----
-    // Three input paths, all feeding the same `setThumb()` so preview /
-    // resize / upload stay identical:
-    //   • DESKTOP — click to focus, then ⌘/Ctrl+V fires `paste` with
-    //               image bytes in clipboardData.items.
-    //   • MOBILE (image bytes) — tap, the Async Clipboard API
-    //               (iOS 13.4+, Chrome Android) returns a binary
-    //               image item. First call shows a permission prompt.
-    //   • MOBILE (URL only) — iOS Safari's "long-press image → Copy"
-    //               often puts ONLY the image URL on the clipboard,
-    //               not the image bytes. We detect text/plain URLs
-    //               and fetch them as a CORS-mode HTTP GET, then
-    //               wrap the response blob and feed setThumb. Falls
-    //               back to an <img>+canvas trip if the direct fetch
-    //               fails CORS (some hosts allow image loading but
-    //               not fetch — the canvas re-encode pulls them in).
+    // Three input paths into the same `setThumb()` pipeline:
+    //   1. PC ⌘V/Ctrl+V with image bytes in clipboardData (paste event).
+    //   2. PC ⌘V/Ctrl+V with a text URL → fetched as an image.
+    //   3. MOBILE TAP → Async Clipboard API. Reads image bytes if
+    //      present; if the clipboard only has a URL (typical on iOS
+    //      "Copy image" from a webpage — examples: media.cnn.com /
+    //      vid.alarabiya.net image URLs) the URL is fetched and the
+    //      response blob becomes the thumbnail.
+    // CORS-friendly hosts (Supabase Storage, S3, jsdelivr, GitHub
+    // raw, most major CDNs) fetch directly. Hosts that block fetch
+    // but allow image loading are picked up by an `<img
+    // crossOrigin="anonymous">` + canvas re-encode fallback.
     const pasteZone = document.getElementById('f-thumb-paste');
     function _flashPasted() {
       if (!pasteZone) return;
@@ -272,15 +265,13 @@
       _flashPasted();
       return true;
     }
-    // URL → image. Tries direct fetch first (works for CORS-friendly
-    // image hosts: Supabase Storage, S3, jsdelivr, GitHub user content,
-    // most CDNs). Falls back to <img crossOrigin="anonymous"> + canvas
-    // re-encode for hosts that allow CORS on image loading but not on
-    // fetch. Returns true if the thumbnail was set, false otherwise.
+    // URL → image. Direct fetch first; falls back to <img>+canvas
+    // for hosts that allow img tag loading but not cross-origin
+    // fetch (some CDNs do this).
     async function _tryPasteUrlAsImage(text) {
       const url = (text || '').trim();
       if (!/^https?:\/\//i.test(url)) return false;
-      // Path A — direct fetch.
+      // Path A — direct cross-origin fetch.
       try {
         const r = await fetch(url, { mode: 'cors' });
         if (r.ok) {
@@ -292,7 +283,7 @@
       } catch (e) {
         console.warn('[paste] direct fetch failed', e && e.message);
       }
-      // Path B — <img> + canvas (re-encodes as JPEG).
+      // Path B — <img crossOrigin="anonymous"> + canvas re-encode.
       try {
         const img = await new Promise((resolve, reject) => {
           const im = new Image();
@@ -305,8 +296,7 @@
         const canvas = document.createElement('canvas');
         canvas.width  = img.naturalWidth;
         canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0);
+        canvas.getContext('2d').drawImage(img, 0, 0);
         const blob = await new Promise((resolve) => {
           canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9);
         });
@@ -316,16 +306,15 @@
       }
       return false;
     }
-    // Try the Async Clipboard API. Reads image bytes first; if the
-    // clipboard only carries a URL (iOS Safari "Copy image"
-    // sometimes does this), falls back to fetching that URL.
+    // Async Clipboard API — used by the mobile tap path. Reads image
+    // bytes first, then falls back to text/plain (which iOS's "Copy
+    // image" often produces in place of bytes).
     async function tryAsyncPaste() {
       if (!navigator.clipboard) return false;
-      // 1) Structured read — supports both image bytes and text/plain.
       if (navigator.clipboard.read) {
         try {
           const items = await navigator.clipboard.read();
-          // Image bytes first.
+          // 1) Image bytes.
           for (const item of items) {
             for (const type of item.types || []) {
               if (typeof type === 'string' && type.startsWith('image/')) {
@@ -334,7 +323,7 @@
               }
             }
           }
-          // No image bytes? Look for a text URL among the items.
+          // 2) text/plain URL among the items.
           for (const item of items) {
             if ((item.types || []).indexOf('text/plain') >= 0) {
               try {
@@ -348,8 +337,7 @@
           console.warn('[paste] clipboard.read failed', e && e.message);
         }
       }
-      // 2) Last resort — readText() (older iOS versions sometimes
-      //    expose only this method).
+      // 3) Last resort — readText() for older iOS versions.
       if (navigator.clipboard.readText) {
         try {
           const text = await navigator.clipboard.readText();
@@ -362,13 +350,9 @@
       pasteZone.addEventListener('click', async () => {
         const pasted = await tryAsyncPaste();
         if (!pasted) {
-          // Desktop fallback — focus so the next ⌘V/Ctrl+V is captured
-          // by our `paste` listener below. On iOS this is also a no-op
-          // hint; the actual paste happens via the click→Async path.
+          // Desktop fallback: focus so the next ⌘V/Ctrl+V is captured
+          // by the `paste` listener below.
           pasteZone.focus();
-          // If Async Clipboard returned empty (no permission, no
-          // image, no URL), surface a hint rather than failing silently
-          // — it tells the user where the failure is.
           if (navigator.clipboard) {
             errBox.textContent = '클립보드에 이미지나 이미지 URL이 없습니다.';
           }
@@ -376,7 +360,7 @@
       });
       pasteZone.addEventListener('paste', async (e) => {
         const items = (e.clipboardData && e.clipboardData.items) || [];
-        // Path 1: image bytes directly in clipboardData.
+        // 1) Image bytes directly in clipboardData.
         for (const item of items) {
           if (item && item.type && item.type.startsWith('image/')) {
             const blob = item.getAsFile();
@@ -386,7 +370,7 @@
             }
           }
         }
-        // Path 2: text/plain URL — fetch and use.
+        // 2) text/plain URL — fetch and convert.
         for (const item of items) {
           if (item && item.kind === 'string' && item.type === 'text/plain') {
             e.preventDefault();

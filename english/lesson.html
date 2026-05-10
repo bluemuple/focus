@@ -5685,7 +5685,15 @@
     let text = (SENTENCE_MAP[localIdx].text || '').trim();
     if (!text) return '';
 
-    const endsWithPunct = /[.!?]\s*["”'’)\]]?\s*$/.test(text);
+    // Sentence-end probe: matches EN periods/!/?, JP 。！？, and the
+    // closing corner brackets 』」 (with optional trailing closing
+    // quotes). Without the JP/bracket additions, JP sentences ending
+    // in 。 falsely tested as "incomplete" and got cross-page next-
+    // sentence text appended — which then corrupted the contU inline
+    // translation in 1문장씩 mode (the translator received a tail
+    // from the next page jammed onto the displayed sentence).
+    const _terminatorRe = /[.!?。！？』」][\s"”'’)\]」』]*$/;
+    const endsWithPunct = _terminatorRe.test(text);
     // Tail extension: last sentence on this page lacks terminal punct →
     // pull the first sentence-ish chunk from the next page's first paragraph.
     if (!endsWithPunct
@@ -5699,8 +5707,8 @@
       if (firstNextSent) text = text + ' ' + firstNextSent.trim();
     }
     // Head extension: first sentence on this page is mid-sentence (the
-    // previous page's last sentence didn't end with .!?) → prepend it so
-    // the chunker has full context for what's visible here.
+    // previous page's last sentence didn't end with a terminator) →
+    // prepend it so the chunker has full context for what's visible here.
     if (localIdx === 0 && pageIdx > 0) {
       const prevParas = PAGES[pageIdx - 1] || [];
       const lastPrevPara = prevParas[prevParas.length - 1] || '';
@@ -5708,7 +5716,7 @@
         ? splitIntoSentences(lastPrevPara)
         : [lastPrevPara];
       const lastPrevSent = (lastPrevSents[lastPrevSents.length - 1] || '').trim();
-      const prevEndsProperly = /[.!?]\s*["”'’)\]]?\s*$/.test(lastPrevSent);
+      const prevEndsProperly = _terminatorRe.test(lastPrevSent);
       if (lastPrevSent && !prevEndsProperly) {
         text = lastPrevSent + ' ' + text;
       }
