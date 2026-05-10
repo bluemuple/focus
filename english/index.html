@@ -1008,7 +1008,15 @@
     a.className = 'card';
     a.href = 'lesson.html?id=' + encodeURIComponent(l.id);
     const initials = (l.title || '?').trim().slice(0, 2).toUpperCase();
-    const wordCount = ((l.body || '').match(/\b[\p{L}']+\b/gu) || []).length;
+    // Word-count regex (\b…\b) only works for space-separated languages.
+    // Japanese has no word boundaries between morphemes, so this returns
+    // 0 for every JP lesson. Fall back to a character count (whitespace
+    // stripped) and label it "N 글자" instead — character count is the
+    // natural unit for JP learners anyway.
+    const _lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    const lessonCount = (_lang === 'ja')
+      ? ((l.body || '').replace(/\s+/g, '').length) + ' 글자'
+      : (((l.body || '').match(/\b[\p{L}']+\b/gu) || []).length) + ' 단어';
     const hasThumb = !!l.thumbnail_url;
     const thumbStyle = hasThumb
       ? `style="background-image:url('${escapeAttr(l.thumbnail_url)}');background-size:cover;background-position:center;"`
@@ -1025,7 +1033,7 @@
       <div class="body">
         <div class="title">${escapeHtml(l.title || '제목 없음')}</div>
         <div class="meta">
-          <span>${wordCount} 단어</span>
+          <span>${lessonCount}</span>
           <span>·</span>
           <span>${formatDate(l.created_at)}</span>
         </div>
