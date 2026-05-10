@@ -47,14 +47,18 @@
           <img id="f-thumb-preview" alt="썸네일 미리보기" style="display:none">
           <input id="f-thumb" type="file" accept="image/*" style="display:none">
         </div>
-        <!-- Paste-zone: focus the box first, then ⌘/Ctrl+V — the
-             clipboard image goes through the same setThumb() path as
-             a file pick or drop, so "가져오기" uploads it as the
-             lesson's thumbnail. -->
+        <!-- Paste-zone:
+             • Desktop — focus the box, then ⌘/Ctrl+V.
+             • Mobile  — just TAP. Async Clipboard API reads the system
+               clipboard on the first user gesture (iOS asks for permission
+               the first time, then stays silent).
+             Both paths feed setThumb() so the result is identical. -->
         <div class="thumb-paste-zone" id="f-thumb-paste" tabindex="0"
              aria-label="클립보드 이미지 붙여넣기">
           <span class="tp-icon" aria-hidden="true">📋</span>
-          <span class="tp-text">클릭 후 <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> 로 클립보드 이미지 붙여넣기</span>
+          <span class="tp-text">
+            모바일은 <strong>탭</strong> · PC는 클릭 후 <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> — 클립보드 이미지 붙여넣기
+          </span>
         </div>
         <button type="button" id="f-thumb-clear" class="btn ghost"
                 style="display:none;margin-top:8px;font-size:13px">🗑 썸네일 삭제</button>
@@ -232,34 +236,72 @@
     }
 
     // ---- thumbnail PASTE zone ----
-    // Click → focus, then ⌘/Ctrl+V fires `paste`. We pull the first
-    // image item from clipboardData and route it through setThumb so
-    // the rest of the pipeline (preview, resize, upload at submit)
-    // is identical to a click-to-pick or drag-and-drop.
+    // Two paths:
+    //   • DESKTOP — click to focus, then ⌘/Ctrl+V fires `paste`.
+    //   • MOBILE  — tap, browser reads the system clipboard via the
+    //               Async Clipboard API (iOS 13.4+, Chrome Android).
+    //               No keyboard needed. First call shows a permission
+    //               prompt; thereafter it's silent.
+    // Both paths feed the same `setThumb()`, so the rest of the
+    // pipeline (preview, resize, upload at submit) stays identical.
     const pasteZone = document.getElementById('f-thumb-paste');
+    function _flashPasted() {
+      if (!pasteZone) return;
+      pasteZone.classList.add('pasted');
+      setTimeout(() => pasteZone.classList.remove('pasted'), 800);
+    }
+    function _setThumbFromBlob(blob) {
+      if (!blob) return false;
+      const ext = (blob.type.split('/')[1] || 'png').split('+')[0];
+      const named = new File(
+        [blob],
+        'pasted-' + Date.now() + '.' + ext,
+        { type: blob.type || 'image/png' }
+      );
+      setThumb(named);
+      _flashPasted();
+      return true;
+    }
+    // Try Async Clipboard API first (mobile-friendly: no keyboard
+    // needed). Returns true on success, false otherwise so the caller
+    // can fall back to focus-and-wait-for-keyboard-paste.
+    async function tryAsyncPaste() {
+      if (!navigator.clipboard || !navigator.clipboard.read) return false;
+      try {
+        const items = await navigator.clipboard.read();
+        for (const item of items) {
+          for (const type of item.types || []) {
+            if (typeof type === 'string' && type.startsWith('image/')) {
+              const blob = await item.getType(type);
+              return _setThumbFromBlob(blob);
+            }
+          }
+        }
+      } catch (e) {
+        // User denied permission, browser doesn't allow it for the
+        // current origin (non-HTTPS), or the clipboard had no image.
+        console.warn('[paste] clipboard.read failed', e);
+      }
+      return false;
+    }
     if (pasteZone) {
-      pasteZone.addEventListener('click', () => pasteZone.focus());
+      pasteZone.addEventListener('click', async () => {
+        const pasted = await tryAsyncPaste();
+        if (!pasted) {
+          // Desktop fallback — focus so the next ⌘V/Ctrl+V is captured
+          // by our `paste` listener below.
+          pasteZone.focus();
+        }
+      });
       pasteZone.addEventListener('paste', (e) => {
         const items = (e.clipboardData && e.clipboardData.items) || [];
         for (const item of items) {
           if (item && item.type && item.type.startsWith('image/')) {
             const blob = item.getAsFile();
-            if (!blob) continue;
-            // Give the pasted blob a real filename so the resize step
-            // (which inspects file.name) and Storage upload behave the
-            // same as a picked file.
-            const ext = (blob.type.split('/')[1] || 'png').split('+')[0];
-            const named = new File(
-              [blob],
-              'pasted-' + Date.now() + '.' + ext,
-              { type: blob.type }
-            );
-            setThumb(named);
-            // Quick visual confirmation on the paste box itself.
-            pasteZone.classList.add('pasted');
-            setTimeout(() => pasteZone.classList.remove('pasted'), 800);
-            e.preventDefault();
-            return;
+            if (_setThumbFromBlob(blob)) {
+              e.preventDefault();
+              return;
+            }
           }
         }
         errBox.textContent = '클립보드에 이미지가 없습니다.';

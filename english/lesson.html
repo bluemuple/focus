@@ -40,7 +40,18 @@
                    state hint, and the mode toggle moved into the
                    bottom bar (.lb-cont-controls) alongside ←/→ arrows
                    so PC and mobile share the same controls layout. -->
-              <div class="head-tools"></div>
+              <div class="head-tools">
+                <!-- Focused-reading toggle. Click → show ONE sentence
+                     at 2× font-size; the page counter (top-right
+                     thumbnail overlay) flips to "n / total sentences",
+                     and ←/→/[,]/[.] step through sentences instead of
+                     pages. Click again to return to normal view. -->
+                <button class="ht-btn" id="single-sent-btn" type="button"
+                        aria-pressed="false" title="한 문장씩 읽기 — 한 문장만 크게 보여요">
+                  <span class="ht-ico" aria-hidden="true">📜</span>
+                  <span class="ht-label">1문장씩</span>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -6370,6 +6381,31 @@
   }
 
   function updateProgress() {
+    // 1문장씩 mode redefines "page" as "sentence" — counter, prev/next
+    // disabled state, and overlay all flip to sentence-based math.
+    if (SINGLE_SENT_MODE) {
+      const total = ALL_SENTENCES.length || 1;
+      const cur = (SINGLE_SENT_IDX || 0) + 1;
+      const lhPrev = document.getElementById('lh-page-prev');
+      const lhNext = document.getElementById('lh-page-next');
+      if (lhPrev && lhNext) {
+        lhPrev.hidden = false;
+        lhNext.hidden = false;
+        lhPrev.disabled = SINGLE_SENT_IDX === 0;
+        lhNext.disabled = SINGLE_SENT_IDX >= total - 1;
+      }
+      const tp    = document.getElementById('thumb-pages');
+      const thumb = document.getElementById('lesson-thumb-img');
+      const hasThumbImg = !!(LESSON && LESSON.thumbnail_url);
+      if (tp && thumb) {
+        thumb.classList.toggle('no-thumb', !hasThumbImg);
+        tp.textContent = cur + ' / ' + total;
+        tp.hidden = false;
+        thumb.hidden = false;
+        thumb.classList.add('has-pages');
+      }
+      return;
+    }
     // The bottom page slider was removed, so most of these elements no
     // longer exist. We keep the function as a no-op safety net (with null
     // guards) in case any of them get re-introduced.
@@ -6418,7 +6454,118 @@
     }
   }
 
+  // ============== 1문장씩 (single-sentence focused reading) ==============
+  // State + helpers. The mode renders ONE sentence at 2× font in the
+  // existing .lesson-text container; goPage() / lh-page-prev/next /
+  // ,/. shortcuts are trampolined to step through ALL_SENTENCES
+  // instead of PAGES, and the thumb-pages counter shows
+  // "<sentence n> / <total sentences>" so the user reads
+  // exactly one sentence at a time. Click the toggle (or Esc)
+  // to leave the mode and return to the normal page view.
+  let SINGLE_SENT_MODE = false;
+  let SINGLE_SENT_IDX  = 0;
+  function _findSentenceIdxOfWord(wEl) {
+    if (!wEl || !ALL_SENTENCES.length) return -1;
+    // Walk from the page's first sentence forward; the body word
+    // sits inside one of those page-local sentences. Use the
+    // SENTENCE_MAP (current page) to find the local idx.
+    if (!SENTENCE_MAP || !SENTENCE_MAP.length) return -1;
+    let local = -1;
+    for (let i = 0; i < SENTENCE_MAP.length; i++) {
+      if (SENTENCE_MAP[i].words && SENTENCE_MAP[i].words.indexOf(wEl) !== -1) {
+        local = i; break;
+      }
+    }
+    if (local < 0) return -1;
+    const start = PAGE_SENTENCE_STARTS[pageIdx] || 0;
+    return Math.min(ALL_SENTENCES.length - 1, start + local);
+  }
+  function enterSingleSent() {
+    if (!ALL_SENTENCES.length) computeAllSentences();
+    if (!ALL_SENTENCES.length) return;
+    // Pick starting sentence: the one containing the active word
+    // when there is one, otherwise the first sentence of the
+    // current page.
+    let startIdx = -1;
+    const active = (typeof getActiveWordEl === 'function') ? getActiveWordEl() : null;
+    if (active) startIdx = _findSentenceIdxOfWord(active);
+    if (startIdx < 0) startIdx = PAGE_SENTENCE_STARTS[pageIdx] || 0;
+    SINGLE_SENT_MODE = true;
+    SINGLE_SENT_IDX  = Math.max(0, Math.min(ALL_SENTENCES.length - 1, startIdx));
+    document.body.classList.add('single-sent-mode');
+    // Reflect the active state on the toggle button.
+    const btn = document.getElementById('single-sent-btn');
+    if (btn) {
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed', 'true');
+    }
+    // Drop any selections / cards from the previous mode.
+    hidePopup();
+    hideContBar();
+    hideWordSheet();
+    clearContSelection();
+    if (typeof clearSidebar === 'function') clearSidebar();
+    renderSingleSent();
+    updateProgress();
+  }
+  function exitSingleSent() {
+    SINGLE_SENT_MODE = false;
+    document.body.classList.remove('single-sent-mode');
+    const btn = document.getElementById('single-sent-btn');
+    if (btn) {
+      btn.classList.remove('active');
+      btn.setAttribute('aria-pressed', 'false');
+    }
+    // Restore the normal page render at whatever pageIdx we ended on.
+    const root = document.getElementById('lesson-text');
+    if (root) {
+      renderInto(root, PAGES[pageIdx] || []);
+      bindWordInteractions(root);
+      buildSentenceMap(root);
+    }
+    updateProgress();
+  }
+  function toggleSingleSent() {
+    if (SINGLE_SENT_MODE) exitSingleSent();
+    else                  enterSingleSent();
+  }
+  function renderSingleSent() {
+    const sent = ALL_SENTENCES[SINGLE_SENT_IDX];
+    const root = document.getElementById('lesson-text');
+    if (!root || !sent) return;
+    root.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'single-sent-wrap';
+    // Reuse renderParagraph so word chips, JP tokenization, click
+    // handlers etc. behave identically to normal page rendering.
+    wrap.appendChild(renderParagraph(sent.text));
+    root.appendChild(wrap);
+    bindWordInteractions(root);
+    buildSentenceMap(root);
+    // Keep pageIdx in sync with the sentence's owning page so
+    // exiting the mode lands the user where they expect.
+    if (typeof sent.pageIdx === 'number') pageIdx = sent.pageIdx;
+  }
+  function singleSentStep(delta) {
+    if (!ALL_SENTENCES.length) return;
+    const next = SINGLE_SENT_IDX + delta;
+    if (next < 0 || next >= ALL_SENTENCES.length) return;
+    SINGLE_SENT_IDX = next;
+    renderSingleSent();
+    updateProgress();
+  }
+  // Wire the toggle button click ONCE on init.
+  (function _wireSingleSentBtn() {
+    const btn = document.getElementById('single-sent-btn');
+    if (!btn) return;
+    btn.addEventListener('click', toggleSingleSent);
+  })();
+
   function goPage(delta) {
+    // Trampoline: in 1문장씩 mode, every "page" step is one sentence.
+    // Hit by ,/./lh-page-prev/lh-page-next/page-prev/page-next without
+    // each call site needing to know about single-sent mode.
+    if (SINGLE_SENT_MODE) { singleSentStep(delta); return; }
     if (animating) return;
     const next = pageIdx + delta;
     if (next < 0 || next >= PAGES.length) return;
@@ -6557,7 +6704,13 @@
     // Esc clears whatever's selected and closes any open panel:
     //   • 이어서 / 이어서밑줄 — drops the running multi-word selection
     //   • 하나씩            — drops the .active cursor + word sheet + glow
+    //   • 1문장씩 mode      — exits back to the normal page view
     if (e.key === 'Escape') {
+      if (SINGLE_SENT_MODE) {
+        exitSingleSent();
+        e.preventDefault();
+        return;
+      }
       if (CONT_SELECTED.size > 0) {
         clearContSelection();
         if (useSidebar())          clearSidebar();
