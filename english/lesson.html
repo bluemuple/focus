@@ -3891,12 +3891,27 @@
   // shortcuts. Both end with the font-size adjustment block.
   function _sidebarManualHTML() {
     const lang = (window.DB && window.DB.getLang && window.DB.getLang()) || 'en';
+    // Two side-by-side stepper groups: text size on the left (A− / A+)
+    // and line spacing on the right (− / +). Both write the same
+    // localStorage keys the page-init code reads so changes persist
+    // across reloads.
     const fontctl =
       '<section class="ls-manual-fontctl">' +
-      '  <h4>본문 글자 크기</h4>' +
-      '  <div class="ls-empty-fontctl">' +
-      '    <button class="toggle-btn dict" id="font-down-btn" title="글자 작게">−</button>' +
-      '    <button class="toggle-btn dict" id="font-up-btn"   title="글자 크게">+</button>' +
+      '  <div class="ls-empty-fontctl-row">' +
+      '    <div class="ls-empty-fontctl-group">' +
+      '      <h4>본문 글자 크기</h4>' +
+      '      <div class="ls-empty-fontctl">' +
+      '        <button class="toggle-btn dict" id="font-down-btn" title="글자 작게">A−</button>' +
+      '        <button class="toggle-btn dict" id="font-up-btn"   title="글자 크게">A+</button>' +
+      '      </div>' +
+      '    </div>' +
+      '    <div class="ls-empty-fontctl-group">' +
+      '      <h4>본문 줄 간격</h4>' +
+      '      <div class="ls-empty-fontctl">' +
+      '        <button class="toggle-btn dict" id="line-down-btn" title="줄 간격 좁게">−</button>' +
+      '        <button class="toggle-btn dict" id="line-up-btn"   title="줄 간격 넓게">+</button>' +
+      '      </div>' +
+      '    </div>' +
       '  </div>' +
       '</section>';
     if (lang === 'ja') {
@@ -4025,6 +4040,12 @@
     host.querySelectorAll('#font-down-btn, #font-up-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const evtName = btn.id === 'font-up-btn' ? 'eng:bumpFont:+' : 'eng:bumpFont:-';
+        window.dispatchEvent(new CustomEvent(evtName));
+      });
+    });
+    host.querySelectorAll('#line-down-btn, #line-up-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const evtName = btn.id === 'line-up-btn' ? 'eng:bumpLine:+' : 'eng:bumpLine:-';
         window.dispatchEvent(new CustomEvent(evtName));
       });
     });
@@ -5268,14 +5289,51 @@
       const next = Math.max(12, Math.min(40, Math.round(cur + delta)));
       applyFontPx(next);
     }
-    // Font buttons are now rendered dynamically inside the sidebar's
-    // empty state (renderSidebarWordList rewrites #ls-empty's HTML on
-    // every clearSidebar). Listening on the elements directly would
-    // miss subsequent renders, so we rely on global custom events
-    // dispatched by the per-render binders. The events carry no
-    // payload — the bump direction is encoded in the event name.
+    // Line-height bumper. Mirrors `bumpFont` but writes
+    // `eng.v1.lessonLineHeight` (the same key the page-init code
+    // already reads on load). Steps of 0.2 keep the value rounded
+    // to one decimal so the saved string stays compact.
+    const LH_KEY = 'eng.v1.lessonLineHeight';
+    function readLineHeight() {
+      const n = parseFloat(localStorage.getItem(LH_KEY) || '');
+      return (Number.isFinite(n) && n >= 1.4 && n <= 3.4) ? n : null;
+    }
+    function applyLineHeight(lh) {
+      try { localStorage.setItem(LH_KEY, String(lh)); } catch (e) {}
+      document.querySelectorAll('.lesson-text').forEach(el => {
+        el.style.lineHeight = String(lh);
+      });
+      // Re-paginate so each page still fills the box at the new spacing.
+      if (LESSON) {
+        requestAnimationFrame(() => {
+          PAGES = paginateByHeight(LESSON.body || '');
+          computePageCharCounts();
+          if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
+          if (pageIdx < 0) pageIdx = 0;
+          renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
+          bindWordInteractions(document.getElementById('lesson-text'));
+          buildSentenceMap(document.getElementById('lesson-text'));
+          updateProgress();
+        });
+      }
+    }
+    function bumpLine(delta) {
+      const cur = readLineHeight() ||
+                  parseFloat(getComputedStyle(document.querySelector('.lesson-text')).lineHeight) /
+                  (parseFloat(getComputedStyle(document.querySelector('.lesson-text')).fontSize) || 18) ||
+                  2.4;
+      const next = Math.max(1.4, Math.min(3.4, Math.round((cur + delta) * 10) / 10));
+      applyLineHeight(next);
+    }
+    // Font / line-height buttons are rendered dynamically inside the
+    // sidebar's empty state (renderSidebarWordList rewrites
+    // #ls-empty's HTML on every clearSidebar). Listening on the
+    // elements directly would miss subsequent renders, so we rely on
+    // global custom events dispatched by the per-render binder.
     window.addEventListener('eng:bumpFont:+', () => bumpFont(+2));
     window.addEventListener('eng:bumpFont:-', () => bumpFont(-2));
+    window.addEventListener('eng:bumpLine:+', () => bumpLine(+0.2));
+    window.addEventListener('eng:bumpLine:-', () => bumpLine(-0.2));
     // Initial-render fallback: the static #ls-empty in the HTML uses
     // the same button IDs and is shown on first sidebar paint before
     // renderSidebarWordList has had a chance to run. Bind those once.
@@ -5283,6 +5341,10 @@
     const fontDownInit = document.getElementById('font-down-btn');
     if (fontUpInit)   fontUpInit.addEventListener('click',   () => bumpFont(+2));
     if (fontDownInit) fontDownInit.addEventListener('click', () => bumpFont(-2));
+    const lineUpInit   = document.getElementById('line-up-btn');
+    const lineDownInit = document.getElementById('line-down-btn');
+    if (lineUpInit)   lineUpInit  .addEventListener('click', () => bumpLine(+0.2));
+    if (lineDownInit) lineDownInit.addEventListener('click', () => bumpLine(-0.2));
 
     // (TTS engine toggle removed — Cloud TTS is the only engine now.)
 
