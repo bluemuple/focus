@@ -265,12 +265,10 @@
       _flashPasted();
       return true;
     }
-    // URL → image. Direct fetch first; falls back to <img>+canvas
-    // for hosts that allow img tag loading but not cross-origin
-    // fetch (some CDNs do this).
-    async function _tryPasteUrlAsImage(text) {
-      const url = (text || '').trim();
-      if (!/^https?:\/\//i.test(url)) return false;
+    // Single-URL → image. Direct cross-origin fetch first; falls
+    // back to <img>+canvas for hosts that allow img tag loading but
+    // block fetch (some CDNs do this).
+    async function _fetchUrlAsImage(url) {
       // Path A — direct cross-origin fetch.
       try {
         const r = await fetch(url, { mode: 'cors' });
@@ -303,6 +301,37 @@
         if (blob) return _setThumbFromBlob(blob);
       } catch (e) {
         console.warn('[paste] img+canvas fallback failed', e && e.message);
+      }
+      return false;
+    }
+    // Top-level handler. Builds a list of URL candidates from the
+    // pasted text and tries each until one returns an image:
+    //   1. The whole text if it's a single clean URL.
+    //   2. Any image-extension URL (.jpg/.jpeg/.png/.gif/.webp/.bmp/
+    //      .avif/.svg) found ANYWHERE inside the text — handles
+    //      cases where iOS pastes more than the bare URL (HTML
+    //      fragments, surrounding text, etc.) and where a wrapper
+    //      URL embeds the actual image URL as a query parameter.
+    async function _tryPasteUrlAsImage(text) {
+      const raw = (text || '').trim();
+      if (!raw) return false;
+      const candidates = [];
+      const seen = new Set();
+      function _push(u) {
+        if (!u || seen.has(u)) return;
+        seen.add(u);
+        candidates.push(u);
+      }
+      // 1. Whole text as a URL.
+      if (/^https?:\/\//i.test(raw)) _push(raw);
+      // 2. Image-extension URLs anywhere in the text.
+      const IMG_URL_RE =
+        /https?:\/\/[^\s'"<>]+?\.(?:jpe?g|png|gif|webp|bmp|svg|avif)(?:\?[^\s'"<>]*)?/gi;
+      let m;
+      while ((m = IMG_URL_RE.exec(raw)) !== null) _push(m[0]);
+      // Try each candidate; first success wins.
+      for (const url of candidates) {
+        if (await _fetchUrlAsImage(url)) return true;
       }
       return false;
     }
