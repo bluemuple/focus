@@ -740,8 +740,15 @@
           // count, prev/next sentence buttons step by logical
           // sentence, and TTS playback's cross-page stitching has
           // matching indices to skip over.
-          if (last && last.pageIdx !== p
-              && !/[.!?]\s*["”'’)\]]?\s*$/.test((last.text || '').trim())) {
+          // Merge ONLY when the prior page's last entry doesn't already
+          // end with a sentence terminator. The terminator set covers
+          // EN periods/question/exclamation, JP 。！？, and the closing
+          // corner brackets 』」 — so JP sentences across page
+          // boundaries don't snowball into one giant entry.
+          const _endsSentence = /[.!?。！？』」][\s"”'’)\]」』]*$/.test(
+            (last && last.text || '').trim()
+          );
+          if (last && last.pageIdx !== p && !_endsSentence) {
             last.text = (last.text + ' ' + s).trim();
             last.spans = last.spans || [last.pageIdx];
             if (last.spans[last.spans.length - 1] !== p) last.spans.push(p);
@@ -5544,7 +5551,22 @@
       refreshContTranslation(sorted[0]);
     }
   }
+  // Set when MODE changes during 1문장씩 — defers pagination work to
+  // exit so the live single-sentence DOM never flickers through an
+  // intermediate multi-sentence render.
+  let _pagesNeedRebuild = false;
+
   function onModeChanged() {
+    // 1문장씩 mode is orthogonal to the underlying reading mode: it
+    // shows ONE sentence regardless of single/cont/contU. Don't
+    // touch the live DOM, don't re-paginate the visible body, don't
+    // run any side effects that could briefly reveal multi-sentence
+    // content. Just record that PAGES need rebuilding when the user
+    // exits 1문장씩 — at which point the new MODE's spacing applies.
+    if (SINGLE_SENT_MODE) {
+      _pagesNeedRebuild = true;
+      return;
+    }
     // Snapshot the active cursor (single) or the multi-word selection
     // (cont/contU) BEFORE we tear down the previous mode's DOM. The
     // snapshot is replayed after the re-render so the user's focus
@@ -5552,28 +5574,12 @@
     // active word, cont → single keeps just the leftmost selected
     // word, cont ↔ contU preserves the whole range.
     const _snap = _captureModeSelection();
-
-    // 1문장씩 mode is orthogonal to the underlying reading mode: the
-    // single-sentence view should survive a MODE toggle and stay on
-    // the SAME sentence (don't reset to the first one, don't drop
-    // back to base font size). Capture the currently-shown sentence
-    // text so we can re-locate it after re-pagination, and skip the
-    // normal full-page re-render path entirely.
-    const _wasSingleSent = SINGLE_SENT_MODE;
-    const _prevSentText = _wasSingleSent
-      ? ((ALL_SENTENCES[SINGLE_SENT_IDX] || {}).text || null)
-      : null;
-
-    // Clean up state from the previous mode. Skip surface clearers
-    // when we're staying in 1문장씩 — they'd hide the sidebar / cards
-    // unnecessarily.
-    if (!_wasSingleSent) {
-      hidePopup();
-      hideContBar();
-      hideWordSheet();
-      clearContSelection();
-      clearSidebar();
-    }
+    // Clean up state from the previous mode.
+    hidePopup();
+    hideContBar();
+    hideWordSheet();
+    clearContSelection();
+    clearSidebar();
     applyModeClass();
     applySidebarVisibility();
     applyMobileContBar();
@@ -5585,22 +5591,6 @@
       computeAllSentences();   // pagination changed → ALL_SENTENCES too
       if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
       if (pageIdx < 0) pageIdx = 0;
-      if (_wasSingleSent) {
-        // Re-locate the previously-shown sentence in the (possibly
-        // reshuffled) ALL_SENTENCES list. Match by text first; fall
-        // back to clamping the existing index if the text isn't
-        // found (rare — would mean cross-page merge changed it).
-        if (_prevSentText) {
-          const idx = ALL_SENTENCES.findIndex(s => s && s.text === _prevSentText);
-          if (idx >= 0) SINGLE_SENT_IDX = idx;
-        }
-        if (SINGLE_SENT_IDX >= ALL_SENTENCES.length) {
-          SINGLE_SENT_IDX = Math.max(0, ALL_SENTENCES.length - 1);
-        }
-        renderSingleSent();
-        updateProgress();
-        return;
-      }
       renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
       bindWordInteractions(document.getElementById('lesson-text'));
       buildSentenceMap(document.getElementById('lesson-text'));
@@ -5872,8 +5862,17 @@
   // ---- finger-follow page swipe ----
   function startSwipeFollow(direction) {
     if (animating) return null;
-    if (direction > 0 && pageIdx >= PAGES.length - 1) return null;
-    if (direction < 0 && pageIdx <= 0) return null;
+    // 1문장씩 mode swipes through ALL_SENTENCES, not PAGES — bounds
+    // and peek content come from the sentence list so the swipe
+    // visually matches the post-commit rendering (one sentence at
+    // 2× font instead of a multi-paragraph page).
+    if (SINGLE_SENT_MODE) {
+      if (direction > 0 && SINGLE_SENT_IDX >= ALL_SENTENCES.length - 1) return null;
+      if (direction < 0 && SINGLE_SENT_IDX <= 0) return null;
+    } else {
+      if (direction > 0 && pageIdx >= PAGES.length - 1) return null;
+      if (direction < 0 && pageIdx <= 0) return null;
+    }
 
     const wrap = document.getElementById('lesson-text-wrap');
     const currentRoot = document.getElementById('lesson-text');
@@ -5882,7 +5881,19 @@
     if (MODE === 'cont')  peekRoot.classList.add('mode-cont');
     if (MODE === 'contU') peekRoot.classList.add('mode-contU');
     applyTextStyleVars(peekRoot);         // keep user's font / line-height during swipe
-    renderInto(peekRoot, PAGES[pageIdx + direction] || []);
+    if (SINGLE_SENT_MODE) {
+      // Peek the next/prev SENTENCE in a .single-sent-wrap so it
+      // gets the 2× CSS font-size and centered layout immediately.
+      const nextSent = ALL_SENTENCES[SINGLE_SENT_IDX + direction];
+      if (nextSent) {
+        const swrap = document.createElement('div');
+        swrap.className = 'single-sent-wrap';
+        swrap.appendChild(renderParagraph(nextSent.text));
+        peekRoot.appendChild(swrap);
+      }
+    } else {
+      renderInto(peekRoot, PAGES[pageIdx + direction] || []);
+    }
 
     const width = currentRoot.offsetWidth;
     peekRoot.style.transition = 'none';
@@ -5926,10 +5937,22 @@
         peekRoot.id = 'lesson-text';
         peekRoot.style.transition = '';
         peekRoot.style.transform  = '';
-        pageIdx += direction;
-        updateProgress();
-        buildSentenceMap(peekRoot);
-        prefetchPage();          // warm cache for the new page in background
+        if (SINGLE_SENT_MODE) {
+          // Sentence-step on commit: bump SINGLE_SENT_IDX, sync
+          // pageIdx, refit the 2× font for the new sentence's
+          // length, and update the counter.
+          SINGLE_SENT_IDX += direction;
+          const sent = ALL_SENTENCES[SINGLE_SENT_IDX];
+          if (sent && typeof sent.pageIdx === 'number') pageIdx = sent.pageIdx;
+          buildSentenceMap(peekRoot);
+          updateProgress();
+          requestAnimationFrame(() => requestAnimationFrame(fitSingleSentFont));
+        } else {
+          pageIdx += direction;
+          updateProgress();
+          buildSentenceMap(peekRoot);
+          prefetchPage();          // warm cache for the new page in background
+        }
         setCurrentSentence(-1);
         animating = false;
       }, 230);
@@ -6234,6 +6257,57 @@
       }
       pageRanges.push({ start: startIdx, end: lastFit });
       startIdx = lastFit + 1;
+    }
+
+    // PC-only: snap each page's end backward to the latest sentence
+    // boundary inside the page so the LAST sentence isn't cut mid-
+    // sentence. Mobile keeps the tighter word-level fit (sentences
+    // can split across pages there). Falls through to word-level
+    // when the page contains no sentence boundary at all (a single
+    // sentence so long it fills the whole page).
+    if (window.matchMedia('(min-width: 1024px)').matches && pageRanges.length > 1) {
+      // Map each .w element to the index of the sentence it belongs to,
+      // by walking and tracking sentence-end punct chips. The INDEX of
+      // a sentence-end is the last word of that sentence.
+      const sentenceEnds = [];
+      let lastNonPunct = null;
+      for (let i = 0; i < words.length; i++) {
+        const w = words[i];
+        if (w.classList.contains('punct')) {
+          if (isSentenceBreakPunct(w, lastNonPunct)) sentenceEnds.push(i);
+        } else {
+          lastNonPunct = w;
+        }
+        // Treat a paragraph boundary (next word in a different <p>)
+        // as a sentence end so titles or bulleted items are honored
+        // even without terminal punctuation.
+        if (i + 1 < words.length && words[i + 1].parentNode !== w.parentNode) {
+          if (sentenceEnds[sentenceEnds.length - 1] !== i) sentenceEnds.push(i);
+        }
+      }
+      // Snap each non-final page's end to the latest sentence-end at
+      // or before its current end. Skip the snap if no sentence-end
+      // exists in the page (whole page is one giant sentence — no
+      // way to avoid mid-sentence break there).
+      for (let i = 0; i < pageRanges.length - 1; i++) {
+        const range = pageRanges[i];
+        let snap = -1;
+        for (const idx of sentenceEnds) {
+          if (idx > range.end) break;
+          if (idx >= range.start && idx <= range.end) snap = idx;
+        }
+        if (snap >= 0 && snap < range.end) {
+          range.end = snap;
+          pageRanges[i + 1].start = snap + 1;
+        }
+      }
+      // Drop empty trailing ranges that the snap may have produced
+      // (rare — happens when an entire page would have been just the
+      // tail of a sentence that got pushed forward).
+      while (pageRanges.length &&
+             pageRanges[pageRanges.length - 1].start > pageRanges[pageRanges.length - 1].end) {
+        pageRanges.pop();
+      }
     }
 
     // Convert each [start..end] range → array of paragraph strings by
@@ -6576,6 +6650,22 @@
     if (btn) {
       btn.classList.remove('active');
       btn.setAttribute('aria-pressed', 'false');
+    }
+    // If the user changed reading modes WHILE in 1문장씩, we deferred
+    // the re-paginate. Apply it now so the page view picks up the
+    // new mode's spacing / line-height. Also recompute ALL_SENTENCES
+    // and TOTAL_SENTENCES so the playbar's "n / total" counter is
+    // correct on subsequent TTS playback.
+    if (_pagesNeedRebuild && LESSON) {
+      applyModeClass();
+      applySidebarVisibility();
+      applyMobileContBar();
+      PAGES = paginateByHeight(LESSON.body || '');
+      computePageCharCounts();
+      computeAllSentences();
+      if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
+      if (pageIdx < 0) pageIdx = 0;
+      _pagesNeedRebuild = false;
     }
     // Restore the normal page render at whatever pageIdx we ended on.
     const root = document.getElementById('lesson-text');
