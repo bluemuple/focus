@@ -579,6 +579,12 @@
     // inter-sentence spaces). Handle these BEFORE the EN logic so
     // mixed-script content (rare) still works.
     if (/[。！？]/.test(txt)) return true;
+    // Closing JP corner brackets — per the project spec, 』 / 」 at
+    // the end of a sentence count as a terminator. Either appears
+    // ALONE (e.g. 「行きます」) or RIDES the period (「行きます。」 →
+    // chip text "。」"). Either way the chip contains 』/」 and
+    // marks the sentence end.
+    if (/[』」]/.test(txt)) return true;
     if (!/[.!?]/.test(txt)) return false;
     // ! and ? always end a sentence; periods need extra checks.
     if (/[!?]/.test(txt)) return true;
@@ -5622,6 +5628,23 @@
     if (!root) return;
     let curr = { text: '', words: [] };
     let prevWord = null;
+    // Flush helper: if `curr` is a closing-bracket-only fragment
+    // (e.g. the renderer split 「行きます。」 into the chips ['。','」']),
+    // attach those brackets to the PREVIOUS sentence's tail instead
+    // of creating a 1-char "」" sentence — same logical reading as
+    // the user expects, and keeps the playbar counter / chunker /
+    // 1문장씩 mode honest.
+    function _flushCurr() {
+      if (!curr.text.trim()) return;
+      if (/^[\s』」]+$/.test(curr.text) && SENTENCE_MAP.length) {
+        const last = SENTENCE_MAP[SENTENCE_MAP.length - 1];
+        last.text += curr.text;
+        last.words.push.apply(last.words, curr.words);
+      } else {
+        SENTENCE_MAP.push(curr);
+      }
+      curr = { text: '', words: [] };
+    }
     // Walk paragraph by paragraph so a missing terminal punctuation
     // (like the lesson title 「動物の森のケーキ」 with no 。) doesn't
     // bleed the title into the first body sentence. Each <p> boundary
@@ -5640,8 +5663,7 @@
         // It's a punct token. Only break if it's a real sentence-ending
         // mark and not a period inside an abbreviation like "Mr." / "Dr.".
         if (isSentenceBreakPunct(el, prevWord)) {
-          if (curr.text.trim()) SENTENCE_MAP.push(curr);
-          curr = { text: '', words: [] };
+          _flushCurr();
         }
       }
       // Force a sentence break at the end of every paragraph, even if
@@ -6107,14 +6129,24 @@
       const ch = text[i];
       buf += ch;
       if (/[.!?]/.test(ch)) {
+        // Greedily consume trailing closing quotes / brackets so
+        // patterns like ." .' .” .’ .) .] .』 .」 stay attached to
+        // the sentence (per the project spec). Without this, "She
+        // said, 'Hi.' He smiled." would split between '.' and " ' "
+        // — but it's a single quoted sentence inside the larger one.
+        while (i + 1 < text.length && /["'”’)\]」』]/.test(text[i + 1])) {
+          i++;
+          buf += text[i];
+        }
         const next = text[i + 1];
         const atEnd = !next;
         const followedByWS = /\s/.test(next || '');
         if (atEnd || followedByWS) {
-          // Look behind in `buf` (without the trailing punct) for the last
-          // word — if it's an abbreviation like "Mr" / "Dr" / "etc", the
-          // period is NOT a sentence boundary and we just keep buffering.
-          const head = buf.slice(0, -1);
+          // Look behind in `buf` (without the trailing punct + quotes)
+          // for the last word — if it's an abbreviation like "Mr" /
+          // "Dr" / "etc", the period is NOT a sentence boundary and
+          // we just keep buffering.
+          const head = buf.replace(/["'”’)\]」』]+$/, '').slice(0, -1);
           const m = head.match(/\b([\p{L}]+)$/u);
           const lastWord = m ? m[1].toLowerCase() : '';
           if (!SENTENCE_ABBR.has(lastWord)) {

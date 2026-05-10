@@ -821,13 +821,20 @@
     }
   }
 
-  // Sentence segmentation for Japanese — split on 。！？ keeping the
-  // terminator with its sentence. Falls back to the whole input as
-  // one sentence when there's no terminator.
+  // Sentence segmentation for Japanese.
+  // Sentence enders per the project spec:
+  //   • 。 ！ ？ ! ? — full-stops / interrogatives
+  //   • 』 」          — closing corner brackets (sentence ends when
+  //                      the bracket is the last char of a run, e.g.
+  //                      「お名前は?」 → "「お名前は?」" stays as one
+  //                      sentence with the closing 」 attached.)
+  // The regex consumes either a terminator (。！？!?) plus optional
+  // trailing closing brackets, OR a bare closing bracket alone, so
+  // both 「行きます。」 and 「行きます」 segment correctly.
   function splitSentencesJa(text) {
     const s = String(text || '');
     if (!s.trim()) return [];
-    const re = /[^。！？!?]+[。！？!?]+|[^。！？!?]+$/g;
+    const re = /[^。！？!?』」]+[。！？!?]+[』」]*|[^。！？!?』」]+[』」]+|[^。！？!?』」]+$/g;
     const out = (s.match(re) || []).map(x => x.trim()).filter(Boolean);
     return out.length ? out : [s.trim()];
   }
