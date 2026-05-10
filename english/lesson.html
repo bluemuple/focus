@@ -5547,12 +5547,27 @@
     // word, cont ↔ contU preserves the whole range.
     const _snap = _captureModeSelection();
 
-    // Clean up state from the previous mode.
-    hidePopup();
-    hideContBar();
-    hideWordSheet();
-    clearContSelection();
-    clearSidebar();
+    // 1문장씩 mode is orthogonal to the underlying reading mode: the
+    // single-sentence view should survive a MODE toggle and stay on
+    // the SAME sentence (don't reset to the first one, don't drop
+    // back to base font size). Capture the currently-shown sentence
+    // text so we can re-locate it after re-pagination, and skip the
+    // normal full-page re-render path entirely.
+    const _wasSingleSent = SINGLE_SENT_MODE;
+    const _prevSentText = _wasSingleSent
+      ? ((ALL_SENTENCES[SINGLE_SENT_IDX] || {}).text || null)
+      : null;
+
+    // Clean up state from the previous mode. Skip surface clearers
+    // when we're staying in 1문장씩 — they'd hide the sidebar / cards
+    // unnecessarily.
+    if (!_wasSingleSent) {
+      hidePopup();
+      hideContBar();
+      hideWordSheet();
+      clearContSelection();
+      clearSidebar();
+    }
     applyModeClass();
     applySidebarVisibility();
     applyMobileContBar();
@@ -5561,8 +5576,25 @@
     requestAnimationFrame(() => {
       PAGES = paginateByHeight(LESSON.body || '');
       computePageCharCounts();
+      computeAllSentences();   // pagination changed → ALL_SENTENCES too
       if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
       if (pageIdx < 0) pageIdx = 0;
+      if (_wasSingleSent) {
+        // Re-locate the previously-shown sentence in the (possibly
+        // reshuffled) ALL_SENTENCES list. Match by text first; fall
+        // back to clamping the existing index if the text isn't
+        // found (rare — would mean cross-page merge changed it).
+        if (_prevSentText) {
+          const idx = ALL_SENTENCES.findIndex(s => s && s.text === _prevSentText);
+          if (idx >= 0) SINGLE_SENT_IDX = idx;
+        }
+        if (SINGLE_SENT_IDX >= ALL_SENTENCES.length) {
+          SINGLE_SENT_IDX = Math.max(0, ALL_SENTENCES.length - 1);
+        }
+        renderSingleSent();
+        updateProgress();
+        return;
+      }
       renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
       bindWordInteractions(document.getElementById('lesson-text'));
       buildSentenceMap(document.getElementById('lesson-text'));
@@ -6545,6 +6577,41 @@
     // Keep pageIdx in sync with the sentence's owning page so
     // exiting the mode lands the user where they expect.
     if (typeof sent.pageIdx === 'number') pageIdx = sent.pageIdx;
+    // Two passes are needed before measuring: one for the DOM
+    // mutation to settle, one for the browser to apply CSS variables
+    // and reflow. requestAnimationFrame x2 is the standard idiom.
+    requestAnimationFrame(() => requestAnimationFrame(fitSingleSentFont));
+  }
+  // Auto-shrink the 2× font when a long sentence overflows the
+  // lesson-text container so it always fits on a single "page".
+  // Strategy: compute the height ratio at the default 2 em and scale
+  // the multiplier proportionally. Floor at 1 em (= the user's base
+  // font) — never shrink BELOW the page-mode size. A small buffer
+  // keeps the last line from clipping at the descender.
+  function fitSingleSentFont() {
+    const root = document.getElementById('lesson-text');
+    const wrap = root && root.querySelector('.single-sent-wrap');
+    if (!root || !wrap) return;
+    // Reset any previous inline font-size so the CSS default (2 em)
+    // is in effect for the measurement.
+    wrap.style.fontSize = '';
+    const containerH = root.clientHeight;
+    if (!containerH) return;
+    const wrapH = wrap.scrollHeight;
+    if (wrapH <= containerH) return;        // already fits at 2 em
+    // Scale the multiplier by the height ratio with a 4 % buffer so
+    // the last line's descender doesn't get clipped at the bottom.
+    const ratio = (containerH * 0.96) / wrapH;
+    let mult = Math.max(1, 2 * ratio);
+    wrap.style.fontSize = mult.toFixed(3) + 'em';
+    // Defensive correction loop — handles edge cases where line-break
+    // points shift after the first shrink and the new height is still
+    // a hair over. Bounded to a few iterations so it can't spin.
+    let safety = 5;
+    while (wrap.scrollHeight > containerH && mult > 1 && safety-- > 0) {
+      mult *= 0.95;
+      wrap.style.fontSize = mult.toFixed(3) + 'em';
+    }
   }
   function singleSentStep(delta) {
     if (!ALL_SENTENCES.length) return;
@@ -6850,8 +6917,20 @@
         if (!LESSON) return;
         PAGES = paginateByHeight(LESSON.body || '');
         computePageCharCounts();
+        computeAllSentences();
         if (pageIdx >= PAGES.length) pageIdx = PAGES.length - 1;
         if (pageIdx < 0) pageIdx = 0;
+        if (SINGLE_SENT_MODE) {
+          // Container height changed → re-fit the 2× font so the
+          // sentence still fills the page comfortably without
+          // overflow / underflow on the new viewport.
+          if (SINGLE_SENT_IDX >= ALL_SENTENCES.length) {
+            SINGLE_SENT_IDX = Math.max(0, ALL_SENTENCES.length - 1);
+          }
+          renderSingleSent();
+          updateProgress();
+          return;
+        }
         renderInto(document.getElementById('lesson-text'), PAGES[pageIdx] || []);
         bindWordInteractions(document.getElementById('lesson-text'));
         buildSentenceMap(document.getElementById('lesson-text'));
