@@ -5959,6 +5959,13 @@ function renderFocusMatrix() {
           commit();
         });
         inp.addEventListener('keydown', (e) => {
+          // Same Korean-IME guard as the +add-task input — pressing Enter
+          // mid-composition fires keydown twice (keyCode 229 / isComposing
+          // first, then real Enter). Without this filter, the first Enter
+          // commits the task, chains a new one, and the IME flushes the
+          // trailing syllable into the new input where the second Enter
+          // saves it as a ghost task.
+          if (e.isComposing || e.keyCode === 229) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             const wasNonEmpty = (inp.value || '').trim().length > 0;
@@ -6116,6 +6123,14 @@ function renderFocusMatrix() {
         }
         input.addEventListener('blur', () => commit(true));
         input.addEventListener('keydown', (e) => {
+          // Korean (and other CJK) IME guard: pressing Enter mid-composition
+          // fires keydown TWICE — first to commit the in-progress syllable
+          // (keyCode 229 / isComposing=true), then a real Enter. Without this
+          // guard, the first Enter commits "준비" and re-opens a fresh input;
+          // the IME then redirects the unfinished "비" composition into that
+          // new input, and the second Enter saves "비" as a second ghost task.
+          // Bail on the composition-stage keydown so only the real Enter runs.
+          if (e.isComposing || e.keyCode === 229) return;
           if (e.key === 'Enter') {
             e.preventDefault();
             commit(true);
