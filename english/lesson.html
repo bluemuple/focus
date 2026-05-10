@@ -154,6 +154,13 @@
        하나씩 / 이어서(밑줄) modes. Content mirrors what the popup card would
        show, plus a "+ 구문에 추가" button for saving phrases. -->
   <aside class="lesson-sidebar" id="lesson-sidebar" hidden>
+    <!-- Top-left "manual" button — same pill design as the close button
+         on the right. Clicking it forces the empty-state into the lesson
+         manual (instead of the recently-clicked word list). The button
+         is auto-hidden whenever the manual is already showing — no UX
+         redundancy. -->
+    <button class="ls-manual-btn" id="ls-manual-btn"
+            aria-label="레슨 사용법" title="레슨 사용법">📖</button>
     <button class="ls-close" id="ls-close" aria-label="사이드바 닫기" title="사이드바 닫기">
       <img src="images/closeside.png" alt="" onerror="this.style.display='none';this.parentNode.textContent='›';">
     </button>
@@ -2353,6 +2360,9 @@
     // Drop the focus glow + chunk highlight on the body too — sidebar
     // empty state means no active selection.
     clearWordFocus();
+    // Sync the top-left manual pill — visible when the empty-state
+    // shows the word list, hidden when it falls back to the manual.
+    if (typeof _refreshManualBtn === 'function') _refreshManualBtn();
   }
 
   // ---- mobile cont sticky bottom bar ----
@@ -3898,8 +3908,7 @@
             <ul>
               <li><kbd>Space</kbd> — 읽기 모드 전환</li>
               <li><kbd>Enter</kbd> — TTS 재생 / 일시정지</li>
-              <li><kbd>←</kbd> <kbd>→</kbd> — 단어 이동 / 선택 확장</li>
-              <li><kbd>↑</kbd> <kbd>↓</kbd> — 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+              <li><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> — 단어 이동 / 선택 확장</li>
               <li><kbd>,</kbd> <kbd>.</kbd> — 이전 / 다음 페이지</li>
               <li><kbd>Esc</kbd> — 열린 팝업 / 사전 닫기</li>
               <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> — 단어 학습 단계 (아래 ↓)</li>
@@ -3965,10 +3974,9 @@
         <section class="ls-manual-sec">
           <h4>⌨️ 단축키</h4>
           <ul>
-            <li><kbd>Space</kbd> — 읽기 모드 전환 <span class="muted">(단어 뜻 하나씩 / 여러개 이어서 / 이어서 아래)</span></li>
+            <li><kbd>Space</kbd> — 읽기 모드 전환</li>
             <li><kbd>Enter</kbd> — TTS 재생 / 일시정지</li>
-            <li><kbd>←</kbd> <kbd>→</kbd> — 단어 이동 / 선택 확장</li>
-            <li><kbd>↑</kbd> <kbd>↓</kbd> — 위/아래 단어 선택 <span class="muted">(하나씩 모드)</span></li>
+            <li><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd> — 단어 이동 / 선택 확장</li>
             <li><kbd>,</kbd> <kbd>.</kbd> — 이전 / 다음 페이지</li>
             <li><kbd>Esc</kbd> — 열린 팝업 / 사전 닫기</li>
             <li><kbd>0</kbd>~<kbd>4</kbd>·<kbd>V</kbd> — 단어 학습 단계 (아래 ↓)</li>
@@ -4029,6 +4037,50 @@
     if (!empty) return;
     empty.innerHTML = _sidebarManualHTML();
     _wireSidebarFontButtons(empty);
+    _refreshManualBtn();
+  })();
+  // Manual is "open" when ls-empty is visible AND its rendered content
+  // is the manual (vs the recently-clicked word list). The card being
+  // shown counts as "manual closed" since manual content is hidden
+  // behind it.
+  function _isManualOpen() {
+    const card  = document.getElementById('ls-card');
+    const empty = document.getElementById('ls-empty');
+    if (!empty || empty.hidden) return false;
+    if (card && !card.hidden) return false;
+    return !!empty.querySelector('.ls-manual');
+  }
+  // Force the manual into ls-empty (overrides the word-list state),
+  // hide any open card, drop the body's word focus glow so the
+  // sidebar's "no active selection" state is reflected in the body.
+  function _showManual() {
+    const card  = document.getElementById('ls-card');
+    const empty = document.getElementById('ls-empty');
+    if (card)  card.hidden = true;
+    if (empty) {
+      empty.hidden = false;
+      empty.innerHTML = _sidebarManualHTML();
+      _wireSidebarFontButtons(empty);
+    }
+    const bottomFixed = document.getElementById('ls-bottom-fixed');
+    if (bottomFixed) bottomFixed.hidden = true;
+    if (typeof clearWordFocus === 'function') clearWordFocus();
+    _refreshManualBtn();
+  }
+  // Toggle the top-left 📖 pill's visibility based on the current
+  // sidebar state. The button only makes sense when the manual is NOT
+  // already showing.
+  function _refreshManualBtn() {
+    const btn = document.getElementById('ls-manual-btn');
+    if (!btn) return;
+    btn.hidden = _isManualOpen();
+  }
+  // Wire the click ONCE — the button is static HTML so we don't need
+  // to re-bind on every paint.
+  (function _wireManualBtn() {
+    const btn = document.getElementById('ls-manual-btn');
+    if (!btn) return;
+    btn.addEventListener('click', () => { _showManual(); });
   })();
   function renderSidebarWordList(host) {
     // Pull every word state with state ≥ 1 (clicked at least twice).
@@ -4084,6 +4136,9 @@
     if (!card || !empty) return;
     card.hidden = false;
     empty.hidden = true;
+    // Card is showing → the manual is no longer the visible content,
+    // so the top-left 📖 pill should re-appear.
+    if (typeof _refreshManualBtn === 'function') _refreshManualBtn();
 
     const isPhrase = /\s/.test(text);
     const lower = text.toLowerCase();
@@ -5269,7 +5324,124 @@
     const ico = b.querySelector('.title-heart-ico');
     if (ico) ico.textContent = on ? '♥' : '♡';
   }
+  // Snapshot the current selection so we can re-seed it after a mode
+  // change. Each entry is the word's position-on-page index plus its
+  // surface text — surface is used as a sanity check after the
+  // re-paginate may shift indices by a few slots.
+  function _captureModeSelection() {
+    const root = document.getElementById('lesson-text');
+    if (!root) return null;
+    const allW = Array.from(root.querySelectorAll('.w'));
+
+    // Single mode: capture the .active cursor.
+    const active = root.querySelector('.w.active');
+    if (active && (!CONT_SELECTED || !CONT_SELECTED.size)) {
+      const idx = allW.indexOf(active);
+      if (idx < 0) return null;
+      return { indices: [idx], texts: [_wText(active)] };
+    }
+
+    // cont / contU: capture every selected word in document order.
+    if (CONT_SELECTED && CONT_SELECTED.size) {
+      const sorted = Array.from(CONT_SELECTED).sort((a, b) => {
+        const cmp = a.compareDocumentPosition(b);
+        if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+      const indices = [];
+      const texts = [];
+      for (const el of sorted) {
+        const i = allW.indexOf(el);
+        if (i < 0) continue;             // detached element from a stale page
+        indices.push(i);
+        texts.push(_wText(el));
+      }
+      if (!indices.length) return null;
+      return { indices, texts };
+    }
+    return null;
+  }
+  // Re-establish a captured selection in the CURRENT mode after a
+  // mode change has re-rendered the body. The same snapshot drives
+  // every transition:
+  //   • single → cont/contU : seed cont selection with the (single)
+  //                           captured word.
+  //   • cont/contU → single : take the FIRST captured word (leftmost
+  //                           in document order) as the new cursor.
+  //   • cont   → contU      : restore the full range as-is.
+  //   • contU  → cont       : same.
+  function _restoreModeSelection(snap) {
+    if (!snap || !snap.indices || !snap.indices.length) return;
+    const root = document.getElementById('lesson-text');
+    if (!root) return;
+    const allW = Array.from(root.querySelectorAll('.w'));
+    function findEl(idx, text) {
+      // Re-pagination may shift the same word a slot or two — try the
+      // exact captured index first, then walk outward looking for a
+      // matching surface.
+      const cand = allW[idx];
+      if (cand && _wText(cand) === text && !cand.classList.contains('punct')) {
+        return cand;
+      }
+      for (let off = 1; off < 6; off++) {
+        const left  = allW[idx - off];
+        const right = allW[idx + off];
+        if (left  && _wText(left)  === text && !left .classList.contains('punct')) return left;
+        if (right && _wText(right) === text && !right.classList.contains('punct')) return right;
+      }
+      // Last resort: any matching surface on the current page.
+      for (const w of allW) {
+        if (_wText(w) === text && !w.classList.contains('punct')) return w;
+      }
+      return null;
+    }
+
+    if (MODE === 'single') {
+      // Take the LEFTMOST captured word — single mode shows ONE word.
+      const seed = findEl(snap.indices[0], snap.texts[0]);
+      if (!seed) return;
+      root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
+      seed.classList.add('active');
+      const word = (seed.dataset && seed.dataset.word) || seed.textContent || '';
+      const sentence = getContextSentence(seed);
+      if (useSidebar()) showInSidebar(word, sentence, seed);
+      else              showInWordSheet(word, sentence, seed);
+      return;
+    }
+
+    // cont / contU — restore every captured word as cont-selected.
+    // Single→cont snapshots have just one entry, so this naturally
+    // seeds cont with that single word.
+    let lastSeed = null;
+    for (let i = 0; i < snap.indices.length; i++) {
+      const el = findEl(snap.indices[i], snap.texts[i]);
+      if (!el) continue;
+      CONT_SELECTED.add(el);
+      el.classList.add('cont-sel');
+      lastSeed = el;
+    }
+    if (CONT_SELECTED.size && typeof refreshContTranslation === 'function') {
+      // Use the leftmost selected element as the chunk anchor — same
+      // rule the playbar / chunk highlight already follow.
+      const sorted = Array.from(CONT_SELECTED).sort((a, b) => {
+        const cmp = a.compareDocumentPosition(b);
+        if (cmp & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+        if (cmp & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+        return 0;
+      });
+      refreshContTranslation(sorted[0]);
+    }
+  }
   function onModeChanged() {
+    // Snapshot the active cursor (single) or the multi-word selection
+    // (cont/contU) BEFORE we tear down the previous mode's DOM. The
+    // snapshot is replayed after the re-render so the user's focus
+    // carries across the mode switch — single → cont seeds with the
+    // active word, cont → single keeps just the leftmost selected
+    // word, cont ↔ contU preserves the whole range.
+    const _snap = _captureModeSelection();
+
     // Clean up state from the previous mode.
     hidePopup();
     hideContBar();
@@ -5291,6 +5463,9 @@
       buildSentenceMap(document.getElementById('lesson-text'));
       setCurrentSentence(-1);
       updateProgress();
+      // Now that the body has fresh `.w` elements, replay the
+      // snapshot in whatever mode we just landed in.
+      _restoreModeSelection(_snap);
     });
   }
   // ---- sentence map for the rendered page (used by playback underline) ----
