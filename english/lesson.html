@@ -6732,13 +6732,72 @@
       wrap.style.fontSize = mult.toFixed(3) + 'em';
     }
   }
+  // Animated step between sentences in 1문장씩 mode. Mirrors the
+  // page-slide choreography of `goPage()` — same `slide-from-*`,
+  // `slide-anim`, `slide-out-*` class dance — so navigating with
+  // ,/./lh-page-prev/lh-page-next/page-prev/page-next feels visually
+  // identical to flipping pages in the normal multi-sentence view,
+  // just with one sentence inside the slide-in panel.
   function singleSentStep(delta) {
+    if (animating) return;
     if (!ALL_SENTENCES.length) return;
     const next = SINGLE_SENT_IDX + delta;
     if (next < 0 || next >= ALL_SENTENCES.length) return;
+    const wrap    = document.getElementById('lesson-text-wrap');
+    const oldRoot = document.getElementById('lesson-text');
+    if (!wrap || !oldRoot) {
+      // No DOM to animate against — fall through to instant render.
+      SINGLE_SENT_IDX = next;
+      renderSingleSent();
+      updateProgress();
+      return;
+    }
+    animating = true;
+    const goingForward = delta > 0;
+    const newRoot = document.createElement('div');
+    newRoot.className = 'lesson-text';
+    if (MODE === 'cont')  newRoot.classList.add('mode-cont');
+    if (MODE === 'contU') newRoot.classList.add('mode-contU');
+    newRoot.classList.add(goingForward ? 'slide-from-right' : 'slide-from-left');
+    applyTextStyleVars(newRoot);
+
     SINGLE_SENT_IDX = next;
-    renderSingleSent();
-    updateProgress();
+    const sent = ALL_SENTENCES[SINGLE_SENT_IDX];
+    if (sent && typeof sent.pageIdx === 'number') pageIdx = sent.pageIdx;
+
+    // Build the single-sentence content directly into the slide-in
+    // panel so the 2× CSS font-size and centered layout are applied
+    // BEFORE the slide animation starts (no flash of small text).
+    const swrap = document.createElement('div');
+    swrap.className = 'single-sent-wrap';
+    if (sent) swrap.appendChild(renderParagraph(sent.text));
+    newRoot.appendChild(swrap);
+
+    wrap.appendChild(newRoot);
+    bindWordInteractions(newRoot);
+
+    void newRoot.offsetWidth;            // force reflow before adding the
+                                         // animation classes
+    requestAnimationFrame(() => {
+      oldRoot.classList.add('slide-anim');
+      newRoot.classList.add('slide-anim');
+      oldRoot.classList.add(goingForward ? 'slide-out-left' : 'slide-out-right');
+      newRoot.classList.remove('slide-from-right', 'slide-from-left');
+    });
+
+    setTimeout(() => {
+      oldRoot.id = '';
+      oldRoot.remove();
+      newRoot.id = 'lesson-text';
+      newRoot.classList.remove('slide-anim');
+      buildSentenceMap(newRoot);
+      updateProgress();
+      animating = false;
+      // Now that the slide settled, fit the 2× font to the new
+      // sentence's actual height. rAF×2 so the browser has settled
+      // layout post-transition before measuring.
+      requestAnimationFrame(() => requestAnimationFrame(fitSingleSentFont));
+    }, 280);
   }
   // Wire the toggle button click ONCE on init.
   (function _wireSingleSentBtn() {

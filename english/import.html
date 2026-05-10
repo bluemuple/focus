@@ -47,17 +47,20 @@
           <img id="f-thumb-preview" alt="썸네일 미리보기" style="display:none">
           <input id="f-thumb" type="file" accept="image/*" style="display:none">
         </div>
-        <!-- Paste-zone:
-             • Desktop — focus the box, then ⌘/Ctrl+V.
-             • Mobile  — just TAP. Async Clipboard API reads the system
-               clipboard on the first user gesture (iOS asks for permission
-               the first time, then stays silent).
-             Both paths feed setThumb() so the result is identical. -->
+        <!-- Paste-zone — feeds setThumb() so all four input paths
+             (file pick / drop / image bytes / image URL) end at the
+             same upload pipeline.
+               • Desktop  — focus, then ⌘/Ctrl+V (image bytes).
+               • Mobile   — TAP. Async Clipboard API reads the system
+                 clipboard. iOS asks for permission the first time.
+               • iOS Safari "Copy image" sometimes only puts the image
+                 URL on the clipboard (not bytes). We detect that and
+                 fetch the URL automatically. -->
         <div class="thumb-paste-zone" id="f-thumb-paste" tabindex="0"
              aria-label="클립보드 이미지 붙여넣기">
           <span class="tp-icon" aria-hidden="true">📋</span>
           <span class="tp-text">
-            모바일은 <strong>탭</strong> · PC는 클릭 후 <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> — 클립보드 이미지 붙여넣기
+            <strong>탭</strong> (모바일) · 클릭 후 <kbd>⌘V</kbd> / <kbd>Ctrl+V</kbd> (PC) — 클립보드 이미지 또는 이미지 URL 붙여넣기
           </span>
         </div>
         <button type="button" id="f-thumb-clear" class="btn ghost"
@@ -236,14 +239,21 @@
     }
 
     // ---- thumbnail PASTE zone ----
-    // Two paths:
-    //   • DESKTOP — click to focus, then ⌘/Ctrl+V fires `paste`.
-    //   • MOBILE  — tap, browser reads the system clipboard via the
-    //               Async Clipboard API (iOS 13.4+, Chrome Android).
-    //               No keyboard needed. First call shows a permission
-    //               prompt; thereafter it's silent.
-    // Both paths feed the same `setThumb()`, so the rest of the
-    // pipeline (preview, resize, upload at submit) stays identical.
+    // Three input paths, all feeding the same `setThumb()` so preview /
+    // resize / upload stay identical:
+    //   • DESKTOP — click to focus, then ⌘/Ctrl+V fires `paste` with
+    //               image bytes in clipboardData.items.
+    //   • MOBILE (image bytes) — tap, the Async Clipboard API
+    //               (iOS 13.4+, Chrome Android) returns a binary
+    //               image item. First call shows a permission prompt.
+    //   • MOBILE (URL only) — iOS Safari's "long-press image → Copy"
+    //               often puts ONLY the image URL on the clipboard,
+    //               not the image bytes. We detect text/plain URLs
+    //               and fetch them as a CORS-mode HTTP GET, then
+    //               wrap the response blob and feed setThumb. Falls
+    //               back to an <img>+canvas trip if the direct fetch
+    //               fails CORS (some hosts allow image loading but
+    //               not fetch — the canvas re-encode pulls them in).
     const pasteZone = document.getElementById('f-thumb-paste');
     function _flashPasted() {
       if (!pasteZone) return;
@@ -262,25 +272,89 @@
       _flashPasted();
       return true;
     }
-    // Try Async Clipboard API first (mobile-friendly: no keyboard
-    // needed). Returns true on success, false otherwise so the caller
-    // can fall back to focus-and-wait-for-keyboard-paste.
-    async function tryAsyncPaste() {
-      if (!navigator.clipboard || !navigator.clipboard.read) return false;
+    // URL → image. Tries direct fetch first (works for CORS-friendly
+    // image hosts: Supabase Storage, S3, jsdelivr, GitHub user content,
+    // most CDNs). Falls back to <img crossOrigin="anonymous"> + canvas
+    // re-encode for hosts that allow CORS on image loading but not on
+    // fetch. Returns true if the thumbnail was set, false otherwise.
+    async function _tryPasteUrlAsImage(text) {
+      const url = (text || '').trim();
+      if (!/^https?:\/\//i.test(url)) return false;
+      // Path A — direct fetch.
       try {
-        const items = await navigator.clipboard.read();
-        for (const item of items) {
-          for (const type of item.types || []) {
-            if (typeof type === 'string' && type.startsWith('image/')) {
-              const blob = await item.getType(type);
-              return _setThumbFromBlob(blob);
-            }
+        const r = await fetch(url, { mode: 'cors' });
+        if (r.ok) {
+          const blob = await r.blob();
+          if (blob && /^image\//i.test(blob.type || '')) {
+            return _setThumbFromBlob(blob);
           }
         }
       } catch (e) {
-        // User denied permission, browser doesn't allow it for the
-        // current origin (non-HTTPS), or the clipboard had no image.
-        console.warn('[paste] clipboard.read failed', e);
+        console.warn('[paste] direct fetch failed', e && e.message);
+      }
+      // Path B — <img> + canvas (re-encodes as JPEG).
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const im = new Image();
+          im.crossOrigin = 'anonymous';
+          im.onload  = () => resolve(im);
+          im.onerror = (er) => reject(er);
+          im.src = url;
+        });
+        if (!img.naturalWidth || !img.naturalHeight) return false;
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const blob = await new Promise((resolve) => {
+          canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9);
+        });
+        if (blob) return _setThumbFromBlob(blob);
+      } catch (e) {
+        console.warn('[paste] img+canvas fallback failed', e && e.message);
+      }
+      return false;
+    }
+    // Try the Async Clipboard API. Reads image bytes first; if the
+    // clipboard only carries a URL (iOS Safari "Copy image"
+    // sometimes does this), falls back to fetching that URL.
+    async function tryAsyncPaste() {
+      if (!navigator.clipboard) return false;
+      // 1) Structured read — supports both image bytes and text/plain.
+      if (navigator.clipboard.read) {
+        try {
+          const items = await navigator.clipboard.read();
+          // Image bytes first.
+          for (const item of items) {
+            for (const type of item.types || []) {
+              if (typeof type === 'string' && type.startsWith('image/')) {
+                const blob = await item.getType(type);
+                if (_setThumbFromBlob(blob)) return true;
+              }
+            }
+          }
+          // No image bytes? Look for a text URL among the items.
+          for (const item of items) {
+            if ((item.types || []).indexOf('text/plain') >= 0) {
+              try {
+                const tblob = await item.getType('text/plain');
+                const text  = await tblob.text();
+                if (await _tryPasteUrlAsImage(text)) return true;
+              } catch (e) {}
+            }
+          }
+        } catch (e) {
+          console.warn('[paste] clipboard.read failed', e && e.message);
+        }
+      }
+      // 2) Last resort — readText() (older iOS versions sometimes
+      //    expose only this method).
+      if (navigator.clipboard.readText) {
+        try {
+          const text = await navigator.clipboard.readText();
+          if (await _tryPasteUrlAsImage(text)) return true;
+        } catch (e) {}
       }
       return false;
     }
@@ -289,12 +363,20 @@
         const pasted = await tryAsyncPaste();
         if (!pasted) {
           // Desktop fallback — focus so the next ⌘V/Ctrl+V is captured
-          // by our `paste` listener below.
+          // by our `paste` listener below. On iOS this is also a no-op
+          // hint; the actual paste happens via the click→Async path.
           pasteZone.focus();
+          // If Async Clipboard returned empty (no permission, no
+          // image, no URL), surface a hint rather than failing silently
+          // — it tells the user where the failure is.
+          if (navigator.clipboard) {
+            errBox.textContent = '클립보드에 이미지나 이미지 URL이 없습니다.';
+          }
         }
       });
-      pasteZone.addEventListener('paste', (e) => {
+      pasteZone.addEventListener('paste', async (e) => {
         const items = (e.clipboardData && e.clipboardData.items) || [];
+        // Path 1: image bytes directly in clipboardData.
         for (const item of items) {
           if (item && item.type && item.type.startsWith('image/')) {
             const blob = item.getAsFile();
@@ -302,6 +384,16 @@
               e.preventDefault();
               return;
             }
+          }
+        }
+        // Path 2: text/plain URL — fetch and use.
+        for (const item of items) {
+          if (item && item.kind === 'string' && item.type === 'text/plain') {
+            e.preventDefault();
+            const text = await new Promise((resolve) => item.getAsString(resolve));
+            if (await _tryPasteUrlAsImage(text)) return;
+            errBox.textContent = '클립보드 URL을 이미지로 가져오지 못했습니다 (서버 CORS 제한일 수 있습니다).';
+            return;
           }
         }
         errBox.textContent = '클립보드에 이미지가 없습니다.';
