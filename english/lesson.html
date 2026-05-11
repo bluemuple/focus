@@ -973,18 +973,27 @@
     }
     const lang = (window.DB && DB.getLang) ? DB.getLang() : 'en';
 
-    // Collect sentences across all pages, reusing the lesson page's
-    // own splitIntoSentences for language-correct boundaries.
+    // Use ALL_SENTENCES — the lesson page already computed this via
+    // `computeAllSentences()` during renderLesson, and its merge
+    // logic for cross-page sentences MATCHES what
+    // `getContextSentence` reconstructs at click-time. Using the
+    // same string here is what makes the cache key align: when a
+    // student later clicks a word, the runtime context they pass
+    // to `Translate.translate` is byte-for-byte identical to what
+    // we cached against, so it's a real cache hit (not a near-miss
+    // that triggers a fresh GPT call).
+    //
+    // (Falling back to PAGES + splitIntoSentences was the previous
+    // approach. It produced partial sentences at page boundaries
+    // — different text than what getContextSentence returns —
+    // which is why "번역중" lingered on first click after prewarm.)
+    if (!ALL_SENTENCES.length && typeof computeAllSentences === 'function') {
+      computeAllSentences();
+    }
     const sentences = [];
-    for (const page of PAGES) {
-      for (const para of (page || [])) {
-        const list = (typeof splitIntoSentences === 'function')
-          ? splitIntoSentences(para) : [para];
-        for (const s of list) {
-          const t = String(s || '').trim();
-          if (t.length >= 3) sentences.push(t);
-        }
-      }
+    for (const s of (ALL_SENTENCES || [])) {
+      const t = String(s && s.text || '').trim();
+      if (t.length >= 3) sentences.push(t);
     }
 
     // Per-sentence word extraction. EN: alpha regex. JP: kuromoji
