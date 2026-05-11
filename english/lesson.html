@@ -929,6 +929,111 @@
     // (Removed: post-render soft refresh on GPT-furigana arrival —
     // the body now renders plain text, no ruby. Chunk furigana is
     // fetched on-demand when a word is tapped.)
+    // ?prewarm=1 → headless cache-fill driver (run via hidden iframe
+    // from the home page kebab menu). See `_runPrewarm` below.
+    if (params.get('prewarm') === '1') {
+      _runPrewarm();
+    }
+  }
+  // Headless cache-fill driver. Iterates EVERY sentence across EVERY
+  // page (not just the current one) and calls the same prefetch
+  // helpers the lesson page normally uses on demand:
+  //   • chunk-gpt / chunk-ja-gpt (via Translate.getChunks)
+  //   • word-info-gpt (via Translate.getWordInfo) — EN words only,
+  //     JP needs kuromoji tokens to extract word lemmas which would
+  //     duplicate work the page renderer already did (skipped here)
+  //   • translate(word, sentence) — DeepL batch per sentence
+  //   • furigana-gpt — JP only, via Translate.getFurigana on JPT
+  // Sends `eng:prewarm` progress + done messages to the parent window
+  // (the home page's hidden iframe driver picks these up for the
+  // progress bar). Concurrency capped at 4 to stay under the Edge
+  // Function rate limit while still finishing in reasonable time.
+  async function _runPrewarm() {
+    function _post(payload) {
+      try { window.parent.postMessage(Object.assign({ kind: 'eng:prewarm' }, payload), '*'); } catch (_) {}
+    }
+    _post({ type: 'progress', done: 0, total: 1, label: '준비 중' });
+    // Wait briefly for SENTENCE_MAP / PAGES to settle in case of
+    // async rendering (JP kuromoji etc.).
+    await new Promise(r => setTimeout(r, 200));
+    if (!LESSON || !PAGES || !PAGES.length) {
+      _post({ type: 'done', done: 0, total: 0 });
+      return;
+    }
+    const lang = (window.DB && DB.getLang) ? DB.getLang() : 'en';
+    // Collect every sentence across all pages by reusing the same
+    // splitIntoSentences logic the lesson page already trusts.
+    const sentences = [];
+    for (const page of PAGES) {
+      for (const para of (page || [])) {
+        const list = (typeof splitIntoSentences === 'function')
+          ? splitIntoSentences(para) : [para];
+        for (const s of list) {
+          const t = String(s || '').trim();
+          if (t.length >= 3) sentences.push(t);
+        }
+      }
+    }
+    // EN word extraction — strip punctuation, lowercase, dedupe.
+    const allWords = new Set();
+    if (lang === 'en') {
+      for (const s of sentences) {
+        const m = s.match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
+        for (const w of m) {
+          const lo = w.toLowerCase();
+          if (lo.length >= 2) allWords.add(lo);
+        }
+      }
+    }
+    const wordArr = Array.from(allWords);
+    // Per-sentence: chunks (1 op) + DeepL batch (1 op).
+    // Per-word: word-info (1 op).
+    const total = sentences.length * 2 + wordArr.length;
+    let done = 0;
+    function tick(label) {
+      done++;
+      // Throttle messages to ~1 per frame batch so we don't flood
+      // postMessage. Always send when first / last / every 5%.
+      if (done === 1 || done === total || done % Math.max(1, Math.floor(total / 30)) === 0) {
+        _post({ type: 'progress', done, total, label: label || '' });
+      }
+    }
+    // Worker pool — 4 concurrent. Each task swallows its own errors
+    // (cache misses or 429s shouldn't abort the whole prewarm).
+    const queue = [];
+    for (const s of sentences) {
+      queue.push(async () => {
+        try { if (Translate.getChunks) await Translate.getChunks(s); } catch (_) {}
+        tick('청크');
+      });
+      queue.push(async () => {
+        if (lang === 'ja') { tick('번역'); return; }
+        try {
+          const m = s.match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
+          const words = Array.from(new Set(m.map(w => w.toLowerCase()).filter(w => w.length >= 2)));
+          if (words.length && Translate.translateBatch) {
+            await Translate.translateBatch(words, s);
+          }
+        } catch (_) {}
+        tick('번역');
+      });
+    }
+    for (const w of wordArr) {
+      queue.push(async () => {
+        try { if (Translate.getWordInfo) await Translate.getWordInfo(w); } catch (_) {}
+        tick('단어 사전');
+      });
+    }
+    const CONCURRENCY = 4;
+    let next = 0;
+    async function worker() {
+      while (next < queue.length) {
+        const i = next++;
+        await queue[i]();
+      }
+    }
+    await Promise.all(Array.from({ length: CONCURRENCY }, () => worker()));
+    _post({ type: 'done', done, total });
   }
 
   // ============== PC sidebar ==============

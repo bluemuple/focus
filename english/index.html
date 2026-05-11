@@ -1098,6 +1098,7 @@
     const menu = document.createElement('div');
     menu.className = 'card-menu';
     menu.innerHTML = `
+      <button class="cm-item" data-act="prewarm"><span class="cm-icon">⚡</span> 캐시 준비</button>
       <button class="cm-item" data-act="rename"><span class="cm-icon">✏️</span> 수정</button>
       <button class="cm-item danger" data-act="delete"><span class="cm-icon">🗑</span> 삭제</button>
     `;
@@ -1118,7 +1119,9 @@
       e.stopPropagation();
       const act = btn.dataset.act;
       closeCardMenu();
-      if (act === 'rename') {
+      if (act === 'prewarm') {
+        openPrewarmModal(lesson);
+      } else if (act === 'rename') {
         // Navigate to the edit form (import.html in edit mode). The
         // page lets the user change title, body, replace or remove
         // thumbnail / audio, then 확인 to save or 취소 to bail.
@@ -1141,6 +1144,114 @@
   function closeCardMenu() {
     document.querySelectorAll('.card-menu').forEach(m => m.remove());
     document.removeEventListener('keydown', onCardMenuKey);
+  }
+
+  // ===== Lesson cache prewarm =====
+  // Opens the lesson in a hidden iframe with `?prewarm=1`. The lesson
+  // page itself handles the actual prefetch (chunks, word-info,
+  // translations, JP kuromoji + furigana) since it has all the
+  // language-specific knowledge already wired up. The iframe
+  // postMessages progress + done back here. The cloud caches
+  // (chunk_gpt_cache / word_info_gpt_cache / translate_*_cache /
+  // furigana_gpt_cache) get populated once → every other device for
+  // the same lesson hits the cache instantly.
+  function openPrewarmModal(lesson) {
+    const overlay = document.createElement('div');
+    overlay.className = 'status-overlay prewarm-overlay';
+    overlay.innerHTML = `
+      <div class="status-card prewarm-card">
+        <button class="sc-close" aria-label="닫기">×</button>
+        <h3>⚡ 캐시 준비</h3>
+        <p class="prewarm-title">${escapeHtml(lesson.title || '레슨')}</p>
+        <p class="prewarm-desc">
+          GPT 호출을 미리 진행해 클라우드 캐시를 채웁니다.<br>
+          이후 학생들이 같은 레슨을 열 때 즉시 응답합니다.
+        </p>
+        <div class="prewarm-bar-wrap">
+          <div class="prewarm-bar" id="prewarm-bar"></div>
+        </div>
+        <div class="prewarm-status" id="prewarm-status">시작 중…</div>
+        <div class="prewarm-actions">
+          <button class="btn" id="prewarm-stop" type="button">중단</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const barEl    = overlay.querySelector('#prewarm-bar');
+    const statusEl = overlay.querySelector('#prewarm-status');
+    const stopBtn  = overlay.querySelector('#prewarm-stop');
+    let finished   = false;
+    let lastBeat   = Date.now();
+    // Hard timeout — even if the iframe never signals "done", close
+    // after 5 minutes so the user isn't stuck staring at a frozen
+    // progress bar. Most lessons finish in well under a minute.
+    const HARD_TIMEOUT_MS = 5 * 60 * 1000;
+    const start = Date.now();
+    function setProgress(done, total, label) {
+      if (finished) return;
+      const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+      if (barEl) barEl.style.width = pct + '%';
+      if (statusEl) statusEl.textContent = label
+        ? `${label} — ${done} / ${total}`
+        : `${done} / ${total}`;
+    }
+    function close(success) {
+      finished = true;
+      window.removeEventListener('message', onMessage);
+      clearInterval(watchdog);
+      try { iframe.remove(); } catch (_) {}
+      try { overlay.remove(); } catch (_) {}
+    }
+    function onMessage(e) {
+      const d = e.data;
+      if (!d || typeof d !== 'object' || d.kind !== 'eng:prewarm') return;
+      lastBeat = Date.now();
+      if (d.type === 'progress') {
+        setProgress(d.done || 0, d.total || 0, d.label || '진행 중');
+      } else if (d.type === 'done') {
+        if (barEl)   barEl.style.width = '100%';
+        if (statusEl) statusEl.textContent = `✅ 완료 — ${d.done || 0} / ${d.total || 0}`;
+        if (stopBtn)  stopBtn.textContent = '닫기';
+        try { iframe.remove(); } catch (_) {}
+        clearInterval(watchdog);
+        finished = true;
+      }
+    }
+    window.addEventListener('message', onMessage);
+
+    // Watchdog — if the iframe goes quiet for 90 s OR exceeds the
+    // hard timeout, give up gracefully. Most lessons signal progress
+    // every few seconds while running.
+    const watchdog = setInterval(() => {
+      if (finished) return;
+      const sinceBeat = Date.now() - lastBeat;
+      const sinceStart = Date.now() - start;
+      if (sinceStart > HARD_TIMEOUT_MS) {
+        if (statusEl) statusEl.textContent = '⏱ 시간 초과 — 일부만 캐시됨';
+        if (stopBtn)  stopBtn.textContent = '닫기';
+        try { iframe.remove(); } catch (_) {}
+        clearInterval(watchdog);
+        finished = true;
+      } else if (sinceBeat > 90 * 1000) {
+        if (statusEl) statusEl.textContent = '응답 없음 — 일부만 캐시됨';
+        if (stopBtn)  stopBtn.textContent = '닫기';
+        try { iframe.remove(); } catch (_) {}
+        clearInterval(watchdog);
+        finished = true;
+      }
+    }, 5000);
+
+    stopBtn.addEventListener('click', () => close(false));
+    overlay.querySelector('.sc-close').addEventListener('click', () => close(false));
+
+    // Hidden iframe runs the lesson page with ?prewarm=1.
+    const iframe = document.createElement('iframe');
+    iframe.style.cssText =
+      'position:absolute;left:-99999px;top:0;width:1024px;height:768px;' +
+      'border:0;visibility:hidden;';
+    iframe.src = 'lesson.html?id=' + encodeURIComponent(lesson.id) + '&prewarm=1';
+    document.body.appendChild(iframe);
   }
   function onCardMenuKey(e) {
     if (e.key === 'Escape') closeCardMenu();
