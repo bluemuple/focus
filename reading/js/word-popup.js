@@ -33,13 +33,17 @@
           <span class="wc-popup-word"></span>
           <button class="wc-popup-tts wc-btn ghost" title="Hear it">🔊</button>
         </div>
-        <div class="wc-popup-levelrow">
-          <span class="wc-muted" style="margin-right:8px;">Your colour:</span>
-          <span class="wc-popup-currlevel"></span>
-        </div>
-        <div class="wc-popup-actions">
-          <button class="wc-btn wc-popup-known">I know it! 🌟</button>
-          <button class="wc-btn ghost wc-popup-skip">Skip — I don’t need it</button>
+        <!-- 또박또박-style level bar: 🗑 1 2 3 4 ✓ — left = ignore,
+             right = mastered, middle digits = familiarity tiers. The
+             pill backgrounds preview the resulting word colour so kids
+             can see what each level "looks like" before tapping. -->
+        <div class="wc-level-bar" role="radiogroup" aria-label="Word level">
+          <button class="lv-btn ignore" data-state="-1" title="Skip / 무시">🗑</button>
+          <button class="lv-btn"        data-state="1"  title="Learning">1</button>
+          <button class="lv-btn"        data-state="2"  title="Seen it">2</button>
+          <button class="lv-btn"        data-state="3"  title="Familiar">3</button>
+          <button class="lv-btn"        data-state="4"  title="Almost there">4</button>
+          <button class="lv-btn known"  data-state="5"  title="I know it!">✓</button>
         </div>
         <div class="wc-popup-divider"></div>
         <div class="wc-popup-dict">
@@ -87,17 +91,14 @@
     onLevelChangeCb = onLevelChange || (() => {});
     const root = host.querySelector('.wc-popup');
 
-    host.querySelector('.wc-popup-word').textContent       = word;
-    host.querySelector('.wc-popup-currlevel').innerHTML    = levelDot(level || 0);
+    host.querySelector('.wc-popup-word').textContent = word;
 
-    // Wire the action buttons (re-wire each open so we capture the right `level`).
-    const known = host.querySelector('.wc-popup-known');
-    const skip  = host.querySelector('.wc-popup-skip');
-    known.onclick = () => {
-      const next = level === -1 ? 1 : Math.min(5, (level || 0) + 1);
-      bumpAndClose(next);
-    };
-    skip.onclick = () => bumpAndClose(-1);
+    // Highlight the pill matching the current level (if any).
+    host.querySelectorAll('.wc-level-bar .lv-btn').forEach(btn => {
+      const s = parseInt(btn.dataset.state, 10);
+      btn.classList.toggle('active', s === level);
+      btn.onclick = () => bumpAndClose(s);
+    });
 
     // TTS pronunciation.
     host.querySelector('.wc-popup-tts').onclick = () => {

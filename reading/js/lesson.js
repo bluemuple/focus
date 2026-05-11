@@ -178,10 +178,17 @@
           return;
         }
         const sp = document.createElement('span');
-        sp.className = 'wc-word';
+        // `.w` is the 또박또박-style word chip. State sub-class (.s1..s5
+        // / .sx / .unseen) is applied by applyLevelClass below.
+        sp.className = 'w';
         sp.dataset.word = tok.lower;
         sp.textContent  = tok.text;
-        applyLevelClass(sp, wordLevels.get(tok.lower) || 0);
+        // Words that have NEVER been tapped should stay plain text — no
+        // sky-blue overlay until the user actually engages with them.
+        // We use the special `unseen` class for that; once tapped the
+        // class flips to `s0` (sky-blue) or whatever level the popup sets.
+        const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
+        applyLevelClass(sp, startLevel);
         sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
         wrap.appendChild(sp);
       });
@@ -196,29 +203,50 @@
   }
 
   function applyLevelClass(el, level) {
-    el.classList.remove('lvl--1','lvl-0','lvl-1','lvl-2','lvl-3','lvl-4','lvl-5');
-    el.classList.add('lvl-' + level);
+    // 또박또박 word state class mapping:
+    //   null  → unseen (transparent, no overlay)
+    //   0     → s0 (sky blue — "just tapped")
+    //   1-4   → s1..s4 (green fading lighter)
+    //   5     → s5 (transparent — mastered)
+    //   -1    → sx (transparent — ignored / 무시)
+    el.classList.remove('unseen','s0','s1','s2','s3','s4','s5','sx');
+    if (level === null || level === undefined) { el.classList.add('unseen'); return; }
+    if (level === -1) { el.classList.add('sx'); return; }
+    el.classList.add('s' + level);
   }
 
   // ---------- word click ----------
   async function onWordClick(el, lower, original) {
-    const current = wordLevels.get(lower) || 0;
-    // Open the popup; the popup is the source of truth for level changes
-    // (it offers Got it / Mark as 무시 / Hear it / Look it up actions).
+    const wasUnseen = !wordLevels.has(lower);
+    const current   = wasUnseen ? 0 : wordLevels.get(lower);
+
+    // 또박또박 baseline: simply tapping an unseen word counts as
+    // "I've engaged with this" → state 0 (sky-blue). Saved + counted
+    // immediately so the user sees instant feedback even if they
+    // dismiss the popup without picking a level.
+    if (wasUnseen) {
+      wordLevels.set(lower, 0);
+      applyLevelClass(el, 0);
+      try { await window.WCDB.wordStates.upsert(me.id, lower, 0); } catch (e) {}
+      window.dispatchEvent(new CustomEvent('wc:level-up', {
+        detail: { word: lower, prev: -2, next: 0, lessonId },  // -2 sentinel = "previously unseen"
+      }));
+      notifyLevelChange({ word: lower, prev: -2, next: 0 });
+    }
+
     window.WCWordPopup.open({
       word: original,
       lower,
       level: current,
       onLevelChange: async (next) => {
-        const prev = wordLevels.get(lower) || 0;
+        const prev = wordLevels.get(lower) ?? 0;
+        if (next === prev) return;
         wordLevels.set(lower, next);
         applyLevelClass(el, next);
         try {
           await window.WCDB.wordStates.upsert(me.id, lower, next);
         } catch (e) { console.warn('upsert wordState', e); }
-        // Phase 5 hook: encounter counter bumps on UPWARD changes only,
-        // and (in Phase 5) is throttled by time. For now we just emit
-        // an event other scripts can listen to.
+        // Phase 5 hook: encounter counter bumps on UPWARD changes only.
         if (next > prev && next !== -1) {
           window.dispatchEvent(new CustomEvent('wc:level-up', {
             detail: { word: lower, prev, next, lessonId },
