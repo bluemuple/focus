@@ -511,7 +511,30 @@
   .drag-handle:hover { color: #4b5563; }
   .drag-handle:active { cursor: grabbing; }
   .task-row.dragging { opacity: 0.4; }
+  /* Legacy single-row highlight kept for non-matrix lists; the matrix uses
+     the .drop-indicator element below for between-row precision. */
   .task-row.drag-over { box-shadow: 0 -2px 0 0 #2563eb inset, 0 2px 0 0 #2563eb inset; }
+  /* Between-row drop indicator — a thin colored bar that shows exactly where
+     the dragged task will land. Color matches each quadrant's tone (darker
+     shade of the cell background). pointer-events: none is essential so the
+     bar doesn't intercept dragover events when the cursor crosses it. */
+  .drop-indicator {
+    height: 4px;
+    border-radius: 2px;
+    margin: 1px 4px;
+    background: #6b7280;
+    pointer-events: none;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.45);
+    animation: dropIndicatorPulse 1s ease-in-out infinite alternate;
+  }
+  .drop-indicator[data-q="q1"] { background: #db2777; }  /* dark pink   */
+  .drop-indicator[data-q="q2"] { background: #d97706; }  /* dark amber  */
+  .drop-indicator[data-q="q3"] { background: #7c3aed; }  /* dark violet */
+  .drop-indicator[data-q="q4"] { background: #2563eb; }  /* dark blue   */
+  @keyframes dropIndicatorPulse {
+    from { opacity: 0.70; transform: scaleY(1); }
+    to   { opacity: 1.00; transform: scaleY(1.4); }
+  }
 
   /* ---- (E) link in the Statistics heading: jump to the English Learning site ---- */
   .english-link {
@@ -4659,6 +4682,57 @@ if (_delAcctBtn) _delAcctBtn.onclick = async () => {
    The handle (≡) is draggable; the row accepts drops. Reordering is allowed
    only within the same quadrant for now. */
 let _draggedTask = null;
+/* Between-row drop indicator state. The indicator is a single DOM element
+   that's moved into the right gap (above or below a row) during dragover,
+   and _dropTarget remembers the insertion index it represents so drop can
+   commit there regardless of which row the drop event fires on. */
+let _dropIndicatorEl = null;
+let _dropTarget = null;   // { q, insertAt } | null
+function _ensureDropIndicator(q) {
+  if (!_dropIndicatorEl) {
+    _dropIndicatorEl = document.createElement('div');
+    _dropIndicatorEl.className = 'drop-indicator';
+  }
+  _dropIndicatorEl.dataset.q = q;
+  return _dropIndicatorEl;
+}
+function _placeDropIndicator(tasksDiv, beforeNode, q, insertAt) {
+  const ind = _ensureDropIndicator(q);
+  // Only re-insert if it isn't already in the right gap, to avoid layout
+  // thrash during rapid dragover events.
+  if (ind.parentNode !== tasksDiv || ind.nextSibling !== beforeNode) {
+    tasksDiv.insertBefore(ind, beforeNode || null);
+  }
+  _dropTarget = { q, insertAt };
+}
+function _clearDropIndicator() {
+  if (_dropIndicatorEl && _dropIndicatorEl.parentNode) {
+    _dropIndicatorEl.parentNode.removeChild(_dropIndicatorEl);
+  }
+  _dropTarget = null;
+}
+/* Commit a reorder using a target insertion index. Pulled out of the row
+   ondrop handler so the cell-level drop handler (used for the empty space
+   below the last task) can share the same logic. */
+function _commitTaskMove(q, fromIdx, insertAtRaw) {
+  const arr = state.tasks[q];
+  if (!arr || fromIdx < 0 || fromIdx >= arr.length) return;
+  // Translate raw insertion index (0..arr.length) into the post-splice index.
+  let insertAt = Math.max(0, Math.min(arr.length, insertAtRaw));
+  const [moved] = arr.splice(fromIdx, 1);
+  if (insertAt > fromIdx) insertAt -= 1;
+  arr.splice(insertAt, 0, moved);
+  // Keep an active pomodoro pinned to the same underlying task.
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro' && at.q === q) {
+    if (at.idx === fromIdx) at.idx = insertAt;
+    else if (fromIdx < at.idx && insertAt >= at.idx) at.idx -= 1;
+    else if (fromIdx > at.idx && insertAt <= at.idx) at.idx += 1;
+  }
+  saveState(); markSettingsChanged(); pushSettingsToCloud();
+  if (document.getElementById('setup-page') && document.getElementById('setup-page').style.display !== 'none') renderTasks();
+  if (document.getElementById('focus-page') && document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
+}
 function attachDragHandlers(row, handle, q, i) {
   if (handle) {
     handle.ondragstart = (e) => {
@@ -4671,6 +4745,8 @@ function attachDragHandlers(row, handle, q, i) {
     handle.ondragend = () => {
       _draggedTask = null;
       row.classList.remove('dragging');
+      // Clean up any lingering indicator + legacy drag-over highlight.
+      _clearDropIndicator();
       document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
     };
     // Prevent click from triggering pomodoro when releasing on handle
@@ -4681,30 +4757,62 @@ function attachDragHandlers(row, handle, q, i) {
     if (_draggedTask.q !== q) return;   // same-quadrant reorder only
     e.preventDefault();
     try { e.dataTransfer.dropEffect = 'move'; } catch (_){}
-    row.classList.add('drag-over');
+    // Decide top-half (insert ABOVE this row) vs bottom-half (insert BELOW).
+    // Then move the colored indicator into the corresponding gap so the user
+    // sees exactly where the dragged bar will land.
+    const tasksDiv = row.parentNode;
+    if (!tasksDiv) return;
+    const rect = row.getBoundingClientRect();
+    const isTopHalf = (e.clientY - rect.top) < rect.height / 2;
+    if (isTopHalf) {
+      _placeDropIndicator(tasksDiv, row, q, i);
+    } else {
+      _placeDropIndicator(tasksDiv, row.nextSibling, q, i + 1);
+    }
   };
-  row.ondragleave = () => row.classList.remove('drag-over');
+  row.ondragleave = () => { /* no-op — clearing happens on dragend/drop */ };
   row.ondrop = (e) => {
     e.preventDefault();
-    row.classList.remove('drag-over');
-    if (!_draggedTask || _draggedTask.q !== q) return;
-    if (_draggedTask.idx === i) return;
-    const arr = state.tasks[q];
+    if (!_draggedTask || _draggedTask.q !== q) { _clearDropIndicator(); return; }
+    // Snap into wherever the indicator was last shown. Fall back to this row's
+    // index if the indicator state is missing for any reason.
     const fromIdx = _draggedTask.idx;
-    const [moved] = arr.splice(fromIdx, 1);
-    const insertAt = i > fromIdx ? i - 1 : i;
-    arr.splice(insertAt, 0, moved);
-    // If active pomodoro is on the moved task, update its idx
-    const at = state.activeTimer;
-    if (at && (at.type === 'pomodoro') && at.q === q) {
-      if (at.idx === fromIdx) at.idx = insertAt;
-      else if (fromIdx < at.idx && insertAt >= at.idx) at.idx -= 1;
-      else if (fromIdx > at.idx && insertAt <= at.idx) at.idx += 1;
-    }
+    const insertAt = (_dropTarget && _dropTarget.q === q)
+      ? _dropTarget.insertAt
+      : i;
+    _clearDropIndicator();
     _draggedTask = null;
-    saveState(); markSettingsChanged(); pushSettingsToCloud();
-    if (document.getElementById('setup-page').style.display !== 'none') renderTasks();
-    if (document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
+    if (insertAt !== fromIdx && insertAt !== fromIdx + 1) {
+      _commitTaskMove(q, fromIdx, insertAt);
+    }
+  };
+}
+/* Cell-level fallback: lets the user drop into the empty space below the
+   last task, and ensures the .drop-indicator gets cleaned up cleanly. */
+function attachCellDragHandlers(cell, q) {
+  const tasksDiv = cell.querySelector('.tasks');
+  if (!tasksDiv) return;
+  tasksDiv.ondragover = (e) => {
+    if (!_draggedTask || _draggedTask.q !== q) return;
+    // If the dragover target was a child row, that row's handler already
+    // placed the indicator. Only handle the empty-space case here.
+    if (e.target !== tasksDiv) return;
+    e.preventDefault();
+    const arr = state.tasks[q] || [];
+    _placeDropIndicator(tasksDiv, null, q, arr.length);
+  };
+  tasksDiv.ondrop = (e) => {
+    if (!_draggedTask || _draggedTask.q !== q) return;
+    e.preventDefault();
+    const fromIdx = _draggedTask.idx;
+    const insertAt = (_dropTarget && _dropTarget.q === q)
+      ? _dropTarget.insertAt
+      : (state.tasks[q] || []).length;
+    _clearDropIndicator();
+    _draggedTask = null;
+    if (insertAt !== fromIdx && insertAt !== fromIdx + 1) {
+      _commitTaskMove(q, fromIdx, insertAt);
+    }
   };
 }
 
@@ -4737,6 +4845,17 @@ function renderTasks() {
       };
       cb.onchange = () => {
         const task = state.tasks[q][i];
+        // If a pomodoro is currently running on THIS task and the user is
+        // marking it done, stop the timer first so the elapsed work-phase
+        // time is credited (per-minute money + quadrant bonus) BEFORE the
+        // finish bid is awarded. The finish bid stacks on top of the time
+        // money. (Logging happens inside stopActiveTimer / logPomodoroPhase.)
+        if (cb.checked) {
+          const _at = state.activeTimer;
+          if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) {
+            stopActiveTimer('finish');
+          }
+        }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
@@ -5297,10 +5416,22 @@ function firstTextLogIfNeeded(q, i) {
   logEvent({ type: 'add-task', name: `Added: ${task.text}`, money: reward, q });
 }
 /* Delete a task — also reverses the +$addTask reward (if it had been awarded
-   on first-text) and logs a 'delete-task' Activity-log entry. */
+   on first-text) and logs a 'delete-task' Activity-log entry.
+   If a pomodoro is currently running on THIS task, the elapsed work-phase
+   time is DISCARDED (no per-minute money credited) — deleting a task voids
+   any time accumulated under it. If the running pomodoro is on a task AFTER
+   the deleted one, its `idx` is decremented so it keeps pointing at the same
+   underlying task after the splice. */
 function deleteTaskAt(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
+  // ---- Pomodoro discard (this task's running timer is voided) ----
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro' && at.q === q && at.idx === i) {
+    // Clear without calling stopActiveTimer/logPomodoroPhase so NO money is
+    // credited for the elapsed minutes.
+    state.activeTimer = null;
+  }
   // Reverse the +$5 add-task reward if it was awarded.
   if (task.addLogged) {
     const reward = +(state.moneyChangeFactors && state.moneyChangeFactors.addTask) || 0;
@@ -5313,6 +5444,12 @@ function deleteTaskAt(q, i) {
     });
   }
   state.tasks[q].splice(i, 1);
+  // After the splice, shift any active pomodoro index that pointed AFTER the
+  // deleted row, so it tracks the same underlying task.
+  const at2 = state.activeTimer;
+  if (at2 && at2.type === 'pomodoro' && at2.q === q && typeof at2.idx === 'number' && at2.idx > i) {
+    at2.idx = at2.idx - 1;
+  }
 }
 document.querySelectorAll('.add-task').forEach(btn => {
   btn.onclick = () => {
@@ -6027,6 +6164,17 @@ function renderFocusMatrix() {
       bidWrap.appendChild(bidBtn);
       cb.onchange = () => {
         const task = state.tasks[q][i];
+        // If a pomodoro is currently running on THIS task and the user is
+        // marking it done, stop the timer first so the elapsed work-phase
+        // time is credited (per-minute money + quadrant bonus) BEFORE the
+        // finish bid is awarded. The finish bid stacks on top of the time
+        // money. (Logging happens inside stopActiveTimer / logPomodoroPhase.)
+        if (cb.checked) {
+          const _at = state.activeTimer;
+          if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) {
+            stopActiveTimer('finish');
+          }
+        }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
         const bid = +task.bid || +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
@@ -6145,6 +6293,9 @@ function renderFocusMatrix() {
         });
       };
     }
+    // Wire the cell-level drag handler so the user can drop into the empty
+    // space below the last task and the indicator stays well-behaved.
+    if (typeof attachCellDragHandlers === 'function') attachCellDragHandlers(cell, q);
     root.appendChild(cell);
   });
 }
@@ -7912,8 +8063,22 @@ function renderManaList(kind) {
       };
       row.querySelector('.remove').onclick = (e) => {
         e.stopPropagation();
-        if (running) stopManaTimer(kind, i);
+        // Discard (do NOT credit) any elapsed time on this tracker — deleting
+        // a habit voids whatever time was accumulated under it. Money / mana
+        // adjustments and the watch-log entry are skipped on purpose; the
+        // earlier `stopManaTimer(kind, i)` call would have applied them.
+        const at = state.activeTimer;
+        const expectedType = (kind === 'multiplier') ? 'multiplier' : 'muncher';
+        if (at && at.type === expectedType && at.manaIdx === i) {
+          state.activeTimer = null;
+        }
         state.mana[kind].splice(i,1); saveState(); renderManaList(kind);
+        // Re-anchor activeTimer.manaIdx if it pointed at a row AFTER the
+        // deleted one (would otherwise drift onto the wrong tracker).
+        const at2 = state.activeTimer;
+        if (at2 && at2.type === expectedType && typeof at2.manaIdx === 'number' && at2.manaIdx > i) {
+          at2.manaIdx = at2.manaIdx - 1;
+        }
         markSettingsChanged(); pushSettingsToCloud();
       };
       list.appendChild(row);
