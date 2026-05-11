@@ -935,34 +935,46 @@
       _runPrewarm();
     }
   }
-  // Headless cache-fill driver. Iterates EVERY sentence across EVERY
-  // page (not just the current one) and calls the same prefetch
-  // helpers the lesson page normally uses on demand:
-  //   • chunk-gpt / chunk-ja-gpt (via Translate.getChunks)
-  //   • word-info-gpt (via Translate.getWordInfo) — EN words only,
-  //     JP needs kuromoji tokens to extract word lemmas which would
-  //     duplicate work the page renderer already did (skipped here)
-  //   • translate(word, sentence) — DeepL batch per sentence
-  //   • furigana-gpt — JP only, via Translate.getFurigana on JPT
-  // Sends `eng:prewarm` progress + done messages to the parent window
-  // (the home page's hidden iframe driver picks these up for the
-  // progress bar). Concurrency capped at 4 to stay under the Edge
-  // Function rate limit while still finishing in reasonable time.
+  // Headless cache-fill driver — fills EVERY cache the lesson page
+  // hits on demand, across BOTH languages:
+  //
+  //   chunk_gpt_cache / chunk-ja-gpt rows  ← getChunks(s)
+  //   translate_deepl_cache                ← translateBatch(items, s)
+  //   translate_gpt_cache                  ← translateGPT(item, s)
+  //                                          [runs unconditionally
+  //                                           in the live page as a
+  //                                           background "GPT override"
+  //                                           on top of DeepL — the ✨
+  //                                           toggle UI was removed
+  //                                           but the call is still
+  //                                           wired in lesson.html]
+  //   word_info_gpt_cache                  ← getWordInfo(w)
+  //
+  // EN words come from an alpha regex. JP words come from kuromoji
+  // (window.JPT — loaded inside this iframe by the normal lesson
+  // init). We prewarm BOTH the surface form (data-surface on body
+  // chips) AND the basic_form / lemma (data-word — what
+  // getWordInfo / translate calls key on) so every subsequent
+  // student click lands on a cache hit.
+  //
+  // Worker pool: 4 concurrent calls — enough throughput to finish
+  // medium lessons in 1-3 minutes without hammering the OpenAI
+  // rate limit. Each task swallows its own errors so one Edge
+  // Function blip can't abort the whole pass.
   async function _runPrewarm() {
     function _post(payload) {
       try { window.parent.postMessage(Object.assign({ kind: 'eng:prewarm' }, payload), '*'); } catch (_) {}
     }
     _post({ type: 'progress', done: 0, total: 1, label: '준비 중' });
-    // Wait briefly for SENTENCE_MAP / PAGES to settle in case of
-    // async rendering (JP kuromoji etc.).
     await new Promise(r => setTimeout(r, 200));
     if (!LESSON || !PAGES || !PAGES.length) {
       _post({ type: 'done', done: 0, total: 0 });
       return;
     }
     const lang = (window.DB && DB.getLang) ? DB.getLang() : 'en';
-    // Collect every sentence across all pages by reusing the same
-    // splitIntoSentences logic the lesson page already trusts.
+
+    // Collect sentences across all pages, reusing the lesson page's
+    // own splitIntoSentences for language-correct boundaries.
     const sentences = [];
     for (const page of PAGES) {
       for (const para of (page || [])) {
@@ -974,56 +986,161 @@
         }
       }
     }
-    // EN word extraction — strip punctuation, lowercase, dedupe.
-    const allWords = new Set();
-    if (lang === 'en') {
-      for (const s of sentences) {
-        const m = s.match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
+
+    // Per-sentence word extraction. EN: alpha regex. JP: kuromoji
+    // sync tokenizer — same tokens the body chips use.
+    function _wordsIn(sentence) {
+      const set = new Set();
+      if (lang === 'ja') {
+        if (window.JPT && window.JPT.tokenizeSync) {
+          const tokens = window.JPT.tokenizeSync(sentence) || [];
+          for (const tk of tokens) {
+            const surf = tk && tk.surface_form;
+            const lemma = tk && tk.basic_form && tk.basic_form !== '*' ? tk.basic_form : null;
+            // Only content tokens — skip pure punctuation chips.
+            if (surf && /[一-鿿ぁ-んァ-ヶ]/.test(surf)) set.add(surf);
+            if (lemma && /[一-鿿ぁ-んァ-ヶ]/.test(lemma)) set.add(lemma);
+          }
+        }
+      } else {
+        const m = sentence.match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
         for (const w of m) {
           const lo = w.toLowerCase();
-          if (lo.length >= 2) allWords.add(lo);
+          if (lo.length >= 2) set.add(lo);
         }
       }
+      return Array.from(set);
     }
+
+    // Aggregate unique words for the per-word phase (word-info).
+    const allWords = new Set();
+    const wordsBySentence = sentences.map(s => {
+      const ws = _wordsIn(s);
+      for (const w of ws) allWords.add(w);
+      return ws;
+    });
     const wordArr = Array.from(allWords);
-    // Per-sentence: chunks (1 op) + DeepL batch (1 op).
-    // Per-word: word-info (1 op).
-    const total = sentences.length * 2 + wordArr.length;
+
+    // Op budget:
+    //   • 1 × getChunks per sentence
+    //   • 1 × translateBatch per sentence (words + chunk texts in one DeepL call)
+    //   • 1 × translateGPT per (word, sentence) pair
+    //   • 1 × translateGPT per sentence — covers every chunk_text in
+    //         that sentence serially (chunk count not known up front,
+    //         so one task per sentence rather than per chunk)
+    //   • 1 × getWordInfo per unique word
+    let translateGptPairs = 0;
+    for (const ws of wordsBySentence) translateGptPairs += ws.length;
+    const total =
+        sentences.length        // getChunks
+      + sentences.length        // translateBatch
+      + translateGptPairs       // translateGPT (word, sentence)
+      + sentences.length        // translateGPT chunks per sentence
+      + wordArr.length;         // word-info
+
     let done = 0;
     function tick(label) {
       done++;
-      // Throttle messages to ~1 per frame batch so we don't flood
-      // postMessage. Always send when first / last / every 5%.
-      if (done === 1 || done === total || done % Math.max(1, Math.floor(total / 30)) === 0) {
+      if (done === 1 || done === total ||
+          done % Math.max(1, Math.floor(total / 30)) === 0) {
         _post({ type: 'progress', done, total, label: label || '' });
       }
     }
-    // Worker pool — 4 concurrent. Each task swallows its own errors
-    // (cache misses or 429s shouldn't abort the whole prewarm).
+
+    // Local memo of chunk texts per sentence. Populated by phase 1
+    // (or lazily by phase 2/3 if a worker happens to pick those up
+    // before phase 1 for the same sentence completes — see
+    // `_chunksFor` below).
+    const chunksBySentence = new Map();
+    async function _chunksFor(s) {
+      if (chunksBySentence.has(s)) return chunksBySentence.get(s);
+      try {
+        if (Translate.getChunks) {
+          const result = await Translate.getChunks(s);
+          if (Array.isArray(result)) {
+            const texts = result.map(c => c && c.text).filter(Boolean);
+            chunksBySentence.set(s, texts);
+            return texts;
+          }
+        }
+      } catch (_) {}
+      chunksBySentence.set(s, []);
+      return [];
+    }
+
     const queue = [];
+
+    // Phase 1: getChunks per sentence (memo-fills chunksBySentence).
     for (const s of sentences) {
       queue.push(async () => {
-        try { if (Translate.getChunks) await Translate.getChunks(s); } catch (_) {}
+        await _chunksFor(s);
         tick('청크');
       });
+    }
+
+    // Phase 2: DeepL batch of (words + chunk texts) per sentence.
+    // Uses `_chunksFor` so it gracefully handles phase 1 not having
+    // finished for this specific sentence yet (race-safe).
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
       queue.push(async () => {
-        if (lang === 'ja') { tick('번역'); return; }
         try {
-          const m = s.match(/[A-Za-z][A-Za-z'’\-]*/g) || [];
-          const words = Array.from(new Set(m.map(w => w.toLowerCase()).filter(w => w.length >= 2)));
-          if (words.length && Translate.translateBatch) {
-            await Translate.translateBatch(words, s);
+          const items = new Set(wordsBySentence[i]);
+          const chunks = await _chunksFor(s);
+          for (const c of chunks) if (c) items.add(c);
+          const arr = Array.from(items);
+          if (arr.length && Translate.translateBatch) {
+            await Translate.translateBatch(arr, s);
           }
         } catch (_) {}
         tick('번역');
       });
     }
+
+    // Phase 3: translateGPT for each (word, sentence) pair AND each
+    // (chunk_text, sentence) pair — populates translate_gpt_cache so
+    // student clicks don't trigger the background GPT override call.
+    // The chunk-level GPT call is the one the user's recent prompt
+    // tuning targets (turning "to optimize their children" into
+    // "자녀를 최적화해야 하는") — it MUST be in the cache by the
+    // time students click.
+    for (let i = 0; i < sentences.length; i++) {
+      const s = sentences[i];
+      for (const w of wordsBySentence[i]) {
+        queue.push(async () => {
+          try {
+            if (Translate.translateGPT) await Translate.translateGPT(w, s);
+          } catch (_) {}
+          tick('GPT 번역');
+        });
+      }
+      // Chunk-level translateGPT runs once per sentence (one task
+      // looping its chunks serially) because we don't know the
+      // chunk count upfront. Uses `_chunksFor` so it's race-safe
+      // against phase 1.
+      queue.push(async () => {
+        try {
+          const chunks = await _chunksFor(s);
+          for (const ct of chunks) {
+            if (!ct) continue;
+            try { if (Translate.translateGPT) await Translate.translateGPT(ct, s); } catch (_) {}
+          }
+        } catch (_) {}
+        tick('GPT 청크');
+      });
+    }
+
+    // Phase 4: word-info per unique word.
     for (const w of wordArr) {
       queue.push(async () => {
         try { if (Translate.getWordInfo) await Translate.getWordInfo(w); } catch (_) {}
         tick('단어 사전');
       });
     }
+
+    // Worker pool — 4 concurrent. We process phases interleaved by
+    // the global FIFO order so progress feels continuous; correctness
+    // doesn't depend on phase ordering (each cache is independent).
     const CONCURRENCY = 4;
     let next = 0;
     async function worker() {
