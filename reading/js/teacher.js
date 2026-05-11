@@ -220,6 +220,228 @@
     throw new Error('Could not generate a unique code — too many students.');
   }
 
+  // ----------------------------------------------------------------
+  //  Print login cards — opens a new tab with a print-ready A4 sheet
+  //  laid out 2 columns × 5 rows (10 cards per page). Teachers print
+  //  it, cut on the dashed lines, and hand each student their card.
+  //
+  //  Pop-ups can be blocked; we fail loud with a helpful message.
+  //  Cards include the site URL so students don't have to ask twice.
+  // ----------------------------------------------------------------
+  $('printCardsBtn').addEventListener('click', () => {
+    if (!currentClass) { alert('Pick or create a class first.'); return; }
+    const cardable = students.filter(s => s.login_code);
+    if (!cardable.length) {
+      alert('No students with login codes yet. Add a student first.');
+      return;
+    }
+    const skipped = students.length - cardable.length;
+    if (skipped > 0 &&
+        !confirm(`${skipped} student${skipped===1?'':'s'} ${skipped===1?'has':'have'} no login code yet and will be skipped. Print the rest?`)) {
+      return;
+    }
+    openPrintWindow(cardable, currentClass);
+  });
+
+  function openPrintWindow(studentList, klass) {
+    const win = window.open('', '_blank');
+    if (!win) {
+      alert('Pop-ups are blocked. Allow pop-ups for this page and try again.');
+      return;
+    }
+    win.document.write(buildPrintHTML(studentList, klass));
+    win.document.close();
+    win.focus();
+  }
+
+  function buildPrintHTML(studentList, klass) {
+    // Where students go to sign in — derive from this page's URL so
+    // it works on localhost, a dev server, or a production deploy
+    // without hardcoding anything.
+    const signInURL = location.origin
+      + location.pathname.replace(/teacher\.html.*$/, 'index.html');
+
+    // Chunk into groups of 10. We render exactly 10 slots per page,
+    // padding the final page with empty placeholders so the cut
+    // lines stay aligned and the grid doesn't visually "shrink".
+    const PAGE_SIZE = 10;
+    const pages = [];
+    for (let i = 0; i < studentList.length; i += PAGE_SIZE) {
+      pages.push(studentList.slice(i, i + PAGE_SIZE));
+    }
+
+    const css = `
+      :root { color-scheme: light; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        background: #f4f1ea;
+        color: #2A2A33;
+      }
+      .topbar {
+        position: sticky; top: 0; z-index: 10;
+        background: #fff; border-bottom: 1px solid #ddd;
+        padding: 14px 20px;
+        display: flex; align-items: center; gap: 16px;
+        flex-wrap: wrap;
+      }
+      .topbar h1 { margin: 0; font-size: 18px; }
+      .topbar button {
+        appearance: none; cursor: pointer;
+        background: #F77F4E; color: #fff;
+        border: none; border-radius: 8px;
+        font: inherit; font-weight: 700;
+        padding: 10px 16px;
+      }
+      .topbar small { color: #777; }
+      .stage { padding: 24px 0; }
+
+      @page { size: A4 portrait; margin: 8mm; }
+
+      .sheet {
+        width: 194mm;
+        height: 281mm;
+        margin: 0 auto 18px;
+        background: #fff;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: repeat(5, 1fr);
+        gap: 4mm;
+        padding: 0;
+        box-shadow: 0 6px 24px rgba(0,0,0,.08);
+        page-break-after: always;
+      }
+      .sheet:last-child { page-break-after: auto; }
+
+      .card {
+        border: 1.4px dashed #b9b3a3;
+        border-radius: 6px;
+        padding: 5mm 6mm;
+        display: flex; flex-direction: column;
+        justify-content: space-between;
+        overflow: hidden;
+      }
+      .card.empty {
+        border-style: dotted;
+        opacity: .25;
+      }
+
+      .card .brand {
+        font-size: 12pt;
+        font-weight: 800;
+        color: #F77F4E;
+        letter-spacing: -.3px;
+      }
+      .card .brand span { color: #4FB3D9; }
+
+      .card .greet {
+        font-size: 14pt;
+        margin-top: 2mm;
+        line-height: 1.25;
+      }
+      .card .greet .emoji { margin-right: 1mm; }
+
+      .card .codelabel {
+        font-size: 8.5pt;
+        text-transform: uppercase;
+        letter-spacing: 1pt;
+        color: #888;
+        margin-top: 3mm;
+      }
+      .card .code {
+        font-family: "SF Mono", Menlo, Consolas, monospace;
+        font-size: 30pt;
+        font-weight: 700;
+        letter-spacing: 6pt;
+        line-height: 1;
+        text-align: center;
+        background: #FFF3E5;
+        border: 1.5px solid #F4C8A2;
+        border-radius: 6px;
+        padding: 3mm 0;
+        margin-top: 1mm;
+      }
+
+      .card .foot {
+        margin-top: 3mm;
+        font-size: 8.5pt;
+        color: #666;
+        line-height: 1.35;
+      }
+      .card .foot .url {
+        font-family: "SF Mono", Menlo, monospace;
+        font-size: 8.5pt;
+        color: #2A2A33;
+        word-break: break-all;
+      }
+      .card .foot .klass {
+        margin-top: 1mm;
+        color: #999;
+      }
+
+      @media screen {
+        .stage { padding-top: 18px; }
+      }
+      @media print {
+        .topbar { display: none; }
+        body { background: #fff; }
+        .sheet { box-shadow: none; margin: 0 auto; }
+        .stage { padding: 0; }
+      }
+    `;
+
+    function renderCard(s) {
+      const genderEmoji = ({ girl:'👧', boy:'👦', other:'🙂' })[s.gender] || '🙂';
+      const codeStr = String(s.login_code || '').split('').join(' ');
+      return `
+        <div class="card">
+          <div>
+            <div class="brand">Word<span>Catch</span></div>
+            <div class="greet"><span class="emoji">${genderEmoji}</span>Kia ora, <strong>${escapeHtml(s.real_name)}</strong>!</div>
+          </div>
+          <div>
+            <div class="codelabel">Your code</div>
+            <div class="code">${codeStr}</div>
+          </div>
+          <div class="foot">
+            Sign in at:<br>
+            <span class="url">${escapeHtml(signInURL)}</span>
+            <div class="klass">Class: ${escapeHtml(klass.name)}</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderSheet(group) {
+      const cells = group.map(renderCard);
+      // pad with empty placeholders to 10 slots
+      for (let i = group.length; i < PAGE_SIZE; i++) {
+        cells.push('<div class="card empty"></div>');
+      }
+      return `<div class="sheet">${cells.join('')}</div>`;
+    }
+
+    return `<!doctype html>
+<html lang="en-NZ">
+<head>
+<meta charset="utf-8">
+<title>Login cards — ${escapeHtml(klass.name)}</title>
+<style>${css}</style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Login cards — ${escapeHtml(klass.name)} (${studentList.length})</h1>
+    <button onclick="window.print()">🖨 Print these cards</button>
+    <small>Tip: cut along the dashed lines and hand each student their card.</small>
+  </div>
+  <div class="stage">
+    ${pages.map(renderSheet).join('')}
+  </div>
+</body>
+</html>`;
+  }
+
   // ============================================================
   //  TAB 2 — LESSONS
   // ============================================================
