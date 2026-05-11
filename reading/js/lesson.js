@@ -40,6 +40,12 @@
   let wordLevels  = new Map(); // lower → level (number)
   let singleMode  = false;
   let singleIdx   = 0;       // active sentence index when singleMode
+  // Pagination — body split into "pages" the bottom arrows step through.
+  // For Phase-current scope we paginate by paragraph: each <p> = one page,
+  // which matches 또박또박's per-paragraph rhythm well enough without a
+  // viewport-fitting algorithm. Future: dynamic auto-fit pagination.
+  let pages       = [];      // [[sentence,…], …]  groups of parts
+  let pageIdx     = 0;
   // Subscribers (sidebar) that want to react to word-level changes.
   const levelChangeListeners = [];
   function notifyLevelChange(detail) {
@@ -105,9 +111,43 @@
     } catch (e) { console.warn('wordStates load:', e); }
 
     sentences = tokeniseBody(lesson.body);
+    pages     = paginate(sentences, lesson.body);
+    pageIdx   = 0;
     renderBody();
     wireToolbar();
+    refreshPageCounter();
+    refreshNavBoundary();
   })();
+
+  // ---------- pagination ----------
+  // Group sentence/gap parts into pages, breaking on paragraph boundaries
+  // (a "gap" containing \n\n is the natural paragraph break).
+  function paginate(parts, rawBody) {
+    if (!parts.length) return [];
+    const out  = [];
+    let curr   = [];
+    parts.forEach(p => {
+      curr.push(p);
+      if (p.kind === 'gap' && /\n\s*\n/.test(p.text)) {
+        out.push(curr);
+        curr = [];
+      }
+    });
+    if (curr.length) out.push(curr);
+    // If the body had no blank-line paragraph breaks at all, fall back
+    // to a single page rather than 1-sentence pages.
+    return out.length ? out : [parts];
+  }
+
+  function refreshPageCounter() {
+    const el = document.getElementById('thumbPages');
+    if (!el) return;
+    el.textContent = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
+    const prev = document.getElementById('btnPagePrev');
+    const next = document.getElementById('btnPageNext');
+    if (prev) prev.disabled = pageIdx <= 0;
+    if (next) next.disabled = pageIdx >= pages.length - 1;
+  }
 
   // ---------- tokenisation ----------
   function tokeniseBody(body) {
@@ -163,8 +203,12 @@
   function renderBody() {
     const root = $('lessonBody');
     root.innerHTML = '';
+    // Render only the parts belonging to the current page. In single-
+    // sentence mode we still render the whole page but dim non-active
+    // sentences (handled in refreshSingleMode).
+    const parts = pages[pageIdx] || sentences;
     let sentIdx = 0;
-    sentences.forEach(p => {
+    parts.forEach(p => {
       if (p.kind === 'gap') {
         root.appendChild(document.createTextNode(p.text));
         return;
@@ -178,21 +222,16 @@
           return;
         }
         const sp = document.createElement('span');
-        // `.w` is the 또박또박-style word chip. State sub-class (.s1..s5
-        // / .sx / .unseen) is applied by applyLevelClass below.
+        // `.w` is the 또박또박-style word chip. State sub-class is set
+        // by applyLevelClass below.
         sp.className = 'w';
         sp.dataset.word = tok.lower;
         sp.textContent  = tok.text;
-        // Words that have NEVER been tapped should stay plain text — no
-        // sky-blue overlay until the user actually engages with them.
-        // We use the special `unseen` class for that; once tapped the
-        // class flips to `s0` (sky-blue) or whatever level the popup sets.
         const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
         applyLevelClass(sp, startLevel);
         sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
         wrap.appendChild(sp);
       });
-      // a click on whitespace inside a sentence focuses that sentence in single mode
       wrap.addEventListener('click', e => {
         if (singleMode && e.target === wrap) goSingle(parseInt(wrap.dataset.idx, 10));
       });
@@ -257,32 +296,80 @@
     });
   }
 
-  // ---------- toolbar ----------
+  // ---------- toolbar / bottom-bar wiring ----------
   function wireToolbar() {
+    // ▶ Play / pause TTS on the current page or sentence.
+    let isPlaying = false;
     $('btnPlay').addEventListener('click', async () => {
-      const text = singleMode ? currentSentenceText() : flatText();
+      if (isPlaying) { window.WCTTS.stop(); isPlaying = false; $('btnPlay').classList.remove('playing'); return; }
+      isPlaying = true;
+      $('btnPlay').classList.add('playing');
+      const text = singleMode ? currentSentenceText() : currentPageText();
       try { await window.WCTTS.speak(text); }
       catch (e) { console.warn('TTS error', e); }
+      isPlaying = false;
+      $('btnPlay').classList.remove('playing');
     });
-    $('btnStop').addEventListener('click', () => window.WCTTS.stop());
 
+    // 1문장씩 chip in the header → toggles the dim-others mode.
     $('btnSingle').addEventListener('click', () => {
       singleMode = !singleMode;
       $('btnSingle').classList.toggle('active', singleMode);
-      $('btnSingle').textContent = singleMode ? 'One sentence: ON' : 'One sentence: OFF';
-      $('btnPrev').classList.toggle('wc-hidden', !singleMode);
-      $('btnNext').classList.toggle('wc-hidden', !singleMode);
+      $('btnSingle').setAttribute('aria-pressed', singleMode ? 'true' : 'false');
       if (singleMode && singleIdx == null) singleIdx = 0;
       refreshSingleMode();
     });
-    $('btnPrev').addEventListener('click', () => goSingle(singleIdx - 1));
-    $('btnNext').addEventListener('click', () => goSingle(singleIdx + 1));
+
+    // Bottom-bar arrows: when 1문장씩 ON they step sentences; otherwise
+    // they step PAGES (same role as 또박또박's lb-arrow buttons).
+    $('btnPrev').addEventListener('click', () => {
+      if (singleMode) goSingle(singleIdx - 1);
+      else            goPage(pageIdx - 1);
+    });
+    $('btnNext').addEventListener('click', () => {
+      if (singleMode) goSingle(singleIdx + 1);
+      else            goPage(pageIdx + 1);
+    });
+
+    // Thumbnail page buttons (top-right) — explicit page navigation.
+    const ppPrev = document.getElementById('btnPagePrev');
+    const ppNext = document.getElementById('btnPageNext');
+    if (ppPrev) ppPrev.addEventListener('click', () => goPage(pageIdx - 1));
+    if (ppNext) ppNext.addEventListener('click', () => goPage(pageIdx + 1));
+  }
+
+  function goPage(next) {
+    if (!pages.length) return;
+    pageIdx = Math.max(0, Math.min(pages.length - 1, next));
+    singleIdx = 0;
+    renderBody();
+    refreshPageCounter();
+    refreshNavBoundary();
+  }
+
+  function refreshNavBoundary() {
+    const prev = $('btnPrev'), next = $('btnNext');
+    if (!prev || !next) return;
+    if (singleMode) {
+      const last = (document.querySelectorAll('.wc-sentence').length || 1) - 1;
+      prev.disabled = singleIdx <= 0;
+      next.disabled = singleIdx >= last;
+    } else {
+      prev.disabled = pageIdx <= 0;
+      next.disabled = pageIdx >= pages.length - 1;
+    }
+  }
+
+  function currentPageText() {
+    const parts = pages[pageIdx] || [];
+    return parts.map(p => p.text).join('');
   }
 
   function refreshSingleMode() {
     const wraps = document.querySelectorAll('.wc-sentence');
     if (!singleMode) {
       wraps.forEach(w => w.classList.remove('wc-dim', 'wc-active'));
+      refreshNavBoundary();
       return;
     }
     wraps.forEach(w => {
@@ -290,9 +377,9 @@
       w.classList.toggle('wc-active', i === singleIdx);
       w.classList.toggle('wc-dim',    i !== singleIdx);
     });
-    // scroll the active one into view
     const active = document.querySelector('.wc-sentence.wc-active');
     if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    refreshNavBoundary();
   }
 
   function goSingle(next) {
