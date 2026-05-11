@@ -261,10 +261,12 @@
     const signInURL = location.origin
       + location.pathname.replace(/teacher\.html.*$/, 'index.html');
 
-    // Chunk into groups of 10. We render exactly 10 slots per page,
+    // Chunk into groups of 8. We render exactly 8 slots per page,
     // padding the final page with empty placeholders so the cut
     // lines stay aligned and the grid doesn't visually "shrink".
-    const PAGE_SIZE = 10;
+    // 8-up (2×4) gives each card noticeably more room than 10-up,
+    // making the 4-digit code easier for younger students to read.
+    const PAGE_SIZE = 8;
     const pages = [];
     for (let i = 0; i < studentList.length; i += PAGE_SIZE) {
       pages.push(studentList.slice(i, i + PAGE_SIZE));
@@ -306,8 +308,8 @@
         background: #fff;
         display: grid;
         grid-template-columns: 1fr 1fr;
-        grid-template-rows: repeat(5, 1fr);
-        gap: 4mm;
+        grid-template-rows: repeat(4, 1fr);
+        gap: 5mm;
         padding: 0;
         box-shadow: 0 6px 24px rgba(0,0,0,.08);
         page-break-after: always;
