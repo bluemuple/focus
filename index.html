@@ -762,7 +762,7 @@
   .panel.collapsible > h2:hover,
   .panel.collapsible > h3:hover { color: #2563eb; }
 
-  /* Account sync buttons — Cloud→Device / Device→Cloud.
+  /* Account sync button — Device → Cloud (manual checkpoint + cloud save).
      PC: words. "Device" green so users instantly see which side is theirs.
      Phone: emojis (☁️ / 📱) for compactness. */
   /* Daily backups list — appears under "Signed in as ..." when 2+ versions
@@ -2609,15 +2609,10 @@
             <button class="btn" id="account-manual-btn" type="button" title="Open the User Guide">Guide</button>
           </div>
           <div class="row-flex account-row-2">
-            <button class="btn sync-btn" id="auth-push-now" title="Push this device's data to cloud — keeps your data safe before clearing browser data">
+            <button class="btn sync-btn" id="auth-push-now" title="Save a backup and push this device's data to the cloud">
               <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
               <span class="arrow"> → </span>
               <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
-            </button>
-            <button class="btn sync-btn" id="auth-resync" title="Pull latest data from cloud — overwrites this device's state">
-              <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
-              <span class="arrow"> → </span>
-              <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
             </button>
           </div>
           <span id="auth-status2" class="help"></span>
@@ -3040,8 +3035,7 @@
         <ul>
           <li><em>Sign out</em></li>
           <li><em>Manual</em> — open this guide.</li>
-          <li><em>Device → Cloud</em> — push this device's state to Supabase right now (use before clearing browser data).</li>
-          <li><em>Cloud → Device</em> — pull the latest cloud state, overwriting this device.</li>
+          <li><em>Device → Cloud</em> — saves a backup checkpoint (visible in the Backups list above) and pushes this device's state to the cloud. Use it before clearing browser data, or whenever you want a restore point.</li>
         </ul>
       </li>
 
@@ -9077,8 +9071,6 @@ const authPasswordInput = document.getElementById('auth-password');
 const authSigninBtn = document.getElementById('auth-signin');
 const authSignupBtn = document.getElementById('auth-signup');
 const authSignoutBtn = document.getElementById('auth-signout');
-const authResyncBtn = document.getElementById('auth-resync');
-
 async function pullEverythingFromCloud() {
   // syncStatsBidi pulls focus_sessions and (via syncSettingsBidi) user_settings
   // including motivational_lines, ext_others, int_others, tasks. After pulling
@@ -9144,23 +9136,25 @@ async function handleSignOut() {
   const status2 = document.getElementById('auth-status2');
   if (status2) { status2.textContent = 'Signed out'; status2.style.color = '#6b7280'; }
 }
-async function handleForceResync() {
-  const el = document.getElementById('auth-status2');
-  if (el) { el.textContent = 'Pulling from cloud…'; el.style.color = '#6b7280'; }
-  try {
-    await pullEverythingFromCloud();
-    if (el) { el.textContent = '✓ Cloud → Device done'; el.style.color = '#059669'; }
-  } catch (e) {
-    if (el) { el.textContent = '✗ ' + (e.message || 'Pull failed'); el.style.color = '#dc2626'; }
-  }
-}
 /* Device → Cloud — the same hardened save the Sleep button performs:
-   awaits pushSettingsToCloud + writes today's stats snapshot. Used when the
-   user wants to make sure local data is safely in the cloud before clearing
-   browser data, switching devices, etc. */
+   awaits pushSettingsToCloud + writes today's stats snapshot. This is also
+   the user's manual checkpoint: clicking it stamps a NEW backup row into
+   state.versions BEFORE pushing, so the cloud (and the Account backup list)
+   reflect "this is the state I want to be able to come back to". The
+   3-most-recent cap in pushDailyVersion keeps the list short. */
 async function handleDeviceToCloud() {
   const el = document.getElementById('auth-status2');
   if (el) { el.textContent = 'Saving to cloud…'; el.style.color = '#6b7280'; }
+  // Stamp a manual backup BEFORE the push so the new version goes out in the
+  // same payload (and shows up in the Account backups list immediately).
+  try {
+    if (typeof pushDailyVersion === 'function') {
+      const when = new Date().toLocaleString();
+      pushDailyVersion('Manual save · ' + when);
+      saveState();
+      if (typeof renderVersionsList === 'function') renderVersionsList();
+    }
+  } catch (_) {}
   // Cancel any pending debounced push so we send everything in one go.
   if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
     clearTimeout(_settingsPushTimer);
@@ -9175,7 +9169,7 @@ async function handleDeviceToCloud() {
     }
   } catch (_) {}
   if (el) {
-    el.textContent = ok ? '✓ Device → Cloud done' : '✗ Save failed (network?)';
+    el.textContent = ok ? '✓ Backup saved to cloud' : '✗ Save failed (network?)';
     el.style.color = ok ? '#059669' : '#dc2626';
   }
 }
@@ -9183,7 +9177,6 @@ async function handleDeviceToCloud() {
 if (authSigninBtn) authSigninBtn.onclick = handleSignIn;
 if (authSignupBtn) authSignupBtn.onclick = handleSignUp;
 if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
-if (authResyncBtn) authResyncBtn.onclick = handleForceResync;
 const _authPushNowBtn = document.getElementById('auth-push-now');
 if (_authPushNowBtn) _authPushNowBtn.onclick = handleDeviceToCloud;
 
@@ -9196,7 +9189,6 @@ document.addEventListener('click', (ev) => {
   const t = ev.target;
   if (!t) return;
   if (t.closest && t.closest('#auth-signout'))   { handleSignOut();      return; }
-  if (t.closest && t.closest('#auth-resync'))    { handleForceResync();  return; }
   if (t.closest && t.closest('#auth-push-now'))  { handleDeviceToCloud();return; }
 });
 // Allow pressing Enter in either field to sign in
@@ -10061,7 +10053,9 @@ function renderVersionsList() {
   const el = document.getElementById('versions-list');
   if (!el) return;
   const list = (state.versions || []).slice().sort((a, b) => (b.savedAt||0) - (a.savedAt||0));
-  if (list.length < 2) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+  // Show the panel as soon as ANY backup exists — manual Device → Cloud
+  // creates one explicitly and the user should see the row immediately.
+  if (list.length < 1) { el.innerHTML = ''; el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   el.innerHTML = `
     <div class="versions-head">Backups</div>
