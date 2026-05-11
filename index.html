@@ -1362,12 +1362,24 @@
     font-variant-numeric: tabular-nums; font-weight: 700;
     color: #2563eb; cursor: pointer; padding: 2px 8px; border-radius: 6px;
     user-select: none;
-    transition: background .15s ease;
+    transition: background .15s ease, color .15s ease;
   }
   .im-doing-time:hover { background: rgba(37,99,235,.08); }
-  .im-doing.paused .im-doing-time { color: #b45309; background: #fef3c7; }
+  /* Color the elapsed-time by the activity's effect on the user's score:
+     red when the current activity RAISES money or mana (pomodoro, +rate
+     trackers); blue when it LOWERS money or mana (-rate trackers). */
+  .im-doing-time.gain { color: #dc2626; }   /* raises money / mana */
+  .im-doing-time.lose { color: #1d4ed8; }   /* lowers money / mana */
+  .im-doing-time.gain:hover { background: rgba(220,38,38,.08); }
+  .im-doing-time.lose:hover { background: rgba(29,78,216,.08); }
+  /* Paused & idle overrides win over gain/lose. */
+  .im-doing.paused .im-doing-time,
+  .im-doing.paused .im-doing-time.gain,
+  .im-doing.paused .im-doing-time.lose { color: #b45309; background: #fef3c7; }
   .im-doing.idle   .im-doing-name { color: #9ca3af; font-style: italic; font-weight: 500; }
-  .im-doing.idle   .im-doing-time { color: #9ca3af; cursor: default; }
+  .im-doing.idle   .im-doing-time,
+  .im-doing.idle   .im-doing-time.gain,
+  .im-doing.idle   .im-doing-time.lose { color: #9ca3af; cursor: default; }
   .im-doing.idle   .im-doing-time:hover { background: transparent; }
   /* Sleep button — softer pill that matches "Set GTD ⏰" so it doesn't
      dominate the Mana area visually. The "must-sleep" red variant later
@@ -7472,6 +7484,7 @@ function renderImDoing() {
     // Idle: just one cheerful line, no time. The Sleep button stays put.
     wrap.classList.remove('paused');
     wrap.classList.add('idle');
+    timeEl.classList.remove('gain', 'lose');
     if (labelEl) labelEl.style.display = 'none';
     timeEl.style.display = 'none';
     // Phone gets a tighter abbreviation so it doesn't overflow next to Sleep.
@@ -7484,6 +7497,7 @@ function renderImDoing() {
   if (at.pendingPhaseConfirm) {
     wrap.classList.remove('paused');
     wrap.classList.add('idle');
+    timeEl.classList.remove('gain', 'lose');
     if (labelEl) labelEl.style.display = 'none';
     timeEl.style.display = 'none';
     nameEl.textContent = '';
@@ -7493,18 +7507,34 @@ function renderImDoing() {
   wrap.classList.toggle('paused', !!at.paused);
   if (labelEl) labelEl.style.display = '';
   timeEl.style.display = '';
-  // Resolve the activity name
+  // Resolve the activity name + decide whether this activity RAISES or
+  // LOWERS the user's money / mana, which controls the timer color:
+  //   - pomodoro                            → gain (per-min money + bid)
+  //   - multiplier/muncher with rate > 0    → gain (adds money or mana)
+  //   - multiplier/muncher with rate < 0    → lose (subtracts money/mana)
+  //   - rate === 0 (rare)                   → gain (per-minute cents still
+  //                                           applies positively to money)
   let name = '(timer)';
+  let effect = null;  // 'gain' | 'lose' | null
   if (at.type === 'pomodoro') {
     const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (t) name = t.text || '(task)';
+    effect = 'gain';
   } else if (at.type === 'muncher' || at.type === 'multiplier') {
     const list = at.type === 'multiplier' ? state.mana.multiplier : state.mana.muncher;
     const m = list && list[at.manaIdx];
     if (m) name = m.lbl || '(tracker)';
+    const rate = m && typeof m.pointsPer5Min === 'number'
+      ? m.pointsPer5Min
+      : (at.type === 'multiplier' ? 3 : -3);
+    effect = rate < 0 ? 'lose' : 'gain';
   }
   nameEl.textContent = name;
   timeEl.textContent = imDoingElapsedString(at);
+  // Apply the gain/lose class — paused/idle CSS overrides take precedence so
+  // the orange / gray states still win visually when applicable.
+  timeEl.classList.toggle('gain', effect === 'gain');
+  timeEl.classList.toggle('lose', effect === 'lose');
   // Tooltip differs by timer type: pomodoro uses pause/resume; trackers stop
   // and log. This matches the actual behavior wired in toggleActiveTimerPause.
   timeEl.title = (at.type === 'pomodoro')
