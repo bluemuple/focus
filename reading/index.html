@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WordCatch — Login</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div class="wc-shell">
+    <header class="wc-header">
+      <div class="wc-logo">Word<span class="catch">Catch</span></div>
+    </header>
+
+    <!-- ============================================================
+         STEP 1 — landing: pick role
+         ============================================================ -->
+    <section id="step-role" class="wc-card wc-hero">
+      <h1>Welcome to WordCatch!</h1>
+      <p>Read together. Catch words. Catch animals.</p>
+      <div class="wc-btn-row" style="justify-content:center; margin-top:32px;">
+        <button class="wc-btn lg" data-go="student">I’m a Student</button>
+        <button class="wc-btn lg secondary" data-go="teacher">I’m a Teacher</button>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         STEP 2 — student: pick gender
+         ============================================================ -->
+    <section id="step-gender" class="wc-card wc-wizard wc-hidden">
+      <h2 class="wc-step-title">Who are you?</h2>
+      <p class="wc-step-hint">Tap one to see the name list.</p>
+      <div class="wc-gender-grid">
+        <button class="wc-btn" data-gender="girl">
+          <span class="emoji">👧</span>Girl
+        </button>
+        <button class="wc-btn" data-gender="boy">
+          <span class="emoji">👦</span>Boy
+        </button>
+        <button class="wc-btn" data-gender="other">
+          <span class="emoji">🙂</span>Other
+        </button>
+      </div>
+      <div class="wc-center"><span class="wc-back" data-back="step-role">← Back</span></div>
+    </section>
+
+    <!-- ============================================================
+         STEP 3 — student: pick name from list
+         ============================================================ -->
+    <section id="step-name" class="wc-card wc-wizard wc-hidden">
+      <h2 class="wc-step-title">Find your name</h2>
+      <p class="wc-step-hint">Tap your name. (Type to search.)</p>
+      <input id="nameFilter" type="text" class="wc-input" placeholder="Start typing your name…" autocomplete="off">
+      <div id="nameList" class="wc-name-list" aria-live="polite"></div>
+      <div class="wc-center"><span class="wc-back" data-back="step-gender">← Back</span></div>
+    </section>
+
+    <!-- ============================================================
+         STEP 4 — student: enter 4-digit code
+         ============================================================ -->
+    <section id="step-code" class="wc-card wc-wizard wc-hidden">
+      <h2 class="wc-step-title">Type your code</h2>
+      <p class="wc-step-hint">It’s the 4-digit number your teacher gave you. Hi <span id="codeWho">there</span>!</p>
+      <div class="wc-field">
+        <input id="codeInput" class="wc-input wc-code-input" type="tel" inputmode="numeric"
+               pattern="\d*" maxlength="4" placeholder="••••" autocomplete="off">
+      </div>
+      <button id="codeSubmit" class="wc-btn lg block">Let me in!</button>
+      <div id="codeErr" class="wc-alert error wc-hidden"></div>
+      <div class="wc-center"><span class="wc-back" data-back="step-name">← Pick a different name</span></div>
+    </section>
+
+    <!-- ============================================================
+         STEP T — teacher: name + code
+         ============================================================ -->
+    <section id="step-teacher" class="wc-card wc-wizard wc-hidden">
+      <h2 class="wc-step-title">Kia ora, teacher!</h2>
+      <p class="wc-step-hint">Type your name and your 4-digit code.</p>
+      <div class="wc-field">
+        <label>Name</label>
+        <input id="teacherName" class="wc-input" type="text" autocomplete="off" placeholder="Your name">
+      </div>
+      <div class="wc-field">
+        <label>Code</label>
+        <input id="teacherCode" class="wc-input wc-code-input" type="tel" inputmode="numeric"
+               pattern="\d*" maxlength="4" placeholder="••••" autocomplete="off">
+      </div>
+      <button id="teacherSubmit" class="wc-btn lg block">Sign in</button>
+      <div id="teacherErr" class="wc-alert error wc-hidden"></div>
+      <div class="wc-center"><span class="wc-back" data-back="step-role">← Back</span></div>
+    </section>
+  </div>
+
+  <script src="./js/supabase-config.js"></script>
+  <script src="./js/db.js"></script>
+  <script src="./js/auth.js"></script>
+  <script>
+  // ============================================================
+  //  Login wizard (state machine)
+  //
+  //  Step flow:
+  //    step-role → step-gender → step-name → step-code → home.html
+  //                          ↘             ↗
+  //                           step-teacher → teacher.html
+  //
+  //  Already signed in? Send straight to the right home.
+  // ============================================================
+  (() => {
+    // bounce if already logged in
+    const existing = window.WCAuth.session();
+    if (existing) {
+      window.location.href = existing.role === 'teacher' ? './teacher.html' : './home.html';
+      return;
+    }
+
+    const $ = (id) => document.getElementById(id);
+    const steps = ['step-role','step-gender','step-name','step-code','step-teacher'];
+    function show(id) {
+      steps.forEach(s => $(s).classList.toggle('wc-hidden', s !== id));
+    }
+
+    // role buttons
+    document.querySelectorAll('[data-go]').forEach(b => {
+      b.addEventListener('click', () => {
+        const target = b.dataset.go;
+        if (target === 'student') show('step-gender');
+        if (target === 'teacher') show('step-teacher');
+      });
+    });
+    // back links
+    document.querySelectorAll('[data-back]').forEach(b => {
+      b.addEventListener('click', () => show(b.dataset.back));
+    });
+
+    // ---- gender → name list ----
+    let pickedGender = null;
+    let pickedName   = null;
+    let allStudents  = [];
+
+    document.querySelectorAll('[data-gender]').forEach(b => {
+      b.addEventListener('click', async () => {
+        pickedGender = b.dataset.gender;
+        document.querySelectorAll('[data-gender]').forEach(x => x.classList.toggle('active', x === b));
+        try {
+          allStudents = await window.WCDB.users.listAllStudents(pickedGender);
+        } catch (e) {
+          allStudents = [];
+          console.error('listAllStudents failed', e);
+        }
+        renderNameList('');
+        $('nameFilter').value = '';
+        show('step-name');
+        setTimeout(() => $('nameFilter').focus(), 50);
+      });
+    });
+
+    function renderNameList(filterText) {
+      const wrap = $('nameList');
+      wrap.innerHTML = '';
+      const q = (filterText || '').trim().toLowerCase();
+      const matches = allStudents.filter(s =>
+        !q || s.real_name.toLowerCase().includes(q)
+      );
+      if (!matches.length) {
+        const empty = document.createElement('div');
+        empty.className = 'wc-name-empty';
+        empty.textContent = allStudents.length
+          ? 'No names match. Try a different spelling.'
+          : 'No students set up yet. Ask your teacher.';
+        wrap.appendChild(empty);
+        return;
+      }
+      matches.forEach(s => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = s.real_name;
+        btn.addEventListener('click', () => {
+          pickedName = s.real_name;
+          $('codeWho').textContent = pickedName;
+          $('codeInput').value = '';
+          $('codeErr').classList.add('wc-hidden');
+          show('step-code');
+          setTimeout(() => $('codeInput').focus(), 50);
+        });
+        wrap.appendChild(btn);
+      });
+    }
+    $('nameFilter').addEventListener('input', e => renderNameList(e.target.value));
+
+    // ---- code submit ----
+    async function studentSubmit() {
+      const code = $('codeInput').value.trim();
+      const errEl = $('codeErr');
+      errEl.classList.add('wc-hidden');
+      try {
+        const user = await window.WCAuth.login(pickedName, code);
+        // success! → home
+        window.location.href = './home.html';
+      } catch (e) {
+        errEl.textContent = e.message || 'Could not sign in.';
+        errEl.classList.remove('wc-hidden');
+      }
+    }
+    $('codeSubmit').addEventListener('click', studentSubmit);
+    $('codeInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') studentSubmit();
+    });
+
+    // ---- teacher submit ----
+    async function teacherSubmit() {
+      const name = $('teacherName').value.trim();
+      const code = $('teacherCode').value.trim();
+      const errEl = $('teacherErr');
+      errEl.classList.add('wc-hidden');
+      try {
+        if (!/^\d{4}$/.test(code)) throw new Error('Code must be 4 digits.');
+        const user = await window.WCDB.users.byLoginCode(code);
+        if (!user || user.role !== 'teacher') {
+          throw new Error('That teacher code isn’t right.');
+        }
+        if (user.real_name !== name) {
+          throw new Error('Name doesn’t match this code.');
+        }
+        localStorage.setItem('wc.session.v1', JSON.stringify(user));
+        window.WCDB.users.touchSeen(user.id).catch(() => {});
+        window.location.href = './teacher.html';
+      } catch (e) {
+        errEl.textContent = e.message || 'Could not sign in.';
+        errEl.classList.remove('wc-hidden');
+      }
+    }
+    $('teacherSubmit').addEventListener('click', teacherSubmit);
+    $('teacherCode').addEventListener('keydown', e => {
+      if (e.key === 'Enter') teacherSubmit();
+    });
+  })();
+  </script>
+</body>
+</html>

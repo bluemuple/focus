@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>WordCatch — My Lessons</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div class="wc-shell">
+    <header class="wc-header">
+      <div class="wc-logo" onclick="location.href='./home.html'">Word<span class="catch">Catch</span></div>
+      <div class="wc-user-chip" id="userChip">
+        <span id="userName">…</span>
+        <span class="coin" title="Coins">🪙 <span id="userMoney">0</span></span>
+        <a href="./profile.html" style="color:var(--brand-2); font-weight:600;">My Pets</a>
+        <span style="color:var(--line);">|</span>
+        <a href="#" id="logoutBtn" style="color:var(--ink-soft);">Sign out</a>
+      </div>
+    </header>
+
+    <h1 style="margin: 8px 0 18px; font-size: 28px;">My Lessons</h1>
+    <p class="wc-muted" style="margin: 0 0 20px;">
+      Pick a lesson to start reading. Tap any word you don’t know — it’ll change colour and might bring an animal!
+    </p>
+
+    <div id="lessonList" class="wc-list">
+      <div class="wc-list-item">
+        <div>
+          <div class="title">Loading lessons…</div>
+          <div class="meta">Hang on a sec</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="empty" class="wc-card wc-center wc-hidden" style="margin-top:24px;">
+      <p class="wc-muted">No lessons yet. Your teacher will add some soon!</p>
+    </div>
+  </div>
+
+  <script src="./js/supabase-config.js"></script>
+  <script src="./js/db.js"></script>
+  <script src="./js/auth.js"></script>
+  <script>
+  (async () => {
+    const me = window.WCAuth.requireStudent('./index.html');
+    if (!me) return;
+
+    document.getElementById('userName').textContent = me.real_name;
+    document.getElementById('userMoney').textContent = me.money || 0;
+    document.getElementById('logoutBtn').addEventListener('click', e => {
+      e.preventDefault();
+      window.WCAuth.logout();
+      location.href = './index.html';
+    });
+
+    const list = document.getElementById('lessonList');
+    list.innerHTML = '';
+
+    if (!me.class_id) {
+      document.getElementById('empty').classList.remove('wc-hidden');
+      document.getElementById('empty').querySelector('p').textContent =
+        'You’re not in a class yet. Ask your teacher.';
+      return;
+    }
+
+    let lessons = [];
+    try {
+      lessons = await window.WCDB.lessons.listForClass(me.class_id);
+    } catch (e) {
+      console.error(e);
+    }
+
+    if (!lessons.length) {
+      document.getElementById('empty').classList.remove('wc-hidden');
+      return;
+    }
+
+    lessons.forEach(L => {
+      const row = document.createElement('a');
+      row.href = './lesson.html?id=' + encodeURIComponent(L.id);
+      row.className = 'wc-list-item';
+      row.style.color = 'inherit';
+      row.style.textDecoration = 'none';
+      row.innerHTML = `
+        <div>
+          <div class="title">${escapeHtml(L.title)}</div>
+          <div class="meta">${escapeHtml(animalSetLabel(L.animal_set))} · ${new Date(L.created_at).toLocaleDateString('en-NZ')}</div>
+        </div>
+        <button class="wc-btn">Read</button>
+      `;
+      list.appendChild(row);
+    });
+
+    function animalSetLabel(s) {
+      return ({
+        'animals': 'World animals',
+        'nz-animals': 'NZ animals',
+        'penguin': 'Penguins',
+        'mixed': 'Mixed animals',
+      })[s] || 'Animals';
+    }
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+    }
+  })();
+  </script>
+</body>
+</html>
