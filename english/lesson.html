@@ -649,6 +649,21 @@
   // Selected words in 이어서 mode (Set of .w elements on the live page).
   const CONT_SELECTED = new Set();
 
+  // Tracks the LAST chunk text the user heard via auto-TTS in 하나씩
+  // mode. Logic:
+  //   • Word click  → resets this to ''; the chunk that contains
+  //                   the new word then gets spoken once.
+  //   • Arrow / ←/→ → does NOT reset; if the next word falls in
+  //                   the SAME chunk, the chunk-speak check below
+  //                   sees a match and skips TTS. If it falls in
+  //                   a new chunk, speak that chunk once.
+  //   • Sheet close / sidebar clear → resets to '' for the next
+  //                   selection.
+  // Net effect: hearing the chunk happens exactly once per chunk
+  // crossing, regardless of how many arrow steps were taken to get
+  // there.
+  let _lastSpokenChunkText = '';
+
   // ============== state metadata ==============
   const STATE_LABEL = {
     [-1]: '무시',
@@ -2618,6 +2633,9 @@
     const card  = document.getElementById('ls-card');
     const empty = document.getElementById('ls-empty');
     const bottomFixed = document.getElementById('ls-bottom-fixed');
+    // Reset the chunk-speak memo so the next word-click re-reads
+    // its chunk (even if it's the same chunk that was just cleared).
+    _lastSpokenChunkText = '';
     if (card)  card.hidden = true;
     if (empty) {
       empty.hidden = false;
@@ -3820,18 +3838,20 @@
     const closeBtn = document.getElementById('ws-close');
     if (closeBtn) closeBtn.onclick = (e) => { e.stopPropagation(); hideWordSheet(); };
 
-    // Auto-speak the selected word every time the sheet opens. Mobile
-    // 하나씩 mode treats word selection as a "show me this word" cue, and
-    // hearing it together with seeing the meaning is the strongest learning
-    // signal. The TTS module no-ops if the user has muted globally.
+    // Auto-speak the CHUNK that contains this word (not the word
+    // alone) — per spec, hearing the whole syntactic unit reads
+    // more naturally than a single isolated word. The speak fires
+    // inside the Translate.getChunks().then() block below once we
+    // know which chunk the word belongs to. The `_lastSpokenChunkText`
+    // memo at module scope guarantees the chunk is spoken AT MOST
+    // ONCE per crossing — arrow-stepping within the same chunk is
+    // silent. Headword tap (the ws-meaning row below) re-speaks the
+    // word on its own.
     //
-    // For JP, prefer the SURFACE form (the conjugated text the user
-    // actually saw — 食べました, 住んでいました, 言いました) over the
-    // lemma (data-word: 食べる, 住む, 言う). Reading the lemma turns
-    // 言いました into "iu", which sounds wrong against the visible
-    // chip text.
-    const _ttsAutoText = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || word;
-    try { TTS.speak(_ttsAutoText); } catch (_) {}
+    // Remember the surface form so the headword tap below can read
+    // the conjugated text the user actually saw (食べました), not
+    // the lemma (食べる).
+    const _surfaceForTTS = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || word;
 
     // DeepL-only translation. (Dual-mode with GPT was removed along
     // with the ✨ toggle button — DeepL is now the single engine.) The
@@ -3955,6 +3975,15 @@
         applyChunkHighlight(anchorEl, c);
         latestChunk = c;
         repaintChunkPanel();    // chunk text immediately, Korean blank
+        // Chunk-aware TTS — speak the chunk once per chunk crossing.
+        // Module-scope `_lastSpokenChunkText` is reset on explicit
+        // word click (so re-click re-reads) and on sheet close;
+        // arrow stepping leaves it alone so consecutive words in
+        // the same chunk stay silent.
+        if (c.text && c.text !== _lastSpokenChunkText) {
+          try { TTS.speak(c.text); } catch (_) {}
+          _lastSpokenChunkText = c.text;
+        }
         Translate.translate(c.text, sentence).then(chunkKo => {
           if (_sheetWord !== word) return;
           latestChunkKo = chunkKo || '';
@@ -3973,6 +4002,21 @@
           }).catch(() => {});
         }
       }).catch(() => {});
+    }
+    // Headword tap on the ws-meaning row → re-speak the SELECTED
+    // WORD (not the chunk). This gives the user direct control over
+    // hearing the word in isolation any time, without triggering a
+    // chunk replay. The row also contains the Korean meaning, so the
+    // whole row is the tap target.
+    {
+      const meaningRow = document.getElementById('ws-meaning');
+      if (meaningRow) {
+        meaningRow.style.cursor = 'pointer';
+        meaningRow.onclick = (ev) => {
+          ev.stopPropagation();
+          try { TTS.speak(_surfaceForTTS); } catch (_) {}
+        };
+      }
     }
 
     // Rich GPT word info — examples + collocations (mnemonic dropped per
@@ -4048,6 +4092,9 @@
   }
 
   function hideWordSheet() {
+    // Reset the chunk-speak memo so the next word selection re-reads
+    // its chunk fresh (no skipped TTS due to stale memo).
+    _lastSpokenChunkText = '';
     const sheet = document.getElementById('word-sheet');
     if (sheet) {
       sheet.classList.remove('show');
@@ -4446,6 +4493,16 @@
       if (wEl0) {
         wEl0.textContent = text;
         wEl0.dataset.activeWord = text;
+        // Headword tap → speak the word (surface form for JP). Tap
+        // is a focused "re-listen" gesture; bypasses the chunk-speak
+        // memo entirely so the user can replay the word any number
+        // of times. `_surfaceForTTS` was set above to the conjugated
+        // surface (e.g. 住んでいました) when JP, else `text`.
+        wEl0.style.cursor = 'pointer';
+        wEl0.onclick = (ev) => {
+          ev.stopPropagation();
+          try { TTS.speak(_surfaceForTTS); } catch (_) {}
+        };
       }
     }
 
@@ -4453,16 +4510,17 @@
     // on sheet open (same as the mobile word-sheet flow). The user can
     // re-listen by re-tapping the word in the body.
     //
-    // JP: speak the SURFACE form (the conjugated text the user actually
-    // saw — 住んでいました, 食べました) instead of the lemma `text`
-    // (住む, 食べる). On PC the auto-speak uses the same lemma the
-    // sidebar opens with, so we have to dig the surface back out of
-    // anchorEl here too — otherwise Google TTS reads the bare verb
-    // stem and 住んでいました comes out as "sumu".
-    {
-      const _ttsText = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || text;
-      TTS.speak(_ttsText);
-    }
+    // Auto-speak now reads the CHUNK that contains the word (not
+    // the bare word) — moved inside the Translate.getChunks().then()
+    // block below so we know which chunk to speak. The chunk is
+    // spoken AT MOST ONCE per crossing thanks to the module-scope
+    // `_lastSpokenChunkText` memo. Headword tap on .ls-word
+    // (wired further down) plays just the word on demand.
+    //
+    // Remember the surface form so the headword click can read
+    // the conjugated text the user saw (住んでいました), not the
+    // lemma (住む).
+    const _surfaceForTTS = (anchorEl && anchorEl.dataset && anchorEl.dataset.surface) || text;
 
     // (Heart toggle moved to the level-bar — see mountLevelBar below,
     // which now adds a heart pill as the rightmost slot. The old
@@ -4709,6 +4767,14 @@
         if (mnBlock) mnBlock.hidden = false;
         sbLatestChunk = c;
         repaintSidebarChunk();
+        // Chunk-aware TTS — speak the chunk once per chunk crossing.
+        // Module-scope memo `_lastSpokenChunkText` keeps arrow-stepping
+        // within the same chunk silent and resets on explicit word
+        // click / sidebar clear.
+        if (c.text && c.text !== _lastSpokenChunkText) {
+          try { TTS.speak(c.text); } catch (_) {}
+          _lastSpokenChunkText = c.text;
+        }
         // DeepL pass for chunk Korean (fast).
         Translate.translate(c.text, sentence).then(ko => {
           if (cur.dataset.activeWord !== text) return;
@@ -7605,6 +7671,13 @@
         // a previously-seen word.
         root.querySelectorAll('.w.active').forEach(x => x.classList.remove('active'));
         w.classList.add('active');
+        // Explicit click resets the chunk-speak memo so the chunk
+        // containing the newly-clicked word ALWAYS gets spoken once
+        // — even if it's the same chunk as the last selection.
+        // Arrow / ←/→ stepping goes through `trySingleStep` which
+        // does NOT reset, so stepping within the same chunk stays
+        // silent.
+        _lastSpokenChunkText = '';
         const sentence = getContextSentence(w);
         if (useSidebar()) {
           showInSidebar(word, sentence, w);
