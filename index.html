@@ -9141,44 +9141,57 @@ async function handleSignOut() {
    the user's manual checkpoint: clicking it stamps a NEW backup row into
    state.versions BEFORE pushing, so the cloud (and the Account backup list)
    reflect "this is the state I want to be able to come back to". The
-   3-most-recent cap in pushDailyVersion keeps the list short. */
+   3-most-recent cap in pushDailyVersion keeps the list short.
+   `_deviceToCloudInflight` blocks re-entrance: even if a stray duplicate
+   click handler is wired up somewhere (or the user mashes the button), only
+   ONE backup row is created per actual save cycle. */
+let _deviceToCloudInflight = false;
 async function handleDeviceToCloud() {
+  if (_deviceToCloudInflight) return;
+  _deviceToCloudInflight = true;
   const el = document.getElementById('auth-status2');
   if (el) { el.textContent = 'Saving to cloud…'; el.style.color = '#6b7280'; }
-  // Stamp a manual backup BEFORE the push so the new version goes out in the
-  // same payload (and shows up in the Account backups list immediately).
   try {
-    if (typeof pushDailyVersion === 'function') {
-      const when = new Date().toLocaleString();
-      pushDailyVersion('Manual save · ' + when);
-      saveState();
-      if (typeof renderVersionsList === 'function') renderVersionsList();
+    // Stamp a manual backup BEFORE the push so the new version goes out in
+    // the same payload (and shows up in the Account backups list now).
+    try {
+      if (typeof pushDailyVersion === 'function') {
+        const when = new Date().toLocaleString();
+        pushDailyVersion('Manual save · ' + when);
+        saveState();
+        if (typeof renderVersionsList === 'function') renderVersionsList();
+      }
+    } catch (_) {}
+    // Cancel any pending debounced push so we send everything in one go.
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
     }
-  } catch (_) {}
-  // Cancel any pending debounced push so we send everything in one go.
-  if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
-    clearTimeout(_settingsPushTimer);
-    _settingsPushTimer = null;
-  }
-  let ok = false;
-  try { ok = await pushSettingsToCloud(); } catch (e) { ok = false; }
-  // Today's stats snapshot — don't wait for midnight.
-  try {
-    if (typeof snapshotDayToStats === 'function') {
-      snapshotDayToStats(getCurrentDayKey());
+    let ok = false;
+    try { ok = await pushSettingsToCloud(); } catch (e) { ok = false; }
+    // Today's stats snapshot — don't wait for midnight.
+    try {
+      if (typeof snapshotDayToStats === 'function') {
+        snapshotDayToStats(getCurrentDayKey());
+      }
+    } catch (_) {}
+    if (el) {
+      el.textContent = ok ? '✓ Backup saved to cloud' : '✗ Save failed (network?)';
+      el.style.color = ok ? '#059669' : '#dc2626';
     }
-  } catch (_) {}
-  if (el) {
-    el.textContent = ok ? '✓ Backup saved to cloud' : '✗ Save failed (network?)';
-    el.style.color = ok ? '#059669' : '#dc2626';
+  } finally {
+    _deviceToCloudInflight = false;
   }
 }
 
 if (authSigninBtn) authSigninBtn.onclick = handleSignIn;
 if (authSignupBtn) authSignupBtn.onclick = handleSignUp;
 if (authSignoutBtn) authSignoutBtn.onclick = handleSignOut;
-const _authPushNowBtn = document.getElementById('auth-push-now');
-if (_authPushNowBtn) _authPushNowBtn.onclick = handleDeviceToCloud;
+// NOTE: #auth-push-now intentionally has NO direct .onclick — the delegated
+// document click handler below covers it. Having both fires the handler
+// twice on a single click, which created two backup rows per Device→Cloud
+// press. The in-flight guard inside handleDeviceToCloud also blocks rapid
+// duplicate clicks defensively.
 
 /* Delegated backup — the Account panel gets relocated by the focus-page
    layout IIFE later in the script, and a few interactions (collapsible

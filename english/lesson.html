@@ -8575,11 +8575,19 @@
         // word-sheet / cont-bar) STAYS visible during playback so the
         // user keeps seeing the word they were studying. We only
         // swap lesson-bar → playbar at the bottom; everything else
-        // remains untouched. (The previous dismissWordOverlays call
-        // closed the panel — removed.)
+        // remains untouched.
         if (PLAY_VARIANT === 'word') {
           const t = await resolveVariantTexts();
           if (!t.word) return;
+          // Light up 단어반복 so the user has a visual signal that
+          // the playback is in word-focused mode. Arrow-key / ←→
+          // buttons will now step word-by-word (auto-playing each
+          // new word twice) instead of falling back to whole-
+          // sentence sequential reading. The button being lit also
+          // tells the prev/next handlers which loop kind to restart
+          // when the cursor moves.
+          clearRepActive();
+          if (wordRepBtn) wordRepBtn.classList.add('active');
           startLoopedPlayback(t.word, 2);
           return;
         }
@@ -8706,16 +8714,54 @@
       }
     }
 
-    // ⏮ Previous / ⏭ Next sentence — navigate AND auto-play from the new
-    // sentence. The "11 → 10 → 19" race that broke this previously is now
-    // fixed by the generation-token in stopAnyPlayback(): any pending
-    // onplay callback from the prior loop bails on token mismatch, so it
-    // can't silently advance CURRENT_SENTENCE between clicks.
-    if (prevBtn) prevBtn.addEventListener('click', () => {
+    // Step the .active cursor to the next/prev WORD and restart the
+    // currently-active repeat loop (단어반복 or 밑줄반복) on the new
+    // word. Used by ⏮ / ⏭ (and the keyboard ←/→ that proxy them)
+    // when one of the repeat buttons is lit — otherwise pressing ←/→
+    // would fall into sentence-sequential reading, which is the
+    // "underlines the whole sentence and reads it" bug the user
+    // reported for 밑줄반복.
+    const wordRepBtnRef  = document.getElementById('pb-word-rep');
+    const chunkRepBtnRef = document.getElementById('pb-chunk-rep');
+    async function stepWordInRepeatMode(direction /* 'left'|'right' */) {
+      const inWordRep  = wordRepBtnRef  && wordRepBtnRef .classList.contains('active');
+      const inChunkRep = chunkRepBtnRef && chunkRepBtnRef.classList.contains('active');
+      if (!inWordRep && !inChunkRep) return false;
+      // Cancel the running loop on the OLD word before moving the
+      // cursor. _playToken++ inside stopAnyPlayback invalidates the
+      // in-flight TTS onend callback so it can't race the new loop.
+      stopAnyPlayback();
+      // Move .active cursor (trySingleStep also opens the sidebar /
+      // word-sheet for the new word, so the user sees it immediately).
+      const moved = (typeof trySingleStep === 'function')
+        ? trySingleStep(direction) : false;
+      if (!moved) return false;
+      // Restart the SAME kind of loop on the new word. resolveVariantTexts
+      // reads the live .w.active which trySingleStep just placed, plus
+      // re-fetches the chunk via cached chunk-gpt for 밑줄반복.
+      const t = await resolveVariantTexts();
+      if (inWordRep) {
+        if (t.word) startLoopedPlayback(t.word, 2);
+      } else if (inChunkRep) {
+        const txt = t.chunk || t.word;
+        if (txt) startLoopedPlayback(txt, Infinity);
+      }
+      return true;
+    }
+
+    // ⏮ Previous / ⏭ Next:
+    //   • In 단어반복 / 밑줄반복 mode → step by WORD on the page
+    //     (auto-playing each new word in the same loop style).
+    //   • Otherwise → step by SENTENCE and resume sequential reading.
+    // The generation-token in stopAnyPlayback() protects against the
+    // "11 → 10 → 19" race when the user mashes the buttons.
+    if (prevBtn) prevBtn.addEventListener('click', async () => {
+      if (await stepWordInRepeatMode('left')) return;
       const cur = globalSentenceIdx();
       jumpAndPlay(Math.max(0, cur - 1));
     });
-    if (nextBtn) nextBtn.addEventListener('click', () => {
+    if (nextBtn) nextBtn.addEventListener('click', async () => {
+      if (await stepWordInRepeatMode('right')) return;
       const cur = globalSentenceIdx();
       if (cur >= TOTAL_SENTENCES - 1) {
         stopAnyPlayback();
