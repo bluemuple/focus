@@ -519,12 +519,11 @@
      shade of the cell background). pointer-events: none is essential so the
      bar doesn't intercept dragover events when the cursor crosses it. */
   .drop-indicator {
-    height: 4px;
-    border-radius: 2px;
+    height: 2px;
+    border-radius: 1px;
     margin: 1px 4px;
     background: #6b7280;
     pointer-events: none;
-    box-shadow: 0 0 0 1px rgba(255,255,255,0.45);
     animation: dropIndicatorPulse 1s ease-in-out infinite alternate;
   }
   .drop-indicator[data-q="q1"] { background: #db2777; }  /* dark pink   */
@@ -532,8 +531,8 @@
   .drop-indicator[data-q="q3"] { background: #7c3aed; }  /* dark violet */
   .drop-indicator[data-q="q4"] { background: #2563eb; }  /* dark blue   */
   @keyframes dropIndicatorPulse {
-    from { opacity: 0.70; transform: scaleY(1); }
-    to   { opacity: 1.00; transform: scaleY(1.4); }
+    from { opacity: 0.65; }
+    to   { opacity: 1.00; }
   }
 
   /* ---- (E) link in the Statistics heading: jump to the English Learning site ---- */
@@ -4787,27 +4786,52 @@ function attachDragHandlers(row, handle, q, i) {
     }
   };
 }
-/* Cell-level fallback: lets the user drop into the empty space below the
-   last task, and ensures the .drop-indicator gets cleaned up cleanly. */
+/* Given a cursor Y inside a tasks div, figure out which inter-row gap is
+   closest and return {beforeNode, insertAt}. Used when the cursor lands in
+   the margin between two rows (or in the empty trailing space) — neither
+   row's ondragover fires for that pixel, so we resolve the gap ourselves
+   based on row midpoints. */
+function _resolveGapByY(tasksDiv, clientY) {
+  const rows = tasksDiv.querySelectorAll('.task-row');
+  for (let k = 0; k < rows.length; k++) {
+    const r = rows[k];
+    const rect = r.getBoundingClientRect();
+    if (clientY < rect.top + rect.height / 2) {
+      return { beforeNode: r, insertAt: k };
+    }
+  }
+  return { beforeNode: null, insertAt: rows.length };
+}
+/* Cell-level fallback: handles the cursor being in the small margin gap
+   between two rows (where neither row's dragover fires) AND the trailing
+   empty space below the last row. Resolves the closest gap by Y so the
+   indicator always lands between the two adjacent rows the user is aiming
+   at, never silently snapping to the end of the list. */
 function attachCellDragHandlers(cell, q) {
   const tasksDiv = cell.querySelector('.tasks');
   if (!tasksDiv) return;
   tasksDiv.ondragover = (e) => {
     if (!_draggedTask || _draggedTask.q !== q) return;
     // If the dragover target was a child row, that row's handler already
-    // placed the indicator. Only handle the empty-space case here.
+    // placed the indicator more precisely (top-half vs bottom-half).
     if (e.target !== tasksDiv) return;
     e.preventDefault();
-    const arr = state.tasks[q] || [];
-    _placeDropIndicator(tasksDiv, null, q, arr.length);
+    const g = _resolveGapByY(tasksDiv, e.clientY);
+    _placeDropIndicator(tasksDiv, g.beforeNode, q, g.insertAt);
   };
   tasksDiv.ondrop = (e) => {
     if (!_draggedTask || _draggedTask.q !== q) return;
     e.preventDefault();
     const fromIdx = _draggedTask.idx;
-    const insertAt = (_dropTarget && _dropTarget.q === q)
-      ? _dropTarget.insertAt
-      : (state.tasks[q] || []).length;
+    // Prefer the indicator's last-known position; if it isn't set for any
+    // reason, fall back to a fresh Y-based resolve so we never silently
+    // dump the drop at the end.
+    let insertAt;
+    if (_dropTarget && _dropTarget.q === q) {
+      insertAt = _dropTarget.insertAt;
+    } else {
+      insertAt = _resolveGapByY(tasksDiv, e.clientY).insertAt;
+    }
     _clearDropIndicator();
     _draggedTask = null;
     if (insertAt !== fromIdx && insertAt !== fromIdx + 1) {
