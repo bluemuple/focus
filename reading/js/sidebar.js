@@ -107,12 +107,49 @@
     const wrap = $('sideWord');
     if (!wrap) return;
 
-    // Empty state — no word picked yet.
+    // Empty state — no word picked yet. Show a quick guide to the
+    // level-bar buttons + their keyboard shortcuts so the student
+    // knows what to do on first landing.
     if (!state) {
       wrap.innerHTML = `
-        <div class="wc-word-empty">
-          <div class="wc-word-empty-icon">📖</div>
-          <p>Tap any word in the lesson<br>to see what it means!</p>
+        <div class="wc-help">
+          <h3 class="wc-help-title">📖 How to mark your words</h3>
+          <p class="wc-side-hint" style="margin: 0 0 12px;">
+            Tap any word in the lesson — then pick a button below to
+            remember how well you know it.
+          </p>
+          <ul class="wc-help-levels">
+            <li>
+              <span class="wc-help-btn ignore">🗑</span>
+              <span class="wc-help-text">Skip — I don't need this</span>
+              <kbd>0</kbd>
+            </li>
+            <li>
+              <span class="wc-help-btn s1">1</span>
+              <span class="wc-help-text">Just learning it</span>
+              <kbd>1</kbd>
+            </li>
+            <li>
+              <span class="wc-help-btn s2">2</span>
+              <span class="wc-help-text">Seen it before</span>
+              <kbd>2</kbd>
+            </li>
+            <li>
+              <span class="wc-help-btn s3">3</span>
+              <span class="wc-help-text">I know what it means</span>
+              <kbd>3</kbd>
+            </li>
+            <li>
+              <span class="wc-help-btn s4">4</span>
+              <span class="wc-help-text">Almost there</span>
+              <kbd>4</kbd>
+            </li>
+            <li>
+              <span class="wc-help-btn known">✓</span>
+              <span class="wc-help-text">I know it perfectly</span>
+              <kbd>5</kbd> <kbd>v</kbd>
+            </li>
+          </ul>
         </div>
       `;
       return;

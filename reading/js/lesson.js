@@ -1300,6 +1300,44 @@
       refreshSingleMode();
     });
 
+    // ── Reading-comfort controls: font size +/- and "Read Better"
+    // (dyslexia-friendly font). Settings persist per-device.
+    const FONT_KEY = 'wc.fontSize.v1';
+    const READ_KEY = 'wc.readBetter.v1';
+    const BASE_FONT = 20;
+    let fontSize = parseInt(localStorage.getItem(FONT_KEY), 10);
+    if (!Number.isFinite(fontSize) || fontSize < 14 || fontSize > 40) fontSize = BASE_FONT;
+    function applyFontSize() {
+      document.documentElement.style.setProperty('--wc-body-font', fontSize + 'px');
+      try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch {}
+      // After font changes, page heights shift — repaginate so the
+      // new layout doesn't leave overflow buried.
+      requestAnimationFrame(() => repaginateOverflow());
+    }
+    applyFontSize();
+    $('btnFontMinus').addEventListener('click', () => {
+      fontSize = Math.max(14, fontSize - 2);
+      applyFontSize();
+    });
+    $('btnFontPlus').addEventListener('click', () => {
+      fontSize = Math.min(40, fontSize + 2);
+      applyFontSize();
+    });
+
+    let readBetter = localStorage.getItem(READ_KEY) === '1';
+    function applyReadBetter() {
+      document.body.classList.toggle('wc-readable-font', readBetter);
+      $('btnReadBetter').classList.toggle('active', readBetter);
+      $('btnReadBetter').setAttribute('aria-pressed', readBetter ? 'true' : 'false');
+      try { localStorage.setItem(READ_KEY, readBetter ? '1' : '0'); } catch {}
+      requestAnimationFrame(() => repaginateOverflow());
+    }
+    applyReadBetter();
+    $('btnReadBetter').addEventListener('click', () => {
+      readBetter = !readBetter;
+      applyReadBetter();
+    });
+
     // Chunk-mute chip — toggles whether tapping a word triggers a
     // one-shot TTS read of its surrounding chunk. Default = muted.
     const muteBtn   = $('btnChunkMute');
