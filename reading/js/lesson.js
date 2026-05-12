@@ -169,37 +169,48 @@
   }
 
   // ---------- tokenisation ----------
-  function tokeniseBody(body) {
-    // Split on sentence-final punctuation followed by whitespace, but
-    // KEEP the punctuation as part of the sentence. The regex captures
-    // (sentence text + trailing punct) and the separating whitespace.
+  // Strip [[IMG:N]] markers BEFORE sentence tokenisation so they
+  // don't get tangled in word/sentence boundaries. We remember each
+  // marker's position so the renderer can re-inject the image at
+  // the right point during render.
+  function extractImageMarkers(body) {
+    const re = /\[\[IMG:(\d+)\]\]/g;
     const parts = [];
-    const re = /[^.!?]+[.!?]+["'’)\]]*/g;
-    let m;
-    let lastEnd = 0;
+    let last = 0; let m;
     while ((m = re.exec(body)) !== null) {
-      // any whitespace between this and the previous match: stays as separator
-      if (m.index > lastEnd) {
-        parts.push({ kind: 'gap', text: body.slice(lastEnd, m.index) });
-      }
-      parts.push({ kind: 'sent', text: m[0] });
-      lastEnd = m.index + m[0].length;
+      if (m.index > last) parts.push({ kind: 'text', text: body.slice(last, m.index) });
+      parts.push({ kind: 'img',  idx: parseInt(m[1], 10) });
+      last = m.index + m[0].length;
     }
-    if (lastEnd < body.length) {
-      // tail (no terminal punctuation) — treat as one final sentence
-      const tail = body.slice(lastEnd);
-      if (tail.trim()) parts.push({ kind: 'sent', text: tail });
-      else if (tail) parts.push({ kind: 'gap', text: tail });
-    }
+    if (last < body.length) parts.push({ kind: 'text', text: body.slice(last) });
+    return parts;
+  }
 
-    // Now build sentence-level structures with word tokens inside each.
+  function tokeniseBody(body) {
+    // Step 1: split out [[IMG:N]] markers so they're standalone items.
+    const segments = extractImageMarkers(body);
+
     const out = [];
-    parts.forEach(p => {
-      if (p.kind === 'gap') {
-        out.push({ kind: 'gap', text: p.text });
+    segments.forEach(seg => {
+      if (seg.kind === 'img') {
+        out.push({ kind: 'img', idx: seg.idx });
         return;
       }
-      out.push({ kind: 'sent', text: p.text, words: extractWordTokens(p.text) });
+      // Step 2: split each text segment into sentences + glue gaps.
+      const re = /[^.!?]+[.!?]+["'’)\]]*/g;
+      let lastEnd = 0; let m;
+      while ((m = re.exec(seg.text)) !== null) {
+        if (m.index > lastEnd) {
+          out.push({ kind: 'gap', text: seg.text.slice(lastEnd, m.index) });
+        }
+        out.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
+        lastEnd = m.index + m[0].length;
+      }
+      if (lastEnd < seg.text.length) {
+        const tail = seg.text.slice(lastEnd);
+        if (tail.trim()) out.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
+        else if (tail)   out.push({ kind: 'gap',  text: tail });
+      }
     });
     return out;
   }
@@ -257,12 +268,32 @@
         root.appendChild(document.createTextNode(p.text));
         return;
       }
+      if (p.kind === 'img') {
+        const img = makeFloatingImage(p.idx);
+        if (img) root.appendChild(img);
+        return;
+      }
       root.appendChild(makeSentenceWrap(p, globalStart + pageSentIdx));
       visibleSentences.push(p.text);
       pageSentIdx++;
     });
     // Prefetch chunks for everything just rendered — fire-and-forget.
     if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
+  }
+
+  // Build a floated <img> for the Nth image attached to this lesson.
+  // The corner field on the image record decides which side the float
+  // sits on and whether margin pushes it down to the bottom edge.
+  function makeFloatingImage(idx) {
+    const list = Array.isArray(lesson?.images) ? lesson.images : [];
+    const rec  = list[idx];
+    if (!rec || !rec.data_url) return null;
+    const img = document.createElement('img');
+    img.className = 'wc-lesson-img wc-corner-' + (rec.corner || 'tr');
+    img.src = rec.data_url;
+    img.alt = '';
+    img.draggable = false;
+    return img;
   }
 
   function makeSentenceWrap(p, idx) {

@@ -105,11 +105,22 @@
     // `pronunciation` is the new UFLI Foundations field; fall back to
     // legacy `ipa` if an older cache row from the v1 schema returns.
     const pron = info?.pronunciation || info?.ipa || '';
+
+    // Show the headword AS THE STUDENT TAPPED IT (inflected form),
+    // with the inflection suffix coloured sky-blue à la 또박또박. This
+    // makes the lemma↔inflection split visually obvious — e.g.
+    //   "consult" + "ed"   → "consult<sky>ed</sky>"
+    //   "book"    + "s"    → "book<sky>s</sky>"
+    //   "run"     + "ning" → "run<sky>ning</sky>"
+    // Irregular forms (went / go, was / be) get no overlap → we just
+    // show the inflected form plain (no false split).
+    const headHtml = inflectionHtml(w.word || '', info?.lemma || '');
+
     wrap.innerHTML = `
       <div class="wc-word-card">
         <div class="wc-word-head">
           <div class="wc-word-text">
-            <h2>${escapeHtml(info?.lemma || w.word || '')}</h2>
+            <h2>${headHtml}</h2>
             ${pron ? `<div class="wc-word-ipa">${escapeHtml(pron)}</div>` : ''}
           </div>
           <button class="wc-word-tts" id="wcWordTts" title="Hear it">🔊</button>
@@ -304,5 +315,24 @@
   function escapeHtml(s) {
     return String(s || '').replace(/[&<>"']/g, c =>
       ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+  }
+
+  // Split `displayed` (the inflected form the student tapped) into a
+  // base portion that shares a prefix with `lemma`, and the leftover
+  // inflection. Returns HTML with the inflection wrapped in
+  // `.wc-hl-infl` (sky-blue). When the overlap is too short to be
+  // meaningful (irregular forms, or no lemma supplied), fall back to
+  // the displayed word unchanged.
+  function inflectionHtml(displayed, lemma) {
+    const d = String(displayed || '');
+    const l = String(lemma || '');
+    const dl = d.toLowerCase(), ll = l.toLowerCase();
+    if (!ll || dl === ll) return escapeHtml(d);
+    let i = 0;
+    while (i < Math.min(dl.length, ll.length) && dl[i] === ll[i]) i++;
+    // Need at least 2 shared letters to treat the rest as inflection.
+    // Otherwise (went/go, was/be) just show the plain word.
+    if (i < 2 || i >= d.length) return escapeHtml(d);
+    return escapeHtml(d.slice(0, i)) + `<span class="wc-hl-infl">${escapeHtml(d.slice(i))}</span>`;
   }
 })();

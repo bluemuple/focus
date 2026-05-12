@@ -79,6 +79,16 @@ create table if not exists wc_lessons (
 );
 create index if not exists wc_lessons_class_idx on wc_lessons(class_id);
 
+-- Inline images that float in one of the white card's 4 corners.
+-- Each entry: { corner: 'tl'|'tr'|'bl'|'br', data_url: 'data:image/jpeg;base64,…' }.
+-- The body text refers to each image via `[[IMG:N]]` tokens; the
+-- render layer replaces them with floated <img> elements. Stored
+-- as data-URLs (post-downscale typically 30-80 KB each) to avoid
+-- a separate Storage bucket — fits comfortably under Postgres's
+-- JSONB row limit for a 5-image lesson.
+alter table wc_lessons
+  add column if not exists images jsonb not null default '[]'::jsonb;
+
 -- ---------- Word states (per-student word level) ----------
 -- level: -1 = 무시 (ignored), 0 = unseen, 1..5 = familiarity levels
 create table if not exists wc_word_states (

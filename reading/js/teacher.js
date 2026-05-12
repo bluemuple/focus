@@ -503,6 +503,192 @@
     ).length;
   }
 
+  // ----------------------------------------------------------------
+  //  IMAGE UPLOAD for the lesson body
+  //
+  //  Flow: teacher clicks in the body textarea to place the cursor →
+  //  presses "📷 Add image" OR Cmd+V (paste image from clipboard) →
+  //  a small modal asks which CORNER of the white card the image
+  //  should sit in. We downscale to max 800px on long edge + re-
+  //  encode as JPEG 75% (typical result: 30-90 KB) so we can stash
+  //  it inline as a data-URL on the lesson row without needing a
+  //  separate Storage bucket. A marker `[[IMG:N]]` is inserted at
+  //  the cursor so the lesson renderer knows where each image
+  //  anchors in the body.
+  // ----------------------------------------------------------------
+  let lessonImages = [];      // accumulates while teacher composes a lesson
+  let pendingInsertPos = null;  // cursor position at the moment of image trigger
+
+  function rememberCursor() {
+    const ta = $('lessonBody');
+    pendingInsertPos = ta.selectionStart;
+  }
+  // The textarea remembers its own selection on focus/blur, but we
+  // also stash on every click/keyup so paste-via-shortcut from
+  // anywhere in the form still anchors to the correct text position.
+  $('lessonBody').addEventListener('click',   rememberCursor);
+  $('lessonBody').addEventListener('keyup',   rememberCursor);
+  $('lessonBody').addEventListener('blur',    rememberCursor);
+
+  $('addImageBtn').addEventListener('click', () => {
+    rememberCursor();
+    $('addImageFile').click();
+  });
+  $('addImageFile').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    await handleImageFile(file);
+    e.target.value = '';   // allow same file twice
+  });
+  // Paste — works anywhere on the page; we only consume when there's
+  // actually an image in the clipboard. Plain-text paste keeps default
+  // textarea behaviour.
+  document.addEventListener('paste', async (e) => {
+    // Only react when the body textarea has focus — avoids accidental
+    // image inserts from pastes elsewhere on the page.
+    if (document.activeElement !== $('lessonBody')) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = it.getAsFile();
+        if (file) await handleImageFile(file);
+        return;
+      }
+    }
+  });
+
+  async function handleImageFile(file) {
+    rememberCursor();
+    const dataUrl = await downscaleImage(file).catch(err => {
+      alert('Could not process image: ' + (err.message || err));
+      return null;
+    });
+    if (!dataUrl) return;
+    pickCorner(corner => insertImage(corner, dataUrl));
+  }
+
+  // Reads `file` into an <img>, redraws it on a canvas at ≤800px on
+  // the long edge, returns a JPEG data URL.
+  async function downscaleImage(file, maxDim = 800, quality = 0.75) {
+    const buf = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload  = () => resolve(fr.result);
+      fr.onerror = () => reject(new Error('read failed'));
+      fr.readAsDataURL(file);
+    });
+    const img = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload  = () => resolve(im);
+      im.onerror = () => reject(new Error('decode failed'));
+      im.src = buf;
+    });
+    const longEdge = Math.max(img.width, img.height);
+    const scale = longEdge > maxDim ? maxDim / longEdge : 1;
+    const w = Math.round(img.width  * scale);
+    const h = Math.round(img.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', quality);
+  }
+
+  // Small modal asks: "Where should this image sit?" with 4 corner
+  // buttons. Resolves with 'tl' | 'tr' | 'bl' | 'br'.
+  function pickCorner(onPick) {
+    let host = document.getElementById('cornerPickerHost');
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'cornerPickerHost';
+      host.className = 'wc-popup-backdrop';
+      host.innerHTML = `
+        <div class="wc-popup" style="max-width: 360px;">
+          <button class="wc-popup-close" aria-label="Close">×</button>
+          <h3 style="margin: 0 0 12px;">Where should this image sit?</h3>
+          <div class="wc-corner-grid">
+            <button data-corner="tl"><span>↖</span> Top-left</button>
+            <button data-corner="tr"><span>↗</span> Top-right</button>
+            <button data-corner="bl"><span>↙</span> Bottom-left</button>
+            <button data-corner="br"><span>↘</span> Bottom-right</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(host);
+      host.addEventListener('click', e => { if (e.target === host) host.remove(); });
+      host.querySelector('.wc-popup-close').addEventListener('click', () => host.remove());
+    } else {
+      host.style.display = 'flex';
+    }
+    host.querySelectorAll('[data-corner]').forEach(b => {
+      b.onclick = () => {
+        const c = b.dataset.corner;
+        host.remove();
+        onPick(c);
+      };
+    });
+  }
+
+  function insertImage(corner, dataUrl) {
+    const idx = lessonImages.length;
+    lessonImages.push({ corner, data_url: dataUrl });
+
+    const ta = $('lessonBody');
+    const pos = pendingInsertPos != null ? pendingInsertPos : ta.selectionStart;
+    const marker = `[[IMG:${idx}]]`;
+    const before = ta.value.slice(0, pos);
+    const after  = ta.value.slice(pos);
+    // Insert with surrounding spaces so the marker doesn't glue to
+    // adjacent words (which would break tokenisation downstream).
+    const sep1 = before && !/\s$/.test(before) ? ' ' : '';
+    const sep2 = after  && !/^\s/.test(after)  ? ' ' : '';
+    ta.value = before + sep1 + marker + sep2 + after;
+    const newPos = before.length + sep1.length + marker.length + sep2.length;
+    ta.setSelectionRange(newPos, newPos);
+    ta.focus();
+    pendingInsertPos = newPos;
+    renderImagesPreview();
+  }
+
+  function renderImagesPreview() {
+    const wrap = $('lessonImagesPreview');
+    if (!wrap) return;
+    if (!lessonImages.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = lessonImages.map((im, i) => `
+      <div class="wc-img-chip">
+        <img src="${im.data_url}" alt="image ${i}"/>
+        <div class="wc-img-chip-meta">
+          <strong>[[IMG:${i}]]</strong>
+          <span class="wc-muted">${cornerLabel(im.corner)}</span>
+        </div>
+        <button data-rm="${i}" class="wc-btn ghost">Remove</button>
+      </div>
+    `).join('');
+    wrap.querySelectorAll('[data-rm]').forEach(b => {
+      b.addEventListener('click', () => removeImage(parseInt(b.dataset.rm, 10)));
+    });
+  }
+  function cornerLabel(c) {
+    return ({ tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' })[c] || c;
+  }
+  function removeImage(idx) {
+    // Drop from array, then re-index the markers in the body. The
+    // marker `[[IMG:idx]]` is unique per index — we walk and rewrite.
+    const ta = $('lessonBody');
+    // Step 1: strip the removed marker entirely.
+    ta.value = ta.value.replace(new RegExp(`\\s*\\[\\[IMG:${idx}\\]\\]\\s*`), ' ');
+    // Step 2: shift down indices > idx by 1 in the body.
+    ta.value = ta.value.replace(/\[\[IMG:(\d+)\]\]/g, (m, n) => {
+      const k = parseInt(n, 10);
+      return k > idx ? `[[IMG:${k - 1}]]` : m;
+    });
+    lessonImages.splice(idx, 1);
+    renderImagesPreview();
+  }
+
+  function resetImages() { lessonImages = []; pendingInsertPos = null; renderImagesPreview(); }
+
   $('addLessonBtn').addEventListener('click', async () => {
     const msg = $('addLessonMsg');
     msg.classList.add('wc-hidden');
@@ -522,8 +708,10 @@
         title, body,
         animal_set: $('lessonAnimalSet').value,
         gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
+        images: lessonImages,
       });
       $('lessonTitle').value = ''; $('lessonBody').value = '';
+      resetImages();
       msg.textContent = 'Lesson created.';
       msg.className = 'wc-alert ok'; msg.classList.remove('wc-hidden');
       await refreshAll();
