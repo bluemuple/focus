@@ -447,6 +447,8 @@
     Array.from(tmp.childNodes).forEach(node => {
       let nodeHtml = '';
       let nodeText = '';
+      const isHeading = node.nodeType === Node.ELEMENT_NODE
+                     && /^H[1-6]$/.test(node.tagName);
       if (node.nodeType === Node.ELEMENT_NODE) {
         nodeHtml = node.outerHTML;
         nodeText = node.textContent || '';
@@ -462,7 +464,12 @@
       const nodeSentCount = (nodeText.match(/[.!?]+/g) || []).length || 1;
       curHtml += nodeHtml;
       sentCount += nodeSentCount;
-      if (sentCount >= maxSentences) {
+      // Defer the split if the just-added node is a heading — a
+      // heading must never be the last block on a page (would
+      // strand it from the content it titles). Wait one more
+      // iteration so the next paragraph (image + text) lands on
+      // the same segment.
+      if (sentCount >= maxSentences && !isHeading) {
         segs.push(curHtml);
         curHtml = '';
         sentCount = 0;
@@ -1148,10 +1155,38 @@
         const c = children[i];
         if (c.offsetTop + c.offsetHeight > cardH) { cutoff = i; break; }
       }
+      // Heading-orphan rule (print typography 101): a heading must
+      // not be left alone at the bottom of a page. If the last
+      // FITTED element is a heading (or only whitespace/empties
+      // follow the heading), demote it to the overflow page so it
+      // stays glued to the content it titles.
+      //
+      // Triggered most often by the "## Title\n[[IMG:0]]\nText"
+      // pattern: the <p> with the floated image + text is tall, so
+      // the measurement split lands right after <h2> and the
+      // heading sits alone on its own page.
+      const originalCutoff = cutoff;
+      while (cutoff > 0) {
+        const lastFitted = children[cutoff - 1];
+        const tag = lastFitted && lastFitted.tagName;
+        const isHeading = tag && /^H[1-6]$/.test(tag);
+        // Treat an "empty" tail (HR, or a <p> that became empty
+        // after image-marker stripping) as transparent — keep
+        // walking back so the real preceding heading gets caught.
+        const isEmpty = lastFitted
+          && !(lastFitted.textContent || '').trim()
+          && !lastFitted.querySelector('img');
+        if (isHeading || isEmpty) cutoff--;
+        else break;
+      }
+      // If pulling the heading down would empty the page entirely
+      // (the heading was the FIRST child on this page already),
+      // accept the orphan — a page with nothing on it is worse
+      // than a heading-only page.
+      if (cutoff <= 0) cutoff = originalCutoff;
       // Edge case: even the first child overflows. Keep it on the
-      // page (better than dropping it entirely) — the user can scroll
-      // by going to the next page anyway. This is rare for typical
-      // lesson HTML (paragraphs / headings).
+      // page (better than dropping it entirely) — overflow:hidden
+      // will clip but the user can advance to the next page.
       if (cutoff <= 0) { p++; continue; }
 
       const fittedHtml   = children.slice(0, cutoff).map(c => c.outerHTML).join('');
