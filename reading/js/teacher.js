@@ -1281,6 +1281,53 @@
     }, 0);
   });
 
+  // Bulk word-image picker. Click the button → OS-native multi-select
+  // file dialog → for each picked file we use the filename (sans
+  // extension) as the word and downscale the bytes into the same
+  // data_url shape the single-row flow produces. Existing rows with
+  // the same word are updated in place (so re-picking replaces).
+  $('addWordImagesBulkBtn').addEventListener('click', () => {
+    $('addWordImagesBulkInput').click();
+  });
+  $('addWordImagesBulkInput').addEventListener('change', async (e) => {
+    const status = $('addWordImagesBulkStatus');
+    const files  = Array.from(e.target.files || []);
+    if (!files.length) return;
+    status.textContent = `Processing ${files.length}…`;
+    status.style.color = 'var(--ink-soft)';
+    let added = 0, updated = 0, skipped = 0;
+    for (const file of files) {
+      // "kororā.jpg" → "kororā". Multi-dot filenames keep everything
+      // before the LAST dot ("my.word.png" → "my.word"), which
+      // matches the OS-level "extension" convention.
+      const base = (file.name || '').replace(/\.[^.]+$/, '').trim();
+      const word = base.toLowerCase();
+      if (!word) { skipped++; continue; }
+      const dataUrl = await downscaleImage(file).catch(() => null);
+      if (!dataUrl) { skipped++; continue; }
+      const existing = lessonWordImages.find(wi =>
+        (wi.word || '').toLowerCase() === word);
+      if (existing) {
+        existing.data_url = dataUrl;
+        updated++;
+      } else {
+        lessonWordImages.push({ word, data_url: dataUrl });
+        added++;
+      }
+    }
+    renderWordImageRows();
+    const parts = [];
+    if (added)   parts.push(`${added} added`);
+    if (updated) parts.push(`${updated} updated`);
+    if (skipped) parts.push(`${skipped} skipped`);
+    status.textContent = parts.length
+      ? parts.join(' · ') + ' ✓'
+      : 'Nothing usable in the selection.';
+    status.style.color = (added || updated) ? 'var(--good)' : 'var(--bad)';
+    // Reset the input so picking the SAME files again re-fires change.
+    e.target.value = '';
+  });
+
   function renderWordImageRows() {
     const wrap = $('wordImageRows');
     if (!wrap) return;
