@@ -12,7 +12,11 @@
 (() => {
   const URL  = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
   const ANON = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
-  const FN   = URL ? URL.replace(/\/+$/, '') + '/functions/v1/word-info-gpt' : '';
+  // NOTE: endpoint is `wc-word-info-gpt`, NOT `word-info-gpt` —
+  // the parent 또박또박 already owns the un-prefixed name in this
+  // same Supabase project (returns Korean translations, wrong shape
+  // for our Year-3 NZ kids). The `wc-` prefix keeps them separate.
+  const FN   = URL ? URL.replace(/\/+$/, '') + '/functions/v1/wc-word-info-gpt' : '';
 
   const mem = new Map();
 

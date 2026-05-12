@@ -1,5 +1,11 @@
 // =============================================================
-//   Supabase Edge Function: word-info-gpt   (WordCatch flavour)
+//   Supabase Edge Function: wc-word-info-gpt   (WordCatch only)
+//
+//   ⚠️  DEPLOY NAME MUST BE "wc-word-info-gpt" — NOT "word-info-gpt".
+//      The parent 또박또박 site already has its own `word-info-gpt`
+//      deployed in this same Supabase project; deploying THIS file
+//      under that name would overwrite it and break Korean learners.
+//      The `wc-` prefix scopes this function to WordCatch.
 //
 //   Returns a dictionary entry tuned for NZ Year-3 readers
 //   (7-8 yr olds). One call per (word, sentence) → cached
@@ -23,7 +29,8 @@
 //     }
 //
 //   Deploy:
-//     1. Edge Functions → New function → name "word-info-gpt"
+//     1. Edge Functions → New function → name "wc-word-info-gpt"
+//        (NOT "word-info-gpt" — that name is taken by 또박또박!)
 //     2. Paste this file
 //     3. Secret OPENAI_API_KEY (shared with other GPT functions)
 //     4. SQL once:

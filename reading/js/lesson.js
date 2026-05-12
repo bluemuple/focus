@@ -238,6 +238,7 @@
       const wrap = makeSentenceWrap(p, i);
       wrap.classList.add('wc-active', 'wc-single');
       root.appendChild(wrap);
+      if (window.WCChunks) window.WCChunks.prefetchSentences([p.text]);
       return;
     }
 
@@ -250,33 +251,47 @@
       globalStart += (pages[i] || []).filter(p => p.kind === 'sent').length;
     }
     let pageSentIdx = 0;
+    const visibleSentences = [];
     parts.forEach(p => {
       if (p.kind === 'gap') {
         root.appendChild(document.createTextNode(p.text));
         return;
       }
       root.appendChild(makeSentenceWrap(p, globalStart + pageSentIdx));
+      visibleSentences.push(p.text);
       pageSentIdx++;
     });
+    // Prefetch chunks for everything just rendered — fire-and-forget.
+    if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
   }
 
   function makeSentenceWrap(p, idx) {
     const wrap = document.createElement('span');
     wrap.className = 'wc-sentence';
     wrap.dataset.idx = String(idx);
+    wrap.dataset.text = p.text;   // used to fetch chunks by sentence text
+    let wIdx = 0;
     p.words.forEach(tok => {
       if (tok.kind === 'glue') {
-        wrap.appendChild(document.createTextNode(tok.text));
+        // Glue spans (whitespace + punctuation between words) carry no
+        // word index but DO get a wrapping span so the chunk underline
+        // can flow continuously across spaces — matches 또박또박 behaviour.
+        const g = document.createElement('span');
+        g.className = 'w punct';
+        g.textContent = tok.text;
+        wrap.appendChild(g);
         return;
       }
       const sp = document.createElement('span');
       sp.className = 'w';
       sp.dataset.word = tok.lower;
+      sp.dataset.wIdx = String(wIdx);   // 0-based, ignores glue — aligns with chunk-gpt indices
       sp.textContent  = tok.text;
       const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
       applyLevelClass(sp, startLevel);
       sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
       wrap.appendChild(sp);
+      wIdx++;
     });
     return wrap;
   }
@@ -304,47 +319,166 @@
     el.classList.add('s' + level);
   }
 
-  // ---------- word click ----------
-  // 또박또박-style: tapping a word DOES NOT auto-advance its state any
-  // more — it only fires a `wc:word-selected` event so the sidebar can
-  // render its dictionary card. The user changes level explicitly via
-  // the sidebar's ice-cream picker.
-  // Untapped words are pre-painted sky-blue (handled in applyLevelClass);
-  // tapping selects the word for the sidebar but doesn't alter colour.
+  // ============================================================
+  //  WORD FOCUS  (또박또박 visual: amber glow + chunk underline)
+  //
+  //  One word is "focused" at a time (sentence + word indices).
+  //  Click OR keyboard arrow changes the focus; we re-paint the
+  //  .focused / .focused-chunk classes and fire wc:word-selected
+  //  so the sidebar's word card updates.
+  // ============================================================
+  let focusedSentIdx = null;
+  let focusedWordIdx = null;
   let lastSelectedSentenceIdx = 0;
 
   async function onWordClick(el, lower, original) {
-    // Find the surrounding sentence index — used by 1문장씩 mode to
-    // start from the sentence containing the clicked word.
     const sentEl = el.closest('.wc-sentence');
-    if (sentEl) {
-      const i = parseInt(sentEl.dataset.idx, 10);
-      if (!isNaN(i)) lastSelectedSentenceIdx = i;
+    if (!sentEl) return;
+    const sIdx = parseInt(sentEl.dataset.idx, 10);
+    const wIdx = parseInt(el.dataset.wIdx, 10);
+    if (!isNaN(sIdx) && !isNaN(wIdx)) {
+      lastSelectedSentenceIdx = sIdx;
+      focusWord(sIdx, wIdx);
     }
-    const sentenceText = findSentenceFor(lower);
-
-    window.dispatchEvent(new CustomEvent('wc:word-selected', {
-      detail: { word: original, lower, sentence: sentenceText },
-    }));
   }
 
-  function findSentenceFor(lower) {
-    // Walk current page's parts; return the text of the first sentence
-    // that contains `lower` (case-insensitive whole-word match).
-    const parts = pages[pageIdx] || sentences;
-    const re = new RegExp("\\b" + lower.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&") + "\\b", "i");
-    for (const p of parts) {
-      if (p.kind === 'sent' && re.test(p.text)) return p.text.trim();
-    }
-    // Fallback — search whole body.
-    if (lesson?.body) {
-      const senRe = /[^.!?]+[.!?]+["'’)\]]*/g;
-      let m;
-      while ((m = senRe.exec(lesson.body)) !== null) {
-        if (re.test(m[0])) return m[0].trim();
+  function focusWord(sIdx, wIdx) {
+    focusedSentIdx = sIdx;
+    focusedWordIdx = wIdx;
+    applyFocus();
+  }
+
+  function applyFocus() {
+    // Clear previous focus markers across the whole body.
+    document.querySelectorAll('.w.focused, .w.focused-chunk')
+      .forEach(el => el.classList.remove('focused', 'focused-chunk'));
+
+    if (focusedSentIdx == null) return;
+    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+    if (!sentEl) return;
+    const wordEl = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx}"]`);
+    if (!wordEl) return;
+
+    wordEl.classList.add('focused');
+
+    // Fire word-selected event → sidebar fetches info + renders.
+    const lower    = wordEl.dataset.word;
+    const original = wordEl.textContent;
+    const sentText = sentEl.dataset.text || '';
+    window.dispatchEvent(new CustomEvent('wc:word-selected', {
+      detail: { word: original, lower, sentence: sentText },
+    }));
+
+    // Chunk highlight — fetch async then paint, but bail if focus moved.
+    const seenSent = focusedSentIdx, seenWord = focusedWordIdx;
+    window.WCChunks.fetch(sentText).then(chunks => {
+      if (focusedSentIdx !== seenSent || focusedWordIdx !== seenWord) return;
+      const chunk = window.WCChunks.findChunkAt(chunks, focusedWordIdx);
+      if (!chunk) return;
+      paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
+    }).catch(()=>{});
+  }
+
+  // Walk children in order and tag every .w span (word OR glue) whose
+  // word-index falls inside [from..to] — gives a continuous underline
+  // across spaces/punctuation, the 또박또박 visual.
+  function paintChunkUnderline(sentEl, from, to) {
+    let inChunk = false;
+    [...sentEl.children].forEach(child => {
+      if (!child.classList || !child.classList.contains('w')) return;
+      const isWord = !child.classList.contains('punct');
+      if (isWord) {
+        const i = parseInt(child.dataset.wIdx, 10);
+        if (i === from) inChunk = true;
+        if (inChunk) child.classList.add('focused-chunk');
+        if (i === to) inChunk = false;   // tagged THIS word; close after we paint it
+      } else if (inChunk) {
+        // glue/punct between chunk words → include in underline
+        child.classList.add('focused-chunk');
       }
+    });
+  }
+
+  // ============================================================
+  //  KEYBOARD NAV  — ←/→ word, ↑/↓ chunk
+  // ============================================================
+  document.addEventListener('keydown', onKeyDown);
+  function onKeyDown(e) {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    switch (e.key) {
+      case 'ArrowLeft':  e.preventDefault(); navWord(-1);  break;
+      case 'ArrowRight': e.preventDefault(); navWord(+1);  break;
+      case 'ArrowUp':    e.preventDefault(); navChunk(-1); break;
+      case 'ArrowDown':  e.preventDefault(); navChunk(+1); break;
     }
-    return '';
+  }
+
+  function navWord(dir) {
+    // Nothing focused yet → start at the first word of the current page.
+    if (focusedSentIdx == null) {
+      const first = document.querySelector('.wc-sentence .w[data-w-idx="0"]');
+      if (first) {
+        const sentEl = first.closest('.wc-sentence');
+        focusWord(parseInt(sentEl.dataset.idx, 10), 0);
+      }
+      return;
+    }
+    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+    if (sentEl) {
+      const target = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx + dir}"]`);
+      if (target) { focusWord(focusedSentIdx, focusedWordIdx + dir); return; }
+    }
+    // Sentence boundary — jump to neighbouring sentence.
+    const adjIdx = focusedSentIdx + dir;
+    const adjEl = document.querySelector(`.wc-sentence[data-idx="${adjIdx}"]`);
+    if (adjEl) {
+      const words = adjEl.querySelectorAll('.w:not(.punct)');
+      if (!words.length) return;
+      focusWord(adjIdx, dir > 0 ? 0 : words.length - 1);
+      return;
+    }
+    // Page boundary — flip page first, then focus first/last word.
+    if (dir > 0 && pageIdx < pages.length - 1) {
+      goPage(pageIdx + 1);
+      setTimeout(() => focusWord(globalStartOfPage(pageIdx), 0), 220);
+    } else if (dir < 0 && pageIdx > 0) {
+      goPage(pageIdx - 1);
+      setTimeout(() => {
+        const newSents = document.querySelectorAll('.wc-sentence');
+        const last = newSents[newSents.length - 1];
+        if (!last) return;
+        const words = last.querySelectorAll('.w:not(.punct)');
+        focusWord(parseInt(last.dataset.idx, 10), words.length - 1);
+      }, 220);
+    }
+  }
+
+  async function navChunk(dir) {
+    if (focusedSentIdx == null) { navWord(dir); return; }
+    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+    if (!sentEl) { navWord(dir); return; }
+    const chunks = await window.WCChunks.fetch(sentEl.dataset.text);
+    if (!chunks || !chunks.length) { navWord(dir); return; }
+    const cur = window.WCChunks.findChunkAt(chunks, focusedWordIdx);
+    const curIdx = cur ? chunks.indexOf(cur) : -1;
+    const nextIdx = curIdx + dir;
+    if (nextIdx >= 0 && nextIdx < chunks.length) {
+      focusWord(focusedSentIdx, chunks[nextIdx].indices[0]);
+      return;
+    }
+    // Off either end of the sentence's chunks → jump sentence.
+    const adjIdx = focusedSentIdx + dir;
+    const adjEl = document.querySelector(`.wc-sentence[data-idx="${adjIdx}"]`);
+    if (adjEl) focusWord(adjIdx, 0);
+  }
+
+  // First global sentence-idx of the given page (used after page-flip).
+  function globalStartOfPage(pi) {
+    let start = 0;
+    for (let i = 0; i < pi; i++) {
+      start += (pages[i] || []).filter(p => p.kind === 'sent').length;
+    }
+    return start;
   }
 
   // ---------- toolbar / bottom-bar wiring ----------
@@ -417,6 +551,7 @@
       renderBody();
       refreshPageCounter();
       refreshNavBoundary();
+      applyFocus();   // re-apply amber glow + chunk underline on the new DOM
       el.classList.remove(outCls);
       el.classList.add(inCls);
       setTimeout(() => el.classList.remove(inCls), 280);
