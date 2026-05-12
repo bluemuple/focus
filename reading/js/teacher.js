@@ -499,12 +499,28 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
           <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
+          <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}">🗑 Delete</button>
         </div>
       `;
       list.appendChild(row);
     });
     list.querySelectorAll('[data-edit]').forEach(b => {
       b.addEventListener('click', () => startEditing(b.dataset.edit));
+    });
+    list.querySelectorAll('[data-delete-row]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.deleteRow;
+        const L = lessons.find(x => x.id === id);
+        if (!L) return;
+        if (!confirm(`Delete "${L.title}"? This can't be undone.`)) return;
+        try {
+          await window.WCDB.lessons.delete(id);
+          if (editingLessonId === id) cancelEditing();
+          await refreshAll();
+        } catch (e) {
+          alert('Could not delete: ' + (e.message || e));
+        }
+      });
     });
   }
 
@@ -517,10 +533,13 @@
     const L = lessons.find(x => x.id === lessonId);
     if (!L) return;
     editingLessonId = L.id;
-    $('lessonTitle').value     = L.title || '';
-    $('lessonBody').value      = L.body  || '';
-    $('lessonAnimalSet').value = L.animal_set || 'animals';
-    $('lessonGiftLimit').value = L.gift_limit_per_day || 3;
+    $('lessonTitle').value      = L.title || '';
+    // Old plain-text bodies still load fine — assigning to innerHTML
+    // just puts the text inside the editor. New HTML bodies render
+    // with their formatting intact.
+    $('lessonBody').innerHTML   = L.body  || '';
+    $('lessonAnimalSet').value  = L.animal_set || 'animals';
+    $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
     lessonWordImages = Array.isArray(L.word_images)
@@ -537,7 +556,7 @@
   function cancelEditing() {
     editingLessonId = null;
     $('lessonTitle').value = '';
-    $('lessonBody').value = '';
+    $('lessonBody').innerHTML = '';
     $('lessonAnimalSet').value = 'animals';
     $('lessonGiftLimit').value = 3;
     resetImages();
@@ -548,19 +567,36 @@
   function updateFormMode() {
     const btn      = $('addLessonBtn');
     const cancel   = $('cancelEditBtn');
+    const del      = $('deleteLessonBtn');
     const notice   = $('lessonEditNotice');
     if (editingLessonId) {
       btn.textContent = 'Save changes';
       cancel.classList.remove('wc-hidden');
+      del   .classList.remove('wc-hidden');
       notice.classList.remove('wc-hidden');
     } else {
       btn.textContent = 'Create lesson';
       cancel.classList.add('wc-hidden');
+      del   .classList.add('wc-hidden');
       notice.classList.add('wc-hidden');
     }
   }
 
   $('cancelEditBtn').addEventListener('click', cancelEditing);
+
+  $('deleteLessonBtn').addEventListener('click', async () => {
+    if (!editingLessonId) return;
+    const L = lessons.find(x => x.id === editingLessonId);
+    const title = L ? L.title : 'this lesson';
+    if (!confirm(`Delete "${title}"? This can't be undone.`)) return;
+    try {
+      await window.WCDB.lessons.delete(editingLessonId);
+      cancelEditing();
+      await refreshAll();
+    } catch (e) {
+      alert('Could not delete: ' + (e.message || e));
+    }
+  });
   function countGiftsToday(lessonId) {
     const today = new Date().toISOString().slice(0, 10);
     return messages.filter(m =>
@@ -593,16 +629,67 @@
   // image slot when the user pastes from the clipboard.
   let activeWordImageRow = null;
 
+  // contentEditable body — `pendingInsertPos` now stashes a DOM Range
+  // rather than a textarea cursor index. When the user triggers an
+  // image upload (button or paste), we restore this range so the
+  // marker lands where the cursor was even if focus has since moved.
   function rememberCursor() {
-    const ta = $('lessonBody');
-    pendingInsertPos = ta.selectionStart;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    // Only stash if the selection is INSIDE the body editor.
+    const body = $('lessonBody');
+    if (body && body.contains(range.startContainer)) {
+      pendingInsertPos = range.cloneRange();
+    }
   }
-  // The textarea remembers its own selection on focus/blur, but we
-  // also stash on every click/keyup so paste-via-shortcut from
-  // anywhere in the form still anchors to the correct text position.
-  $('lessonBody').addEventListener('click',   rememberCursor);
-  $('lessonBody').addEventListener('keyup',   rememberCursor);
-  $('lessonBody').addEventListener('blur',    rememberCursor);
+  // Selection events fire whenever the caret moves; sample them so
+  // the most recent caret position is always remembered.
+  document.addEventListener('selectionchange', rememberCursor);
+  $('lessonBody').addEventListener('click', rememberCursor);
+  $('lessonBody').addEventListener('keyup', rememberCursor);
+
+  // ----------------------------------------------------------------
+  //  RICH-TEXT TOOLBAR (H1/H2/H3/Body/Bold/Underline/Colour)
+  //
+  //  Uses document.execCommand for portability. While execCommand is
+  //  marked deprecated, every shipping browser still implements the
+  //  basic formatting commands and they remain the simplest way to
+  //  apply inline styling to a Selection inside a contentEditable.
+  //  We restore the stashed Range before each command so a click on
+  //  a toolbar button (which steals focus) doesn't lose the user's
+  //  text selection.
+  // ----------------------------------------------------------------
+  function runFormatCommand(cmd, arg) {
+    const body = $('lessonBody');
+    body.focus();
+    if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(pendingInsertPos);
+    }
+    try {
+      document.execCommand(cmd, false, arg || null);
+    } catch (e) { console.warn('execCommand', cmd, e); }
+    rememberCursor();
+  }
+  // mousedown (not click) — prevents focus from leaving the editor
+  // before we run the command (some browsers blur the editor when a
+  // toolbar button receives mousedown).
+  document.querySelectorAll('.wc-rt-toolbar [data-rt-cmd]').forEach(btn => {
+    btn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      runFormatCommand(btn.dataset.rtCmd, btn.dataset.rtArg);
+    });
+  });
+  // Colour picker — apply foreColor when the user picks a colour.
+  const colorInput = document.getElementById('rtColorInput');
+  if (colorInput) {
+    colorInput.addEventListener('mousedown', () => rememberCursor());
+    colorInput.addEventListener('input', () => {
+      runFormatCommand('foreColor', colorInput.value);
+    });
+  }
 
   $('addImageBtn').addEventListener('click', () => {
     rememberCursor();
@@ -618,8 +705,9 @@
   // actually an image in the clipboard. Plain-text paste keeps default
   // textarea behaviour.
   document.addEventListener('paste', async (e) => {
-    // Only react when the body textarea has focus — avoids accidental
-    // image inserts from pastes elsewhere on the page.
+    // Body editor active — handle image paste (insert marker) AND
+    // plain-text paste (strip formatting so external HTML doesn't
+    // muddy the editor's clean output).
     if (document.activeElement !== $('lessonBody')) return;
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
@@ -630,6 +718,13 @@
         if (file) await handleImageFile(file);
         return;
       }
+    }
+    // No image — let browser handle text paste but force plain text
+    // to avoid pasting in foreign HTML/styles.
+    const text = e.clipboardData.getData('text/plain');
+    if (text) {
+      e.preventDefault();
+      document.execCommand('insertText', false, text);
     }
   });
 
@@ -707,21 +802,27 @@
   function insertImage(corner, dataUrl) {
     const idx = lessonImages.length;
     lessonImages.push({ corner, data_url: dataUrl });
-
-    const ta = $('lessonBody');
-    const pos = pendingInsertPos != null ? pendingInsertPos : ta.selectionStart;
     const marker = `[[IMG:${idx}]]`;
-    const before = ta.value.slice(0, pos);
-    const after  = ta.value.slice(pos);
-    // Insert with surrounding spaces so the marker doesn't glue to
-    // adjacent words (which would break tokenisation downstream).
-    const sep1 = before && !/\s$/.test(before) ? ' ' : '';
-    const sep2 = after  && !/^\s/.test(after)  ? ' ' : '';
-    ta.value = before + sep1 + marker + sep2 + after;
-    const newPos = before.length + sep1.length + marker.length + sep2.length;
-    ta.setSelectionRange(newPos, newPos);
-    ta.focus();
-    pendingInsertPos = newPos;
+
+    const body = $('lessonBody');
+    body.focus();
+
+    // Restore the stashed Range so the marker lands where the cursor
+    // was when the user clicked "Add image", even if focus jumped to
+    // the file picker / corner modal in between.
+    if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(pendingInsertPos);
+    }
+    // insertText is the simplest way to insert plain text at the
+    // current caret position inside a contentEditable without
+    // breaking the surrounding markup.
+    document.execCommand('insertText', false, ' ' + marker + ' ');
+
+    // Update pending range to "after the inserted text" so a second
+    // image insertion appends after the first, not on top of it.
+    rememberCursor();
     renderImagesPreview();
   }
 
@@ -880,8 +981,14 @@
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
     const title = $('lessonTitle').value.trim();
-    const body  = $('lessonBody').value.trim();
-    if (!title || !body) {
+    // Body is a contentEditable — read innerHTML to preserve
+    // formatting (H1-H3, bold, underline, colour). textContent check
+    // for the empty-state guard since an empty editor has whitespace
+    // <br> filler in some browsers.
+    const bodyEl = $('lessonBody');
+    const body   = bodyEl.innerHTML.trim();
+    const bodyText = bodyEl.textContent.trim();
+    if (!title || !bodyText) {
       msg.textContent = 'Please enter a title and body.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
@@ -914,7 +1021,7 @@
       // Reset form regardless of create/update.
       editingLessonId = null;
       $('lessonTitle').value = '';
-      $('lessonBody').value = '';
+      $('lessonBody').innerHTML = '';
       resetImages();
       updateFormMode();
       msg.className = 'wc-alert ok'; msg.classList.remove('wc-hidden');

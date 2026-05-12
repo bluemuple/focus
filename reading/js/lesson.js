@@ -208,6 +208,10 @@
   // pagination without doing the full layout-measurement dance.
   function paginate(parts /*, rawBody */) {
     if (!parts.length) return [];
+    // HTML body — one page (pagination of arbitrary HTML is brittle;
+    // teachers structure their lessons via headings instead).
+    if (parts.length === 1 && parts[0].kind === 'html') return [parts];
+
     const MAX_SENTENCES_PER_PAGE = 6;
     const out  = [];
     let curr   = [];
@@ -282,17 +286,51 @@
     return parts;
   }
 
-  function tokeniseBody(body) {
-    // Step 1: split out [[IMG:N]] markers so they're standalone items.
-    const segments = extractImageMarkers(body);
+  // Body can be either plain text (legacy + simple lessons) or an HTML
+  // string (lessons authored with the rich-text toolbar — H1/H2/H3/B/U/
+  // colour). HTML bodies preserve block + inline formatting; we walk
+  // their text nodes at render time to tokenise words/sentences while
+  // keeping the surrounding markup.
+  function isHtmlBody(body) {
+    return /<(p|h[1-6]|div|br|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
+  }
 
+  function tokeniseBody(body) {
+    if (isHtmlBody(body)) {
+      // HTML path — pre-extract a flat sentence list so 1문장씩 mode
+      // still works, and stash the raw HTML for the renderer.
+      const tmp = document.createElement('div');
+      tmp.innerHTML = body;
+      const flat = [];
+      const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
+      let n;
+      while ((n = walker.nextNode())) {
+        const text = n.textContent;
+        if (!text || !text.trim()) continue;
+        const re = /[^.!?]+[.!?]+["'’)\]]*/g;
+        let m;
+        let lastEnd = 0;
+        while ((m = re.exec(text)) !== null) {
+          flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
+          lastEnd = m.index + m[0].length;
+        }
+        if (lastEnd < text.length) {
+          const tail = text.slice(lastEnd);
+          if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
+        }
+      }
+      return [{ kind: 'html', html: body, sentences: flat }];
+    }
+
+    // Plain text path — split out [[IMG:N]] markers first, then split
+    // each text segment into sentences + glue gaps.
+    const segments = extractImageMarkers(body);
     const out = [];
     segments.forEach(seg => {
       if (seg.kind === 'img') {
         out.push({ kind: 'img', idx: seg.idx });
         return;
       }
-      // Step 2: split each text segment into sentences + glue gaps.
       const re = /[^.!?]+[.!?]+["'’)\]]*/g;
       let lastEnd = 0; let m;
       while ((m = re.exec(seg.text)) !== null) {
@@ -349,10 +387,15 @@
       return;
     }
 
-    // page mode — dataset.idx stamps the GLOBAL sentence index so
-    // toggling 1문장씩 from a clicked word can jump to the right
-    // sentence (across pages) without remapping.
+    // HTML body — render the raw HTML, then walk text nodes and
+    // tokenise each in-place. This preserves H1/H2/H3/B/U/colour
+    // markup while making every word individually clickable.
     const parts = pages[pageIdx] || sentences;
+    if (parts.length === 1 && parts[0].kind === 'html') {
+      root.innerHTML = parts[0].html;
+      tokenizeTextNodesInPlace(root);
+      return;
+    }
     let globalStart = 0;
     for (let i = 0; i < pageIdx; i++) {
       globalStart += (pages[i] || []).filter(p => p.kind === 'sent').length;
@@ -392,6 +435,88 @@
     return img;
   }
 
+  // HTML body tokenisation. Walks all text nodes inside `rootEl`,
+  // replaces each with a fragment of .wc-sentence spans (containing
+  // .w word spans). Image markers `[[IMG:N]]` in the text become
+  // floating <img> elements inside the sentence flow. Global sentence
+  // index increments across all text nodes so 1문장씩 nav still works.
+  function tokenizeTextNodesInPlace(rootEl) {
+    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, null, false);
+    const textNodes = [];
+    let n;
+    while ((n = walker.nextNode())) textNodes.push(n);
+
+    let globalSentIdx = 0;
+    textNodes.forEach(tn => {
+      // Skip text nodes inside img / script / style — defensive, the
+      // walker shouldn't surface these anyway.
+      const parent = tn.parentNode;
+      if (!parent || parent.nodeName === 'SCRIPT' || parent.nodeName === 'STYLE') return;
+      const text = tn.textContent;
+      if (!text || !text.trim()) return;
+      const frag = buildSentenceFragment(text, globalSentIdx);
+      globalSentIdx = frag.nextIdx;
+      parent.replaceChild(frag.frag, tn);
+    });
+  }
+
+  function buildSentenceFragment(text, sentIdxStart) {
+    const out = document.createDocumentFragment();
+    let sentIdx = sentIdxStart;
+
+    // First split by image markers — each marker becomes a floating <img>.
+    const imgRe = /\[\[IMG:(\d+)\]\]/g;
+    let lastEnd = 0;
+    let m;
+    while ((m = imgRe.exec(text)) !== null) {
+      if (m.index > lastEnd) {
+        const sub = text.slice(lastEnd, m.index);
+        const r = appendSentencesFromText(out, sub, sentIdx);
+        sentIdx = r;
+      }
+      const idx = parseInt(m[1], 10);
+      const img = makeFloatingImage(idx);
+      if (img) out.appendChild(img);
+      lastEnd = m.index + m[0].length;
+    }
+    if (lastEnd < text.length) {
+      const sub = text.slice(lastEnd);
+      const r = appendSentencesFromText(out, sub, sentIdx);
+      sentIdx = r;
+    }
+    return { frag: out, nextIdx: sentIdx };
+  }
+
+  function appendSentencesFromText(frag, text, sentIdxStart) {
+    let sentIdx = sentIdxStart;
+    const sentRe = /[^.!?]+[.!?]+["'’)\]]*/g;
+    let lastEnd = 0;
+    let m;
+    while ((m = sentRe.exec(text)) !== null) {
+      if (m.index > lastEnd) {
+        // glue between sentences — preserve as plain text so HTML
+        // formatting (italic etc.) renders correctly around it.
+        frag.appendChild(document.createTextNode(text.slice(lastEnd, m.index)));
+      }
+      const sentText = m[0];
+      const sentObj = { kind: 'sent', text: sentText, words: extractWordTokens(sentText) };
+      frag.appendChild(makeSentenceWrap(sentObj, sentIdx));
+      sentIdx++;
+      lastEnd = m.index + m[0].length;
+    }
+    if (lastEnd < text.length) {
+      const tail = text.slice(lastEnd);
+      if (tail.trim()) {
+        const sentObj = { kind: 'sent', text: tail, words: extractWordTokens(tail) };
+        frag.appendChild(makeSentenceWrap(sentObj, sentIdx));
+        sentIdx++;
+      } else {
+        frag.appendChild(document.createTextNode(tail));
+      }
+    }
+    return sentIdx;
+  }
+
   function makeSentenceWrap(p, idx) {
     const wrap = document.createElement('span');
     wrap.className = 'wc-sentence';
@@ -425,6 +550,10 @@
 
   // Flat list of all sentences across the lesson (page-blind).
   function sentenceList() {
+    // HTML body — sentences are pre-extracted into the lone html part.
+    if (sentences.length === 1 && sentences[0].kind === 'html') {
+      return sentences[0].sentences || [];
+    }
     return sentences.filter(p => p.kind === 'sent');
   }
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }

@@ -123,6 +123,14 @@
       const rows = await rPatch('/wc_lessons?id=eq.' + encodeURIComponent(id), patch);
       return rows && rows[0];
     },
+    async delete(id) {
+      // FK cascade is set on wc_visualization_messages (ON DELETE SET NULL)
+      // and wc_encounter_counters (ON DELETE CASCADE), so deleting a lesson
+      // doesn't orphan student progress — word_states stay (they're per-
+      // user, not per-lesson), and viz messages keep their content with a
+      // null lesson_id.
+      return rDelete('/wc_lessons?id=eq.' + encodeURIComponent(id));
+    },
   };
 
   // ---------- word states ----------
