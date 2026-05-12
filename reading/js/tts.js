@@ -19,12 +19,16 @@
 //    .stop()               → halts current playback
 // =============================================================
 (() => {
-  const URL  = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
-  const ANON = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
+  // Rename the local var so it doesn't shadow the global `URL` object —
+  // that shadowing broke base64ToBlobUrl()'s `URL.createObjectURL()`
+  // call (it was being invoked on the supabase URL STRING, which
+  // doesn't have that method).
+  const SB_URL = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
+  const ANON   = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
   // NOTE: endpoint is `wc-tts-google`, NOT `tts-google` — the latter
   // is already owned by the sibling 뚜벅뚜벅 site in this same
   // Supabase project. The `wc-` prefix keeps them separate.
-  const TTS_FN = URL ? URL.replace(/\/+$/, '') + '/functions/v1/wc-tts-google' : '';
+  const TTS_FN = SB_URL ? SB_URL.replace(/\/+$/, '') + '/functions/v1/wc-tts-google' : '';
 
   const memCache = new Map();   // key → blob URL
   let currentAudio = null;
