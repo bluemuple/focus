@@ -208,6 +208,11 @@
     wireToolbar();
     refreshPageCounter();
     refreshNavBoundary();
+    // After first render, walk every page and split anything that
+    // overflows the card's visible height into a fresh page. This is
+    // why #lessonBody has overflow:hidden (no scroll) — pagination is
+    // measurement-based, not sentence-count-based.
+    requestAnimationFrame(() => repaginateOverflow());
   })();
 
   // ---------- pagination ----------
@@ -465,7 +470,15 @@
         const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
         let n;
         while ((n = walker.nextNode())) {
-          const text = n.textContent;
+          // Strip image markers FIRST so the flat sentence list stays
+          // in sync with what the renderer produces. The renderer
+          // replaces `[[IMG:N]]` with an <img> (no sentence span) so a
+          // marker counted here would create an off-by-one between
+          // flat[i] and the DOM's `[data-idx="i"]` — exactly the gap
+          // that hid the TTS underline on the sentence right after an
+          // image. Marker-only paragraphs (text becomes empty after
+          // stripping) drop out via the trim() guard below.
+          const text = (n.textContent || '').replace(/\[\[IMG:\d+\]\]/g, ' ');
           if (!text || !text.trim()) continue;
           const re = /[^.!?]+[.!?]+["'’)\]]*/g;
           let m, lastEnd = 0;
@@ -1027,6 +1040,106 @@
     const adjIdx = focusedSentIdx + dir;
     const adjEl = document.querySelector(`.wc-sentence[data-idx="${adjIdx}"]`);
     if (adjEl) focusWord(adjIdx, 0);
+  }
+
+  // Measurement-based pagination — walks every page, renders its HTML
+  // into the live #lessonBody, and if `scrollHeight > clientHeight`
+  // splits the children at the last one that fully fits. The overflow
+  // children become a new page, inserted right after. Single-mode is
+  // skipped (only one sentence shown, no overflow concern).
+  //
+  // Idempotent: pages already small enough don't change. Plain-text
+  // pages skip too — they're sentence/word objects that we'd have to
+  // re-tokenise to split. For now those rely on the 6-sentence cap.
+  function repaginateOverflow() {
+    if (singleMode) return;
+    const bodyEl = $('lessonBody');
+    if (!bodyEl) return;
+
+    // We mutate `pages` in place; track which page we're examining.
+    // Re-examine after a split because the new fragment might also
+    // overflow (in extreme cases — e.g. a single very long paragraph).
+    let p = 0;
+    let guard = 0;            // hard cap, prevents infinite loops
+    while (p < pages.length && guard < 50) {
+      guard++;
+      const parts = pages[p];
+      // Only paginate HTML pages here. Plain text relies on the
+      // sentence-count split + line-height heuristic.
+      if (!parts || parts.length !== 1 || parts[0].kind !== 'html') {
+        p++; continue;
+      }
+      // Render this page into the live body so we measure with the
+      // real font / line-height / column width.
+      bodyEl.innerHTML = parts[0].html;
+      tokenizeTextNodesInPlace(bodyEl, globalStartOfPage(p));
+
+      const cardH = bodyEl.clientHeight;
+      if (bodyEl.scrollHeight <= cardH + 2) { p++; continue; }
+
+      // Walk top-level children and find the first one whose bottom
+      // edge sits past the visible area.
+      const children = Array.from(bodyEl.children);
+      let cutoff = -1;
+      for (let i = 0; i < children.length; i++) {
+        const c = children[i];
+        if (c.offsetTop + c.offsetHeight > cardH) { cutoff = i; break; }
+      }
+      // Edge case: even the first child overflows. Keep it on the
+      // page (better than dropping it entirely) — the user can scroll
+      // by going to the next page anyway. This is rare for typical
+      // lesson HTML (paragraphs / headings).
+      if (cutoff <= 0) { p++; continue; }
+
+      const fittedHtml   = children.slice(0, cutoff).map(c => c.outerHTML).join('');
+      const overflowHtml = children.slice(cutoff).map(c => c.outerHTML).join('');
+
+      parts[0].html      = fittedHtml;
+      parts[0].sentences = extractSentencesFromSegmentHtml(fittedHtml);
+
+      const newPart = {
+        kind: 'html',
+        html: overflowHtml,
+        sentences: extractSentencesFromSegmentHtml(overflowHtml),
+      };
+      pages.splice(p + 1, 0, [newPart]);
+      // Loop continues to re-check `p` — the just-trimmed page should
+      // now fit; the loop will advance to the new overflow page next.
+    }
+
+    // Finished mutating — re-render the page the user is currently on
+    // (or page 0 if the active page got shifted out).
+    pageIdx = Math.max(0, Math.min(pageIdx, pages.length - 1));
+    renderBody();
+    refreshPageCounter();
+    refreshNavBoundary();
+  }
+
+  // Re-extract sentences from a slice of segment HTML — used by
+  // repaginateOverflow when a page gets split. Mirrors the walk in
+  // tokeniseHtmlBody so the flat sentence list stays accurate for
+  // 1문장씩 mode and TTS auto-advance.
+  function extractSentencesFromSegmentHtml(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const flat = [];
+    const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
+    let n;
+    while ((n = walker.nextNode())) {
+      const text = (n.textContent || '').replace(/\[\[IMG:\d+\]\]/g, ' ');
+      if (!text || !text.trim()) continue;
+      const re = /[^.!?]+[.!?]+["'’)\]]*/g;
+      let m, lastEnd = 0;
+      while ((m = re.exec(text)) !== null) {
+        flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
+        lastEnd = m.index + m[0].length;
+      }
+      if (lastEnd < text.length) {
+        const tail = text.slice(lastEnd);
+        if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
+      }
+    }
+    return flat;
   }
 
   // First global sentence-idx of the given page (used after page-flip
