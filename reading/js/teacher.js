@@ -1590,11 +1590,12 @@
       ${editable ? `
         <div class="wc-tmsg-reply">
           <div class="wc-muted" style="margin-bottom:6px;">
-            Gifts left today on this lesson: <strong>${quotaLeft}</strong> / ${quotaMax}
+            Sticker is optional. Reply with text, a sticker, or both.
+            Stickers left today on this lesson: <strong>${quotaLeft}</strong> / ${quotaMax}
           </div>
           <div class="wc-animal-picker" data-msg="${m.id}"></div>
-          <textarea class="wc-textarea wc-tmsg-text" rows="2" placeholder="Optional note for ${escapeHtml(student?.real_name||'')}…"></textarea>
-          <button class="wc-btn wc-tmsg-send" data-msg="${m.id}" ${quotaLeft <= 0 ? 'disabled' : ''}>Send gift 📨</button>
+          <textarea class="wc-textarea wc-tmsg-text" rows="2" placeholder="Reply to ${escapeHtml(student?.real_name||'')}…"></textarea>
+          <button class="wc-btn wc-tmsg-send" data-msg="${m.id}">Send reply 📨</button>
           <span class="wc-tmsg-status wc-muted"></span>
         </div>
       ` : `
@@ -1621,17 +1622,36 @@
     const sendBtn = card.querySelector('.wc-tmsg-send');
     const picked  = card.querySelector('.wc-animal-picker').dataset.picked;
     const note    = card.querySelector('.wc-tmsg-text').value.trim();
-    if (!picked) {
-      status.textContent = 'Pick an animal first.';
+    // Text alone, sticker alone, or both — all OK. The only invalid
+    // case is both empty (we'd be sending a blank reply).
+    if (!picked && !note) {
+      status.textContent = 'Type a reply or pick a sticker first.';
       status.style.color = 'var(--bad)';
       return;
     }
-    const [setName, idx] = picked.split('::');
+    let setName = null, idx = null;
+    if (picked) {
+      const parts = picked.split('::');
+      setName = parts[0];
+      idx = parseInt(parts[1], 10);
+      // Sticker quota — text-only replies are unlimited, only the
+      // sticker case is rate-limited. We re-read the lesson row via
+      // the closure's `lessons` array.
+      const lessonRow = (typeof lessons !== 'undefined' && Array.isArray(lessons))
+        ? lessons.find(L => L.id === m.lesson_id) : null;
+      const used = countGiftsToday(m.lesson_id);
+      const max  = lessonRow ? (lessonRow.gift_limit_per_day || 0) : Infinity;
+      if (used >= max) {
+        status.textContent = 'No stickers left for this lesson today. Send text instead.';
+        status.style.color = 'var(--bad)';
+        return;
+      }
+    }
     sendBtn.disabled = true;
     status.textContent = 'Sending…';
     status.style.color = 'var(--ink-soft)';
     try {
-      await window.WCDB.viz.respondWithGift(m.id, setName, parseInt(idx, 10), note || null);
+      await window.WCDB.viz.respondWithGift(m.id, setName, idx, note || null);
       status.textContent = 'Sent ✓';
       status.style.color = 'var(--good)';
       // refresh messages list (move this card from pending → answered)

@@ -44,17 +44,18 @@
     renderWordCard(null);   // initial empty-state
     renderLevelBar();       // initial hidden state
 
+    // The standalone "Imagine this!" + "From my teacher" panels are
+    // now folded INTO the word card so each conversation stays
+    // anchored to the word it's about. We always hide the legacy
+    // containers (kept in the HTML for backwards compat).
+    const v = document.getElementById('sideViz');
+    const r = document.getElementById('sideReplies');
+    if (v) v.classList.add('wc-hidden');
+    if (r) r.classList.add('wc-hidden');
+
     // Preview mode (opened from teacher dashboard's "Preview" button)
-    // shouldn't show student-specific panels — there's no student to
-    // send a viz prompt FROM, and no teacher to send replies TO.
-    if (L.isPreview || flags.hideVisualizationSidebar) {
-      const v = document.getElementById('sideViz');
-      const r = document.getElementById('sideReplies');
-      if (v) v.classList.add('wc-hidden');
-      if (r) r.classList.add('wc-hidden');
-    } else {
-      renderVizForm(L);
-      renderReplies(L);
+    // shouldn't poll for replies — there's no student session.
+    if (!L.isPreview && !flags.hideVisualizationSidebar) {
       window.WCDB.realtime.pollViz(L.me.id,
         new Date(Date.now() - 24*3600*1000).toISOString(),
         (msg) => onReplyArrived(L, msg));
@@ -210,6 +211,22 @@
             `
             : `<div class="wc-muted">Couldn't fetch info. Try tapping again!</div>`
         }
+
+        ${ lessonRef.isPreview ? '' : `
+          <!-- Small message-to-teacher box, pinned to this word.
+               Teacher's replies (text + animal sticker) load below
+               once the student has sent at least one message. -->
+          <div class="wc-word-msg" id="wcWordMsg">
+            <div class="wc-word-msg-title">💌 Ask your teacher about “${escapeHtml(w.word || w.lower || '')}”</div>
+            <textarea id="wcWordMsgInput"
+                      class="wc-word-msg-input"
+                      rows="2"
+                      placeholder="Type a question…"></textarea>
+            <button id="wcWordMsgSend" class="wc-word-msg-send" type="button">Send 📨</button>
+            <div id="wcWordMsgStatus" class="wc-word-msg-status"></div>
+            <div id="wcWordMsgThread" class="wc-word-msg-thread"></div>
+          </div>
+        ` }
       </div>
     `;
 
@@ -217,6 +234,86 @@
     if (tts) tts.addEventListener('click', () => {
       if (window.WCTTS) window.WCTTS.speak(info?.lemma || w.word || '').catch(()=>{});
     });
+
+    // Wire the message form (skipped in preview mode where the
+    // section isn't rendered).
+    if (!lessonRef.isPreview) wireWordMessageForm(w);
+  }
+
+  // ============================================================
+  //  Per-word teacher messaging — sits inside the word card.
+  //
+  //  Each message is a row in wc_visualization_messages with the
+  //  selected word stamped on it. Teacher replies with a sticker
+  //  (animal sprite) + optional note via respondWithGift.
+  //
+  //  We render at most the 3 most recent messages for THIS word
+  //  so a chatty student doesn't bury the word card.
+  // ============================================================
+  async function wireWordMessageForm(w) {
+    const input  = $('wcWordMsgInput');
+    const send   = $('wcWordMsgSend');
+    const status = $('wcWordMsgStatus');
+    if (!input || !send || !status) return;
+
+    send.addEventListener('click', async () => {
+      const text = input.value.trim();
+      if (!text) {
+        status.textContent = 'Write something first!';
+        status.className = 'wc-word-msg-status err';
+        return;
+      }
+      send.disabled = true;
+      status.textContent = 'Sending…';
+      status.className = 'wc-word-msg-status';
+      try {
+        await window.WCDB.viz.send(lessonRef.me.id, lessonRef.lesson.id,
+          w.lower, text);
+        input.value = '';
+        status.textContent = 'Sent! Keep reading. ✓';
+        status.className = 'wc-word-msg-status ok';
+        renderWordMessages(w.lower);
+        setTimeout(() => { status.textContent = ''; }, 4000);
+      } catch (e) {
+        status.textContent = 'Could not send. Try again.';
+        status.className = 'wc-word-msg-status err';
+      } finally {
+        send.disabled = false;
+      }
+    });
+
+    renderWordMessages(w.lower);
+  }
+
+  // Fetch all the student's messages and render only those tied to
+  // this word. (For Year-4 traffic volumes this is fine; if it
+  // grows, swap to a server-side filter.)
+  async function renderWordMessages(wordLower) {
+    const host = $('wcWordMsgThread');
+    if (!host) return;
+    let msgs = [];
+    try { msgs = await window.WCDB.viz.forStudent(lessonRef.me.id); } catch {}
+    const mine = (msgs || []).filter(m => (m.word || '').toLowerCase() === wordLower);
+    if (!mine.length) { host.innerHTML = ''; return; }
+
+    host.innerHTML = mine.slice(0, 3).map(m => {
+      const replied = !!(m.responded_at || m.teacher_response
+                         || m.gift_animal_set != null);
+      const stickerSrc = (m.gift_animal_set != null && m.gift_animal_index != null)
+        ? window.WCAssets.spriteFor(m.gift_animal_set, m.gift_animal_index, false)
+        : '';
+      return `
+        <div class="wc-msg-row">
+          <div class="wc-msg-mine">${escapeHtml(m.prompt || '')}</div>
+          ${replied ? `
+            <div class="wc-msg-reply">
+              ${stickerSrc ? `<img class="wc-msg-sticker" src="${stickerSrc}" alt=""/>` : ''}
+              ${m.teacher_response ? `<div class="wc-msg-text">${escapeHtml(m.teacher_response)}</div>` : ''}
+            </div>
+          ` : `<div class="wc-msg-waiting">Waiting for your teacher…</div>`}
+        </div>
+      `;
+    }).join('');
   }
 
   // ============================================================
@@ -370,7 +467,12 @@
     if (!msg || !msg.id) return;
     if (getSeenIds().has(msg.id)) return;   // already shown on this device
     markSeen(msg.id);
-    renderReplies(L);
+    // If the reply is for the word currently in the card, refresh
+    // the thread inline so the student sees it without re-tapping.
+    const msgWord = (msg.word || '').toLowerCase();
+    if (selectedWord && msgWord && selectedWord.lower === msgWord) {
+      renderWordMessages(msgWord);
+    }
     showToast(L, msg);
     if (msg.gift_animal_set != null && msg.gift_animal_index != null) {
       try {
@@ -382,14 +484,19 @@
   function showToast(L, msg) {
     const t = document.createElement('div');
     t.className = 'wc-toast';
-    const sprite = (msg.gift_animal_set != null)
+    const hasSticker = (msg.gift_animal_set != null && msg.gift_animal_index != null);
+    const sprite = hasSticker
       ? `<img src="${window.WCAssets.spriteFor(msg.gift_animal_set, msg.gift_animal_index, false)}" alt=""/>`
-      : '🎁';
+      : '💌';
+    const headline = hasSticker
+      ? 'Your teacher sent a sticker!'
+      : 'Your teacher replied!';
+    const wordHint = msg.word ? ` (about <em>${escapeHtml(msg.word)}</em>)` : '';
     t.innerHTML = `
       <div class="wc-toast-sprite">${sprite.startsWith('<img') ? sprite : `<span>${sprite}</span>`}</div>
       <div>
-        <strong>Your teacher sent a gift!</strong><br>
-        <span class="wc-muted">${escapeHtml(msg.teacher_response || 'A new friend just arrived.')}</span>
+        <strong>${headline}</strong>${wordHint}<br>
+        <span class="wc-muted">${escapeHtml(msg.teacher_response || 'Open this word to read it.')}</span>
       </div>
     `;
     document.body.appendChild(t);

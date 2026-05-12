@@ -28,7 +28,10 @@
 //        alter table wc_quiz_cache enable row level security;
 //        create policy wc_quiz_cache_dev on wc_quiz_cache for all using (true) with check (true);
 //
-//   Request:  { word, sentence, level (1..10), count (1..10) }
+//   Request:  { word, sentence, passage?, level (1..10), count (1..10) }
+//             passage is the visible page text — used for "comprehension"
+//             questions and as a candidate pool for substituting a harder
+//             vocabulary word when the tapped word is too common.
 //   Response: { questions: [{ type, prompt, choices: string[], correct_index }] }
 // =============================================================
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -42,8 +45,12 @@ const cors = {
 const SUPABASE_URL          = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-async function cacheKey(word: string, sentence: string, level: number, count: number): Promise<string> {
-  const norm = `${level}:${count}:${word.toLowerCase().trim()}:::${sentence.normalize("NFKC").trim()}`;
+async function cacheKey(word: string, sentence: string, passage: string, level: number, count: number): Promise<string> {
+  // Hash a 200-char prefix of the passage instead of the whole thing —
+  // small enough to keep keys short, big enough that two different
+  // lessons don't collide on the same word.
+  const passSnip = passage.normalize("NFKC").trim().slice(0, 200);
+  const norm = `${level}:${count}:${word.toLowerCase().trim()}:::${sentence.normalize("NFKC").trim()}:::${passSnip}`;
   const buf = new TextEncoder().encode(norm);
   const digest = await crypto.subtle.digest("SHA-256", buf);
   return Array.from(new Uint8Array(digest))
@@ -86,12 +93,13 @@ Deno.serve(async (req) => {
     const body     = await req.json();
     const word     = String(body?.word || "").trim();
     const sentence = String(body?.sentence || "").trim();
+    const passage  = String(body?.passage  || "").trim().slice(0, 1500);
     const level    = Math.max(1, Math.min(10, parseInt(String(body?.level || "1"), 10) || 1));
     const count    = Math.max(1, Math.min(10, parseInt(String(body?.count || "2"), 10) || 2));
 
     if (!word) return json({ error: "word required" }, 400);
 
-    const ck = await cacheKey(word, sentence, level, count);
+    const ck = await cacheKey(word, sentence, passage, level, count);
     const cached = await readCache(ck);
     if (cached) return json({ ...cached, cached: true });
 
@@ -101,37 +109,77 @@ Deno.serve(async (req) => {
     // Build the difficulty-aware question type mix. Year-4 readers
     // (8-9 years old) need very plain language — even at Lv 10 we
     // stay reading-comprehension, never grammar terminology.
+    //
+    // "comprehension" questions test what the PASSAGE says (who did
+    // what, why, what happened next), not vocabulary. The teacher
+    // wanted these mixed in so encounters cover both the lesson's
+    // hard words AND its meaning.
     const TYPE_MIX: Record<number, string[]> = {
-      1: ["meaning"],
-      2: ["meaning", "context"],
-      3: ["meaning", "context"],
-      4: ["meaning", "context", "context"],
-      5: ["meaning", "context", "context", "usage"],
-      6: ["meaning", "context", "usage", "usage"],
-      7: ["meaning", "context", "usage", "usage", "synonym"],
-      8: ["context", "usage", "synonym", "synonym"],
-      9: ["context", "usage", "synonym", "inference"],
-      10:["usage", "synonym", "inference", "inference"],
+      1: ["meaning", "comprehension"],
+      2: ["meaning", "comprehension", "context"],
+      3: ["meaning", "comprehension", "context"],
+      4: ["meaning", "comprehension", "context", "comprehension"],
+      5: ["meaning", "comprehension", "context", "usage", "comprehension"],
+      6: ["meaning", "comprehension", "context", "usage", "comprehension", "usage"],
+      7: ["meaning", "comprehension", "context", "usage", "synonym", "comprehension", "usage"],
+      8: ["comprehension", "context", "usage", "synonym", "comprehension", "synonym", "usage", "comprehension"],
+      9: ["comprehension", "context", "usage", "synonym", "inference", "comprehension", "synonym", "inference", "comprehension"],
+      10:["comprehension", "usage", "synonym", "inference", "comprehension", "inference", "synonym", "inference", "comprehension", "inference"],
     };
-    const wanted = TYPE_MIX[level] || ["meaning"];
+    const wanted = TYPE_MIX[level] || ["meaning", "comprehension"];
     const typesForCount = Array.from({ length: count }, (_, i) => wanted[i % wanted.length]);
+
+    // If the client sent a "filler" word (was/is/the/and/etc.) we
+    // tell GPT it's allowed to substitute a HARDER content word from
+    // the passage for vocabulary questions. The client already tries
+    // to avoid this, but the server-side check is a safety net.
+    const TRIVIAL = new Set([
+      "the","a","an","and","but","or","so","is","am","are","was","were","be",
+      "been","being","do","does","did","has","have","had","can","could","will",
+      "would","this","that","these","those","with","from","they","them","their",
+      "your","our","his","her","its","he","she","we","us","you","i","me","my",
+      "of","in","on","at","to","as","by","if","it","no","not","up","out","off",
+    ]);
+    const wordTooEasy = TRIVIAL.has(word.toLowerCase()) || word.length <= 3;
 
     const sys = [
       `You write very short reading-comprehension quiz questions for an 8-9 year old`,
-      `student in New Zealand (Year 4). The student just read this sentence and`,
-      `tapped on the word "${word}":`,
+      `student in New Zealand (Year 4). The student is reading this passage:`,
+      ``,
+      `PASSAGE:`,
+      passage ? `  """${passage}"""` : `  (no passage supplied — base questions on the sentence below)`,
+      ``,
+      `They just tapped on the word "${word}" in this sentence:`,
       ``,
       `  "${sentence}"`,
       ``,
-      `Write exactly ${count} questions about that word, IN THE ORDER given by`,
-      `these types: ${JSON.stringify(typesForCount)}.`,
+      `Write exactly ${count} questions, IN THE ORDER given by these types:`,
+      `${JSON.stringify(typesForCount)}.`,
       ``,
       `Type guide:`,
-      `  - "meaning":   "What does <word> mean here?" — 4 short definitions, 1 right.`,
-      `  - "context":   "What is <word> doing in the sentence?" / "Why is <word> mentioned?"`,
-      `  - "usage":     "Which sentence uses <word> the SAME way?" — 4 sample sentences.`,
-      `  - "synonym":   "Which word means almost the same as <word> here?" — 4 single-word options.`,
-      `  - "inference": "From the sentence, what is most likely true about <word>?" — 4 short claims.`,
+      `  - "meaning":       "What does <word> mean here?" — 4 short definitions, 1 right.`,
+      `  - "context":       "What is <word> doing in this sentence?" / "Why is <word> mentioned?"`,
+      `  - "usage":         "Which sentence uses <word> the SAME way?" — 4 sample sentences.`,
+      `  - "synonym":       "Which word means almost the same as <word>?" — 4 single-word options.`,
+      `  - "inference":     "From the sentence, what is most likely true about <word>?" — 4 short claims.`,
+      `  - "comprehension": Asks about the PASSAGE itself — what happened, who did what,`,
+      `                     where, why, what does the writer mean, what could happen next.`,
+      `                     Do NOT mention the word "${word}" in these unless natural.`,
+      ``,
+      `Word-substitution rule:`,
+      wordTooEasy
+        ? `- The supplied word "${word}" is too easy / too common for a vocabulary question. For`
+        : `- The supplied word "${word}" is the default vocabulary subject. But if you find a`,
+      wordTooEasy
+        ? `  ALL vocabulary-type questions (meaning / context / usage / synonym / inference), pick`
+        : `  noticeably HARDER content word in the passage that an 8-9 year old would not know,`,
+      wordTooEasy
+        ? `  a more challenging content word from the passage (a noun, verb or adjective an 8-9`
+        : `  prefer that one instead. Choose words that genuinely stretch Year-4 vocabulary —`,
+      wordTooEasy
+        ? `  year old might not know yet) and write the question about THAT word.`
+        : `  not common words like "was", "is", "the", "and", "this".`,
+      `- "comprehension" questions don't need any specific word — they test understanding.`,
       ``,
       `Rules:`,
       `- Use NZ English: colour, favourite, mum, sweets, lolly, etc.`,
@@ -142,6 +190,7 @@ Deno.serve(async (req) => {
       `- Exactly one correct answer; \`correct_index\` is 0..3.`,
       `- Choices should be plausibly close — no "obviously wrong" filler.`,
       `- For "meaning" / "synonym": all 4 options are the same part of speech / register.`,
+      `- For "comprehension": answer must be findable in the passage (literal or one-step inference).`,
       `- Difficulty rises with the question's index — q[0] easier than q[${count-1}].`,
       ``,
       `Return JSON ONLY (no markdown, no commentary):`,

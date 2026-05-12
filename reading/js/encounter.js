@@ -32,6 +32,39 @@
 
   const PER_WORD_THROTTLE_MS = 60 * 1000;
   const GLOBAL_THROTTLE_MS   =  5 * 1000;
+  // Probability that a qualifying level-up actually fires an encounter.
+  // Previously every Nth click (N = level threshold) triggered for sure;
+  // we now roll the dice on each color-change so animals feel like a
+  // surprise reward, not a counter the kids learn to game. 3/5 = 60%.
+  const TRIGGER_PROBABILITY = 0.6;
+
+  // Tiny stopword list — words a Year-4 reader has long since mastered
+  // and which therefore make boring quiz subjects ("What does 'was'
+  // mean?"). When the triggering word is in here, we substitute the
+  // hardest word from the visible page so the quiz tests something
+  // worth asking about. The list is intentionally small: anything
+  // longer than 4 letters and not in here is fair game.
+  const STOPWORDS = new Set([
+    'the','and','but','for','nor','yet','so','or','if','in','on','at','to','of','as',
+    'is','am','are','was','were','be','been','being','do','does','did','done',
+    'has','have','had','having','can','could','will','would','shall','should',
+    'may','might','must','this','that','these','those','here','there','then',
+    'than','when','where','what','which','who','whom','whose','why','how',
+    'with','from','they','them','their','theirs','your','yours','our','ours',
+    'his','her','hers','its','him','she','he','we','us','you','i','me','my',
+    'into','onto','over','under','about','after','before','again','some','any',
+    'all','one','two','three','more','most','some','such','also','even','still',
+    'just','only','very','really','now','out','off','up','down','too','said',
+    'says','say','go','goes','went','gone','get','gets','got','make','made',
+    'makes','take','took','takes','give','gave','gives','know','knew','knows',
+    'want','wants','tell','told','tells','look','looks','looked','use','used',
+    'uses','need','needs','find','found','come','came','comes','keep','kept',
+    'put','puts','let','lets','seem','seems','feel','felt','feels','try','tried',
+    'leave','left','call','called','calls','little','big','small','good','bad',
+    'old','new','first','last','long','great','high','low','right','wrong','same',
+    'next','many','much','other','others','because','through','around','again',
+    'always','never','sometimes','often','usually','today','yesterday','tomorrow',
+  ]);
 
   // In-memory throttle bookkeeping (resets on reload).
   const lastWordBump = new Map();   // lower → ms
@@ -82,33 +115,21 @@
     lastWordBump.set(word, now);
     lastAnyBump = now;
 
-    // Reward + counter bump (run in parallel — independent writes).
-    const [bumped] = await Promise.all([
-      window.WCDB.encounters.bump(lessonState.me.id, lessonState.lesson.id).catch(e => {
-        console.warn('encounter bump', e); return null;
-      }),
-      bumpCoins(1),
-    ]);
-    if (!bumped) return;
+    // Coin reward always — independent of whether the dice roll a
+    // quiz. Marking a word always earns the small reward.
+    bumpCoins(1);
 
-    const lvl    = lessonState.me.encounter_level || 1;
-    const spec   = window.WCLevels.spec(lvl);
-    const count  = bumped.count_value;
-    const remain = Math.max(0, spec.threshold - count);
+    // We still bump the per-lesson counter (for class analytics &
+    // sidebar progress events) but do NOT key the encounter on it
+    // anymore. The trigger is now purely probability-based so quizzes
+    // feel surprising, not earned by grinding.
+    window.WCDB.encounters.bump(lessonState.me.id, lessonState.lesson.id).catch(() => {});
 
-    // Update progress in sidebar (it has its own re-render path on
-    // wordLevels change, but the bar reads the server counter and
-    // the wordLevels change has just resolved — so this nudge keeps
-    // the bar moving without a roundtrip).
-    window.dispatchEvent(new CustomEvent('wc:counter-changed', {
-      detail: { count, threshold: spec.threshold, remain },
-    }));
+    // Probability gate — 60% chance per qualifying color-change.
+    if (Math.random() >= TRIGGER_PROBABILITY) return;
 
-    // Trigger? Counter hits or passes the threshold → encounter.
-    if (count >= spec.threshold) {
-      try { await runEncounter(detail); }
-      catch (e) { console.error('encounter run', e); }
-    }
+    try { await runEncounter(detail); }
+    catch (e) { console.error('encounter run', e); }
   }
 
   // ----------------------------------------------------------------
@@ -118,9 +139,7 @@
     window.WCEncounter = window.WCEncounter || {};
     window.WCEncounter.busy = true;
 
-    // Reset counter first so consecutive clicks don't re-fire during
-    // the quiz (we already gated re-entry above, but reset is needed
-    // anyway for the *next* round).
+    // Reset counter so the next streak starts from zero (analytics).
     await window.WCDB.encounters.reset(lessonState.me.id, lessonState.lesson.id);
     window.dispatchEvent(new CustomEvent('wc:counter-changed',
       { detail: { count: 0, threshold: 0, remain: 0 } }));
@@ -130,9 +149,13 @@
     const setName   = pickAnimalSet(lessonState.lesson.animal_set, lvl);
     const animalIdx = lvl - 1;  // 1..10 maps to index 0..9
 
-    // Find the sentence that contains the triggering word — gives
-    // GPT context for question generation.
-    const sentence  = findSentenceFor(triggerDetail.word) || lessonState.lesson.body.slice(0, 200);
+    // Pick the quiz subject. If the student tapped a meaty content
+    // word, use that. Otherwise (they tapped "was" / "is" / "the")
+    // substitute the hardest word visible on the current page so the
+    // vocabulary questions actually test something.
+    const quizWord  = pickQuizWord(triggerDetail.word);
+    const sentence  = findSentenceFor(quizWord) || lessonState.lesson.body.slice(0, 200);
+    const passage   = readVisiblePassage() || lessonState.lesson.body.slice(0, 1200);
 
     try {
       const outcome = await window.WCQuiz.run({
@@ -140,13 +163,70 @@
         animalIndex: animalIdx,
         level:       lvl,
         questionCount: spec.questions,
-        word:        triggerDetail.word,
+        word:        quizWord,
         sentence,
+        passage,
       });
       await onEncounterEnd(outcome, setName, animalIdx, lvl);
     } finally {
       window.WCEncounter.busy = false;
     }
+  }
+
+  // ----------------------------------------------------------------
+  //  Subject-word picker
+  //
+  //  Returns the triggering word if it's worth quizzing on; otherwise
+  //  the longest non-stopword visible on the current page that the
+  //  student hasn't mastered yet (level < 5). Falls back to the
+  //  triggering word if the page has nothing better.
+  // ----------------------------------------------------------------
+  function pickQuizWord(triggerWord) {
+    const w = (triggerWord || '').toLowerCase();
+    if (w && w.length > 4 && !STOPWORDS.has(w)) return triggerWord;
+
+    const candidates = collectPageWords();
+    if (!candidates.length) return triggerWord;
+    // Longest first; among ties, prefer ones the student hasn't
+    // marked "known" (level 5). Words they've marked 1-4 are also
+    // good — they're learning them and a quiz reinforces them.
+    const levels = lessonState.wordLevels || new Map();
+    candidates.sort((a, b) => {
+      const knownA = levels.get(a.lower) === 5 ? 1 : 0;
+      const knownB = levels.get(b.lower) === 5 ? 1 : 0;
+      if (knownA !== knownB) return knownA - knownB;   // unknown first
+      return b.lower.length - a.lower.length;          // longer first
+    });
+    return candidates[0].original;
+  }
+
+  // Scan the visible page DOM for distinct content words. Returns
+  // [{ lower, original }]. Deduplicates by lowercase lemma.
+  function collectPageWords() {
+    const seen = new Set();
+    const out = [];
+    document.querySelectorAll('#lessonBody .w:not(.punct)').forEach(el => {
+      const lower = (el.dataset.word || '').toLowerCase();
+      const orig  = el.textContent.trim();
+      if (!lower || seen.has(lower)) return;
+      if (lower.length <= 4) return;        // skip short words
+      if (STOPWORDS.has(lower)) return;     // skip stopwords
+      seen.add(lower);
+      out.push({ lower, original: orig });
+    });
+    return out;
+  }
+
+  // Concatenate visible sentences from the current page for the
+  // comprehension prompt. Falls back to lesson.body if the DOM walk
+  // turns up empty (shouldn't happen during a normal encounter).
+  function readVisiblePassage() {
+    const parts = [];
+    document.querySelectorAll('#lessonBody .wc-sentence').forEach(s => {
+      const t = (s.dataset.text || s.textContent || '').trim();
+      if (t) parts.push(t);
+    });
+    return parts.join(' ').slice(0, 1500);
   }
 
   function findSentenceFor(word) {

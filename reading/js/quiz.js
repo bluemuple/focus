@@ -56,11 +56,11 @@
     ensureHost();
     return new Promise((resolve) => {
       outcomeResolve = resolve;
-      const { animalSet, animalIndex, level, questionCount, word, sentence } = opts;
+      const { animalSet, animalIndex, level, questionCount, word, sentence, passage } = opts;
       stageSplash(animalSet, animalIndex, level, async () => {
         let questions = [];
         try {
-          questions = await fetchQuestions({ word, sentence, level, count: questionCount });
+          questions = await fetchQuestions({ word, sentence, passage, level, count: questionCount });
         } catch (e) {
           console.warn('quiz fetch failed', e);
         }
@@ -100,7 +100,7 @@
     show();
   }
 
-  async function fetchQuestions({ word, sentence, level, count }) {
+  async function fetchQuestions({ word, sentence, passage, level, count }) {
     const URL  = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
     const ANON = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
     if (!URL) throw new Error('Supabase not configured');
@@ -111,7 +111,7 @@
         apikey: ANON,
         Authorization: 'Bearer ' + ANON,
       },
-      body: JSON.stringify({ word, sentence, level, count }),
+      body: JSON.stringify({ word, sentence, passage, level, count }),
     });
     if (!r.ok) throw new Error('quiz-gpt ' + r.status);
     const j = await r.json();
