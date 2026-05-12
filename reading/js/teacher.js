@@ -699,6 +699,11 @@
     const L = lessons.find(x => x.id === lessonId);
     if (!L) return;
     editingLessonId = L.id;
+    // The Create-a-lesson card is collapsed by default — expand it
+    // so the teacher sees the populated form instead of just the
+    // section header.
+    const card = $('createLessonCard');
+    if (card) card.open = true;
     $('lessonTitle').value      = L.title || '';
     // Old plain-text bodies still load fine — assigning to innerHTML
     // just puts the text inside the editor. New HTML bodies render
@@ -727,6 +732,9 @@
     $('lessonGiftLimit').value = 3;
     resetImages();
     updateFormMode();
+    // Return the form card to its default collapsed state.
+    const card = $('createLessonCard');
+    if (card) card.open = false;
     renderLessons();
   }
 
@@ -1255,6 +1263,10 @@
       $('lessonBody').innerHTML = '';
       resetImages();
       updateFormMode();
+      // Collapse the form card back to its default closed state so
+      // the next visit to the Lessons tab is a clean view.
+      const cardEl = $('createLessonCard');
+      if (cardEl) cardEl.open = false;
       msg.className = 'wc-alert ok'; msg.classList.remove('wc-hidden');
       await refreshAll();
       // After saving an EDIT, open the preview in a fresh tab so the
