@@ -192,6 +192,12 @@
           : info
             ? `
               <div class="wc-word-def">${escapeHtml(info.definition)}</div>
+              ${findWordNote(w.lower)
+                ? `<div class="wc-word-teacher-note">
+                    <div class="wc-word-teacher-note-label">📝 From your teacher</div>
+                    <div class="wc-word-teacher-note-body">${escapeHtml(findWordNote(w.lower))}</div>
+                  </div>`
+                : ''}
               ${findWordImage(w.lower)
                 ? `<div class="wc-word-image-wrap">
                     <img class="wc-word-image" src="${findWordImage(w.lower)}" alt="${escapeHtml(w.lower)}" />
@@ -518,6 +524,18 @@
     const want = String(lower || '').toLowerCase();
     const hit  = list.find(wi => (wi.word || '').toLowerCase() === want);
     return hit ? hit.data_url : null;
+  }
+
+  // Same pattern for teacher-written meanings — when the tapped word
+  // has an entry, the note is rendered as an extra "From your teacher"
+  // card directly below the GPT definition. Returns the trimmed note
+  // string or null.
+  function findWordNote(lower) {
+    const list = lessonRef?.lesson?.word_notes;
+    if (!Array.isArray(list) || !list.length) return null;
+    const want = String(lower || '').toLowerCase();
+    const hit  = list.find(wn => (wn.word || '').toLowerCase() === want);
+    return hit && hit.note ? String(hit.note).trim() : null;
   }
 
   // Split `displayed` (the inflected form the student tapped) into a

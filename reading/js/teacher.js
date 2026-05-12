@@ -821,6 +821,9 @@
     lessonWordImages = Array.isArray(L.word_images)
       ? L.word_images.map(wi => ({ ...wi })) : [];
     renderWordImageRows();
+    lessonWordNotes = Array.isArray(L.word_notes)
+      ? L.word_notes.map(wn => ({ ...wn })) : [];
+    renderWordNoteRows();
     updateFormMode();
     // Scroll the form into view so the teacher sees the fields populate.
     $('lessonTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -908,6 +911,11 @@
   // Last-clicked word-image row — paste handler targets this row's
   // image slot when the user pastes from the clipboard.
   let activeWordImageRow = null;
+  // Word-meaning pairs: [{ word: 'kororā', note: 'A little blue penguin …' }]
+  // Shown in the sidebar BELOW the auto-fetched GPT definition when the
+  // student taps a word that appears in the body. Empty rows (no word
+  // OR no note) are stripped at save time.
+  let lessonWordNotes = [];
 
   // Textarea-based body. `pendingInsertPos` is the caret index (or
   // selection-start) so toolbar buttons restore the cursor after the
@@ -1251,6 +1259,8 @@
     lessonWordImages = [];
     activeWordImageRow = null;
     renderWordImageRows();
+    lessonWordNotes = [];
+    renderWordNoteRows();
   }
 
   // ----------------------------------------------------------------
@@ -1328,6 +1338,57 @@
     });
   }
 
+  // ----------------------------------------------------------------
+  //  WORD-MEANING PAIRS — teacher's own note for a word in the body.
+  //  Mirrors the word-image flow above: rows of [word | note | ×],
+  //  rendered as a static input + textarea pair. Stored as JSONB on
+  //  the lesson row (`word_notes`). Empty rows stripped before save.
+  // ----------------------------------------------------------------
+  $('addWordNoteBtn').addEventListener('click', () => {
+    lessonWordNotes.push({ word: '', note: '' });
+    renderWordNoteRows();
+    setTimeout(() => {
+      const rows = document.querySelectorAll('.wc-wordnote-row');
+      const last = rows[rows.length - 1];
+      if (last) last.querySelector('.wn-word').focus();
+    }, 0);
+  });
+
+  function renderWordNoteRows() {
+    const wrap = $('wordNoteRows');
+    if (!wrap) return;
+    if (!lessonWordNotes.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = lessonWordNotes.map((wn, i) => `
+      <div class="wc-wordnote-row" data-idx="${i}">
+        <input class="wn-word wc-input" type="text" placeholder="word"
+               value="${escapeHtml(wn.word || '')}" />
+        <textarea class="wn-note wc-input" rows="2"
+                  placeholder="meaning for this word…">${escapeHtml(wn.note || '')}</textarea>
+        <button type="button" class="wn-remove wc-btn ghost" title="Remove">×</button>
+      </div>
+    `).join('');
+
+    wrap.querySelectorAll('.wc-wordnote-row').forEach(row => {
+      const idx = parseInt(row.dataset.idx, 10);
+      const wordInput = row.querySelector('.wn-word');
+      const noteInput = row.querySelector('.wn-note');
+      const removeBtn = row.querySelector('.wn-remove');
+
+      wordInput.addEventListener('input', () => {
+        // Match the word-image convention: lowercase the lemma so
+        // sidebar lookups don't have to do case-insensitive matching.
+        lessonWordNotes[idx].word = wordInput.value.trim().toLowerCase();
+      });
+      noteInput.addEventListener('input', () => {
+        lessonWordNotes[idx].note = noteInput.value;
+      });
+      removeBtn.addEventListener('click', () => {
+        lessonWordNotes.splice(idx, 1);
+        renderWordNoteRows();
+      });
+    });
+  }
+
   // Paste support — when the user is interacting with a word-image
   // row and pastes an image from the clipboard, route it to the
   // active row's image slot. Body-textarea paste keeps its own
@@ -1375,12 +1436,20 @@
     const cleanedWordImages = lessonWordImages.filter(
       wi => (wi.word && wi.word.trim()) && wi.data_url
     );
+    // Same idea for word-meaning rows: both fields must be filled.
+    const cleanedWordNotes = lessonWordNotes
+      .map(wn => ({
+        word: (wn.word || '').trim().toLowerCase(),
+        note: (wn.note || '').trim(),
+      }))
+      .filter(wn => wn.word && wn.note);
     const payload = {
       title, body,
       animal_set: $('lessonAnimalSet').value,
       gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
       images: lessonImages,
       word_images: cleanedWordImages,
+      word_notes:  cleanedWordNotes,
       headings_start_new_page: !!$('lessonHeadingsNewPage').checked,
     };
     try {

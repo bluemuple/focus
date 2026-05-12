@@ -769,6 +769,10 @@
       // word the teacher attached an image to. Subtle hint that
       // clicking will surface visual info beyond the dictionary entry.
       if (hasWordImage(tok.lower)) sp.classList.add('has-word-image');
+      // Orange pip — same idea but for teacher-written meanings.
+      // When both classes are present the orange dot sits just
+      // left of the green dot (handled in CSS).
+      if (hasWordNote(tok.lower))  sp.classList.add('has-word-note');
       sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
       wrap.appendChild(sp);
       wIdx++;
@@ -781,6 +785,13 @@
     if (!Array.isArray(list) || !list.length) return false;
     const want = String(lower || '').toLowerCase();
     return list.some(wi => (wi.word || '').toLowerCase() === want);
+  }
+
+  function hasWordNote(lower) {
+    const list = lesson && lesson.word_notes;
+    if (!Array.isArray(list) || !list.length) return false;
+    const want = String(lower || '').toLowerCase();
+    return list.some(wn => (wn.word || '').toLowerCase() === want && wn.note);
   }
 
   // Flat list of all sentences across the lesson (page-blind). For
