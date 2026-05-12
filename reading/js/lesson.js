@@ -433,6 +433,13 @@
   let focusedSentIdx = null;
   let focusedWordIdx = null;
   let lastSelectedSentenceIdx = 0;
+  // Chunk-TTS mute state — true by default (don't auto-play). Toggled
+  // by the 🔇/🔊 chip in the header. Only affects chunk-on-tap audio;
+  // ▶ Listen, sidebar headword 🔊, etc. always play.
+  let chunkMuted = true;
+  // Tracks which chunk we last played so moving the focus inside the
+  // same chunk doesn't re-fire TTS on every word.
+  let lastPlayedChunkKey = null;
 
   async function onWordClick(el, lower, original) {
     const sentEl = el.closest('.wc-sentence');
@@ -479,6 +486,16 @@
       const chunk = window.WCChunks.findChunkAt(chunks, focusedWordIdx);
       if (!chunk) return;
       paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
+      // Chunk TTS — read the whole chunk once when the focused word
+      // moves INTO a chunk that we haven't played yet. Skipped when
+      // muted (the default) and in preview mode.
+      const chunkKey = `${seenSent}::${chunk.indices[0]}-${chunk.indices[1]}`;
+      if (!chunkMuted && !isPreview && chunkKey !== lastPlayedChunkKey) {
+        lastPlayedChunkKey = chunkKey;
+        if (window.WCTTS && chunk.text) {
+          window.WCTTS.speak(chunk.text).catch(() => {});
+        }
+      }
     }).catch(()=>{});
   }
 
@@ -635,8 +652,8 @@
       setPlayUi(false);
     });
 
-    // 1문장씩 chip in the header → enter focused-reading. When the
-    // user had just clicked a word, start from THAT sentence; otherwise
+    // Single-sentence chip in the header → enter focused-reading. When
+    // the user just clicked a word, start from THAT sentence; otherwise
     // start from the first sentence on the current page.
     $('btnSingle').addEventListener('click', () => {
       singleMode = !singleMode;
@@ -644,10 +661,30 @@
       $('btnSingle').setAttribute('aria-pressed', singleMode ? 'true' : 'false');
       document.body.classList.toggle('wc-single-mode', singleMode);
       if (singleMode) {
-        // If the user picked a word recently, start from its sentence.
         singleIdx = lastSelectedSentenceIdx || 0;
       }
       refreshSingleMode();
+    });
+
+    // Chunk-mute chip — toggles whether tapping a word triggers a
+    // one-shot TTS read of its surrounding chunk. Default = muted.
+    const muteBtn   = $('btnChunkMute');
+    const muteIco   = $('btnChunkMuteIco');
+    const muteLabel = $('btnChunkMuteLabel');
+    const refreshMuteUi = () => {
+      if (!muteBtn) return;
+      muteBtn.classList.toggle('active', !chunkMuted);   // active = audio ON
+      muteBtn.setAttribute('aria-pressed', chunkMuted ? 'true' : 'false');
+      muteIco.textContent   = chunkMuted ? '🔇' : '🔊';
+      muteLabel.textContent = chunkMuted ? 'Mute chunk' : 'Play chunk';
+    };
+    refreshMuteUi();
+    if (muteBtn) muteBtn.addEventListener('click', () => {
+      chunkMuted = !chunkMuted;
+      refreshMuteUi();
+      // Clear the "last played" memo so unmuting can re-play the
+      // current chunk if the user clicks the same word again.
+      lastPlayedChunkKey = null;
     });
 
     // Bottom-bar arrows — split into WORD-step (‹ ›) and PAGE-step (‹‹ ››).

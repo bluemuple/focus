@@ -94,12 +94,17 @@ Deno.serve(async (req) => {
     const apiKey = Deno.env.get("GOOGLE_CLOUD_API_KEY");
     if (!apiKey) return json({ error: "GOOGLE_CLOUD_API_KEY not set" }, 500);
 
+    // Derive languageCode from the voice name's prefix (en-NZ, en-AU,
+    // en-US, ja-JP, …). Hard-coding "en-NZ" broke once we moved the
+    // default to en-AU-Neural2-A — Google rejects mismatched pairs.
+    const langCode = (voice.match(/^[a-z]{2}-[A-Z]{2}/) || ["en-AU"])[0];
+
     const r = await fetch(`${TTS_URL}?key=${apiKey}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         input: { text },
-        voice: { languageCode: "en-NZ", name: voice },
+        voice: { languageCode: langCode, name: voice },
         audioConfig: { audioEncoding: "MP3", speakingRate: rate },
       }),
     });

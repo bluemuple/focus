@@ -43,7 +43,10 @@
     if (!text) return;
     stop();
 
-    const voice = (opts && opts.voice) || 'en-NZ-Wavenet-A';
+    // Default voice matches 또박또박's "NZ" pick — Google's en-AU-Neural2-A
+    // (NZ/AU female, warm tone). Wavenet was previously default but
+    // Neural2 has cleaner prosody on short chunk-length utterances.
+    const voice = (opts && opts.voice) || 'en-AU-Neural2-A';
     const rate  = (opts && opts.rate)  || 1.0;
     const key   = `${voice}:${rate.toFixed(2)}:${text}`;
 
