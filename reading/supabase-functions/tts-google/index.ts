@@ -83,7 +83,10 @@ Deno.serve(async (req) => {
   try {
     const body  = await req.json();
     const text  = String(body?.text  || "").trim();
-    const voice = String(body?.voice || "en-NZ-Wavenet-A");
+    // Default matches the client (js/tts.js) — 또박또박's NZ/AU female
+    // Neural2 voice. Wavenet-A was the previous default but Neural2 has
+    // cleaner prosody on chunk-length clips.
+    const voice = String(body?.voice || "en-AU-Neural2-A");
     const rate  = Number(body?.rate  || 1.0);
     if (!text) return json({ error: "text required" }, 400);
 

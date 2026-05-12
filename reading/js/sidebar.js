@@ -71,6 +71,13 @@
         renderWordCard({ info });
       });
     });
+    // Esc — clear sidebar selection, revert to empty state.
+    window.addEventListener('wc:word-deselected', () => {
+      selectedWord = null;
+      activeInfo   = null;
+      renderWordCard(null);
+      renderLevelBar();
+    });
     // Level changes (from lesson.js or this sidebar) → refresh picker.
     L.onWordLevelChange(({ word }) => {
       if (selectedWord && word === selectedWord.lower) {

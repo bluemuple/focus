@@ -22,6 +22,42 @@
 
   function normKey(s) { return String(s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
+  // Hard 6-word ceiling enforced CLIENT-SIDE — ported from 또박또박's
+  // translate.js. The chunk-gpt prompt asks for ≤ 6-word chunks but
+  // gpt-4o-mini occasionally returns longer ones (news-style sentences
+  // with multi-PP modifiers). Rather than fight the model, we slab
+  // anything longer than 6 words into 6-word pieces at whitespace
+  // boundaries, with indices recomputed so the body's applyChunk
+  // highlight still aligns.
+  function clampChunks(rawChunks) {
+    if (!Array.isArray(rawChunks)) return rawChunks;
+    const out = [];
+    for (const c of rawChunks) {
+      if (!c || !c.text) continue;
+      const words = String(c.text).split(/\s+/).filter(Boolean);
+      const baseStart = (Array.isArray(c.indices) && Number.isFinite(c.indices[0]))
+        ? (c.indices[0] | 0) : 0;
+      if (words.length <= 6) {
+        const end = (Array.isArray(c.indices) && Number.isFinite(c.indices[1]))
+          ? (c.indices[1] | 0) : (baseStart + words.length - 1);
+        out.push({ text: c.text, indices: [baseStart, end] });
+        continue;
+      }
+      // Too long — slab into ≤ 6-word pieces.
+      let cursor = 0;
+      while (cursor < words.length) {
+        const len = Math.min(6, words.length - cursor);
+        const slab = words.slice(cursor, cursor + len).join(' ');
+        out.push({
+          text: slab,
+          indices: [baseStart + cursor, baseStart + cursor + len - 1],
+        });
+        cursor += len;
+      }
+    }
+    return out;
+  }
+
   async function fetchChunks(sentence) {
     const s = (sentence || '').trim();
     if (s.length < 3) return null;
@@ -40,7 +76,9 @@
       });
       if (!r.ok) throw new Error('chunk-gpt ' + r.status);
       const j = await r.json();
-      const chunks = Array.isArray(j.chunks) ? j.chunks : [];
+      // Apply the 6-word clamp before caching so every consumer sees
+      // already-clamped output. Matches 또박또박's clampChunks step.
+      const chunks = clampChunks(Array.isArray(j.chunks) ? j.chunks : []);
       mem.set(key, chunks);
       return chunks;
     } catch (e) {

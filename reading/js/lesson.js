@@ -162,6 +162,23 @@
         (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + h + 'px';
     }
 
+    // Preview-only Edit button — sits in the top-right of the lesson
+    // card so a teacher reviewing their own lesson can jump straight
+    // to fixing typos / formatting. Students never reach the preview
+    // path so they never see this button.
+    if (isPreview) {
+      const card = document.querySelector('.wc-lesson-main');
+      if (card && !document.getElementById('wcPreviewEdit')) {
+        const editLink = document.createElement('a');
+        editLink.id = 'wcPreviewEdit';
+        editLink.className = 'wc-preview-edit';
+        editLink.href = './teacher.html?edit=' + encodeURIComponent(lessonId);
+        editLink.textContent = '✏️ Edit';
+        editLink.title = 'Open in teacher dashboard for editing';
+        card.appendChild(editLink);
+      }
+    }
+
     // Pull the class's hide_features so sidebar/encounter/popup
     // modules can opt out of disabled features. Failing to fetch is
     // non-fatal — we just behave like nothing's hidden.
@@ -682,6 +699,17 @@
     applyFocus();
   }
 
+  // Drop all visual selection state — focused word ring, chunk
+  // underline, and sidebar word card. Triggered by Esc.
+  function clearWordFocus() {
+    focusedSentIdx = null;
+    focusedWordIdx = null;
+    document.querySelectorAll('.w.focused, .w.focused-chunk')
+      .forEach(el => el.classList.remove('focused', 'focused-chunk'));
+    // Tell the sidebar to revert to its empty state.
+    window.dispatchEvent(new CustomEvent('wc:word-deselected'));
+  }
+
   function applyFocus() {
     // Clear previous focus markers across the whole body.
     document.querySelectorAll('.w.focused, .w.focused-chunk')
@@ -760,6 +788,10 @@
       // Spacebar → play / pause whole-lesson TTS reading. Most
       // natural for a reading app — same as a media player.
       case ' ':          e.preventDefault(); playAllFromCurrent();  return;
+      // Esc → clear word selection (focus + chunk underline) AND
+      // close the sidebar word card. Cheap escape hatch when the
+      // student wants to read without anything highlighted.
+      case 'Escape':     e.preventDefault(); clearWordFocus();      return;
     }
     // Level-picker shortcuts — same mapping as 또박또박:
     //   0   → -1 (무시 / skip)

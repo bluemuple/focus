@@ -40,6 +40,35 @@
     await reloadClasses();
     wireTabs();
     if (currentClass) await refreshAll();
+
+    // Deep-link from the lesson preview's "✏️ Edit" button. If the
+    // URL carries ?edit=<lesson-id>, switch to the right class +
+    // Lessons tab and drop the form straight into edit mode.
+    const editId = new URLSearchParams(location.search).get('edit');
+    if (editId) {
+      try {
+        const target = await window.WCDB.lessons.byId(editId);
+        if (target) {
+          // If the lesson belongs to a class other than the currently-
+          // selected one, switch classes first.
+          if (target.class_id && (!currentClass || target.class_id !== currentClass.id)) {
+            const cls = myClasses.find(c => c.id === target.class_id);
+            if (cls) {
+              currentClass = cls;
+              $('classSelect').value = cls.id;
+              await refreshAll();
+            }
+          }
+          // Activate the Lessons tab.
+          currentTab = 'lessons';
+          document.querySelectorAll('[data-tab]').forEach(b =>
+            b.classList.toggle('active', b.dataset.tab === 'lessons'));
+          renderTab('lessons');
+          // Now load the lesson into the edit form.
+          startEditing(editId);
+        }
+      } catch (e) { console.warn('?edit deep link failed', e); }
+    }
   })();
 
   // ============================================================
