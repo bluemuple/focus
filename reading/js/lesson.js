@@ -139,33 +139,50 @@
   })();
 
   // ---------- pagination ----------
-  // Group sentence/gap parts into pages, breaking on paragraph boundaries
-  // (a "gap" containing \n\n is the natural paragraph break).
-  function paginate(parts, rawBody) {
+  // Group sentence/gap parts into pages. Two break triggers:
+  //   1. paragraph break — a "gap" part whose text contains \n\n
+  //      (the natural reading-comprehension break)
+  //   2. sentence cap — once a page has reached MAX_SENTENCES_PER_PAGE
+  //      sentences we soft-break, even mid-paragraph. Without this
+  //      cap a body with no double-newlines (typical when teachers
+  //      paste from a Word doc that uses single-line wrapping) all
+  //      collapses into a single page — defeating pagination entirely.
+  //
+  // 6 sentences per page = roughly one Year-3 attention span, and
+  // matches the visual density 또박또박 gets from its viewport-fit
+  // pagination without doing the full layout-measurement dance.
+  function paginate(parts /*, rawBody */) {
     if (!parts.length) return [];
+    const MAX_SENTENCES_PER_PAGE = 6;
     const out  = [];
     let curr   = [];
+    let sentCount = 0;
     parts.forEach(p => {
       curr.push(p);
-      if (p.kind === 'gap' && /\n\s*\n/.test(p.text)) {
+      if (p.kind === 'sent') sentCount++;
+      const hardBreak = (p.kind === 'gap' && /\n\s*\n/.test(p.text));
+      const softBreak = (p.kind === 'sent' && sentCount >= MAX_SENTENCES_PER_PAGE);
+      if (hardBreak || softBreak) {
         out.push(curr);
         curr = [];
+        sentCount = 0;
       }
     });
     if (curr.length) out.push(curr);
-    // If the body had no blank-line paragraph breaks at all, fall back
-    // to a single page rather than 1-sentence pages.
     return out.length ? out : [parts];
   }
 
   function refreshPageCounter() {
-    const el = document.getElementById('thumbPages');
-    if (!el) return;
-    el.textContent = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
-    const prev = document.getElementById('btnPagePrev');
-    const next = document.getElementById('btnPageNext');
-    if (prev) prev.disabled = pageIdx <= 0;
-    if (next) next.disabled = pageIdx >= pages.length - 1;
+    const txt = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
+    const thumb = document.getElementById('thumbPages');
+    if (thumb) thumb.textContent = txt;
+    const bar = document.getElementById('lbPageCount');
+    if (bar)   bar.textContent = txt;
+    // ‹‹ / ›› in the bottom bar greys out at boundaries.
+    const prevPage = document.getElementById('btnPagePrev');
+    const nextPage = document.getElementById('btnPageNext');
+    if (prevPage) prevPage.disabled = pageIdx <= 0;
+    if (nextPage) nextPage.disabled = pageIdx >= pages.length - 1;
   }
 
   // ---------- tokenisation ----------
@@ -578,22 +595,20 @@
       refreshSingleMode();
     });
 
-    // Bottom-bar arrows: when 1문장씩 ON they step sentences; otherwise
-    // they step PAGES (same role as 또박또박's lb-arrow buttons).
+    // Bottom-bar arrows — split into WORD-step (‹ ›) and PAGE-step (‹‹ ››).
+    // In 1문장씩 mode, ‹ › step sentences; otherwise they step words
+    // (crossing page boundaries automatically via navWord). Page-step
+    // (‹‹ / ››) always moves a whole page.
     $('btnPrev').addEventListener('click', () => {
       if (singleMode) goSingle(singleIdx - 1);
-      else            goPage(pageIdx - 1);
+      else            navWord(-1);
     });
     $('btnNext').addEventListener('click', () => {
       if (singleMode) goSingle(singleIdx + 1);
-      else            goPage(pageIdx + 1);
+      else            navWord(+1);
     });
-
-    // Thumbnail page buttons (top-right) — explicit page navigation.
-    const ppPrev = document.getElementById('btnPagePrev');
-    const ppNext = document.getElementById('btnPageNext');
-    if (ppPrev) ppPrev.addEventListener('click', () => goPage(pageIdx - 1));
-    if (ppNext) ppNext.addEventListener('click', () => goPage(pageIdx + 1));
+    $('btnPagePrev').addEventListener('click', () => goPage(pageIdx - 1));
+    $('btnPageNext').addEventListener('click', () => goPage(pageIdx + 1));
   }
 
   function goPage(next) {
@@ -633,8 +648,11 @@
       prev.disabled = singleIdx <= 0;
       next.disabled = singleIdx >= last;
     } else {
-      prev.disabled = pageIdx <= 0;
-      next.disabled = pageIdx >= pages.length - 1;
+      // In page mode the single-arrows step WORDS and freely cross
+      // page boundaries via navWord(), so we never disable them —
+      // the page-step buttons (‹‹ / ››) handle the boundary visualisation.
+      prev.disabled = false;
+      next.disabled = false;
     }
   }
 

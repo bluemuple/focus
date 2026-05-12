@@ -284,7 +284,29 @@
   }
 
   // Teacher reply arrived live → toast + auto-catch + refresh.
+  //
+  // De-dup: every message we've already toasted on THIS device is
+  // remembered in localStorage. Without this, every page reload
+  // would re-toast all replies from the last 24 hours (because
+  // pollViz uses a 24-hour look-back window). With it, each new
+  // reply pops once per device, ever.
+  const SEEN_KEY = 'wc.viz.seen.v1';
+  function getSeenIds() {
+    try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function markSeen(id) {
+    const set = getSeenIds();
+    set.add(id);
+    // Cap stored size — keep the most recent 200 IDs only.
+    const arr = [...set].slice(-200);
+    try { localStorage.setItem(SEEN_KEY, JSON.stringify(arr)); } catch {}
+  }
+
   async function onReplyArrived(L, msg) {
+    if (!msg || !msg.id) return;
+    if (getSeenIds().has(msg.id)) return;   // already shown on this device
+    markSeen(msg.id);
     renderReplies(L);
     showToast(L, msg);
     if (msg.gift_animal_set != null && msg.gift_animal_index != null) {
