@@ -141,7 +141,9 @@
     $('lessonTitle').textContent = lesson.title;
 
     // Preview banner — yellow strip at the very top of the page so
-    // the teacher knows nothing they do here is being saved.
+    // the teacher knows nothing they do here is being saved. Fades
+    // away after 3s so it doesn't permanently steal vertical space
+    // (preview tabs often stay open while the teacher tweaks copy).
     if (isPreview && !document.getElementById('wcPreviewBanner')) {
       const banner = document.createElement('div');
       banner.id = 'wcPreviewBanner';
@@ -155,11 +157,26 @@
         padding: '8px 14px', textAlign: 'center',
         boxShadow: '0 1px 4px rgba(0,0,0,.06)',
         fontFamily: 'inherit',
+        transition: 'opacity .35s ease, transform .35s ease',
       });
       document.body.appendChild(banner);
       const h = banner.offsetHeight;
+      const addedPad = h;
       document.body.style.paddingTop =
         (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + h + 'px';
+
+      // Schedule the disappear. Two-phase: fade + slide-up, then
+      // unmount + give back the body padding so the lesson card
+      // reclaims the space.
+      setTimeout(() => {
+        banner.style.opacity   = '0';
+        banner.style.transform = 'translateY(-100%)';
+      }, 3000);
+      setTimeout(() => {
+        banner.remove();
+        const cur = parseFloat(getComputedStyle(document.body).paddingTop) || 0;
+        document.body.style.paddingTop = Math.max(0, cur - addedPad) + 'px';
+      }, 3000 + 400);
     }
 
     // Preview-only Edit button — sits in the top-right of the lesson
