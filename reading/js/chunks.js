@@ -26,33 +26,44 @@
   // translate.js. The chunk-gpt prompt asks for ≤ 6-word chunks but
   // gpt-4o-mini occasionally returns longer ones (news-style sentences
   // with multi-PP modifiers). Rather than fight the model, we slab
-  // anything longer than 6 words into 6-word pieces at whitespace
-  // boundaries, with indices recomputed so the body's applyChunk
-  // highlight still aligns.
+  // anything longer than 6 words into 6-word pieces.
+  //
+  // Indices: we now DERIVE the end index from the chunk text's word
+  // count, ignoring whatever end the server returned. This protects
+  // against a class of cache / model bug where the chunk text has
+  // N words but the indices say [start, start] — which would force
+  // the body's chunk-underline to highlight only the FIRST word in
+  // a multi-word chunk. (That's the "청킹이 안 되고 있어. 1단어씩만
+  // 밑줄을 쳐" bug.) `start` still comes from the server when valid;
+  // otherwise we chain it onto the previous chunk's tail.
   function clampChunks(rawChunks) {
     if (!Array.isArray(rawChunks)) return rawChunks;
     const out = [];
+    let runningStart = 0;
     for (const c of rawChunks) {
       if (!c || !c.text) continue;
       const words = String(c.text).split(/\s+/).filter(Boolean);
-      const baseStart = (Array.isArray(c.indices) && Number.isFinite(c.indices[0]))
-        ? (c.indices[0] | 0) : 0;
-      if (words.length <= 6) {
-        const end = (Array.isArray(c.indices) && Number.isFinite(c.indices[1]))
-          ? (c.indices[1] | 0) : (baseStart + words.length - 1);
-        out.push({ text: c.text, indices: [baseStart, end] });
+      const n = words.length;
+      if (!n) continue;
+      const serverStart = (Array.isArray(c.indices) && Number.isFinite(c.indices[0]))
+        ? (c.indices[0] | 0) : null;
+      const start = serverStart !== null ? serverStart : runningStart;
+      if (n <= 6) {
+        const end = start + n - 1;
+        out.push({ text: c.text, indices: [start, end] });
+        runningStart = end + 1;
         continue;
       }
       // Too long — slab into ≤ 6-word pieces.
       let cursor = 0;
-      while (cursor < words.length) {
-        const len = Math.min(6, words.length - cursor);
+      while (cursor < n) {
+        const len = Math.min(6, n - cursor);
         const slab = words.slice(cursor, cursor + len).join(' ');
-        out.push({
-          text: slab,
-          indices: [baseStart + cursor, baseStart + cursor + len - 1],
-        });
+        const slabStart = start + cursor;
+        const slabEnd   = slabStart + len - 1;
+        out.push({ text: slab, indices: [slabStart, slabEnd] });
         cursor += len;
+        runningStart = slabEnd + 1;
       }
     }
     return out;
