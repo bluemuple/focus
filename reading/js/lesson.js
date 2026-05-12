@@ -324,16 +324,35 @@
   // don't get tangled in word/sentence boundaries. We remember each
   // marker's position so the renderer can re-inject the image at
   // the right point during render.
+  //
+  // The *parse* regex is strict (exact `[[IMG:N]]`) so we capture
+  // a valid index for the renderer to pull `images[idx]`. The
+  // separate *strip* regex is lenient — it scrubs not just valid
+  // markers but also partial / single-bracketed / spaced variants
+  // ([IMG:0], [[IMG:0], IMG:0) so none of them ever leak into the
+  // flat sentence list that TTS reads aloud.
+  const IMG_MARKER_PARSE_RE = /\[\[IMG:(\d+)\]\]/g;
+  const IMG_MARKER_STRIP_RE = /(?:\[+\s*IMG\s*:\s*\d+\s*\]+|\bIMG\s*:\s*\d+\b)/gi;
   function extractImageMarkers(body) {
-    const re = /\[\[IMG:(\d+)\]\]/g;
+    const re = new RegExp(IMG_MARKER_PARSE_RE.source, 'g');
     const parts = [];
     let last = 0; let m;
     while ((m = re.exec(body)) !== null) {
-      if (m.index > last) parts.push({ kind: 'text', text: body.slice(last, m.index) });
+      if (m.index > last) {
+        // Also scrub any malformed markers in the text between valid
+        // ones (e.g. a [IMG:0] typo) so they don't end up on the
+        // page as visible debris or in TTS playback.
+        const between = body.slice(last, m.index)
+          .replace(IMG_MARKER_STRIP_RE, ' ');
+        parts.push({ kind: 'text', text: between });
+      }
       parts.push({ kind: 'img',  idx: parseInt(m[1], 10) });
       last = m.index + m[0].length;
     }
-    if (last < body.length) parts.push({ kind: 'text', text: body.slice(last) });
+    if (last < body.length) {
+      const tail = body.slice(last).replace(IMG_MARKER_STRIP_RE, ' ');
+      parts.push({ kind: 'text', text: tail });
+    }
     return parts;
   }
 
@@ -618,9 +637,12 @@
           // marker counted here would create an off-by-one between
           // flat[i] and the DOM's `[data-idx="i"]` — exactly the gap
           // that hid the TTS underline on the sentence right after an
-          // image. Marker-only paragraphs (text becomes empty after
-          // stripping) drop out via the trim() guard below.
-          const text = (n.textContent || '').replace(/\[\[IMG:\d+\]\]/g, ' ');
+          // image. We use the LENIENT strip regex so malformed
+          // markers ([IMG:0], stray IMG:0, etc.) also get scrubbed
+          // before they reach the TTS layer. Marker-only paragraphs
+          // (text becomes empty after stripping) drop out via the
+          // trim() guard below.
+          const text = (n.textContent || '').replace(IMG_MARKER_STRIP_RE, ' ');
           if (!text || !text.trim()) continue;
           const re = /[^.!?]+[.!?]+["'’)\]]*/g;
           let m, lastEnd = 0;
@@ -1325,7 +1347,7 @@
     const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
     let n;
     while ((n = walker.nextNode())) {
-      const text = (n.textContent || '').replace(/\[\[IMG:\d+\]\]/g, ' ');
+      const text = (n.textContent || '').replace(IMG_MARKER_STRIP_RE, ' ');
       if (!text || !text.trim()) continue;
       const re = /[^.!?]+[.!?]+["'’)\]]*/g;
       let m, lastEnd = 0;

@@ -56,20 +56,34 @@
     //      handles them gracefully, but Web Speech APIs on macOS /
     //      Windows literally read out the punctuation name.
     text = String(text || '')
-      // Image / generic markers: [[IMG:0]], [[IMG:12]], [[KEY:value]].
-      .replace(/\[\[[^\]]+\]\]/g, ' ')
+      // Image markers — robust against unbalanced/single-bracket
+      // variants. Matches [[IMG:0]], [IMG:0], [[IMG:0], [IMG:0]],
+      // anything where one-or-more `[` wraps `IMG:N` wraps one-or-
+      // more `]`. The `\s*` tolerates accidental spaces inside.
+      .replace(/\[+\s*IMG\s*:\s*\d+\s*\]+/gi, ' ')
+      // Bare IMG:N tokens that already lost their brackets somewhere
+      // upstream — paranoid catch-all so the synthesiser never
+      // pronounces them.
+      .replace(/\bIMG\s*:\s*\d+\b/gi, ' ')
+      // Generic balanced [[key:value]] markers (defensive).
+      .replace(/\[\[[^\]]*\]\]/g, ' ')
       // Stray HTML tags (defensive — sentence text shouldn't have any
       // by the time it reaches TTS, but page-break HRs / leftover
       // markdown→HTML fragments occasionally sneak in).
       .replace(/<[^>]+>/g, ' ')
       // Markdown page-break (---) on its own line.
       .replace(/^---+\s*$/gm, ' ')
-      // Square brackets / round parens / curly braces — Web Speech
-      // pronounces these aloud. Strip them, keeping the text inside.
-      .replace(/[\[\](){}]/g, ' ')
+      // Square brackets / round parens / curly braces — Web Speech on
+      // some platforms says "opening parenthesis" aloud. Strip them,
+      // keeping the text inside. Also handle Unicode full-width
+      // parens that Korean keyboards sometimes emit.
+      .replace(/[\[\](){}（）]/g, ' ')
       // Collapse all whitespace runs.
       .replace(/\s+/g, ' ')
       .trim();
+    // Empty or whitespace-only after sanitising → no-op. Saves a
+    // round-trip + prevents the playback loop from stalling on a
+    // 200 ms "play nothing" call.
     if (!text) return;
     stop();
 
