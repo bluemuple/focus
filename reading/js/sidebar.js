@@ -165,17 +165,13 @@
   function renderLevelBar() {
     const wrap = document.getElementById('sideLevelBar');
     if (!wrap) return;
-
-    // Hide entirely until the student picks a word — otherwise the
-    // strip is meaningless and crowds the empty state.
-    if (!selectedWord) {
-      wrap.hidden = true;
-      wrap.innerHTML = '';
-      return;
-    }
+    // The strip is ALWAYS visible — when no word is selected the
+    // six buttons render disabled so the row stays as a steady visual
+    // anchor at the bottom of the sidebar (matches 또박또박's
+    // .ls-bottom-fixed which never collapses).
     wrap.hidden = false;
 
-    const currentLevel = lessonRef.wordLevels.has(selectedWord.lower)
+    const currentLevel = selectedWord && lessonRef.wordLevels.has(selectedWord.lower)
       ? lessonRef.wordLevels.get(selectedWord.lower) : null;
 
     // [-1, 1, 2, 3, 4, 5] → six buttons. Inner glyphs match 또박또박:
@@ -189,11 +185,13 @@
       { state:  5, label: '✓', cls: 'known',   tip: 'I know it! · 5' },
     ];
 
+    const noWord = !selectedWord;
     wrap.innerHTML = `
       <div class="level-bar">
         ${buttons.map(b => `
           <button class="lv-btn ${b.cls} ${b.state === currentLevel ? 'active' : ''}"
-                  data-state="${b.state}" data-tip="${b.tip}">
+                  data-state="${b.state}" data-tip="${b.tip}"
+                  ${noWord ? 'disabled' : ''}>
             ${b.label}
           </button>
         `).join('')}
@@ -202,8 +200,8 @@
 
     wrap.querySelectorAll('.lv-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const s = parseInt(btn.dataset.state, 10);
         if (!selectedWord) return;
+        const s = parseInt(btn.dataset.state, 10);
         window.WCLesson.setWordLevel(selectedWord.lower, s, selectedWord.word);
       });
     });
