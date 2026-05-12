@@ -94,12 +94,15 @@
   }
 
   async function fetchStudents(classId) {
-    // We need the login_code (private-ish) — listStudents() omits it
-    // on purpose for the student-facing flow. Here on teacher side,
-    // we pull the full row.
+    // Full row — we used to select only a hand-picked subset, which
+    // bit us during "View as student" because the impersonation path
+    // requires role + class_id to be present (otherwise
+    // requireStudent() fails on home.html and we bounce in a redirect
+    // loop). Selecting * is cheap (rows are tiny) and future-proofs
+    // any other page that wants to read columns we forgot to list.
     const URL  = window.WC_SUPABASE.url;
     const ANON = window.WC_SUPABASE.anon;
-    const r = await fetch(`${URL}/rest/v1/wc_users?select=id,real_name,gender,login_code,money,encounter_level,last_seen_at`
+    const r = await fetch(`${URL}/rest/v1/wc_users?select=*`
       + `&class_id=eq.${encodeURIComponent(classId)}&role=eq.student&order=real_name.asc`, {
       headers: { apikey: ANON, Authorization: 'Bearer ' + ANON },
     });

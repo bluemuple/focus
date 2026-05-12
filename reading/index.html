@@ -102,8 +102,17 @@
     // bounce if already logged in
     const existing = window.WCAuth.session();
     if (existing) {
-      window.location.href = existing.role === 'teacher' ? './teacher.html' : './home.html';
-      return;
+      // Sanity check: a valid session has a `role`. If somehow we ended
+      // up with a partial row (e.g. older builds stored a row without
+      // `role`), wipe it here so we DON'T ping-pong index ↔ home in an
+      // infinite redirect loop — the user just sees the login screen.
+      if (!existing.role || (existing.role !== 'teacher' && existing.role !== 'student')) {
+        console.warn('[WC] Found a corrupted session, wiping.', existing);
+        window.WCAuth.logout();
+      } else {
+        window.location.href = existing.role === 'teacher' ? './teacher.html' : './home.html';
+        return;
+      }
     }
 
     const $ = (id) => document.getElementById(id);
