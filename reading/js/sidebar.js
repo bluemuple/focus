@@ -60,13 +60,26 @@
         (msg) => onReplyArrived(L, msg));
     }
 
-    // Wired from lesson.js — fires whenever a word is tapped.
+    // Wired from lesson.js — fires whenever a word is tapped. The
+    // closure captures `d.lower` so we can detect "did the user
+    // click another word while this fetch was in flight?" — if so
+    // we drop the late response so the sidebar never flashes the
+    // wrong word's definition + collocations.
     window.addEventListener('wc:word-selected', (e) => {
       const d = e.detail || {};
       selectedWord = { word: d.word, lower: d.lower, sentence: d.sentence };
+      activeInfo = null;        // wipe old info immediately
       renderWordCard({ loading: true });
       renderLevelBar();
+      const wantedLower    = d.lower;
+      const wantedSentence = d.sentence || '';
       window.WCWordInfo.fetch(d.word, d.sentence).then(info => {
+        // Bail if the user has since clicked another word OR even
+        // re-clicked the same word in a different sentence (sense
+        // disambiguation needs a fresh fetch for that case).
+        if (!selectedWord) return;
+        if (selectedWord.lower    !== wantedLower)    return;
+        if ((selectedWord.sentence || '') !== wantedSentence) return;
         activeInfo = info;
         renderWordCard({ info });
       });

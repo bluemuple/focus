@@ -266,6 +266,139 @@
     }
   });
 
+  // ----------------------------------------------------------------
+  //  CACHE PREWARM
+  //
+  //  Pre-fetches every sentence's chunks + every (word, sentence)
+  //  word-info BEFORE any student opens the lesson. After this
+  //  finishes, the first student to read the lesson sees no GPT
+  //  latency — both wc_word_info_cache and chunk_gpt_cache are
+  //  fully populated.
+  //
+  //  Runs in parallel batches of 5 to avoid hammering the edge fns
+  //  with hundreds of simultaneous requests. Reports live progress
+  //  on the triggering button so the teacher can watch it land.
+  // ----------------------------------------------------------------
+  async function prewarmLesson(lessonId, btn) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    if (btn.dataset.busy === '1') return;   // ignore double-clicks
+    btn.dataset.busy = '1';
+    const origLabel = btn.textContent;
+
+    const sentences = extractPrewarmSentences(L.body || '');
+    const wordPairs = extractPrewarmWordPairs(sentences);
+    const total = sentences.length + wordPairs.length;
+    if (total === 0) {
+      btn.textContent = '∅ Empty';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
+    }
+
+    let done = 0;
+    const updateLabel = () => {
+      btn.textContent = `🔥 ${done}/${total}`;
+    };
+    updateLabel();
+
+    const URL  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const ANON = window.WC_SUPABASE.anon;
+    const baseHeaders = {
+      'Content-Type': 'application/json',
+      apikey: ANON,
+      Authorization: 'Bearer ' + ANON,
+    };
+
+    // Chunk-gpt fan-out — one POST per unique sentence.
+    await runInBatches(sentences, 5, async (sentence) => {
+      try {
+        await fetch(URL + '/functions/v1/chunk-gpt', {
+          method: 'POST', headers: baseHeaders,
+          body: JSON.stringify({ sentence }),
+        });
+      } catch {}
+      done++; updateLabel();
+    });
+
+    // Word-info fan-out — one POST per (word, sentence) pair.
+    await runInBatches(wordPairs, 5, async (pair) => {
+      try {
+        await fetch(URL + '/functions/v1/wc-word-info-gpt', {
+          method: 'POST', headers: baseHeaders,
+          body: JSON.stringify({ word: pair.word, sentence: pair.sentence }),
+        });
+      } catch {}
+      done++; updateLabel();
+    });
+
+    btn.textContent = '✓ Prewarmed';
+    setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 2500);
+  }
+
+  // Pull a unique list of sentences out of the lesson body. Handles
+  // BOTH plain-text and HTML bodies (HTML is reduced to its
+  // textContent before sentence-splitting).
+  function extractPrewarmSentences(body) {
+    let plain = body;
+    if (/<[a-z]/i.test(body || '')) {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = body;
+      plain = tmp.textContent || '';
+    }
+    // Strip image markers — they break sentence detection and aren't
+    // useful targets for prewarm.
+    plain = plain.replace(/\[\[IMG:\d+\]\]/g, ' ');
+    const sentRe = /[^.!?]+[.!?]+["'’)\]]*/g;
+    const seen = new Set();
+    const out  = [];
+    let m;
+    while ((m = sentRe.exec(plain)) !== null) {
+      const s = m[0].trim();
+      if (s.length < 4) continue;
+      const key = s.toLowerCase().replace(/\s+/g, ' ');
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+    return out;
+  }
+
+  // For each sentence, yield (word, sentence) pairs — the same
+  // shape word-info-gpt expects. We dedupe across the whole body so
+  // a common word like "the" only gets one fetch in total.
+  function extractPrewarmWordPairs(sentences) {
+    const wre = /[A-Za-z][A-Za-z'’\-]*[A-Za-z]|[A-Za-z]/g;
+    const seen = new Set();
+    const out  = [];
+    sentences.forEach(sent => {
+      let m;
+      while ((m = wre.exec(sent)) !== null) {
+        const w = m[0];
+        const lower = w.toLowerCase().replace(/[’]/g, "'");
+        // Dedupe key = lower + sentence hash so each (word, sentence)
+        // pair only fires once. Sense disambiguation needs the
+        // sentence context.
+        const key = lower + '::' + sent;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ word: w, sentence: sent });
+      }
+    });
+    return out;
+  }
+
+  // Tiny concurrency limiter — keeps at most `limit` tasks in flight.
+  async function runInBatches(items, limit, worker) {
+    const queue = items.slice();
+    const runners = Array.from({ length: limit }, async () => {
+      while (queue.length) {
+        const item = queue.shift();
+        await worker(item);
+      }
+    });
+    await Promise.all(runners);
+  }
+
   function generateCode(existing) {
     const banned = new Set(['0000','1111','2222','3333','4444','5555','6666','7777','8888','9999','1234','4321']);
     for (let i = 0; i < 200; i++) {
@@ -528,6 +661,7 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
           <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
+          <button class="wc-btn ghost" data-prewarm="${L.id}" title="Pre-fetch GPT data so the first student to read this lesson doesn't wait">🔥 Prewarm</button>
           <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}">🗑 Delete</button>
         </div>
       `;
@@ -535,6 +669,9 @@
     });
     list.querySelectorAll('[data-edit]').forEach(b => {
       b.addEventListener('click', () => startEditing(b.dataset.edit));
+    });
+    list.querySelectorAll('[data-prewarm]').forEach(b => {
+      b.addEventListener('click', () => prewarmLesson(b.dataset.prewarm, b));
     });
     list.querySelectorAll('[data-delete-row]').forEach(b => {
       b.addEventListener('click', async () => {
