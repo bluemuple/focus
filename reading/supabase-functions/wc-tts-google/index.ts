@@ -1,9 +1,15 @@
 // =============================================================
-//   Supabase Edge Function: tts-google
+//   Supabase Edge Function: wc-tts-google   (WordCatch only)
 //
-//   Proxies Google Cloud Text-to-Speech with the en-NZ-Wavenet-A
-//   voice (the WordCatch default — NZ accent, friendly tone).
-//   Voice is overridable per call, but defaults to NZ.
+//   ⚠️  DEPLOY NAME MUST BE "wc-tts-google" — NOT "tts-google".
+//      The sibling 뚜벅뚜벅 site already has its own `tts-google`
+//      deployed in this same Supabase project. Deploying THIS
+//      file under that name would overwrite it and break 뚜벅뚜벅.
+//      The `wc-` prefix scopes this function to WordCatch.
+//
+//   Proxies Google Cloud Text-to-Speech with the en-AU-Neural2-A
+//   voice (또박또박's "NZ" label — NZ/AU female, warm tone). Voice
+//   is overridable per call.
 //
 //   Cloud cache: identical (text, voice, rate) tuples cache in
 //   `wc_tts_cache` (audio stored as base64 — fine for short
@@ -11,7 +17,8 @@
 //   First user pays Google's cents, everyone else gets it free.
 //
 //   Deploy:
-//     1. Edge Functions → New function → name "tts-google"
+//     1. Edge Functions → New function → name "wc-tts-google"
+//        (NOT "tts-google" — that name is taken by 뚜벅뚜벅!)
 //     2. Paste this whole file as the body
 //     3. Secret GOOGLE_CLOUD_API_KEY (Cloud TTS API enabled)
 //     4. SQL once:

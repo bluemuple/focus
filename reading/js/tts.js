@@ -1,7 +1,7 @@
 // =============================================================
 //  WordCatch — TTS service
 //
-//  Primary:   Google Cloud TTS via the `tts-google` edge function,
+//  Primary:   Google Cloud TTS via the `wc-tts-google` edge function,
 //             voice = en-NZ-Wavenet-A. Cached server-side so the
 //             same sentence costs nothing after the first play.
 //  Fallback:  Web Speech API speechSynthesis with whichever en-NZ
@@ -21,7 +21,10 @@
 (() => {
   const URL  = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
   const ANON = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
-  const TTS_FN = URL ? URL.replace(/\/+$/, '') + '/functions/v1/tts-google' : '';
+  // NOTE: endpoint is `wc-tts-google`, NOT `tts-google` — the latter
+  // is already owned by the sibling 뚜벅뚜벅 site in this same
+  // Supabase project. The `wc-` prefix keeps them separate.
+  const TTS_FN = URL ? URL.replace(/\/+$/, '') + '/functions/v1/wc-tts-google' : '';
 
   const memCache = new Map();   // key → blob URL
   let currentAudio = null;
@@ -67,7 +70,7 @@
         },
         body: JSON.stringify({ text, voice, rate }),
       });
-      if (!r.ok) throw new Error('tts-google ' + r.status);
+      if (!r.ok) throw new Error('wc-tts-google ' + r.status);
       const j = await r.json();
       if (!j.audio_base64) throw new Error('no audio');
       const url = base64ToBlobUrl(j.audio_base64, 'audio/mp3');
