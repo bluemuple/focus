@@ -68,8 +68,12 @@
       const prev = wordLevels.has(lower) ? wordLevels.get(lower) : null;
       if (next === prev) return;
       wordLevels.set(lower, next);
-      document.querySelectorAll('.w[data-word="' + cssEsc(lower) + '"]')
-        .forEach(el => applyLevelClass(el, next));
+      // Recolour every visible occurrence of this word. Iterate all .w
+      // spans and match by dataset.word — avoids needing a CSS escape
+      // pass for apostrophes / hyphens / Unicode in the selector.
+      document.querySelectorAll('.w').forEach(el => {
+        if (el.dataset.word === lower) applyLevelClass(el, next);
+      });
       try { await window.WCDB.wordStates.upsert(me.id, lower, next); } catch (e) {}
       if (next > (prev ?? -2) && next !== -1) {
         window.dispatchEvent(new CustomEvent('wc:level-up', {
@@ -79,10 +83,6 @@
       notifyLevelChange({ word: lower, prev, next });
     },
   };
-
-  // Cheap CSS-attribute selector escape: lower already lower-case
-  // alphanumerics + apostrophes, but better safe.
-  function cssEsc(s) { return String(s).replace(/["\\\]/g, '\\$&'); }
 
   // ---------- chrome ----------
   $('userName').textContent  = me.real_name;
