@@ -324,6 +324,83 @@
     return /<(p|h[1-6]|div|br|hr|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
   }
 
+  // Detect lightweight markdown the toolbar emits: `# `/`## `/`### `
+  // headings, `**bold**`, `__under__`, `{color:#xxx}…{/color}`, and
+  // `---` page breaks. Plain prose without any of these markers
+  // skips the markdown→HTML hop and stays on the plain-text path.
+  function looksLikeMarkdown(body) {
+    if (!body) return false;
+    return /^#{1,3}\s/m.test(body)
+        || /\*\*[\s\S]+?\*\*/.test(body)
+        || /__[\s\S]+?__/.test(body)
+        || /\{color:[^}]+\}[\s\S]+?\{\/color\}/.test(body)
+        || /^---+\s*$/m.test(body);
+  }
+
+  function escapeHtmlText(s) {
+    return String(s || '').replace(/[&<>]/g, c =>
+      ({ '&':'&amp;','<':'&lt;','>':'&gt;' })[c]);
+  }
+
+  // Convert toolbar markdown to HTML so the existing HTML renderer
+  // can take over. Only handles the subset of markers the body
+  // toolbar actually inserts — no need for a full CommonMark parser.
+  // The output respects the same HTML shape (h1/h2/h3, p, b, u, span,
+  // hr.wc-page-break) the contentEditable approach used to produce.
+  function markdownToHtml(text) {
+    if (!text) return '';
+    // Image markers must survive escaping so the HTML tokenizer can
+    // still recognise them as `[[IMG:N]]`. They contain no HTML chars
+    // anyway, so plain escapeHtml leaves them intact.
+    let s = escapeHtmlText(text);
+
+    // Page break — three+ dashes on their own line, possibly with
+    // whitespace either side. Output an <hr> with the marker class
+    // that tokeniseHtmlBody splits on.
+    s = s.replace(/^[ \t]*---+[ \t]*$/gm, '<hr class="wc-page-break" />');
+
+    // Headings (line-start). Order matters — ### before ## before #
+    // so the longest prefix wins.
+    s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    s = s.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
+    s = s.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
+
+    // Inline: bold, then underline, then colour. Use non-greedy + the
+    // `s` flag style ([\s\S]+?) so multi-word spans on one line are
+    // matched without leaking across multiple constructs.
+    s = s.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>');
+    s = s.replace(/__([\s\S]+?)__/g,     '<u>$1</u>');
+    s = s.replace(/\{color:([^}]+)\}([\s\S]+?)\{\/color\}/g,
+      (_m, col, inner) => `<span style="color:${col}">${inner}</span>`);
+
+    // Walk line-by-line to wrap prose in <p>. Each blank line OR
+    // block-level tag flushes the current paragraph. Adjacent non-
+    // blank lines within a paragraph get joined with <br>. Matches
+    // the way the toolbar produces output: a heading on its own line
+    // doesn't need a blank line before the next paragraph.
+    const lines  = s.split('\n');
+    const out    = [];
+    let   buffer = [];
+    const flush  = () => {
+      if (!buffer.length) return;
+      const joined = buffer.join('<br>');
+      if (joined.trim()) out.push('<p>' + joined + '</p>');
+      buffer = [];
+    };
+    for (const line of lines) {
+      const t = line.trim();
+      if (!t) { flush(); continue; }
+      if (/^<(h[1-3]|hr|p|div)/i.test(t)) {
+        flush();
+        out.push(t);
+      } else {
+        buffer.push(t);
+      }
+    }
+    flush();
+    return out.join('\n');
+  }
+
   // HTML auto-pagination — when the teacher hasn't placed any
   // <hr class="wc-page-break"> markers, walk the body's top-level
   // children and accumulate them into segments until the running
@@ -364,6 +441,13 @@
   }
 
   function tokeniseBody(body) {
+    // Markdown body? Convert to HTML first so the existing HTML path
+    // handles it. Plain text without any markdown markers skips this
+    // hop and stays on the legacy plain-text path with its own
+    // pagination + image marker handling.
+    if (looksLikeMarkdown(body)) {
+      body = markdownToHtml(body);
+    }
     if (isHtmlBody(body)) {
       // HTML path. Two splitting strategies:
       //   1. If the teacher inserted <hr class="wc-page-break"> markers,

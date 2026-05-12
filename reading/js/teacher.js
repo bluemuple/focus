@@ -708,7 +708,7 @@
     // Old plain-text bodies still load fine — assigning to innerHTML
     // just puts the text inside the editor. New HTML bodies render
     // with their formatting intact.
-    $('lessonBody').innerHTML   = L.body  || '';
+    $('lessonBody').value       = L.body  || '';
     $('lessonAnimalSet').value  = L.animal_set || 'animals';
     $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
@@ -727,7 +727,7 @@
   function cancelEditing() {
     editingLessonId = null;
     $('lessonTitle').value = '';
-    $('lessonBody').innerHTML = '';
+    $('lessonBody').value = '';
     $('lessonAnimalSet').value = 'animals';
     $('lessonGiftLimit').value = 3;
     resetImages();
@@ -803,87 +803,143 @@
   // image slot when the user pastes from the clipboard.
   let activeWordImageRow = null;
 
-  // contentEditable body — `pendingInsertPos` now stashes a DOM Range
-  // rather than a textarea cursor index. When the user triggers an
-  // image upload (button or paste), we restore this range so the
-  // marker lands where the cursor was even if focus has since moved.
+  // Textarea-based body. `pendingInsertPos` is the caret index (or
+  // selection-start) so toolbar buttons restore the cursor after the
+  // button click steals focus. Markdown syntax (#, **, __, {color}, ---)
+  // is wrapped/inserted around the current selection; on the lesson
+  // page it gets parsed to HTML before tokenisation.
   function rememberCursor() {
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) return;
-    const range = sel.getRangeAt(0);
-    // Only stash if the selection is INSIDE the body editor.
-    const body = $('lessonBody');
-    if (body && body.contains(range.startContainer)) {
-      pendingInsertPos = range.cloneRange();
-    }
+    const ta = $('lessonBody');
+    pendingInsertPos = ta.selectionStart;
   }
-  // Selection events fire whenever the caret moves; sample them so
-  // the most recent caret position is always remembered.
-  document.addEventListener('selectionchange', rememberCursor);
-  $('lessonBody').addEventListener('click', rememberCursor);
-  $('lessonBody').addEventListener('keyup', rememberCursor);
+  $('lessonBody').addEventListener('click',   rememberCursor);
+  $('lessonBody').addEventListener('keyup',   rememberCursor);
+  $('lessonBody').addEventListener('blur',    rememberCursor);
 
   // ----------------------------------------------------------------
-  //  RICH-TEXT TOOLBAR (H1/H2/H3/Body/Bold/Underline/Colour)
+  //  MARKDOWN TOOLBAR (H1/H2/H3/Body/Bold/Underline/Colour)
   //
-  //  Uses document.execCommand for portability. While execCommand is
-  //  marked deprecated, every shipping browser still implements the
-  //  basic formatting commands and they remain the simplest way to
-  //  apply inline styling to a Selection inside a contentEditable.
-  //  We restore the stashed Range before each command so a click on
-  //  a toolbar button (which steals focus) doesn't lose the user's
-  //  text selection.
+  //  Each button manipulates the textarea's selection directly,
+  //  wrapping it with markdown syntax. On the lesson page that
+  //  syntax is parsed back into HTML before tokenisation.
+  //
+  //    H1/H2/H3 → "# "/"## "/"### " prefix on the current line
+  //    Body     → strip any "# / ## / ###" prefix
+  //    B        → wrap selection in **…**
+  //    U        → wrap in __…__
+  //    Colour   → wrap in {color:#hex}…{/color}
+  //    Page break → blank line + "---" + blank line
   // ----------------------------------------------------------------
-  function runFormatCommand(cmd, arg) {
-    const body = $('lessonBody');
-    body.focus();
-    if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(pendingInsertPos);
+
+  // Wrap whatever's currently selected in `before`…`after`. If nothing
+  // is selected, drop the wrappers at the caret and place the cursor
+  // between them so the teacher can type inside immediately.
+  function wrapMd(before, after) {
+    const ta = $('lessonBody');
+    ta.focus();
+    const start = (pendingInsertPos != null && ta.selectionStart === ta.selectionEnd)
+      ? pendingInsertPos : ta.selectionStart;
+    const end   = ta.selectionEnd;
+    const sel   = ta.value.slice(start, end);
+    const inserted = before + sel + after;
+    ta.value = ta.value.slice(0, start) + inserted + ta.value.slice(end);
+    if (sel) {
+      ta.selectionStart = start + before.length;
+      ta.selectionEnd   = end   + before.length;
+    } else {
+      ta.selectionStart = ta.selectionEnd = start + before.length;
     }
-    try {
-      document.execCommand(cmd, false, arg || null);
-    } catch (e) { console.warn('execCommand', cmd, e); }
-    rememberCursor();
+    pendingInsertPos = ta.selectionStart;
   }
-  // mousedown (not click) — prevents focus from leaving the editor
-  // before we run the command (some browsers blur the editor when a
-  // toolbar button receives mousedown).
+
+  // Replace the current line's heading-prefix (#, ##, ###) with the
+  // supplied prefix. Empty prefix = strip heading marker.
+  function setLineHeading(prefix) {
+    const ta = $('lessonBody');
+    ta.focus();
+    const pos = ta.selectionStart;
+    const v   = ta.value;
+    let lineStart = pos;
+    while (lineStart > 0 && v[lineStart - 1] !== '\n') lineStart--;
+    let lineEnd = pos;
+    while (lineEnd < v.length && v[lineEnd] !== '\n') lineEnd++;
+    const line = v.slice(lineStart, lineEnd);
+    const stripped = line.replace(/^#{1,3}\s*/, '');
+    const newLine = prefix + stripped;
+    ta.value = v.slice(0, lineStart) + newLine + v.slice(lineEnd);
+    const newCaret = lineStart + prefix.length + Math.max(0, pos - lineStart - (line.length - stripped.length));
+    ta.setSelectionRange(newCaret, newCaret);
+    pendingInsertPos = newCaret;
+  }
+
+  // Apply a toolbar button command. mousedown handler so the
+  // textarea's selection isn't blurred away before we read it.
   document.querySelectorAll('.wc-rt-toolbar [data-rt-cmd]').forEach(btn => {
     btn.addEventListener('mousedown', e => {
       e.preventDefault();
-      runFormatCommand(btn.dataset.rtCmd, btn.dataset.rtArg);
+      const cmd = btn.dataset.rtCmd;
+      const arg = btn.dataset.rtArg;
+      switch (cmd) {
+        case 'formatBlock':
+          if (arg === 'h1') setLineHeading('# ');
+          else if (arg === 'h2') setLineHeading('## ');
+          else if (arg === 'h3') setLineHeading('### ');
+          else                  setLineHeading('');      // Body
+          break;
+        case 'bold':       wrapMd('**', '**');           break;
+        case 'underline':  wrapMd('__', '__');           break;
+        case 'removeFormat': {
+          // Strip markdown markers from the current selection so the
+          // teacher can wipe formatting without retyping the words.
+          const ta = $('lessonBody');
+          const s = ta.selectionStart, e2 = ta.selectionEnd;
+          if (s === e2) break;
+          const raw = ta.value.slice(s, e2);
+          const clean = raw
+            .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
+            .replace(/__([\s\S]*?)__/g, '$1')
+            .replace(/\{color:[^}]+\}([\s\S]*?)\{\/color\}/g, '$1')
+            .replace(/^#{1,3}\s*/gm, '');
+          ta.value = ta.value.slice(0, s) + clean + ta.value.slice(e2);
+          ta.setSelectionRange(s, s + clean.length);
+          pendingInsertPos = ta.selectionStart;
+          break;
+        }
+      }
     });
   });
-  // Colour picker — apply foreColor when the user picks a colour.
+
+  // Colour picker — wraps selection in {color:#hex}…{/color}.
   const colorInput = document.getElementById('rtColorInput');
   if (colorInput) {
     colorInput.addEventListener('mousedown', () => rememberCursor());
     colorInput.addEventListener('input', () => {
-      runFormatCommand('foreColor', colorInput.value);
+      wrapMd('{color:' + colorInput.value + '}', '{/color}');
     });
   }
 
-  // ── Page break ── inserts an <hr class="wc-page-break"> at the
-  // caret. The lesson renderer splits the body by these HR markers
-  // so each segment becomes its own page, REGARDLESS of font size /
-  // sentence count / paragraph count. Teachers get exact control
-  // over what lives on each page.
+  // ── Page break ── inserts a markdown horizontal rule (`---` on its
+  // own line, blank lines either side). The lesson renderer converts
+  // this to <hr class="wc-page-break"> during markdown → HTML, which
+  // splits the body into pages.
   const pageBreakBtn = document.getElementById('addPageBreakBtn');
   if (pageBreakBtn) {
     pageBreakBtn.addEventListener('mousedown', e => {
       e.preventDefault();
-      const body = $('lessonBody');
-      body.focus();
-      if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
-        const sel = window.getSelection();
-        sel.removeAllRanges();
-        sel.addRange(pendingInsertPos);
-      }
-      document.execCommand('insertHTML', false,
-        '<hr class="wc-page-break" />');
-      rememberCursor();
+      const ta = $('lessonBody');
+      ta.focus();
+      const pos = pendingInsertPos != null ? pendingInsertPos : ta.selectionStart;
+      const before = ta.value.slice(0, pos);
+      const after  = ta.value.slice(pos);
+      // Make sure we sit on its own line — pad with newlines if the
+      // surroundings don't already provide them.
+      const nl1 = before.endsWith('\n') ? '' : '\n';
+      const nl2 = after.startsWith('\n') ? '' : '\n';
+      const insert = nl1 + '---' + nl2;
+      ta.value = before + insert + after;
+      const np = pos + insert.length;
+      ta.setSelectionRange(np, np);
+      pendingInsertPos = np;
     });
   }
 
@@ -901,9 +957,8 @@
   // actually an image in the clipboard. Plain-text paste keeps default
   // textarea behaviour.
   document.addEventListener('paste', async (e) => {
-    // Body editor active — handle image paste (insert marker) AND
-    // plain-text paste (strip formatting so external HTML doesn't
-    // muddy the editor's clean output).
+    // Body textarea — image paste inserts a [[IMG:N]] marker at the
+    // caret; plain-text paste uses the textarea's native behaviour.
     if (document.activeElement !== $('lessonBody')) return;
     const items = e.clipboardData && e.clipboardData.items;
     if (!items) return;
@@ -915,13 +970,7 @@
         return;
       }
     }
-    // No image — let browser handle text paste but force plain text
-    // to avoid pasting in foreign HTML/styles.
-    const text = e.clipboardData.getData('text/plain');
-    if (text) {
-      e.preventDefault();
-      document.execCommand('insertText', false, text);
-    }
+    // Plain text — let the textarea handle it natively.
   });
 
   async function handleImageFile(file) {
@@ -1008,25 +1057,19 @@
     lessonImages.push({ corner, data_url: dataUrl, scale: 1.0 });
     const marker = `[[IMG:${idx}]]`;
 
-    const body = $('lessonBody');
-    body.focus();
-
-    // Restore the stashed Range so the marker lands where the cursor
-    // was when the user clicked "Add image", even if focus jumped to
-    // the file picker / corner modal in between.
-    if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
-      const sel = window.getSelection();
-      sel.removeAllRanges();
-      sel.addRange(pendingInsertPos);
-    }
-    // insertText is the simplest way to insert plain text at the
-    // current caret position inside a contentEditable without
-    // breaking the surrounding markup.
-    document.execCommand('insertText', false, ' ' + marker + ' ');
-
-    // Update pending range to "after the inserted text" so a second
-    // image insertion appends after the first, not on top of it.
-    rememberCursor();
+    const ta = $('lessonBody');
+    const pos = pendingInsertPos != null ? pendingInsertPos : ta.selectionStart;
+    const before = ta.value.slice(0, pos);
+    const after  = ta.value.slice(pos);
+    // Sprinkle whitespace so the marker doesn't glue to adjacent
+    // words (would break sentence tokenisation downstream).
+    const sep1 = before && !/\s$/.test(before) ? ' ' : '';
+    const sep2 = after  && !/^\s/.test(after)  ? ' ' : '';
+    ta.value = before + sep1 + marker + sep2 + after;
+    const newPos = before.length + sep1.length + marker.length + sep2.length;
+    ta.setSelectionRange(newPos, newPos);
+    ta.focus();
+    pendingInsertPos = newPos;
     renderImagesPreview();
   }
 
@@ -1214,14 +1257,10 @@
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
     const title = $('lessonTitle').value.trim();
-    // Body is a contentEditable — read innerHTML to preserve
-    // formatting (H1-H3, bold, underline, colour). textContent check
-    // for the empty-state guard since an empty editor has whitespace
-    // <br> filler in some browsers.
-    const bodyEl = $('lessonBody');
-    const body   = bodyEl.innerHTML.trim();
-    const bodyText = bodyEl.textContent.trim();
-    if (!title || !bodyText) {
+    // Body is a textarea now — read .value as plain text + markdown
+    // syntax. The lesson page converts markdown → HTML at render time.
+    const body  = $('lessonBody').value.trim();
+    if (!title || !body) {
       msg.textContent = 'Please enter a title and body.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
@@ -1260,7 +1299,7 @@
       // Reset form regardless of create/update.
       editingLessonId = null;
       $('lessonTitle').value = '';
-      $('lessonBody').innerHTML = '';
+      $('lessonBody').value = '';
       resetImages();
       updateFormMode();
       // Collapse the form card back to its default closed state so
