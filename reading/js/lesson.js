@@ -393,12 +393,14 @@
   }
 
   // Detect lightweight markdown the toolbar emits: `# `/`## `/`### `
-  // headings, `**bold**`, `__under__`, `{color:#xxx}…{/color}`, and
-  // `---` page breaks. Plain prose without any of these markers
-  // skips the markdown→HTML hop and stays on the plain-text path.
+  // headings (also lenient — accepts 1-6 hashes, with OR without the
+  // following space so `#Title` and `#### Subtitle` both qualify),
+  // `**bold**`, `__under__`, `{color:#xxx}…{/color}`, and `---`
+  // page breaks. Plain prose without any of these markers skips the
+  // markdown→HTML hop and stays on the plain-text path.
   function looksLikeMarkdown(body) {
     if (!body) return false;
-    return /^#{1,3}\s/m.test(body)
+    return /^#{1,6}\s*\S/m.test(body)
         || /\*\*[\s\S]+?\*\*/.test(body)
         || /__[\s\S]+?__/.test(body)
         || /\{color:[^}]+\}[\s\S]+?\{\/color\}/.test(body)
@@ -427,11 +429,21 @@
     // that tokeniseHtmlBody splits on.
     s = s.replace(/^[ \t]*---+[ \t]*$/gm, '<hr class="wc-page-break" />');
 
-    // Headings (line-start). Order matters — ### before ## before #
-    // so the longest prefix wins.
-    s = s.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-    s = s.replace(/^## (.+)$/gm,  '<h2>$1</h2>');
-    s = s.replace(/^# (.+)$/gm,   '<h1>$1</h1>');
+    // Headings (line-start). Order matters — longest prefix wins, so
+    // `####` is caught before `##`. `\s*` after the hashes accepts
+    // `#Title` (no space) just as readily as `# Title`. We accept up
+    // to 6 hashes (full markdown spec) so unexpected `#####`-style
+    // titles get converted instead of leaking into prose where TTS
+    // would read them as "hash hash hash hash Title".
+    s = s.replace(/^######\s*(.+)$/gm, '<h6>$1</h6>');
+    s = s.replace(/^#####\s*(.+)$/gm,  '<h5>$1</h5>');
+    s = s.replace(/^####\s*(.+)$/gm,   '<h4>$1</h4>');
+    s = s.replace(/^###\s*(.+)$/gm,    '<h3>$1</h3>');
+    s = s.replace(/^##\s*(.+)$/gm,     '<h2>$1</h2>');
+    s = s.replace(/^#\s*(.+)$/gm,      '<h1>$1</h1>');
+    // Any leftover hash-only lines (e.g. `##` with nothing after)
+    // would otherwise become "## " text. Strip them.
+    s = s.replace(/^#+\s*$/gm, '');
 
     // Inline: bold, then underline, then colour. Use non-greedy + the
     // `s` flag style ([\s\S]+?) so multi-word spans on one line are
@@ -725,6 +737,11 @@
       wrap.classList.add('wc-active', 'wc-single');
       root.appendChild(wrap);
       if (window.WCChunks) window.WCChunks.prefetchSentences([p.text]);
+      // After the sentence is in the DOM, measure it and shrink the
+      // font if the line wraps past the visible card height. Waits
+      // one frame so the browser has computed layout (otherwise
+      // scrollHeight returns the pre-paint value).
+      requestAnimationFrame(() => fitSingleSentenceToCard());
       return;
     }
 
@@ -762,6 +779,48 @@
     });
     // Prefetch chunks for everything just rendered — fire-and-forget.
     if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
+  }
+
+  // Single-sentence mode auto-fit. The CSS sets the active sentence
+  // to font-size: 2em — perfect for a typical 8-15 word sentence,
+  // but long ones (40+ words, e.g. a teacher's heavy compound
+  // sentence) wrap past the bottom of the card. We measure once and
+  // shrink the font progressively until the whole sentence fits,
+  // with a 0.85em floor so it never gets unreadably small.
+  //
+  // Idempotent: re-running with an already-small sentence is a no-op
+  // because we reset `style.fontSize` first.
+  function fitSingleSentenceToCard() {
+    if (!singleMode) return;
+    const bodyEl = $('lessonBody');
+    if (!bodyEl) return;
+    const sentEl = bodyEl.querySelector('.wc-sentence.wc-single');
+    if (!sentEl) return;
+
+    // Reset any prior shrink so we start from the CSS-defined 2em.
+    sentEl.style.fontSize = '';
+
+    const cardH = bodyEl.clientHeight;
+    if (!cardH) return;
+    // Fits at the default size? Done.
+    if (bodyEl.scrollHeight <= cardH + 2) return;
+
+    // Compute a single-shot approximation from the overflow ratio:
+    // if the text is 1.4× the card height, scale to ~1/1.4 of 2em,
+    // i.e. ~1.4em. The 0.92 fudge factor accounts for line-wrap
+    // adding extra height as fonts shrink unevenly.
+    const ratio = cardH / bodyEl.scrollHeight;
+    const MIN = 0.85, MAX = 2.0;
+    let scale = Math.max(MIN, Math.min(MAX, 2.0 * ratio * 0.92));
+    sentEl.style.fontSize = scale.toFixed(2) + 'em';
+
+    // Fine-tune: shrink in 0.05em steps if still overflowing. Cap at
+    // 25 iterations so a pathological case can't lock the browser.
+    let guard = 25;
+    while (guard-- > 0 && scale > MIN && bodyEl.scrollHeight > cardH + 2) {
+      scale = Math.max(MIN, scale - 0.05);
+      sentEl.style.fontSize = scale.toFixed(2) + 'em';
+    }
   }
 
   // Build a floated <img> for the Nth image attached to this lesson.
@@ -1488,8 +1547,12 @@
       document.documentElement.style.setProperty('--wc-body-font', fontSize + 'px');
       try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch {}
       // After font changes, page heights shift — repaginate so the
-      // new layout doesn't leave overflow buried.
-      requestAnimationFrame(() => repaginateOverflow());
+      // new layout doesn't leave overflow buried. In single mode the
+      // active sentence may need to re-fit at the new base size too.
+      requestAnimationFrame(() => {
+        repaginateOverflow();
+        if (singleMode) fitSingleSentenceToCard();
+      });
     }
     applyFontSize();
     $('btnFontMinus').addEventListener('click', () => {
@@ -1507,12 +1570,28 @@
       $('btnReadBetter').classList.toggle('active', readBetter);
       $('btnReadBetter').setAttribute('aria-pressed', readBetter ? 'true' : 'false');
       try { localStorage.setItem(READ_KEY, readBetter ? '1' : '0'); } catch {}
-      requestAnimationFrame(() => repaginateOverflow());
+      requestAnimationFrame(() => {
+        repaginateOverflow();
+        if (singleMode) fitSingleSentenceToCard();
+      });
     }
     applyReadBetter();
     $('btnReadBetter').addEventListener('click', () => {
       readBetter = !readBetter;
       applyReadBetter();
+    });
+
+    // Window resize — the card height changes (e.g. browser zoom,
+    // window resize, mobile orientation). Re-fit the single-mode
+    // sentence and re-paginate page mode. Debounced so a drag-resize
+    // doesn't fire 60×/sec.
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        if (singleMode) fitSingleSentenceToCard();
+        else            repaginateOverflow();
+      }, 120);
     });
 
     // Chunk-mute chip — toggles whether tapping a word triggers a

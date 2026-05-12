@@ -73,6 +73,15 @@
       .replace(/<[^>]+>/g, ' ')
       // Markdown page-break (---) on its own line.
       .replace(/^---+\s*$/gm, ' ')
+      // Stray markdown heading marks (#, ##, ### …) at start of line
+      // or after whitespace. Triggered when the body bypassed the
+      // markdown→HTML conversion (e.g. unusual hash patterns) and
+      // the raw `#` would otherwise be read aloud as "hash".
+      .replace(/(?:^|\s)#+/g, ' ')
+      // Stray bold/underline wrappers — leftover ** or __ pairs that
+      // weren't stripped upstream. Keep the inner text.
+      .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
+      .replace(/__([\s\S]*?)__/g,     '$1')
       // Square brackets / round parens / curly braces — Web Speech on
       // some platforms says "opening parenthesis" aloud. Strip them,
       // keeping the text inside. Also handle Unicode full-width

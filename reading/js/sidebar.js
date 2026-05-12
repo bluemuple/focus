@@ -177,6 +177,16 @@
     // show the inflected form plain (no false split).
     const headHtml = inflectionHtml(w.word || '', info?.lemma || '');
 
+    // "Disable, but still show" mode for the message form.
+    //  - Preview tab  → no real student session, sending would write
+    //    a row attributed to a placeholder UUID.
+    //  - Class flag `hideVisualizationSidebar` → teacher opted out.
+    // In either case we still render the form (the teacher
+    // previewing wants to *see* the feature exists), but disable
+    // the textarea + send button so it can't actually post.
+    const flags = (lessonRef && lessonRef.classFlags) || {};
+    const msgDisabled = !!lessonRef.isPreview || !!flags.hideVisualizationSidebar;
+
     wrap.innerHTML = `
       <div class="wc-word-card">
         <div class="wc-word-head">
@@ -218,21 +228,26 @@
             : `<div class="wc-muted">Couldn't fetch info. Try tapping again!</div>`
         }
 
-        ${ lessonRef.isPreview ? '' : `
-          <!-- Small message-to-teacher box, pinned to this word.
-               Teacher's replies (text + animal sticker) load below
-               once the student has sent at least one message. -->
-          <div class="wc-word-msg" id="wcWordMsg">
-            <div class="wc-word-msg-title">💌 Ask your teacher about “${escapeHtml(w.word || w.lower || '')}”</div>
-            <textarea id="wcWordMsgInput"
-                      class="wc-word-msg-input"
-                      rows="2"
-                      placeholder="Type a question…"></textarea>
-            <button id="wcWordMsgSend" class="wc-word-msg-send" type="button">Send 📨</button>
-            <div id="wcWordMsgStatus" class="wc-word-msg-status"></div>
-            <div id="wcWordMsgThread" class="wc-word-msg-thread"></div>
-          </div>
-        ` }
+        <!-- Small message-to-teacher box, pinned to this word.
+             Always rendered so the teacher can see it in preview
+             mode + the student sees it on every word click. The
+             send button is disabled in preview / when the class
+             flag hides the visualisation sidebar; in those modes
+             the form is purely visual. -->
+        <div class="wc-word-msg" id="wcWordMsg">
+          <div class="wc-word-msg-title">💌 Ask your teacher about “${escapeHtml(w.word || w.lower || '')}”</div>
+          <textarea id="wcWordMsgInput"
+                    class="wc-word-msg-input"
+                    rows="2"
+                    placeholder="Type a question…"
+                    ${msgDisabled ? 'disabled' : ''}></textarea>
+          <button id="wcWordMsgSend" class="wc-word-msg-send" type="button"
+                  ${msgDisabled ? 'disabled title="Disabled in preview"' : ''}>
+            Send 📨
+          </button>
+          <div id="wcWordMsgStatus" class="wc-word-msg-status"></div>
+          <div id="wcWordMsgThread" class="wc-word-msg-thread"></div>
+        </div>
       </div>
     `;
 
@@ -241,9 +256,9 @@
       if (window.WCTTS) window.WCTTS.speak(info?.lemma || w.word || '').catch(()=>{});
     });
 
-    // Wire the message form (skipped in preview mode where the
-    // section isn't rendered).
-    if (!lessonRef.isPreview) wireWordMessageForm(w);
+    // Wire the message form unless we rendered it in disabled mode
+    // (no real student session → no send + no thread fetch).
+    if (!msgDisabled) wireWordMessageForm(w);
   }
 
   // ============================================================
