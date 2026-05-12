@@ -364,13 +364,21 @@ body.wc-lesson-layout {
   color: var(--tobok-ink);
 }
 
-/* The lesson card itself — clean white, rounded, soft shadow. */
+/* The lesson card itself — clean white, rounded, soft shadow.
+   Viewport-fit height so the body doesn't grow into a long scrolling
+   page — content overflows are clipped and the user paginates instead
+   (matches 또박또박's "no scroll" reading experience). */
 body.wc-lesson-layout .wc-lesson-main {
   background: var(--tobok-card);
   border-radius: 14px;
   padding: 18px 22px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.06);
   border: none;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 130px);  /* viewport − (top padding + bottom-bar) */
+  min-height: 360px;
+  overflow: hidden;
 }
 
 /* ===== Header grid — left column + right thumbnail =====
@@ -512,11 +520,51 @@ body.wc-lesson-layout .wc-lesson-main {
   .thumb-pages { font-size: 15px; }
 }
 
-/* Body wrapper — flexes to fill remaining card height. */
+/* Body wrapper — flexes to fill remaining card height. Hides overflow
+   so the slide-in/out animations don't leak outside the white card. */
 .wc-lesson-text-wrap {
   position: relative;
   flex: 1 1 auto;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* ===== Page-slide animation =====
+   Used on goPage() AND goSingle() so navigation always has the same
+   horizontal-flip feel as 또박또박. Direction is decided by the
+   helper in lesson.js based on whether next > prev. */
+body.wc-lesson-layout #lessonBody {
+  transition: transform .18s cubic-bezier(.22,.6,.36,1), opacity .18s ease;
+}
+body.wc-lesson-layout #lessonBody.wc-slide-out-left  { transform: translateX(-24px); opacity: 0; }
+body.wc-lesson-layout #lessonBody.wc-slide-out-right { transform: translateX( 24px); opacity: 0; }
+body.wc-lesson-layout #lessonBody.wc-slide-in-right  { animation: wcSlideInRight .28s cubic-bezier(.22,.6,.36,1); }
+body.wc-lesson-layout #lessonBody.wc-slide-in-left   { animation: wcSlideInLeft  .28s cubic-bezier(.22,.6,.36,1); }
+@keyframes wcSlideInRight {
+  from { transform: translateX( 24px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+@keyframes wcSlideInLeft {
+  from { transform: translateX(-24px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
+}
+
+/* ===== 1문장씩 (single-sentence focused reading) =====
+   In this mode the body contains exactly ONE .wc-sentence span.
+   We pump it up to 2× the inherited font size (so the user's
+   chosen font size is preserved as the base) and centre it. */
+body.wc-single-mode #lessonBody {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  height: 100%;
+  text-align: left;
+}
+body.wc-single-mode #lessonBody .wc-sentence.wc-single {
+  font-size: 2em;
+  line-height: 1.5;
+  display: block;
+  width: 100%;
 }
 
 /* Lesson body — bigger, airier, no extra padding/borders. */
@@ -532,25 +580,30 @@ body.wc-lesson-layout #lessonBody {
 }
 
 /* ===== Word chip — 또박또박 word states (.w + .sN / .sx) =====
-   Default (state 0, no extra class beyond .w): pale sky blue —
-   "I just tapped this." States 1-4 fade through green as the word
-   becomes familiar; state 5 / -1 are transparent (mastered / skipped). */
+   Bare `.w` (no state class) = sky-blue overlay by default — invites
+   the student to engage. After they pick a level via the sidebar
+   ice-cream picker, the matching sub-class is applied:
+   1-4 fade through green, 5 / -1 are transparent (mastered / skipped). */
 body.wc-lesson-layout .w {
-  background: var(--word-new);
+  background: var(--word-new);   /* default sky-blue for unrated words */
   border-radius: 2px;
   cursor: pointer;
   transition: background .2s;
 }
+body.wc-lesson-layout .w.s0 { background: var(--word-new); }  /* explicit state 0 */
 body.wc-lesson-layout .w.s1 { background: var(--word-1); }
 body.wc-lesson-layout .w.s2 { background: var(--word-2); }
 body.wc-lesson-layout .w.s3 { background: var(--word-3); }
 body.wc-lesson-layout .w.s4 { background: var(--word-4); }
 body.wc-lesson-layout .w.s5,
 body.wc-lesson-layout .w.sx { background: transparent; }
-/* state 0 (unclicked): no class beyond .w-virgin → no highlight at all.
-   Once tapped, the class is added so the sky-blue fills in. */
-body.wc-lesson-layout .w.s0      { background: var(--word-new); }
-body.wc-lesson-layout .w.unseen  { background: transparent; }
+
+/* Tap-to-select highlight — the currently-selected word in the
+   sidebar gets a soft outline so the student knows which one's
+   showing in the side panel. */
+body.wc-lesson-layout .w.wc-selected {
+  box-shadow: 0 0 0 2px var(--tobok-accent);
+}
 
 /* Single-sentence mode — keep the dim/active feel but in green. */
 .wc-sentence { transition: opacity .2s ease, background .2s ease; }
@@ -854,9 +907,7 @@ body.wc-lesson-layout .wc-shell-wide { padding-bottom: 100px; }
   color: var(--ink-soft);
 }
 
-/* Sidebar accent shift (or rather override) — on the lesson page the
-   sidebar's primary brand colour bends toward 또박또박 green so the
-   page reads as one design family, not two. */
+/* Sidebar accent shift — match 또박또박 green tokens. */
 body.wc-lesson-layout .wc-progress-bar {
   background: linear-gradient(90deg, var(--tobok-accent) 0%, var(--tobok-blue) 100%);
 }
@@ -865,6 +916,128 @@ body.wc-lesson-layout .wc-side-section {
   border: 1px solid var(--tobok-line);
   background: var(--tobok-card);
 }
+
+/* ===== Word detail card (selected word in sidebar) ===== */
+.wc-side-word { padding: 18px; }
+
+.wc-word-empty {
+  text-align: center;
+  padding: 24px 8px;
+  color: var(--ink-soft);
+}
+.wc-word-empty-icon { font-size: 32px; margin-bottom: 8px; }
+
+.wc-word-card { display: flex; flex-direction: column; gap: 10px; }
+.wc-word-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 10px;
+}
+.wc-word-text h2 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+  word-break: break-word;
+}
+.wc-word-ipa {
+  color: var(--ink-soft);
+  font-size: 13px;
+  margin-top: 2px;
+  font-family: "SF Mono", Menlo, monospace;
+}
+.wc-word-tts {
+  appearance: none;
+  border: 1px solid var(--tobok-line);
+  background: #fff;
+  border-radius: 999px;
+  width: 36px; height: 36px;
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: grid; place-items: center;
+}
+.wc-word-tts:hover { background: #f1f3f5; }
+
+.wc-word-def {
+  font-size: 16px;
+  line-height: 1.45;
+  background: var(--tobok-accent-s);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #1f3a2c;
+}
+.wc-word-loading {
+  background: #f1f3f5;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+
+.wc-word-collo-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-top: 4px;
+}
+.wc-word-collo {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* Ice-cream level picker — 6 vertical-stack slots showing silhouette
+   by default; the user's current level shows in colour. */
+.wc-word-levelpicker-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  margin-top: 8px;
+}
+.wc-word-levelpicker {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-top: 4px;
+}
+.wc-lvl-pick {
+  appearance: none;
+  background: #fff;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  padding: 4px 2px;
+  font: inherit;
+  cursor: pointer;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 2px;
+  transition: border-color .12s ease, background .12s ease, transform .06s;
+}
+.wc-lvl-pick img {
+  width: 100%;
+  height: 56px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.wc-lvl-pick span {
+  font-size: 10.5px;
+  color: var(--ink-soft);
+  text-align: center;
+  line-height: 1.1;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.wc-lvl-pick:hover  { background: #f5f5f0; border-color: var(--tobok-line); }
+.wc-lvl-pick:active { transform: translateY(1px); }
+.wc-lvl-pick.on {
+  border-color: var(--tobok-accent);
+  background: var(--tobok-accent-s);
+}
+.wc-lvl-pick.on span { color: var(--tobok-accent-i); font-weight: 700; }
 
 /* ---- progress panel ---- */
 .wc-progress-row {

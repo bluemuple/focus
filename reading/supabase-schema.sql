@@ -129,6 +129,15 @@ create table if not exists wc_quiz_cache (
   created_at timestamptz not null default now()
 );
 
+-- ---------- Word-info cache (Year-3 dictionary entries from word-info-gpt) ----------
+-- Same word in the same sentence context shared across all students
+-- in the class. First click pays GPT; everyone else gets it free.
+create table if not exists wc_word_info_cache (
+  cache_key  text primary key,
+  data       jsonb not null,
+  created_at timestamptz not null default now()
+);
+
 -- ---------- TTS cache (server-side audio cache for tts-google) ----------
 -- Lets identical sentences across all students hit a cached MP3
 -- instead of round-tripping to Google Cloud TTS. Cache key is the
@@ -163,6 +172,7 @@ alter table wc_visualization_messages  enable row level security;
 alter table wc_encounter_counters      enable row level security;
 alter table wc_tts_cache               enable row level security;
 alter table wc_quiz_cache              enable row level security;
+alter table wc_word_info_cache         enable row level security;
 
 -- Phase 1 dev policies: anon role can read+write. Tighten in Phase 7
 -- with check_login_code edge function returning a signed JWT and
@@ -178,4 +188,5 @@ begin
   if not exists (select 1 from pg_policies where policyname = 'wc_dev_all_encounter_counters')     then create policy wc_dev_all_encounter_counters     on wc_encounter_counters     for all using (true) with check (true); end if;
   if not exists (select 1 from pg_policies where policyname = 'wc_dev_all_tts_cache')              then create policy wc_dev_all_tts_cache              on wc_tts_cache              for all using (true) with check (true); end if;
   if not exists (select 1 from pg_policies where policyname = 'wc_dev_all_quiz_cache')             then create policy wc_dev_all_quiz_cache             on wc_quiz_cache             for all using (true) with check (true); end if;
+  if not exists (select 1 from pg_policies where policyname = 'wc_dev_all_word_info_cache')        then create policy wc_dev_all_word_info_cache        on wc_word_info_cache        for all using (true) with check (true); end if;
 end $$;

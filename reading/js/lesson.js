@@ -63,7 +63,26 @@
     get wordLevels() { return wordLevels; },
     get classFlags() { return classFlags; },
     onWordLevelChange(cb) { if (typeof cb === 'function') levelChangeListeners.push(cb); },
+    // Mutators sidebar.js calls when the ice-cream picker fires.
+    setWordLevel: async function (lower, next, originalWord) {
+      const prev = wordLevels.has(lower) ? wordLevels.get(lower) : null;
+      if (next === prev) return;
+      wordLevels.set(lower, next);
+      document.querySelectorAll('.w[data-word="' + cssEsc(lower) + '"]')
+        .forEach(el => applyLevelClass(el, next));
+      try { await window.WCDB.wordStates.upsert(me.id, lower, next); } catch (e) {}
+      if (next > (prev ?? -2) && next !== -1) {
+        window.dispatchEvent(new CustomEvent('wc:level-up', {
+          detail: { word: lower, prev, next, lessonId },
+        }));
+      }
+      notifyLevelChange({ word: lower, prev, next });
+    },
   };
+
+  // Cheap CSS-attribute selector escape: lower already lower-case
+  // alphanumerics + apostrophes, but better safe.
+  function cssEsc(s) { return String(s).replace(/["\\\]/g, '\\$&'); }
 
   // ---------- chrome ----------
   $('userName').textContent  = me.real_name;
@@ -200,100 +219,132 @@
   }
 
   // ---------- render ----------
+  // Two rendering modes:
+  //   - page mode (singleMode=false): render the current page's parts,
+  //     paragraph by paragraph. Arrow buttons step pages.
+  //   - single mode (singleMode=true): render exactly ONE sentence at
+  //     2× the body font (CSS-driven). Arrow buttons step sentences,
+  //     ignoring page boundaries (a 1문장씩 reader doesn't care which
+  //     "page" they're on; they care about the next thought).
   function renderBody() {
     const root = $('lessonBody');
     root.innerHTML = '';
-    // Render only the parts belonging to the current page. In single-
-    // sentence mode we still render the whole page but dim non-active
-    // sentences (handled in refreshSingleMode).
+
+    if (singleMode) {
+      const flat = sentenceList();
+      if (!flat.length) return;
+      const i = clamp(singleIdx, 0, flat.length - 1);
+      const p = flat[i];
+      const wrap = makeSentenceWrap(p, i);
+      wrap.classList.add('wc-active', 'wc-single');
+      root.appendChild(wrap);
+      return;
+    }
+
+    // page mode — dataset.idx stamps the GLOBAL sentence index so
+    // toggling 1문장씩 from a clicked word can jump to the right
+    // sentence (across pages) without remapping.
     const parts = pages[pageIdx] || sentences;
-    let sentIdx = 0;
+    let globalStart = 0;
+    for (let i = 0; i < pageIdx; i++) {
+      globalStart += (pages[i] || []).filter(p => p.kind === 'sent').length;
+    }
+    let pageSentIdx = 0;
     parts.forEach(p => {
       if (p.kind === 'gap') {
         root.appendChild(document.createTextNode(p.text));
         return;
       }
-      const wrap = document.createElement('span');
-      wrap.className = 'wc-sentence';
-      wrap.dataset.idx = String(sentIdx);
-      p.words.forEach(tok => {
-        if (tok.kind === 'glue') {
-          wrap.appendChild(document.createTextNode(tok.text));
-          return;
-        }
-        const sp = document.createElement('span');
-        // `.w` is the 또박또박-style word chip. State sub-class is set
-        // by applyLevelClass below.
-        sp.className = 'w';
-        sp.dataset.word = tok.lower;
-        sp.textContent  = tok.text;
-        const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
-        applyLevelClass(sp, startLevel);
-        sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
-        wrap.appendChild(sp);
-      });
-      wrap.addEventListener('click', e => {
-        if (singleMode && e.target === wrap) goSingle(parseInt(wrap.dataset.idx, 10));
-      });
-      root.appendChild(wrap);
-      sentIdx++;
+      root.appendChild(makeSentenceWrap(p, globalStart + pageSentIdx));
+      pageSentIdx++;
     });
-    refreshSingleMode();
   }
 
+  function makeSentenceWrap(p, idx) {
+    const wrap = document.createElement('span');
+    wrap.className = 'wc-sentence';
+    wrap.dataset.idx = String(idx);
+    p.words.forEach(tok => {
+      if (tok.kind === 'glue') {
+        wrap.appendChild(document.createTextNode(tok.text));
+        return;
+      }
+      const sp = document.createElement('span');
+      sp.className = 'w';
+      sp.dataset.word = tok.lower;
+      sp.textContent  = tok.text;
+      const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
+      applyLevelClass(sp, startLevel);
+      sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
+      wrap.appendChild(sp);
+    });
+    return wrap;
+  }
+
+  // Flat list of all sentences across the lesson (page-blind).
+  function sentenceList() {
+    return sentences.filter(p => p.kind === 'sent');
+  }
+  function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
+
   function applyLevelClass(el, level) {
-    // 또박또박 word state class mapping:
-    //   null  → unseen (transparent, no overlay)
-    //   0     → s0 (sky blue — "just tapped")
-    //   1-4   → s1..s4 (green fading lighter)
-    //   5     → s5 (transparent — mastered)
-    //   -1    → sx (transparent — ignored / 무시)
+    // 또박또박 visual states (sidebar-picker spec):
+    //   null  → sky blue overlay by default — student hasn't picked
+    //           a level yet but the word is "fresh" and inviting.
+    //   1-4   → s1..s4 (dark→pale green, "learning")
+    //   5     → s5 (transparent — known)
+    //   -1    → sx (transparent — ignored)
+    // Note: state 0 isn't picker-selectable, but the visual class .w
+    //       (no sub-class) already paints sky-blue via CSS, so null
+    //       and 0 look identical.
     el.classList.remove('unseen','s0','s1','s2','s3','s4','s5','sx');
-    if (level === null || level === undefined) { el.classList.add('unseen'); return; }
+    if (level === null || level === undefined) return;     // bare .w = sky blue
     if (level === -1) { el.classList.add('sx'); return; }
+    if (level === 0)  { el.classList.add('s0'); return; }
     el.classList.add('s' + level);
   }
 
   // ---------- word click ----------
+  // 또박또박-style: tapping a word DOES NOT auto-advance its state any
+  // more — it only fires a `wc:word-selected` event so the sidebar can
+  // render its dictionary card. The user changes level explicitly via
+  // the sidebar's ice-cream picker.
+  // Untapped words are pre-painted sky-blue (handled in applyLevelClass);
+  // tapping selects the word for the sidebar but doesn't alter colour.
+  let lastSelectedSentenceIdx = 0;
+
   async function onWordClick(el, lower, original) {
-    const wasUnseen = !wordLevels.has(lower);
-    const current   = wasUnseen ? 0 : wordLevels.get(lower);
-
-    // 또박또박 baseline: simply tapping an unseen word counts as
-    // "I've engaged with this" → state 0 (sky-blue). Saved + counted
-    // immediately so the user sees instant feedback even if they
-    // dismiss the popup without picking a level.
-    if (wasUnseen) {
-      wordLevels.set(lower, 0);
-      applyLevelClass(el, 0);
-      try { await window.WCDB.wordStates.upsert(me.id, lower, 0); } catch (e) {}
-      window.dispatchEvent(new CustomEvent('wc:level-up', {
-        detail: { word: lower, prev: -2, next: 0, lessonId },  // -2 sentinel = "previously unseen"
-      }));
-      notifyLevelChange({ word: lower, prev: -2, next: 0 });
+    // Find the surrounding sentence index — used by 1문장씩 mode to
+    // start from the sentence containing the clicked word.
+    const sentEl = el.closest('.wc-sentence');
+    if (sentEl) {
+      const i = parseInt(sentEl.dataset.idx, 10);
+      if (!isNaN(i)) lastSelectedSentenceIdx = i;
     }
+    const sentenceText = findSentenceFor(lower);
 
-    window.WCWordPopup.open({
-      word: original,
-      lower,
-      level: current,
-      onLevelChange: async (next) => {
-        const prev = wordLevels.get(lower) ?? 0;
-        if (next === prev) return;
-        wordLevels.set(lower, next);
-        applyLevelClass(el, next);
-        try {
-          await window.WCDB.wordStates.upsert(me.id, lower, next);
-        } catch (e) { console.warn('upsert wordState', e); }
-        // Phase 5 hook: encounter counter bumps on UPWARD changes only.
-        if (next > prev && next !== -1) {
-          window.dispatchEvent(new CustomEvent('wc:level-up', {
-            detail: { word: lower, prev, next, lessonId },
-          }));
-        }
-        notifyLevelChange({ word: lower, prev, next });
-      },
-    });
+    window.dispatchEvent(new CustomEvent('wc:word-selected', {
+      detail: { word: original, lower, sentence: sentenceText },
+    }));
+  }
+
+  function findSentenceFor(lower) {
+    // Walk current page's parts; return the text of the first sentence
+    // that contains `lower` (case-insensitive whole-word match).
+    const parts = pages[pageIdx] || sentences;
+    const re = new RegExp("\\b" + lower.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&") + "\\b", "i");
+    for (const p of parts) {
+      if (p.kind === 'sent' && re.test(p.text)) return p.text.trim();
+    }
+    // Fallback — search whole body.
+    if (lesson?.body) {
+      const senRe = /[^.!?]+[.!?]+["'’)\]]*/g;
+      let m;
+      while ((m = senRe.exec(lesson.body)) !== null) {
+        if (re.test(m[0])) return m[0].trim();
+      }
+    }
+    return '';
   }
 
   // ---------- toolbar / bottom-bar wiring ----------
@@ -311,12 +362,18 @@
       $('btnPlay').classList.remove('playing');
     });
 
-    // 1문장씩 chip in the header → toggles the dim-others mode.
+    // 1문장씩 chip in the header → enter focused-reading. When the
+    // user had just clicked a word, start from THAT sentence; otherwise
+    // start from the first sentence on the current page.
     $('btnSingle').addEventListener('click', () => {
       singleMode = !singleMode;
       $('btnSingle').classList.toggle('active', singleMode);
       $('btnSingle').setAttribute('aria-pressed', singleMode ? 'true' : 'false');
-      if (singleMode && singleIdx == null) singleIdx = 0;
+      document.body.classList.toggle('wc-single-mode', singleMode);
+      if (singleMode) {
+        // If the user picked a word recently, start from its sentence.
+        singleIdx = lastSelectedSentenceIdx || 0;
+      }
       refreshSingleMode();
     });
 
@@ -340,18 +397,37 @@
 
   function goPage(next) {
     if (!pages.length) return;
+    const prev = pageIdx;
     pageIdx = Math.max(0, Math.min(pages.length - 1, next));
+    if (pageIdx === prev) return;
     singleIdx = 0;
-    renderBody();
-    refreshPageCounter();
-    refreshNavBoundary();
+    slideRender(pageIdx > prev ? 'forward' : 'back');
+  }
+
+  // Slide animation wrapper. Direction:
+  //   'forward' → outgoing slides out to the LEFT, incoming enters
+  //                from the RIGHT  (next page / next sentence)
+  //   'back'    → outgoing → RIGHT, incoming ← LEFT
+  function slideRender(direction) {
+    const el = $('lessonBody');
+    const outCls = direction === 'forward' ? 'wc-slide-out-left' : 'wc-slide-out-right';
+    const inCls  = direction === 'forward' ? 'wc-slide-in-right' : 'wc-slide-in-left';
+    el.classList.add(outCls);
+    setTimeout(() => {
+      renderBody();
+      refreshPageCounter();
+      refreshNavBoundary();
+      el.classList.remove(outCls);
+      el.classList.add(inCls);
+      setTimeout(() => el.classList.remove(inCls), 280);
+    }, 180);
   }
 
   function refreshNavBoundary() {
     const prev = $('btnPrev'), next = $('btnNext');
     if (!prev || !next) return;
     if (singleMode) {
-      const last = (document.querySelectorAll('.wc-sentence').length || 1) - 1;
+      const last = sentenceList().length - 1;
       prev.disabled = singleIdx <= 0;
       next.disabled = singleIdx >= last;
     } else {
@@ -366,27 +442,19 @@
   }
 
   function refreshSingleMode() {
-    const wraps = document.querySelectorAll('.wc-sentence');
-    if (!singleMode) {
-      wraps.forEach(w => w.classList.remove('wc-dim', 'wc-active'));
-      refreshNavBoundary();
-      return;
-    }
-    wraps.forEach(w => {
-      const i = parseInt(w.dataset.idx, 10);
-      w.classList.toggle('wc-active', i === singleIdx);
-      w.classList.toggle('wc-dim',    i !== singleIdx);
-    });
-    const active = document.querySelector('.wc-sentence.wc-active');
-    if (active) active.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Re-render — the renderer branches on singleMode internally.
+    renderBody();
+    refreshPageCounter();
     refreshNavBoundary();
   }
 
   function goSingle(next) {
-    const sentWraps = document.querySelectorAll('.wc-sentence');
-    if (!sentWraps.length) return;
-    singleIdx = Math.max(0, Math.min(sentWraps.length - 1, next));
-    refreshSingleMode();
+    const flat = sentenceList();
+    if (!flat.length) return;
+    const prev = singleIdx;
+    singleIdx = clamp(next, 0, flat.length - 1);
+    if (singleIdx === prev) return;
+    slideRender(singleIdx > prev ? 'forward' : 'back');
   }
 
   // ---------- helpers ----------
