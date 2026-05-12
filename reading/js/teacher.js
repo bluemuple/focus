@@ -1354,6 +1354,58 @@
     }, 0);
   });
 
+  // Bulk paste: one "word: meaning" per line. Lines without a colon
+  // (or with an empty key/value half) are silently skipped so the
+  // teacher can leave example text or notes in the textarea. Existing
+  // rows with the same word are updated in place; new words append.
+  $('wordNoteBulkAddBtn').addEventListener('click', () => {
+    const ta     = $('wordNoteBulkInput');
+    const status = $('wordNoteBulkStatus');
+    if (!ta || !status) return;
+    const raw = (ta.value || '').trim();
+    if (!raw) {
+      status.textContent = 'Paste some lines first.';
+      status.style.color = 'var(--bad)';
+      return;
+    }
+    const lines = raw.split(/\r?\n/);
+    let added = 0, updated = 0, skipped = 0;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      // Accept either ":" or "," as the separator — colon is what we
+      // recommend in the placeholder, but pasted spreadsheet cells
+      // often come comma-separated.
+      const sepIdx = trimmed.search(/[:,]/);
+      if (sepIdx <= 0) { skipped++; continue; }
+      const word = trimmed.slice(0, sepIdx).trim().toLowerCase();
+      const note = trimmed.slice(sepIdx + 1).trim();
+      if (!word || !note) { skipped++; continue; }
+      const existing = lessonWordNotes.find(wn =>
+        (wn.word || '').toLowerCase() === word);
+      if (existing) {
+        existing.note = note;
+        updated++;
+      } else {
+        lessonWordNotes.push({ word, note });
+        added++;
+      }
+    }
+    renderWordNoteRows();
+    if (!added && !updated) {
+      status.textContent = `Nothing added — ${skipped} line(s) skipped (need "word: meaning").`;
+      status.style.color = 'var(--bad)';
+    } else {
+      const parts = [];
+      if (added)   parts.push(`${added} added`);
+      if (updated) parts.push(`${updated} updated`);
+      if (skipped) parts.push(`${skipped} skipped`);
+      status.textContent = parts.join(' · ') + ' ✓';
+      status.style.color = 'var(--good)';
+      ta.value = '';
+    }
+  });
+
   function renderWordNoteRows() {
     const wrap = $('wordNoteRows');
     if (!wrap) return;
