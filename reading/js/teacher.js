@@ -738,8 +738,13 @@
     pickCorner(corner => insertImage(corner, dataUrl));
   }
 
-  // Reads `file` into an <img>, redraws it on a canvas at ≤800px on
-  // the long edge, returns a JPEG data URL.
+  // GLOBAL upload guard: every image that goes into the database
+  // passes through this function. The site never stores the raw
+  // file the teacher selected — it's redrawn on a canvas at ≤ 800 px
+  // on the long edge and re-encoded as JPEG 75 %. Typical result
+  // 30-90 KB regardless of input (a 5 MB camera shot becomes ~60 KB).
+  // All three image-upload paths (body images, word images, body
+  // paste) route through here.
   async function downscaleImage(file, maxDim = 800, quality = 0.75) {
     const buf = await new Promise((resolve, reject) => {
       const fr = new FileReader();
@@ -801,7 +806,10 @@
 
   function insertImage(corner, dataUrl) {
     const idx = lessonImages.length;
-    lessonImages.push({ corner, data_url: dataUrl });
+    // `scale` defaults to 1.0 (= the CSS-defined 22% width). The chip
+    // preview's −/+ buttons adjust this in 0.05 increments, and the
+    // lesson renderer multiplies the base width by this scale.
+    lessonImages.push({ corner, data_url: dataUrl, scale: 1.0 });
     const marker = `[[IMG:${idx}]]`;
 
     const body = $('lessonBody');
@@ -830,19 +838,48 @@
     const wrap = $('lessonImagesPreview');
     if (!wrap) return;
     if (!lessonImages.length) { wrap.innerHTML = ''; return; }
-    wrap.innerHTML = lessonImages.map((im, i) => `
-      <div class="wc-img-chip">
-        <img src="${im.data_url}" alt="image ${i}"/>
-        <div class="wc-img-chip-meta">
-          <strong>[[IMG:${i}]]</strong>
-          <span class="wc-muted">${cornerLabel(im.corner)}</span>
+    wrap.innerHTML = lessonImages.map((im, i) => {
+      // Ensure legacy entries (pre-scale) get a default scale of 1.0
+      // so the −/+ buttons display "100%" instead of "NaN%".
+      if (!Number.isFinite(im.scale)) im.scale = 1.0;
+      const pct = Math.round(im.scale * 100);
+      return `
+        <div class="wc-img-chip">
+          <img src="${im.data_url}" alt="image ${i}"/>
+          <div class="wc-img-chip-meta">
+            <strong>[[IMG:${i}]]</strong>
+            <span class="wc-muted">${cornerLabel(im.corner)} · ${pct}%</span>
+          </div>
+          <div class="wc-img-chip-actions">
+            <button data-size="-" data-i="${i}" class="wc-btn ghost" title="Shrink 5%">−</button>
+            <button data-size="+" data-i="${i}" class="wc-btn ghost" title="Grow 5%">+</button>
+            <button data-rm="${i}" class="wc-btn ghost">Remove</button>
+          </div>
         </div>
-        <button data-rm="${i}" class="wc-btn ghost">Remove</button>
-      </div>
-    `).join('');
+      `;
+    }).join('');
     wrap.querySelectorAll('[data-rm]').forEach(b => {
       b.addEventListener('click', () => removeImage(parseInt(b.dataset.rm, 10)));
     });
+    wrap.querySelectorAll('[data-size]').forEach(b => {
+      b.addEventListener('click', () => {
+        const i = parseInt(b.dataset.i, 10);
+        const dir = b.dataset.size === '+' ? 1 : -1;
+        adjustImageSize(i, dir);
+      });
+    });
+  }
+
+  // Resize an image in 5 % steps. Clamped to [20 %, 300 %] so the
+  // image never disappears or grows past the white-card width.
+  function adjustImageSize(idx, dir) {
+    const im = lessonImages[idx];
+    if (!im) return;
+    const step = 0.05;
+    const cur  = Number.isFinite(im.scale) ? im.scale : 1.0;
+    const next = Math.max(0.2, Math.min(3.0, +(cur + dir * step).toFixed(2)));
+    im.scale = next;
+    renderImagesPreview();
   }
   function cornerLabel(c) {
     return ({ tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' })[c] || c;

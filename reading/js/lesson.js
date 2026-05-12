@@ -421,8 +421,9 @@
   }
 
   // Build a floated <img> for the Nth image attached to this lesson.
-  // The corner field on the image record decides which side the float
-  // sits on and whether margin pushes it down to the bottom edge.
+  // `corner` decides which side the float sits on (tl/tr/bl/br);
+  // `scale` (defaults to 1.0) scales the base 22 %-of-card width by
+  // 5 %-step adjustments the teacher made in the chip preview.
   function makeFloatingImage(idx) {
     const list = Array.isArray(lesson?.images) ? lesson.images : [];
     const rec  = list[idx];
@@ -432,6 +433,15 @@
     img.src = rec.data_url;
     img.alt = '';
     img.draggable = false;
+    const scale = Number.isFinite(rec.scale) ? rec.scale : 1.0;
+    if (scale !== 1.0) {
+      // The base width comes from the CSS rule (22 % / min 120 / max 220).
+      // We override BOTH width and max-width together so the size moves
+      // proportionally on both narrow and wide viewports.
+      img.style.width    = (22 * scale).toFixed(1) + '%';
+      img.style.maxWidth = Math.round(220 * scale) + 'px';
+      img.style.minWidth = Math.round(120 * scale) + 'px';
+    }
     return img;
   }
 
@@ -541,11 +551,22 @@
       sp.textContent  = tok.text;
       const startLevel = wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null;
       applyLevelClass(sp, startLevel);
+      // Notification dot — small green pip in the top-right of any
+      // word the teacher attached an image to. Subtle hint that
+      // clicking will surface visual info beyond the dictionary entry.
+      if (hasWordImage(tok.lower)) sp.classList.add('has-word-image');
       sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
       wrap.appendChild(sp);
       wIdx++;
     });
     return wrap;
+  }
+
+  function hasWordImage(lower) {
+    const list = lesson && lesson.word_images;
+    if (!Array.isArray(list) || !list.length) return false;
+    const want = String(lower || '').toLowerCase();
+    return list.some(wi => (wi.word || '').toLowerCase() === want);
   }
 
   // Flat list of all sentences across the lesson (page-blind).
