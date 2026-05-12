@@ -860,9 +860,14 @@
   // by the 🔇/🔊 chip in the header. Only affects chunk-on-tap audio;
   // ▶ Listen, sidebar headword 🔊, etc. always play.
   let chunkMuted = true;
-  // Tracks which chunk we last played so moving the focus inside the
-  // same chunk doesn't re-fire TTS on every word.
+  // Tracks which chunk we last played so arrow-key NAVIGATION inside
+  // the same chunk doesn't re-fire TTS on every word. An explicit
+  // user click bypasses this dedupe (see lastFocusSource below) —
+  // the student tapped the word precisely because they want to hear it.
   let lastPlayedChunkKey = null;
+  // 'click' | 'nav' — applyFocus reads this to decide whether to
+  // honour the lastPlayedChunkKey dedupe. Clicks always re-speak.
+  let lastFocusSource = 'nav';
   // Counter display mode in the bottom bar.
   //   'page'     → "3 / 17" (current page / total pages)
   //   'sentence' → "12 / 84" (current sentence / total sentences)
@@ -878,11 +883,12 @@
     const wIdx = parseInt(el.dataset.wIdx, 10);
     if (!isNaN(sIdx) && !isNaN(wIdx)) {
       lastSelectedSentenceIdx = sIdx;
-      focusWord(sIdx, wIdx);
+      focusWord(sIdx, wIdx, 'click');
     }
   }
 
-  function focusWord(sIdx, wIdx) {
+  function focusWord(sIdx, wIdx, source = 'nav') {
+    lastFocusSource = source;
     focusedSentIdx = sIdx;
     focusedWordIdx = wIdx;
     applyFocus();
@@ -949,7 +955,9 @@
       const speakKey  = chunk
         ? `${seenSent}::${chunk.indices[0]}-${chunk.indices[1]}`
         : `${seenSent}::sent`;
-      if (speakKey === lastPlayedChunkKey) return;   // don't re-play same unit
+      // Dedupe only for keyboard/arrow navigation — a deliberate tap
+      // means the student wants to hear it, even on the same chunk.
+      if (lastFocusSource !== 'click' && speakKey === lastPlayedChunkKey) return;
       lastPlayedChunkKey = speakKey;
       if (window.WCTTS) {
         // Stop any in-flight playback so rapid clicks don't pile up.
