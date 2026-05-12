@@ -406,11 +406,34 @@
   function onKeyDown(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
     switch (e.key) {
-      case 'ArrowLeft':  e.preventDefault(); navWord(-1);  break;
-      case 'ArrowRight': e.preventDefault(); navWord(+1);  break;
-      case 'ArrowUp':    e.preventDefault(); navChunk(-1); break;
-      case 'ArrowDown':  e.preventDefault(); navChunk(+1); break;
+      case 'ArrowLeft':  e.preventDefault(); navWord(-1);  return;
+      case 'ArrowRight': e.preventDefault(); navWord(+1);  return;
+      case 'ArrowUp':    e.preventDefault(); navChunk(-1); return;
+      case 'ArrowDown':  e.preventDefault(); navChunk(+1); return;
     }
+    // Level-picker shortcuts — same mapping as 또박또박:
+    //   0   → -1 (무시 / skip)
+    //   1-4 →  1..4
+    //   5, v, V → 5 (I know it!)
+    // Only fires when a word is currently focused (i.e. shown in the
+    // sidebar) — otherwise we have no target to grade.
+    if (focusedSentIdx == null || focusedWordIdx == null) return;
+    let st = null;
+    if      (e.key === '0' || e.key === '₩')           st = -1;
+    else if (e.key === '1')                            st = 1;
+    else if (e.key === '2')                            st = 2;
+    else if (e.key === '3')                            st = 3;
+    else if (e.key === '4')                            st = 4;
+    else if (e.key === '5' || e.key === 'v' || e.key === 'V') st = 5;
+    if (st === null) return;
+    e.preventDefault();
+    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+    if (!sentEl) return;
+    const wordEl = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx}"]`);
+    if (!wordEl) return;
+    const lower    = wordEl.dataset.word;
+    const original = wordEl.textContent;
+    window.WCLesson.setWordLevel(lower, st, original);
   }
 
   function navWord(dir) {

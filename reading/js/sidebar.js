@@ -41,7 +41,8 @@
     lessonRef = L;
     const flags = L.classFlags || {};
 
-    renderWordCard(null);  // initial empty-state
+    renderWordCard(null);   // initial empty-state
+    renderLevelBar();       // initial hidden state
 
     if (!flags.hideVisualizationSidebar) {
       renderVizForm(L);
@@ -61,6 +62,7 @@
       const d = e.detail || {};
       selectedWord = { word: d.word, lower: d.lower, sentence: d.sentence };
       renderWordCard({ loading: true });
+      renderLevelBar();
       window.WCWordInfo.fetch(d.word, d.sentence).then(info => {
         activeInfo = info;
         renderWordCard({ info });
@@ -70,6 +72,7 @@
     L.onWordLevelChange(({ word }) => {
       if (selectedWord && word === selectedWord.lower) {
         renderWordCard({ info: activeInfo });
+        renderLevelBar();
       }
     });
   }
@@ -131,26 +134,6 @@
             `
             : `<div class="wc-muted">Couldn't fetch info. Try tapping again!</div>`
         }
-
-        <!-- Ice-cream level picker. Each slot shows a silhouette by
-             default; the user's chosen level (if any) is rendered with
-             the colour image. Clicking any slot saves that level. -->
-        <div class="wc-word-levelpicker-label">How well do you know this word?</div>
-        <div class="wc-word-levelpicker" role="radiogroup">
-          ${[-1, 1, 2, 3, 4, 5].map(lvl => {
-            const isCurrent = lvl === currentLevel;
-            const img = isCurrent
-              ? window.WCAssets.levels[lvl].real
-              : window.WCAssets.levels[lvl].silhouette;
-            const label = lvl === -1 ? 'Skip' : (lvl === 5 ? 'I know it!' : `Lv ${lvl}`);
-            return `
-              <button class="wc-lvl-pick ${isCurrent ? 'on' : ''}" data-level="${lvl}" title="${label}">
-                <img src="${img}" alt="${label}" />
-                <span>${label}</span>
-              </button>
-            `;
-          }).join('')}
-        </div>
       </div>
     `;
 
@@ -158,13 +141,59 @@
     if (tts) tts.addEventListener('click', () => {
       if (window.WCTTS) window.WCTTS.speak(info?.lemma || w.word || '').catch(()=>{});
     });
-    wrap.querySelectorAll('.wc-lvl-pick').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const next = parseInt(btn.dataset.level, 10);
+  }
+
+  // ============================================================
+  //  Bottom-fixed level bar — 또박또박 design (🗑 1 2 3 4 ✓)
+  //
+  //  Six round 36-px buttons, centered, with the active level
+  //  filled green. Tooltips on hover via data-tip. Mirrors the
+  //  parent site's .ls-bottom-fixed strip pixel-for-pixel so
+  //  students switching between the two sites see one design.
+  // ============================================================
+  function renderLevelBar() {
+    const wrap = document.getElementById('sideLevelBar');
+    if (!wrap) return;
+
+    // Hide entirely until the student picks a word — otherwise the
+    // strip is meaningless and crowds the empty state.
+    if (!selectedWord) {
+      wrap.hidden = true;
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.hidden = false;
+
+    const currentLevel = lessonRef.wordLevels.has(selectedWord.lower)
+      ? lessonRef.wordLevels.get(selectedWord.lower) : null;
+
+    // [-1, 1, 2, 3, 4, 5] → six buttons. Inner glyphs match 또박또박:
+    //   -1 = 🗑, 1-4 = digit, 5 = ✓
+    const buttons = [
+      { state: -1, label: '🗑', cls: 'ignore', tip: '무시 (Skip) · 0' },
+      { state:  1, label: '1',  cls: '',        tip: 'Level 1 · 1' },
+      { state:  2, label: '2',  cls: '',        tip: 'Level 2 · 2' },
+      { state:  3, label: '3',  cls: '',        tip: 'Level 3 · 3' },
+      { state:  4, label: '4',  cls: '',        tip: 'Level 4 · 4' },
+      { state:  5, label: '✓', cls: 'known',   tip: 'I know it! · 5' },
+    ];
+
+    wrap.innerHTML = `
+      <div class="level-bar">
+        ${buttons.map(b => `
+          <button class="lv-btn ${b.cls} ${b.state === currentLevel ? 'active' : ''}"
+                  data-state="${b.state}" data-tip="${b.tip}">
+            ${b.label}
+          </button>
+        `).join('')}
+      </div>
+    `;
+
+    wrap.querySelectorAll('.lv-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const s = parseInt(btn.dataset.state, 10);
         if (!selectedWord) return;
-        // Delegate to lesson.js's persistence helper (it also fires
-        // wc:level-up if applicable for the encounter system).
-        window.WCLesson.setWordLevel(selectedWord.lower, next, selectedWord.word);
+        window.WCLesson.setWordLevel(selectedWord.lower, s, selectedWord.word);
       });
     });
   }
