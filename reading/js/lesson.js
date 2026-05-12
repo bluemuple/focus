@@ -228,16 +228,40 @@
   }
 
   function refreshPageCounter() {
-    const txt = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
     const thumb = document.getElementById('thumbPages');
-    if (thumb) thumb.textContent = txt;
-    const bar = document.getElementById('lbPageCount');
-    if (bar)   bar.textContent = txt;
+    const bar   = document.getElementById('lbPageCount');
+    const pageText = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
+    let barText = pageText;
+    if (counterMode === 'sentence') {
+      const flat = sentenceList();
+      // "Current sentence" = the sentence the focused word lives in,
+      // falling back to single-mode index, falling back to the first
+      // sentence of the current page so the counter always has a
+      // sensible value.
+      let curIdx = 0;
+      if (focusedSentIdx != null) curIdx = focusedSentIdx;
+      else if (singleMode)        curIdx = singleIdx;
+      else                        curIdx = globalStartOfPage(pageIdx);
+      barText = `${curIdx + 1} / ${Math.max(1, flat.length)}`;
+    }
+    if (thumb) thumb.textContent = pageText;
+    if (bar)   bar.textContent   = barText;
     // ‹‹ / ›› in the bottom bar greys out at boundaries.
     const prevPage = document.getElementById('btnPagePrev');
     const nextPage = document.getElementById('btnPageNext');
     if (prevPage) prevPage.disabled = pageIdx <= 0;
     if (nextPage) nextPage.disabled = pageIdx >= pages.length - 1;
+  }
+
+  // Briefly brighten + glow the counter to signal a mode switch.
+  function flashCounter() {
+    const bar = document.getElementById('lbPageCount');
+    if (!bar) return;
+    bar.classList.remove('wc-counter-glow');
+    // Force reflow so the animation restarts cleanly even on rapid toggles.
+    void bar.offsetWidth;
+    bar.classList.add('wc-counter-glow');
+    setTimeout(() => bar.classList.remove('wc-counter-glow'), 450);
   }
 
   // ---------- tokenisation ----------
@@ -440,6 +464,13 @@
   // Tracks which chunk we last played so moving the focus inside the
   // same chunk doesn't re-fire TTS on every word.
   let lastPlayedChunkKey = null;
+  // Counter display mode in the bottom bar.
+  //   'page'     → "3 / 17" (current page / total pages)
+  //   'sentence' → "12 / 84" (current sentence / total sentences)
+  // Toggles based on which arrow the user last used:
+  //   ›/‹  (word-step)  → 'sentence'
+  //   ››/‹‹ (page-step) → 'page'
+  let counterMode = 'page';
 
   async function onWordClick(el, lower, original) {
     const sentEl = el.closest('.wc-sentence');
@@ -691,16 +722,33 @@
     // In 1문장씩 mode, ‹ › step sentences; otherwise they step words
     // (crossing page boundaries automatically via navWord). Page-step
     // (‹‹ / ››) always moves a whole page.
+    // Word-step arrows — when pressed, the counter flips to sentence
+    // mode (and flashes) so the student sees "12 / 84 sentences"
+    // instead of the page count. ‹‹ / ›› flip it back.
+    function setCounterMode(mode) {
+      if (counterMode === mode) return;
+      counterMode = mode;
+      flashCounter();
+    }
+
     $('btnPrev').addEventListener('click', () => {
+      setCounterMode('sentence');
       if (singleMode) goSingle(singleIdx - 1);
       else            navWord(-1);
     });
     $('btnNext').addEventListener('click', () => {
+      setCounterMode('sentence');
       if (singleMode) goSingle(singleIdx + 1);
       else            navWord(+1);
     });
-    $('btnPagePrev').addEventListener('click', () => goPage(pageIdx - 1));
-    $('btnPageNext').addEventListener('click', () => goPage(pageIdx + 1));
+    $('btnPagePrev').addEventListener('click', () => {
+      setCounterMode('page');
+      goPage(pageIdx - 1);
+    });
+    $('btnPageNext').addEventListener('click', () => {
+      setCounterMode('page');
+      goPage(pageIdx + 1);
+    });
   }
 
   function goPage(next) {

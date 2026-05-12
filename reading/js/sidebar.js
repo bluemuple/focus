@@ -134,6 +134,11 @@
           : info
             ? `
               <div class="wc-word-def">${escapeHtml(info.definition)}</div>
+              ${findWordImage(w.lower)
+                ? `<div class="wc-word-image-wrap">
+                    <img class="wc-word-image" src="${findWordImage(w.lower)}" alt="${escapeHtml(w.lower)}" />
+                  </div>`
+                : ''}
               ${info.collocations && info.collocations.length ? `
                 <div class="wc-word-collo-title">Often used with:</div>
                 <ul class="wc-word-collo">
@@ -338,6 +343,17 @@
   function escapeHtml(s) {
     return String(s || '').replace(/[&<>"']/g, c =>
       ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+  }
+
+  // Look up the teacher-uploaded image for this word, if any. Matched
+  // by case-insensitive equality against the lower form. Words without
+  // an entry return null → the sidebar renders no image area at all.
+  function findWordImage(lower) {
+    const list = lessonRef?.lesson?.word_images;
+    if (!Array.isArray(list) || !list.length) return null;
+    const want = String(lower || '').toLowerCase();
+    const hit  = list.find(wi => (wi.word || '').toLowerCase() === want);
+    return hit ? hit.data_url : null;
   }
 
   // Split `displayed` (the inflected form the student tapped) into a

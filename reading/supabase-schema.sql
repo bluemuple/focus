@@ -89,6 +89,14 @@ create index if not exists wc_lessons_class_idx on wc_lessons(class_id);
 alter table wc_lessons
   add column if not exists images jsonb not null default '[]'::jsonb;
 
+-- Per-word images. When a student taps a word that appears in
+-- this array, the matching image is shown in the sidebar word card
+-- (above "Often used with"). Words NOT in this array show no image
+-- area at all — pure dictionary entry. Each entry:
+--   { word: 'kiwi', data_url: 'data:image/jpeg;base64,...' }
+alter table wc_lessons
+  add column if not exists word_images jsonb not null default '[]'::jsonb;
+
 -- ---------- Word states (per-student word level) ----------
 -- level: -1 = 무시 (ignored), 0 = unseen, 1..5 = familiarity levels
 create table if not exists wc_word_states (

@@ -523,6 +523,9 @@
     $('lessonGiftLimit').value = L.gift_limit_per_day || 3;
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
+    lessonWordImages = Array.isArray(L.word_images)
+      ? L.word_images.map(wi => ({ ...wi })) : [];
+    renderWordImageRows();
     updateFormMode();
     // Scroll the form into view so the teacher sees the fields populate.
     $('lessonTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -583,6 +586,12 @@
   let lessonImages = [];      // accumulates while teacher composes a lesson
   let pendingInsertPos = null;  // cursor position at the moment of image trigger
   let editingLessonId = null;   // null = creating new; UUID = editing existing
+  // Word-image pairs: [{ word: 'kiwi', data_url: 'data:image/jpeg…' }, …]
+  // Empty rows (word === '' AND data_url === '') are stripped before save.
+  let lessonWordImages = [];
+  // Last-clicked word-image row — paste handler targets this row's
+  // image slot when the user pastes from the clipboard.
+  let activeWordImageRow = null;
 
   function rememberCursor() {
     const ta = $('lessonBody');
@@ -752,7 +761,116 @@
     renderImagesPreview();
   }
 
-  function resetImages() { lessonImages = []; pendingInsertPos = null; renderImagesPreview(); }
+  function resetImages() {
+    lessonImages = [];
+    pendingInsertPos = null;
+    renderImagesPreview();
+    lessonWordImages = [];
+    activeWordImageRow = null;
+    renderWordImageRows();
+  }
+
+  // ----------------------------------------------------------------
+  //  WORD-IMAGE PAIRS — optional per-word images shown in the sidebar
+  //  when a student taps that word. Each row has a text input for
+  //  the word + an image (file picker or paste). Rows without both
+  //  fields filled get stripped before save.
+  // ----------------------------------------------------------------
+  $('addWordImageBtn').addEventListener('click', () => {
+    lessonWordImages.push({ word: '', data_url: '' });
+    renderWordImageRows();
+    // Focus the new row's word input so the teacher can start typing
+    // immediately.
+    setTimeout(() => {
+      const rows = document.querySelectorAll('.wc-wordimg-row');
+      const last = rows[rows.length - 1];
+      if (last) last.querySelector('.wi-word').focus();
+    }, 0);
+  });
+
+  function renderWordImageRows() {
+    const wrap = $('wordImageRows');
+    if (!wrap) return;
+    if (!lessonWordImages.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = lessonWordImages.map((wi, i) => `
+      <div class="wc-wordimg-row" data-idx="${i}">
+        <input class="wi-word wc-input" type="text" placeholder="word"
+               value="${escapeHtml(wi.word || '')}" />
+        <div class="wi-image-slot">
+          ${wi.data_url
+            ? `<img class="wi-thumb" src="${wi.data_url}" alt=""/>`
+            : `<button type="button" class="wi-add wc-btn ghost">📷 Image (or Cmd+V)</button>`}
+          <input type="file" class="wi-file" accept="image/*" hidden />
+        </div>
+        <button type="button" class="wi-remove wc-btn ghost" title="Remove">×</button>
+      </div>
+    `).join('');
+
+    wrap.querySelectorAll('.wc-wordimg-row').forEach(row => {
+      const idx = parseInt(row.dataset.idx, 10);
+      const wordInput = row.querySelector('.wi-word');
+      const fileInput = row.querySelector('.wi-file');
+      const addBtn    = row.querySelector('.wi-add');
+      const removeBtn = row.querySelector('.wi-remove');
+
+      // Any interaction with this row marks it as paste-target.
+      row.addEventListener('click', () => { activeWordImageRow = idx; });
+      wordInput.addEventListener('focus', () => { activeWordImageRow = idx; });
+
+      wordInput.addEventListener('input', () => {
+        lessonWordImages[idx].word = wordInput.value.trim().toLowerCase();
+      });
+
+      if (addBtn) {
+        addBtn.addEventListener('click', () => {
+          activeWordImageRow = idx;
+          fileInput.click();
+        });
+      }
+      fileInput.addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const dataUrl = await downscaleImage(file).catch(() => null);
+        if (dataUrl) {
+          lessonWordImages[idx].data_url = dataUrl;
+          renderWordImageRows();
+        }
+        e.target.value = '';
+      });
+      removeBtn.addEventListener('click', () => {
+        lessonWordImages.splice(idx, 1);
+        if (activeWordImageRow === idx) activeWordImageRow = null;
+        renderWordImageRows();
+      });
+    });
+  }
+
+  // Paste support — when the user is interacting with a word-image
+  // row and pastes an image from the clipboard, route it to the
+  // active row's image slot. Body-textarea paste keeps its own
+  // separate handler (lessonImages flow above).
+  document.addEventListener('paste', async (e) => {
+    if (activeWordImageRow == null) return;
+    if (!lessonWordImages[activeWordImageRow]) return;
+    // If the textarea has focus, the body-image paste handler above
+    // owns the event. We only run when focus is on a word-image row.
+    if (document.activeElement === $('lessonBody')) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        e.preventDefault();
+        const file = it.getAsFile();
+        if (!file) return;
+        const dataUrl = await downscaleImage(file).catch(() => null);
+        if (dataUrl) {
+          lessonWordImages[activeWordImageRow].data_url = dataUrl;
+          renderWordImageRows();
+        }
+        return;
+      }
+    }
+  });
 
   $('addLessonBtn').addEventListener('click', async () => {
     const msg = $('addLessonMsg');
@@ -767,11 +885,17 @@
       msg.textContent = 'Please enter a title and body.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
+    // Strip empty word-image rows (no word AND no image) — those are
+    // half-filled drafts that don't need to make it to the DB.
+    const cleanedWordImages = lessonWordImages.filter(
+      wi => (wi.word && wi.word.trim()) && wi.data_url
+    );
     const payload = {
       title, body,
       animal_set: $('lessonAnimalSet').value,
       gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
       images: lessonImages,
+      word_images: cleanedWordImages,
     };
     try {
       if (editingLessonId) {
