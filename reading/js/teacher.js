@@ -1230,19 +1230,25 @@
       word_images: cleanedWordImages,
     };
     try {
+      // Stash the lesson id BEFORE resetting state below — we use it
+      // to pop the preview tab after save.
+      let savedLessonId = null;
       if (editingLessonId) {
         // PATCH only the editable fields — never overwrite created_by,
         // class_id, created_at (those are immutable identity).
         await window.WCDB.lessons.update(editingLessonId, payload);
-        msg.textContent = 'Lesson updated.';
+        savedLessonId = editingLessonId;
+        msg.textContent = 'Lesson updated. Opening preview…';
       } else {
-        await window.WCDB.lessons.create({
+        const created = await window.WCDB.lessons.create({
           ...payload,
           class_id:   currentClass.id,
           created_by: me.id,
         });
+        savedLessonId = created && created.id;
         msg.textContent = 'Lesson created.';
       }
+      const wasEditing = !!editingLessonId;
       // Reset form regardless of create/update.
       editingLessonId = null;
       $('lessonTitle').value = '';
@@ -1251,6 +1257,18 @@
       updateFormMode();
       msg.className = 'wc-alert ok'; msg.classList.remove('wc-hidden');
       await refreshAll();
+      // After saving an EDIT, open the preview in a fresh tab so the
+      // teacher can immediately see their changes in the student view
+      // (no auth swap, no data writes — preview mode handles that).
+      // New-lesson saves don't auto-preview — the teacher is usually
+      // ready to write the next one rather than immediately review.
+      if (wasEditing && savedLessonId) {
+        window.open(
+          './lesson.html?id=' + encodeURIComponent(savedLessonId) + '&preview=1',
+          '_blank',
+          'noopener'
+        );
+      }
     } catch (e) {
       msg.textContent = e.message || 'Could not save lesson.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden');
