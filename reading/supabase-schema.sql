@@ -97,6 +97,13 @@ alter table wc_lessons
 alter table wc_lessons
   add column if not exists word_images jsonb not null default '[]'::jsonb;
 
+-- When true, every markdown heading (#, ##, ###) in the body starts
+-- a fresh page (a page-break HR is injected before each heading
+-- except the very first piece of content). When false (default),
+-- headings appear inline within their natural paragraph flow.
+alter table wc_lessons
+  add column if not exists headings_start_new_page boolean not null default false;
+
 -- ---------- Word states (per-student word level) ----------
 -- level: -1 = 무시 (ignored), 0 = unseen, 1..5 = familiarity levels
 create table if not exists wc_word_states (

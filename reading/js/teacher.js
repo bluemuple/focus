@@ -335,30 +335,130 @@
     setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 2500);
   }
 
-  // Pull a unique list of sentences out of the lesson body. Handles
-  // BOTH plain-text and HTML bodies (HTML is reduced to its
-  // textContent before sentence-splitting).
-  function extractPrewarmSentences(body) {
-    let plain = body;
-    if (/<[a-z]/i.test(body || '')) {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = body;
-      plain = tmp.textContent || '';
+  // ----------------------------------------------------------------
+  //  AUDIO PREWARM — populate `wc_tts_cache` with every sentence's
+  //  Google TTS MP3. After this finishes, ▶ playback for the lesson
+  //  is instant — the edge function reads from the DB cache instead
+  //  of paying for a Google TTS round-trip per sentence.
+  //
+  //  Concurrency is lower (2 in-flight) than the GPT prewarm because
+  //  Google TTS has tighter rate limits on per-second character spend.
+  // ----------------------------------------------------------------
+  async function prewarmAudio(lessonId, btn) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const origLabel = btn.textContent;
+
+    const sentences = extractPrewarmSentences(L.body || '');
+    if (!sentences.length) {
+      btn.textContent = '∅ Empty';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
     }
-    // Strip image markers — they break sentence detection and aren't
-    // useful targets for prewarm.
-    plain = plain.replace(/\[\[IMG:\d+\]\]/g, ' ');
+
+    let done = 0;
+    const updateLabel = () => { btn.textContent = `🎵 ${done}/${sentences.length}`; };
+    updateLabel();
+
+    const URL  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const ANON = window.WC_SUPABASE.anon;
+    const headers = {
+      'Content-Type': 'application/json',
+      apikey: ANON,
+      Authorization: 'Bearer ' + ANON,
+    };
+
+    await runInBatches(sentences, 2, async (sentence) => {
+      try {
+        await fetch(URL + '/functions/v1/wc-tts-google', {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            text:  sentence,
+            voice: 'en-AU-Neural2-A',
+            rate:  1.0,
+          }),
+        });
+      } catch {}
+      done++; updateLabel();
+    });
+
+    btn.textContent = '✓ Audio ready';
+    setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 2500);
+  }
+
+  // Pull a unique list of sentences out of the lesson body. Mirrors
+  // what `tokeniseBody` does on the lesson page so the wc_tts_cache
+  // entries we create here actually match the text playAllFromCurrent
+  // will later send to wc-tts-google. Three input shapes handled:
+  //   1. Markdown body — strip the toolbar markers (# / ** / __ /
+  //      {color:…} / ---) so the underlying prose remains.
+  //   2. HTML body — walk text nodes separately (not textContent of
+  //      the wrapper), which keeps adjacent `<p>` siblings from
+  //      being fused into a single fake sentence.
+  //   3. Plain text — use the body as-is.
+  // Image markers are stripped in all paths. Both terminated
+  // sentences AND no-terminator tails are emitted (the lesson
+  // renderer treats both as sentences).
+  function extractPrewarmSentences(body) {
+    let raw = body || '';
+
+    const hasMarkdownMarker =
+      /^#{1,3}\s/m.test(raw)
+      || /\*\*[\s\S]+?\*\*/.test(raw)
+      || /__[\s\S]+?__/.test(raw)
+      || /\{color:[^}]+\}[\s\S]+?\{\/color\}/.test(raw)
+      || /^---+\s*$/m.test(raw);
+
+    let lines = [];
+    if (hasMarkdownMarker) {
+      // Strip markdown markers and keep the prose.
+      raw = raw
+        .replace(/^#{1,3}\s+/gm, '')
+        .replace(/\*\*([\s\S]+?)\*\*/g, '$1')
+        .replace(/__([\s\S]+?)__/g, '$1')
+        .replace(/\{color:[^}]+\}([\s\S]+?)\{\/color\}/g, '$1')
+        .replace(/^---+\s*$/gm, '');
+      lines = raw.split(/\n+/);
+    } else if (/<[a-z]/i.test(raw)) {
+      // HTML — walk each text node so paragraph boundaries are kept.
+      const tmp = document.createElement('div');
+      tmp.innerHTML = raw;
+      const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT);
+      let n;
+      while ((n = walker.nextNode())) {
+        const t = n.textContent;
+        if (t && t.trim()) lines.push(t);
+      }
+    } else {
+      lines = raw.split(/\n+/);
+    }
+
     const sentRe = /[^.!?]+[.!?]+["'’)\]]*/g;
     const seen = new Set();
     const out  = [];
-    let m;
-    while ((m = sentRe.exec(plain)) !== null) {
-      const s = m[0].trim();
-      if (s.length < 4) continue;
-      const key = s.toLowerCase().replace(/\s+/g, ' ');
-      if (seen.has(key)) continue;
+    const remember = (s) => {
+      const trimmed = (s || '').replace(/\[\[IMG:\d+\]\]/g, ' ').trim();
+      if (trimmed.length < 4) return;
+      const key = trimmed.toLowerCase().replace(/\s+/g, ' ');
+      if (seen.has(key)) return;
       seen.add(key);
-      out.push(s);
+      out.push(trimmed);
+    };
+
+    for (const line of lines) {
+      const text = line.replace(/\[\[IMG:\d+\]\]/g, ' ');
+      if (!text.trim()) continue;
+      sentRe.lastIndex = 0;
+      let m, lastEnd = 0;
+      while ((m = sentRe.exec(text)) !== null) {
+        remember(m[0]);
+        lastEnd = m.index + m[0].length;
+      }
+      // No-terminator tail (e.g. titles, last fragment) becomes a
+      // "sentence" too — the renderer does the same.
+      if (lastEnd < text.length) remember(text.slice(lastEnd));
     }
     return out;
   }
@@ -661,7 +761,8 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
           <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
-          <button class="wc-btn ghost" data-prewarm="${L.id}" title="Pre-fetch GPT data so the first student to read this lesson doesn't wait">🔥 Prewarm</button>
+          <button class="wc-btn ghost" data-prewarm="${L.id}" title="Pre-fetch chunk + word-info data so the first student doesn't wait">🔥 Prewarm</button>
+          <button class="wc-btn ghost" data-prewarmaudio="${L.id}" title="Generate + cache TTS audio for every sentence — Google's API won't be called again for this lesson">🎵 Audio</button>
           <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}">🗑 Delete</button>
         </div>
       `;
@@ -672,6 +773,9 @@
     });
     list.querySelectorAll('[data-prewarm]').forEach(b => {
       b.addEventListener('click', () => prewarmLesson(b.dataset.prewarm, b));
+    });
+    list.querySelectorAll('[data-prewarmaudio]').forEach(b => {
+      b.addEventListener('click', () => prewarmAudio(b.dataset.prewarmaudio, b));
     });
     list.querySelectorAll('[data-delete-row]').forEach(b => {
       b.addEventListener('click', async () => {
@@ -711,6 +815,7 @@
     $('lessonBody').value       = L.body  || '';
     $('lessonAnimalSet').value  = L.animal_set || 'animals';
     $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
+    $('lessonHeadingsNewPage').checked = !!L.headings_start_new_page;
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
     lessonWordImages = Array.isArray(L.word_images)
@@ -730,6 +835,7 @@
     $('lessonBody').value = '';
     $('lessonAnimalSet').value = 'animals';
     $('lessonGiftLimit').value = 3;
+    $('lessonHeadingsNewPage').checked = false;
     resetImages();
     updateFormMode();
     // Return the form card to its default collapsed state.
@@ -1275,6 +1381,7 @@
       gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
       images: lessonImages,
       word_images: cleanedWordImages,
+      headings_start_new_page: !!$('lessonHeadingsNewPage').checked,
     };
     try {
       // Stash the lesson id BEFORE resetting state below — we use it
@@ -1300,6 +1407,7 @@
       editingLessonId = null;
       $('lessonTitle').value = '';
       $('lessonBody').value = '';
+      $('lessonHeadingsNewPage').checked = false;
       resetImages();
       updateFormMode();
       // Collapse the form card back to its default closed state so

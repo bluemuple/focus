@@ -329,6 +329,33 @@
     return /<(p|h[1-6]|div|br|hr|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
   }
 
+  // Inject `<hr class="wc-page-break">` BEFORE every <h1>/<h2>/<h3>
+  // except the first piece of content in the body. Used when the
+  // lesson's `headings_start_new_page` flag is on so each heading
+  // anchors the top of a fresh page.
+  function applyHeadingPageBreaks(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const out = [];
+    let hasContentBefore = false;
+    Array.from(tmp.childNodes).forEach(node => {
+      const isHeading = node.nodeType === Node.ELEMENT_NODE
+        && /^H[123]$/.test(node.tagName);
+      const isMeaningful = node.nodeType === Node.ELEMENT_NODE
+        || (node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+      if (isHeading && hasContentBefore) {
+        out.push('<hr class="wc-page-break" />');
+      }
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        out.push(node.outerHTML);
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        out.push(node.textContent);
+      }
+      if (isMeaningful) hasContentBefore = true;
+    });
+    return out.join('');
+  }
+
   // Detect lightweight markdown the toolbar emits: `# `/`## `/`### `
   // headings, `**bold**`, `__under__`, `{color:#xxx}…{/color}`, and
   // `---` page breaks. Plain prose without any of these markers
@@ -452,6 +479,13 @@
     // pagination + image marker handling.
     if (looksLikeMarkdown(body)) {
       body = markdownToHtml(body);
+    }
+    // If the lesson opts into "headings start new page", inject a
+    // page-break HR before every h1/h2/h3 that isn't the very first
+    // piece of content. The split-by-PAGE_BREAK_RE in the HTML path
+    // then turns each heading into the top of a fresh page.
+    if (isHtmlBody(body) && lesson && lesson.headings_start_new_page) {
+      body = applyHeadingPageBreaks(body);
     }
     if (isHtmlBody(body)) {
       // HTML path. Two splitting strategies:
@@ -896,24 +930,34 @@
       detail: { word: original, lower, sentence: sentText },
     }));
 
-    // Chunk highlight — fetch async then paint, but bail if focus moved.
+    // Chunk highlight + chunk TTS — fire async, bail if focus moved.
     const seenSent = focusedSentIdx, seenWord = focusedWordIdx;
     window.WCChunks.fetch(sentText).then(chunks => {
       if (focusedSentIdx !== seenSent || focusedWordIdx !== seenWord) return;
       const chunk = window.WCChunks.findChunkAt(chunks, focusedWordIdx);
-      if (!chunk) return;
-      paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
-      // Chunk TTS — read the whole chunk once when the focused word
-      // moves INTO a chunk that we haven't played yet. Skipped when
-      // muted (the default) and in preview mode.
-      const chunkKey = `${seenSent}::${chunk.indices[0]}-${chunk.indices[1]}`;
-      if (!chunkMuted && !isPreview && chunkKey !== lastPlayedChunkKey) {
-        lastPlayedChunkKey = chunkKey;
-        if (window.WCTTS && chunk.text) {
-          window.WCTTS.speak(chunk.text).catch(() => {});
-        }
+      // Paint the chunk underline if we found one.
+      if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
+
+      // Chunk-tap TTS. When "Play chunk" is on (chunk-muted = false),
+      // read the chunk aloud once. If chunks aren't available (network
+      // blip / GPT failure / very short sentence), fall back to reading
+      // the whole sentence — the teacher's intent was "play the audio
+      // for what I tapped", and silence isn't useful.
+      if (chunkMuted || isPreview) return;
+      const speakText = (chunk && chunk.text) ? chunk.text : sentText;
+      if (!speakText) return;
+      const speakKey  = chunk
+        ? `${seenSent}::${chunk.indices[0]}-${chunk.indices[1]}`
+        : `${seenSent}::sent`;
+      if (speakKey === lastPlayedChunkKey) return;   // don't re-play same unit
+      lastPlayedChunkKey = speakKey;
+      if (window.WCTTS) {
+        // Stop any in-flight playback so rapid clicks don't pile up.
+        try { window.WCTTS.stop(); } catch {}
+        window.WCTTS.speak(speakText).catch(e =>
+          console.warn('[chunk-tts] failed', e && e.message));
       }
-    }).catch(()=>{});
+    }).catch(e => console.warn('[chunk-tts] chunks fetch failed', e && e.message));
   }
 
   // Walk children in order and tag every .w span (word OR glue) whose
@@ -1174,9 +1218,12 @@
     setPlayUiState(true);
 
     const flat = sentenceList();
-    // Start sentence — focused word's sentence > single-mode index > page start.
-    let i = (focusedSentIdx != null) ? focusedSentIdx
-          : (singleMode ? singleIdx : globalStartOfPage(pageIdx));
+    // Always start from the top of the current page (in single mode,
+    // the visible sentence). The previously-focused word doesn't
+    // anchor playback any more — pressing ▶ on a page reads that
+    // whole page from the beginning, matching the teacher's mental
+    // model of "play this page's audio".
+    let i = singleMode ? singleIdx : globalStartOfPage(pageIdx);
 
     for (; i < flat.length; i++) {
       if (ttsAbort) break;

@@ -48,18 +48,26 @@
   async function speak(text, opts) {
     // Sanitise the input so the synthesiser never tries to "say" any
     // of the structural / placeholder markup that leaks through from
-    // the body text. Without this, the TTS reads things like
-    // "double bracket I M G zero double bracket" out loud after every
-    // floating image.
+    // the body text. Two concerns:
+    //   1. Markers / tags that aren't real speech (e.g. [[IMG:0]],
+    //      <span>) get stripped entirely.
+    //   2. Brackets/parens are removed so the Web Speech fallback
+    //      doesn't announce them ("opening parenthesis"). Google TTS
+    //      handles them gracefully, but Web Speech APIs on macOS /
+    //      Windows literally read out the punctuation name.
     text = String(text || '')
-      // Image markers: [[IMG:0]], [[IMG:12]], any [[KEY:value]] form.
+      // Image / generic markers: [[IMG:0]], [[IMG:12]], [[KEY:value]].
       .replace(/\[\[[^\]]+\]\]/g, ' ')
       // Stray HTML tags (defensive — sentence text shouldn't have any
       // by the time it reaches TTS, but page-break HRs / leftover
       // markdown→HTML fragments occasionally sneak in).
       .replace(/<[^>]+>/g, ' ')
-      // Markdown page-break (---) and consecutive whitespace collapse.
+      // Markdown page-break (---) on its own line.
       .replace(/^---+\s*$/gm, ' ')
+      // Square brackets / round parens / curly braces — Web Speech
+      // pronounces these aloud. Strip them, keeping the text inside.
+      .replace(/[\[\](){}]/g, ' ')
+      // Collapse all whitespace runs.
       .replace(/\s+/g, ' ')
       .trim();
     if (!text) return;
@@ -99,10 +107,21 @@
       }
       const j = await r.json();
       if (!j.audio_base64) throw new Error('no audio');
-      const url = base64ToBlobUrl(j.audio_base64, 'audio/mp3');
+      let url;
+      try {
+        url = base64ToBlobUrl(j.audio_base64, 'audio/mp3');
+      } catch (blobErr) {
+        throw new Error('blob: ' + (blobErr.message || blobErr));
+      }
       memCache.set(key, url);
-      return playUrl(url);
+      try {
+        return await playUrl(url);
+      } catch (playErr) {
+        throw new Error('play: ' + (playErr.message || playErr));
+      }
     } catch (err) {
+      // Tag the failure stage so we can tell apart fetch / blob / play
+      // problems at a glance in the console.
       console.warn('[TTS] edge fn failed, falling back to Web Speech:', err.message || err);
       return webSpeechSpeak(text, rate);
     }
