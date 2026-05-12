@@ -149,6 +149,12 @@
       if (!r.ok) throw new Error('WCDB upsert wordStates ' + r.status);
       return (await r.json())[0];
     },
+    // Delete every word-state row for a student — used by the teacher
+    // "Reset colors" action. After this, the student opens any lesson
+    // and every word is back to its untouched (sky-blue) state.
+    async deleteAllForUser(userId) {
+      return rDelete('/wc_word_states?user_id=eq.' + encodeURIComponent(userId));
+    },
   };
 
   // ---------- pets ----------

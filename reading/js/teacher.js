@@ -201,9 +201,37 @@
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-impersonate="${s.id}" title="See this student's lesson view">👁 View as</button>
           <button class="wc-btn ghost" data-regen="${s.id}">New code</button>
+          <button class="wc-btn ghost" data-reset-colors="${s.id}"
+                  title="Clear every word-color mark this student has made">
+            🧹 Reset colors
+          </button>
         </div>
       `;
       list.appendChild(row);
+    });
+    // Wipe a student's word-state table. We confirm before deleting
+    // because there's no per-row undo — once the rows are gone, the
+    // student's level marks are lost. The button is disabled mid-
+    // request so a double-click doesn't fire twice.
+    list.querySelectorAll('[data-reset-colors]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.resetColors;
+        const s  = students.find(st => st.id === id);
+        const name = s ? s.real_name : 'this student';
+        if (!confirm(`Reset all word colors for ${name}?\n\nEvery word they've marked will be cleared and they'll start fresh.`)) return;
+        const oldLabel = b.textContent;
+        b.disabled = true;
+        b.textContent = 'Resetting…';
+        try {
+          await window.WCDB.wordStates.deleteAllForUser(id);
+          b.textContent = '✓ Reset';
+          setTimeout(() => { b.textContent = oldLabel; b.disabled = false; }, 1500);
+        } catch (e) {
+          alert('Could not reset: ' + (e.message || e));
+          b.disabled = false;
+          b.textContent = oldLabel;
+        }
+      });
     });
     list.querySelectorAll('[data-regen]').forEach(b => {
       b.addEventListener('click', async () => {
