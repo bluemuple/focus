@@ -483,17 +483,30 @@
 
   // ---------- toolbar / bottom-bar wiring ----------
   function wireToolbar() {
-    // ▶ Play / pause TTS on the current page or sentence.
+    // ▶ Play / pause TTS — icon flips between ▶ and ⏸ to mirror state,
+    // and `.playing` toggles the green-filled style.
     let isPlaying = false;
-    $('btnPlay').addEventListener('click', async () => {
-      if (isPlaying) { window.WCTTS.stop(); isPlaying = false; $('btnPlay').classList.remove('playing'); return; }
+    const playBtn = $('btnPlay');
+    const setPlayUi = (playing) => {
+      playBtn.textContent = playing ? '⏸' : '▶';
+      playBtn.classList.toggle('playing', playing);
+      playBtn.setAttribute('aria-label', playing ? '일시정지' : '재생');
+    };
+    setPlayUi(false);
+    playBtn.addEventListener('click', async () => {
+      if (isPlaying) {
+        window.WCTTS.stop();
+        isPlaying = false;
+        setPlayUi(false);
+        return;
+      }
       isPlaying = true;
-      $('btnPlay').classList.add('playing');
+      setPlayUi(true);
       const text = singleMode ? currentSentenceText() : currentPageText();
       try { await window.WCTTS.speak(text); }
       catch (e) { console.warn('TTS error', e); }
       isPlaying = false;
-      $('btnPlay').classList.remove('playing');
+      setPlayUi(false);
     });
 
     // 1문장씩 chip in the header → enter focused-reading. When the

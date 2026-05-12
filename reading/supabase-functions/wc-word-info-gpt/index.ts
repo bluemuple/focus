@@ -98,10 +98,11 @@ Deno.serve(async (req) => {
     const sentence = String(body?.sentence || "").trim();
     if (!word) return json({ error: "word required" }, 400);
 
-    // Cache key: lowercased word + short hash of the sentence context.
-    // Different sentences for the same word (e.g. "bear" the animal vs
-    // "bear" the verb) cache separately so the sense matches.
-    const ck = word.toLowerCase() + ":" + (sentence ? await senseHash(sentence) : "_");
+    // Cache key: lowercased word + sentence hash + SCHEMA VERSION.
+    // The `v2:` prefix invalidates pre-UFLI entries that stored IPA
+    // in the (now-renamed) `ipa` field. Bumping the version forces a
+    // fresh GPT call so the sidebar gets UFLI Foundations notation.
+    const ck = "v2:" + word.toLowerCase() + ":" + (sentence ? await senseHash(sentence) : "_");
     const cached = await readCache(ck);
     if (cached) return json({ ...cached, cached: true });
 
@@ -116,8 +117,72 @@ Deno.serve(async (req) => {
       "Keys:",
       "- lemma (string): the dictionary form of the word (singular,",
       "  base verb, etc.). Input \"runs\" → lemma \"run\".",
-      "- ipa (string): IPA in slashes, e.g. \"/ˈkiː.wi/\". One pronunciation,",
-      "  the one most natural for NZ English.",
+      "",
+      "- pronunciation (string): UFLI Foundations notation, NOT IPA.",
+      "  Slashes around the whole thing; hyphens between syllables for",
+      "  multi-syllable words. The student will read this aloud to",
+      "  themselves — pick symbols a Year-3 phonics learner already knows.",
+      "",
+      "  UFLI symbol palette — use ONLY these between the slashes:",
+      "",
+      "  SHORT VOWELS",
+      "    /ă/ short a — cat, apple",
+      "    /ĕ/ short e — bed, echo",
+      "    /ĭ/ short i — sit, fix",
+      "    /ŏ/ short o — hot, chop",
+      "    /ŭ/ short u — cup, slug, son, love",
+      "  LONG VOWELS",
+      "    /ā/ long a — cake, nation, ai/ay/ea/eigh",
+      "    /ē/ long e — bee, feature, ea/ee/y/ie",
+      "    /ī/ long i — bike, vision, ie/igh",
+      "    /ō/ long o — go, though, oa/ow/oe/ough",
+      "    /ū/ long u (oo) — blue, school, ew/ui/ue/ou",
+      "    /yū/ long u with y — cute, music, ew/eu/ue",
+      "  DIPHTHONGS / SPECIAL",
+      "    /aw/ — bought, saw, augh, au, aw, ough",
+      "    /ow/ — cow, brown, ou",
+      "    /oi/ — boy, coin, oi, oy",
+      "    /ə/ schwa — about, station, sion, weak syllable",
+      "  R-CONTROLLED",
+      "    /ar/ — car, arch, far",
+      "    /er/ — her, picture, sailor, ir/ur/or/ar weak",
+      "    /or/ — for, chord, or",
+      "    /air/ — air, care, bear, are, ear (= /air/)",
+      "    /ear/ — ear, hear, near, deer, here",
+      "  CONSONANTS (single)",
+      "    /b/ /p/ /d/ /t/ /g/ /k/ /m/ /n/ /f/ /v/ /s/ /z/ /h/ /l/ /r/",
+      "    /w/ /y/ /j/ (jet, gem, judge)",
+      "  CONSONANT DIGRAPHS / CLUSTERS",
+      "    /ng/ sing, ring",
+      "    /nk/ think, sink",
+      "    /sh/ ship, chef, tion, sion",
+      "    /zh/ vision, measure",
+      "    /th/ thin, this (both voiced & voiceless use /th/)",
+      "    /ch/ chip, watch, picture",
+      "",
+      "  Concatenate symbols inside ONE pair of slashes. Hyphenate",
+      "  syllables for ≥ 2-syllable words. Examples (NZ English):",
+      "    kiwi      → /kē-wē/",
+      "    optimise  → /ŏp-tə-mīz/",
+      "    children  → /chĭl-drən/",
+      "    pressure  → /prĕsh-ər/",
+      "    nation    → /nā-shən/",
+      "    bear      → /bair/",
+      "    daughter  → /daw-tər/",
+      "    school    → /skūl/",
+      "    cute      → /kyūt/",
+      "    measure   → /mĕzh-ər/",
+      "    teacher   → /tē-chər/",
+      "    bird      → /bĕrd/",
+      "    sky       → /skī/",
+      "",
+      "  Use NEW ZEALAND English. NZ is non-rhotic-ish in colloquial",
+      "  speech but for phonics teaching we still write the /r/ in",
+      "  R-controlled vowels (car → /kar/, bird → /bĕrd/) — that's",
+      "  how the symbol is taught regardless of accent strength.",
+      "  Use NZ short-a /ă/ where US would: dance → /dăns/, last → /lăst/.",
+      "  Do NOT use IPA symbols (ˈ kiː ə ʃ ɔː etc.) — UFLI ONLY.",
+      "",
       "- definition (string): ONE sentence, ≤ 15 words, that a 7-year-old",
       "  could read aloud. The MEANING MUST MATCH HOW THE WORD IS USED IN",
       "  THE GIVEN SENTENCE (sense disambiguation), not the most frequent",
@@ -170,11 +235,12 @@ Deno.serve(async (req) => {
     }
 
     // Defensive defaults so the client renderer never blows up.
-    parsed.lemma        = String(parsed.lemma || word);
-    parsed.ipa          = String(parsed.ipa || "");
-    parsed.definition   = String(parsed.definition || "");
-    parsed.collocations = Array.isArray(parsed.collocations) ? parsed.collocations.slice(0, 4) : [];
-    parsed.examples     = Array.isArray(parsed.examples)     ? parsed.examples.slice(0, 3)     : [];
+    parsed.lemma         = String(parsed.lemma || word);
+    parsed.pronunciation = String(parsed.pronunciation || parsed.ipa || "");
+    parsed.definition    = String(parsed.definition || "");
+    parsed.collocations  = Array.isArray(parsed.collocations) ? parsed.collocations.slice(0, 4) : [];
+    parsed.examples      = Array.isArray(parsed.examples)     ? parsed.examples.slice(0, 3)     : [];
+    delete parsed.ipa;   // legacy key, replaced by `pronunciation`
 
     writeCache(ck, parsed);
     return json(parsed);

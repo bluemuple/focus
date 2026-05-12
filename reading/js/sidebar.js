@@ -99,12 +99,15 @@
     const currentLevel = lessonRef.wordLevels.has(w.lower)
       ? lessonRef.wordLevels.get(w.lower) : null;
 
+    // `pronunciation` is the new UFLI Foundations field; fall back to
+    // legacy `ipa` if an older cache row from the v1 schema returns.
+    const pron = info?.pronunciation || info?.ipa || '';
     wrap.innerHTML = `
       <div class="wc-word-card">
         <div class="wc-word-head">
           <div class="wc-word-text">
             <h2>${escapeHtml(info?.lemma || w.word || '')}</h2>
-            ${info?.ipa ? `<div class="wc-word-ipa">${escapeHtml(info.ipa)}</div>` : ''}
+            ${pron ? `<div class="wc-word-ipa">${escapeHtml(pron)}</div>` : ''}
           </div>
           <button class="wc-word-tts" id="wcWordTts" title="Hear it">🔊</button>
         </div>
