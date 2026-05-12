@@ -25,7 +25,29 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const me = window.WCAuth.requireStudent('./index.html');
+
+  // ?preview=1 → opened from the teacher dashboard's Preview link.
+  // The lesson renders read-only: no auth check, no per-student data,
+  // no DB writes anywhere in the page. Word levels live only in
+  // memory for the duration of the preview tab.
+  const params    = new URLSearchParams(location.search);
+  const isPreview = params.get('preview') === '1';
+
+  const me = isPreview
+    ? {
+        // Synthetic "preview" user. Not a real wc_users row — this
+        // object never reaches the DB. The id starts with `__` so
+        // any accidental query that does hit Postgres returns no
+        // rows instead of touching a real student.
+        id:              '__preview__',
+        real_name:       'Preview',
+        role:            'preview',
+        money:           0,
+        encounter_level: 1,
+        class_id:        null,
+        login_code:      null,
+      }
+    : window.WCAuth.requireStudent('./index.html');
   if (!me) return;
 
   const lessonId = new URLSearchParams(location.search).get('id');
@@ -59,6 +81,7 @@
   // Expose state to sidebar.js etc. — read-only contract.
   window.WCLesson = {
     me,
+    isPreview,
     get lesson() { return lesson; },
     get wordLevels() { return wordLevels; },
     get classFlags() { return classFlags; },
@@ -69,12 +92,15 @@
       if (next === prev) return;
       wordLevels.set(lower, next);
       // Recolour every visible occurrence of this word. Iterate all .w
-      // spans and match by dataset.word — avoids needing a CSS escape
-      // pass for apostrophes / hyphens / Unicode in the selector.
+      // spans and match by dataset.word.
       document.querySelectorAll('.w').forEach(el => {
         if (el.dataset.word === lower) applyLevelClass(el, next);
       });
-      try { await window.WCDB.wordStates.upsert(me.id, lower, next); } catch (e) {}
+      // Persist only when we have a real user — preview mode keeps
+      // word states purely in memory for the tab's lifetime.
+      if (!isPreview) {
+        try { await window.WCDB.wordStates.upsert(me.id, lower, next); } catch (e) {}
+      }
       if (next > (prev ?? -2) && next !== -1) {
         window.dispatchEvent(new CustomEvent('wc:level-up', {
           detail: { word: lower, prev, next, lessonId },
@@ -97,10 +123,13 @@
   (async function init() {
     // Refresh the cached session row from the server so encounter_level /
     // money are current — they can have changed in another tab.
-    try {
-      const fresh = await window.WCDB.users.byLoginCode(me.login_code);
-      if (fresh) Object.assign(me, fresh);
-    } catch {}
+    // Skip in preview mode (the synthetic user has no DB row to refresh).
+    if (!isPreview) {
+      try {
+        const fresh = await window.WCDB.users.byLoginCode(me.login_code);
+        if (fresh) Object.assign(me, fresh);
+      } catch {}
+    }
 
     try {
       lesson = await window.WCDB.lessons.byId(lessonId);

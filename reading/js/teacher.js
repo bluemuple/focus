@@ -498,7 +498,7 @@
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
-          <a href="./lesson.html?id=${encodeURIComponent(L.id)}" class="wc-btn ghost">Preview</a>
+          <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
         </div>
       `;
       list.appendChild(row);
