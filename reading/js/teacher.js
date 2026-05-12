@@ -162,7 +162,10 @@
             · seen ${seen}
           </div>
         </div>
-        <button class="wc-btn ghost" data-regen="${s.id}">New code</button>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="wc-btn ghost" data-impersonate="${s.id}" title="See this student's lesson view">👁 View as</button>
+          <button class="wc-btn ghost" data-regen="${s.id}">New code</button>
+        </div>
       `;
       list.appendChild(row);
     });
@@ -172,6 +175,22 @@
         const code = generateCode(existing);
         await window.WCDB.users.update(b.dataset.regen, { login_code: code });
         await refreshAll();
+      });
+    });
+    // "View as" — teacher takes the student's seat without logging
+    // out. The current teacher session is stashed; a yellow banner
+    // appears site-wide with "↩ Switch back to teacher".
+    list.querySelectorAll('[data-impersonate]').forEach(b => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.impersonate;
+        const student = students.find(s => s.id === id);
+        if (!student) return;
+        if (!student.login_code) {
+          alert('This student has no login code yet — give them one first.');
+          return;
+        }
+        window.WCAuth.impersonate(student);
+        location.href = './home.html';
       });
     });
   }

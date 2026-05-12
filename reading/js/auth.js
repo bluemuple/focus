@@ -24,7 +24,8 @@
 // =============================================================
 
 (() => {
-  const KEY = 'wc.session.v1';
+  const KEY          = 'wc.session.v1';
+  const ORIGINAL_KEY = 'wc.session.original.v1';   // teacher's session, saved while impersonating
 
   function session() {
     try {
@@ -37,6 +38,48 @@
       if (u) localStorage.setItem(KEY, JSON.stringify(u));
       else localStorage.removeItem(KEY);
     } catch {}
+  }
+
+  // ----------------------------------------------------------------
+  //  Teacher impersonation — "Preview as a student"
+  //
+  //  When a teacher hits "View as student" in the dashboard we
+  //  STASH their session under ORIGINAL_KEY and swap KEY to the
+  //  student's row. From the student-facing pages' perspective
+  //  nothing changes — they read the same `wc.session.v1` and run
+  //  as the impersonated user. A small banner (injected here on
+  //  every page load) makes the mode obvious and gives a one-tap
+  //  return to the teacher dashboard.
+  //
+  //  Re-impersonating (teacher → student A → student B) keeps the
+  //  original teacher row intact, so "Switch back" still works.
+  // ----------------------------------------------------------------
+  function isImpersonating() {
+    try { return !!localStorage.getItem(ORIGINAL_KEY); } catch { return false; }
+  }
+  function originalSession() {
+    try {
+      const raw = localStorage.getItem(ORIGINAL_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  }
+  function impersonate(student) {
+    if (!student) return;
+    if (!isImpersonating()) {
+      // First impersonation: save the current (teacher) session.
+      const cur = session();
+      if (cur) {
+        try { localStorage.setItem(ORIGINAL_KEY, JSON.stringify(cur)); } catch {}
+      }
+    }
+    setSession(student);
+  }
+  function unimpersonate() {
+    const orig = originalSession();
+    if (!orig) return null;
+    setSession(orig);
+    try { localStorage.removeItem(ORIGINAL_KEY); } catch {}
+    return orig;
   }
 
   async function login(name, code) {
@@ -56,7 +99,13 @@
     return user;
   }
 
-  function logout() { setSession(null); }
+  function logout() {
+    // Full sign-out wipes BOTH the active session and any stashed
+    // teacher session. Use unimpersonate() instead if the goal is
+    // to return to teacher mode.
+    setSession(null);
+    try { localStorage.removeItem(ORIGINAL_KEY); } catch {}
+  }
 
   function requireStudent(redirect) {
     const u = session();
@@ -75,5 +124,79 @@
     return u;
   }
 
-  window.WCAuth = { session, login, logout, requireStudent, requireTeacher };
+  // ----------------------------------------------------------------
+  //  Impersonation banner — auto-injected on every page load.
+  //  Yellow strip pinned to the top of the viewport. Disappears when
+  //  the user clicks "Switch back to teacher".
+  // ----------------------------------------------------------------
+  function injectImpersonationBanner() {
+    if (!isImpersonating()) return;
+    if (document.getElementById('wcImpersonationBanner')) return;
+    const cur  = session();
+    const orig = originalSession();
+    if (!cur || !orig) return;
+
+    const banner = document.createElement('div');
+    banner.id = 'wcImpersonationBanner';
+    banner.innerHTML = `
+      <span class="wc-imp-msg">
+        👁 Previewing as <strong>${escapeText(cur.real_name)}</strong>
+        <span class="wc-imp-sep">·</span>
+        signed in as <strong>${escapeText(orig.real_name)}</strong>
+      </span>
+      <button id="wcUnimpersonateBtn" class="wc-imp-btn">↩ Switch back to teacher</button>
+    `;
+    Object.assign(banner.style, {
+      position:    'fixed',
+      top:         '0', left: '0', right: '0',
+      zIndex:      '9999',
+      display:     'flex',
+      justifyContent: 'center', alignItems: 'center',
+      gap:         '14px',
+      padding:     '8px 14px',
+      background:  '#fff4c2',
+      borderBottom:'1px solid #e6c84b',
+      color:       '#5a4a1a',
+      fontSize:    '14px',
+      fontFamily:  'inherit',
+      boxShadow:   '0 1px 4px rgba(0,0,0,.06)',
+      flexWrap:    'wrap',
+    });
+    document.body.appendChild(banner);
+
+    // Push the rest of the page down by the banner's height — works
+    // for any page layout (fixed-header pages set body padding-top).
+    const h = banner.offsetHeight;
+    document.body.style.paddingTop = (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + h + 'px';
+
+    const btn = document.getElementById('wcUnimpersonateBtn');
+    Object.assign(btn.style, {
+      appearance: 'none', cursor: 'pointer',
+      background: '#5a4a1a', color: '#fff',
+      border: 'none', borderRadius: '999px',
+      padding: '6px 14px',
+      font: 'inherit', fontWeight: '700', fontSize: '13px',
+    });
+    btn.addEventListener('click', () => {
+      unimpersonate();
+      location.href = './teacher.html';
+    });
+  }
+
+  function escapeText(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+  }
+
+  // Auto-inject the banner on every page (no-op when not impersonating).
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectImpersonationBanner);
+  } else {
+    injectImpersonationBanner();
+  }
+
+  window.WCAuth = {
+    session, login, logout, requireStudent, requireTeacher,
+    impersonate, unimpersonate, isImpersonating, originalSession,
+  };
 })();
