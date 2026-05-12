@@ -324,14 +324,56 @@
     return /<(p|h[1-6]|div|br|hr|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
   }
 
+  // HTML auto-pagination — when the teacher hasn't placed any
+  // <hr class="wc-page-break"> markers, walk the body's top-level
+  // children and accumulate them into segments until the running
+  // sentence count crosses `maxSentences`. Each segment becomes one
+  // page in the lesson renderer.
+  function autoSplitHtmlByCount(html, maxSentences) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const segs = [];
+    let curHtml = '';
+    let sentCount = 0;
+    Array.from(tmp.childNodes).forEach(node => {
+      let nodeHtml = '';
+      let nodeText = '';
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        nodeHtml = node.outerHTML;
+        nodeText = node.textContent || '';
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        // Wrap free-floating text in a span so re-rendering keeps it.
+        const t = node.textContent || '';
+        if (!t.trim()) return;
+        nodeHtml = t;
+        nodeText = t;
+      } else {
+        return;
+      }
+      const nodeSentCount = (nodeText.match(/[.!?]+/g) || []).length || 1;
+      curHtml += nodeHtml;
+      sentCount += nodeSentCount;
+      if (sentCount >= maxSentences) {
+        segs.push(curHtml);
+        curHtml = '';
+        sentCount = 0;
+      }
+    });
+    if (curHtml) segs.push(curHtml);
+    return segs.length ? segs : [html];
+  }
+
   function tokeniseBody(body) {
     if (isHtmlBody(body)) {
-      // HTML path. Teacher-inserted <hr class="wc-page-break"> markers
-      // split the body into pages — each segment becomes one page,
-      // ignoring font size / sentence count. Each page also gets its
-      // own pre-extracted sentence list for 1문장씩 nav + TTS playback.
+      // HTML path. Two splitting strategies:
+      //   1. If the teacher inserted <hr class="wc-page-break"> markers,
+      //      use those — each segment becomes one page.
+      //   2. Otherwise auto-split by sentence count so a long-paragraph
+      //      lesson doesn't collapse into a single buried page.
       const PAGE_BREAK_RE = /<hr\b[^>]*class=["'][^"']*wc-page-break[^"']*["'][^>]*\/?>/gi;
-      const segments = body.split(PAGE_BREAK_RE);
+      const segments = PAGE_BREAK_RE.test(body)
+        ? body.split(PAGE_BREAK_RE)
+        : autoSplitHtmlByCount(body, 6);
       return segments.map(segHtml => {
         const tmp = document.createElement('div');
         tmp.innerHTML = segHtml;
@@ -384,7 +426,11 @@
   }
 
   function extractWordTokens(sentenceText) {
-    const wre = /[A-Za-z][A-Za-z'’\-]*[A-Za-z]|[A-Za-z]/g;
+    // \p{L} (Unicode letter) instead of [A-Za-z] so macrons used in
+    // Māori (ā ē ī ō ū / Ā Ē Ī Ō Ū) AND other accented Latin chars
+    // tokenise as part of the word, not as glue. "Kororā", "Mānawa",
+    // "Māori", "Pīwakawaka", "Wētā", "Takahē" now stay as one token.
+    const wre = /[\p{L}][\p{L}'’\-]*[\p{L}]|[\p{L}]/gu;
     const tokens = [];
     let last = 0;
     let m;
@@ -738,6 +784,12 @@
     if (!wordEl) return;
 
     wordEl.classList.add('focused');
+    // Keep the focused word visible — if it scrolled out of the body's
+    // viewport (long page, ↓ /→ stepping past the visible window),
+    // scroll the nearest scrollable ancestor just enough to bring it
+    // back into view. `block: 'nearest'` is a no-op when the word is
+    // already visible, so this never jiggles the page unnecessarily.
+    try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
 
     // Fire word-selected event → sidebar fetches info + renders.
     const lower    = wordEl.dataset.word;

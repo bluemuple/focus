@@ -70,7 +70,14 @@
         },
         body: JSON.stringify({ text, voice, rate }),
       });
-      if (!r.ok) throw new Error('wc-tts-google ' + r.status);
+      if (!r.ok) {
+        // Surface the server's actual error message so deploy mishaps
+        // (missing GOOGLE_CLOUD_API_KEY, voice unavailable, etc.) are
+        // diagnosable from the browser console without trawling
+        // Supabase logs.
+        const detail = await r.text().catch(() => '');
+        throw new Error('wc-tts-google ' + r.status + ' :: ' + detail.slice(0, 300));
+      }
       const j = await r.json();
       if (!j.audio_base64) throw new Error('no audio');
       const url = base64ToBlobUrl(j.audio_base64, 'audio/mp3');

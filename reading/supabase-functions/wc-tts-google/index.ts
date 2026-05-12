@@ -20,7 +20,9 @@
 //     1. Edge Functions → New function → name "wc-tts-google"
 //        (NOT "tts-google" — that name is taken by 뚜벅뚜벅!)
 //     2. Paste this whole file as the body
-//     3. Secret GOOGLE_CLOUD_API_KEY (Cloud TTS API enabled)
+//     3. Secret GOOGLE_TTS_KEY (already exists for 뚜벅뚜벅 — shared
+//        across both sites' TTS functions). Cloud TTS API must be
+//        enabled in the GCP project.
 //     4. SQL once:
 //        create table if not exists wc_tts_cache (
 //          cache_key text primary key,
@@ -101,8 +103,15 @@ Deno.serve(async (req) => {
     const cached = await readCache(ck);
     if (cached) return json({ audio_base64: cached, cached: true });
 
-    const apiKey = Deno.env.get("GOOGLE_CLOUD_API_KEY");
-    if (!apiKey) return json({ error: "GOOGLE_CLOUD_API_KEY not set" }, 500);
+    // The sibling 뚜벅뚜벅 site (whose tts-google function already
+    // lives in this Supabase project) stores its Google Cloud TTS key
+    // under the secret name `GOOGLE_TTS_KEY`. We reuse the same name
+    // so a single secret powers BOTH sites' TTS — no duplicate keys
+    // to maintain. Fall back to GOOGLE_CLOUD_API_KEY for fresh
+    // deployments that haven't migrated yet.
+    const apiKey = Deno.env.get("GOOGLE_TTS_KEY")
+                 || Deno.env.get("GOOGLE_CLOUD_API_KEY");
+    if (!apiKey) return json({ error: "GOOGLE_TTS_KEY not set" }, 500);
 
     // Derive languageCode from the voice name's prefix (en-NZ, en-AU,
     // en-US, ja-JP, …). Hard-coding "en-NZ" broke once we moved the
