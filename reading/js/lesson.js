@@ -450,6 +450,82 @@
     return out.join('\n');
   }
 
+  // Is this element a heading or a "fake heading" — a short, formatted
+  // paragraph the teacher uses as a section title? We accept:
+  //   - real <h1>/<h2>/<h3>/<h4>/<h5>/<h6>
+  //   - <p> that's short (≤ 80 chars), has NO sentence-final punctuation,
+  //     and wraps its content in <b>/<strong>/<u>/<em>/<i> (i.e. the
+  //     toolbar's "**bold**" / "__under__" output people use as titles)
+  function isTitleLike(el) {
+    if (!el || el.nodeType !== 1) return false;
+    if (/^H[1-6]$/.test(el.tagName)) return true;
+    if (el.tagName !== 'P') return false;
+    const text = (el.textContent || '').trim();
+    if (!text || text.length > 80) return false;
+    if (/[.!?]\s*$/.test(text)) return false;
+    return !!el.querySelector('b, strong, u, em, i');
+  }
+
+  // Wrap every heading (or fake heading) PLUS its following content
+  // block into one `<div class="wc-title-block">`. Subsequent
+  // pagination treats the wrapper as a single child — the heading
+  // can never end up alone on a page while its image + text live
+  // on the next.
+  //
+  // Multiple consecutive headings (## + ###) are grouped together
+  // and bound to whatever non-title follows them.
+  function bindTitlesToNextContent(html) {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const kids = Array.from(tmp.childNodes);
+    const out  = [];
+    const emit = (n) => out.push(n.nodeType === 1 ? n.outerHTML : n.textContent);
+    let i = 0;
+    while (i < kids.length) {
+      const node = kids[i];
+      // Whitespace-only text nodes — emit so round-tripped HTML keeps
+      // its line breaks (purely cosmetic; aids debugging).
+      if (node.nodeType === 3 && !node.textContent.trim()) {
+        out.push(node.textContent);
+        i++;
+        continue;
+      }
+      // Not a title? Emit as-is and move on.
+      if (node.nodeType !== 1 || !isTitleLike(node)) {
+        emit(node);
+        i++;
+        continue;
+      }
+      // Collect consecutive titles (possibly separated by whitespace
+      // text nodes).
+      const group = [];
+      while (i < kids.length) {
+        const n = kids[i];
+        if (n.nodeType === 3 && !n.textContent.trim()) { group.push(n); i++; continue; }
+        if (n.nodeType === 1 && isTitleLike(n))         { group.push(n); i++; continue; }
+        break;
+      }
+      // Greedily attach the very next content node (any kind — a <p>,
+      // an image-only paragraph, even a text node). If we hit end of
+      // document with no content to attach, leave the title(s)
+      // standalone (only happens if a lesson literally ends with a
+      // heading and nothing after).
+      let contentNode = null;
+      if (i < kids.length) {
+        contentNode = kids[i];
+        i++;
+      }
+      const inner = group.map(g =>
+        g.nodeType === 1 ? g.outerHTML : g.textContent
+      ).join('')
+      + (contentNode
+          ? (contentNode.nodeType === 1 ? contentNode.outerHTML : contentNode.textContent)
+          : '');
+      out.push(`<div class="wc-title-block">${inner}</div>`);
+    }
+    return out.join('');
+  }
+
   // HTML auto-pagination — when the teacher hasn't placed any
   // <hr class="wc-page-break"> markers, walk the body's top-level
   // children and accumulate them into segments until the running
@@ -510,6 +586,14 @@
     // then turns each heading into the top of a fresh page.
     if (isHtmlBody(body) && lesson && lesson.headings_start_new_page) {
       body = applyHeadingPageBreaks(body);
+    }
+    // Structurally glue every heading (or "fake heading" — a short
+    // bold/underlined paragraph the teacher uses as a chapter title)
+    // to the content that follows it. After this, downstream
+    // pagination cannot put a heading on one page and its image/text
+    // on the next — the wrapper is one top-level child either way.
+    if (isHtmlBody(body)) {
+      body = bindTitlesToNextContent(body);
     }
     if (isHtmlBody(body)) {
       // HTML path. Two splitting strategies:
