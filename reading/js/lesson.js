@@ -285,6 +285,18 @@
     setTimeout(() => bar.classList.remove('wc-counter-glow'), 450);
   }
 
+  // Centralised counter-mode switch. Called from BOTH bottom-bar
+  // arrow clicks AND ,/. keyboard shortcuts so text + glow always
+  // happen instantly together. Was previously a closure inside
+  // wireToolbar(), which made the keyboard path skip the immediate
+  // text refresh — the number only updated on the next slide render.
+  function setCounterMode(mode) {
+    if (counterMode === mode) return;
+    counterMode = mode;
+    refreshPageCounter();
+    flashCounter();
+  }
+
   // ---------- tokenisation ----------
   // Strip [[IMG:N]] markers BEFORE sentence tokenisation so they
   // don't get tangled in word/sentence boundaries. We remember each
@@ -697,6 +709,10 @@
     focusedSentIdx = sIdx;
     focusedWordIdx = wIdx;
     applyFocus();
+    // Sentence-mode counter shows the focused word's sentence index;
+    // refresh on every focus change so the number moves with the
+    // selection (was previously only refreshing on page slides).
+    if (counterMode === 'sentence') refreshPageCounter();
   }
 
   // Drop all visual selection state — focused word ring, chunk
@@ -783,8 +799,8 @@
       case 'ArrowUp':    e.preventDefault(); navChunk(-1); return;
       case 'ArrowDown':  e.preventDefault(); navChunk(+1); return;
       // ','  → previous page,  '.' → next page (또박또박 convention).
-      case ',':          e.preventDefault(); counterMode = 'page'; flashCounter(); goPage(pageIdx - 1); return;
-      case '.':          e.preventDefault(); counterMode = 'page'; flashCounter(); goPage(pageIdx + 1); return;
+      case ',':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx - 1); return;
+      case '.':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx + 1); return;
       // Spacebar → play / pause whole-lesson TTS reading. Most
       // natural for a reading app — same as a media player.
       case ' ':          e.preventDefault(); playAllFromCurrent();  return;
@@ -1015,13 +1031,9 @@
     // (‹‹ / ››) always moves a whole page.
     // Word-step arrows — when pressed, the counter flips to sentence
     // mode (and flashes) so the student sees "12 / 84 sentences"
-    // instead of the page count. ‹‹ / ›› flip it back.
-    function setCounterMode(mode) {
-      if (counterMode === mode) return;
-      counterMode = mode;
-      flashCounter();
-    }
-
+    // instead of the page count. ‹‹ / ›› flip it back. setCounterMode
+    // is defined at module-level above so the keyboard handler can
+    // reuse it.
     $('btnPrev').addEventListener('click', () => {
       setCounterMode('sentence');
       if (singleMode) goSingle(singleIdx - 1);
@@ -1048,6 +1060,8 @@
     pageIdx = Math.max(0, Math.min(pages.length - 1, next));
     if (pageIdx === prev) return;
     singleIdx = 0;
+    // Update the counter NOW (don't wait for the 180-ms slide).
+    refreshPageCounter();
     slideRender(pageIdx > prev ? 'forward' : 'back');
   }
 
@@ -1105,6 +1119,7 @@
     const prev = singleIdx;
     singleIdx = clamp(next, 0, flat.length - 1);
     if (singleIdx === prev) return;
+    refreshPageCounter();
     slideRender(singleIdx > prev ? 'forward' : 'back');
   }
 
