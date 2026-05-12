@@ -54,6 +54,10 @@
     // hidden, we simply never wire the listener — coin reward + level
     // progression still happen via the word popup's I-know-it action.
     if (lessonState.classFlags && lessonState.classFlags.hideEncounters) return;
+    // Preview mode: no encounters, no quizzes, no DB writes. The
+    // teacher should see the lesson chrome cleanly without random
+    // animals popping up.
+    if (lessonState.isPreview) return;
     window.addEventListener('wc:level-up', onLevelUp);
   }
 

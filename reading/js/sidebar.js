@@ -44,17 +44,20 @@
     renderWordCard(null);   // initial empty-state
     renderLevelBar();       // initial hidden state
 
-    if (!flags.hideVisualizationSidebar) {
+    // Preview mode (opened from teacher dashboard's "Preview" button)
+    // shouldn't show student-specific panels — there's no student to
+    // send a viz prompt FROM, and no teacher to send replies TO.
+    if (L.isPreview || flags.hideVisualizationSidebar) {
+      const v = document.getElementById('sideViz');
+      const r = document.getElementById('sideReplies');
+      if (v) v.classList.add('wc-hidden');
+      if (r) r.classList.add('wc-hidden');
+    } else {
       renderVizForm(L);
       renderReplies(L);
       window.WCDB.realtime.pollViz(L.me.id,
         new Date(Date.now() - 24*3600*1000).toISOString(),
         (msg) => onReplyArrived(L, msg));
-    } else {
-      const v = document.getElementById('sideViz');
-      const r = document.getElementById('sideReplies');
-      if (v) v.classList.add('wc-hidden');
-      if (r) r.classList.add('wc-hidden');
     }
 
     // Wired from lesson.js — fires whenever a word is tapped.

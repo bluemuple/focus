@@ -140,6 +140,28 @@
     }
     $('lessonTitle').textContent = lesson.title;
 
+    // Preview banner — yellow strip at the very top of the page so
+    // the teacher knows nothing they do here is being saved.
+    if (isPreview && !document.getElementById('wcPreviewBanner')) {
+      const banner = document.createElement('div');
+      banner.id = 'wcPreviewBanner';
+      banner.innerHTML = `
+        <span>👁 <strong>Preview mode</strong> — no progress is saved. Close the tab when done.</span>
+      `;
+      Object.assign(banner.style, {
+        position: 'fixed', top: '0', left: '0', right: '0', zIndex: '9999',
+        background: '#fff4c2', borderBottom: '1px solid #e6c84b',
+        color: '#5a4a1a', fontSize: '14px',
+        padding: '8px 14px', textAlign: 'center',
+        boxShadow: '0 1px 4px rgba(0,0,0,.06)',
+        fontFamily: 'inherit',
+      });
+      document.body.appendChild(banner);
+      const h = banner.offsetHeight;
+      document.body.style.paddingTop =
+        (parseFloat(getComputedStyle(document.body).paddingTop) || 0) + h + 'px';
+    }
+
     // Pull the class's hide_features so sidebar/encounter/popup
     // modules can opt out of disabled features. Failing to fetch is
     // non-fatal — we just behave like nothing's hidden.
@@ -152,11 +174,15 @@
       } catch {}
     }
 
-    // load word levels for this user (whole-user set — fine for MVP class size)
-    try {
-      const rows = await window.WCDB.wordStates.forUser(me.id);
-      rows.forEach(r => wordLevels.set(r.word, r.level));
-    } catch (e) { console.warn('wordStates load:', e); }
+    // Load word levels for this user (whole-user set — fine for MVP
+    // class size). Skip in preview mode — there's no real user to load
+    // from, and we want the preview to start with a clean slate.
+    if (!isPreview) {
+      try {
+        const rows = await window.WCDB.wordStates.forUser(me.id);
+        rows.forEach(r => wordLevels.set(r.word, r.level));
+      } catch (e) { console.warn('wordStates load:', e); }
+    }
 
     sentences = tokeniseBody(lesson.body);
     pages     = paginate(sentences, lesson.body);
