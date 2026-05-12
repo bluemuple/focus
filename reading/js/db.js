@@ -119,6 +119,10 @@
       const rows = await rPost('/wc_lessons', row, true);
       return rows && rows[0];
     },
+    async update(id, patch) {
+      const rows = await rPatch('/wc_lessons?id=eq.' + encodeURIComponent(id), patch);
+      return rows && rows[0];
+    },
   };
 
   // ---------- word states ----------

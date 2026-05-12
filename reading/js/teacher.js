@@ -68,6 +68,10 @@
   document.addEventListener('change', async (e) => {
     if (e.target.id !== 'classSelect') return;
     currentClass = myClasses.find(c => c.id === e.target.value) || null;
+    // Switching classes mid-edit is confusing — abandon any in-flight
+    // lesson edit so the form returns to "Create new" mode for the
+    // newly-selected class.
+    if (editingLessonId) cancelEditing();
     await refreshAll();
   });
 
@@ -478,22 +482,82 @@
     }
     lessons.forEach(L => {
       const todaySent = countGiftsToday(L.id);
+      const imgCount = Array.isArray(L.images) ? L.images.length : 0;
+      const editing = editingLessonId === L.id;
       const row = document.createElement('div');
-      row.className = 'wc-list-item';
+      row.className = 'wc-list-item' + (editing ? ' wc-editing' : '');
       row.innerHTML = `
         <div>
-          <div class="title">${escapeHtml(L.title)}</div>
+          <div class="title">${escapeHtml(L.title)}${editing ? ' <span class="wc-muted" style="font-size:13px;">(editing)</span>' : ''}</div>
           <div class="meta">
             ${escapeHtml(L.animal_set)} ·
-            🎁 ${todaySent} / ${L.gift_limit_per_day} sent today ·
-            ${new Date(L.created_at).toLocaleDateString('en-NZ')}
+            🎁 ${todaySent} / ${L.gift_limit_per_day} sent today
+            ${imgCount ? ' · 📷 ' + imgCount : ''}
+            · ${new Date(L.created_at).toLocaleDateString('en-NZ')}
           </div>
         </div>
-        <a href="./lesson.html?id=${encodeURIComponent(L.id)}" class="wc-btn ghost">Preview</a>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
+          <a href="./lesson.html?id=${encodeURIComponent(L.id)}" class="wc-btn ghost">Preview</a>
+        </div>
       `;
       list.appendChild(row);
     });
+    list.querySelectorAll('[data-edit]').forEach(b => {
+      b.addEventListener('click', () => startEditing(b.dataset.edit));
+    });
   }
+
+  // ----------------------------------------------------------------
+  //  EDIT MODE — load an existing lesson into the create form so the
+  //  teacher can amend title/body/animal-set/gift-quota/images and
+  //  PATCH the same row instead of creating a new one.
+  // ----------------------------------------------------------------
+  function startEditing(lessonId) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    editingLessonId = L.id;
+    $('lessonTitle').value     = L.title || '';
+    $('lessonBody').value      = L.body  || '';
+    $('lessonAnimalSet').value = L.animal_set || 'animals';
+    $('lessonGiftLimit').value = L.gift_limit_per_day || 3;
+    lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
+    renderImagesPreview();
+    updateFormMode();
+    // Scroll the form into view so the teacher sees the fields populate.
+    $('lessonTitle').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $('lessonTitle').focus();
+    // Re-render the list so the row gets the "(editing)" badge highlight.
+    renderLessons();
+  }
+
+  function cancelEditing() {
+    editingLessonId = null;
+    $('lessonTitle').value = '';
+    $('lessonBody').value = '';
+    $('lessonAnimalSet').value = 'animals';
+    $('lessonGiftLimit').value = 3;
+    resetImages();
+    updateFormMode();
+    renderLessons();
+  }
+
+  function updateFormMode() {
+    const btn      = $('addLessonBtn');
+    const cancel   = $('cancelEditBtn');
+    const notice   = $('lessonEditNotice');
+    if (editingLessonId) {
+      btn.textContent = 'Save changes';
+      cancel.classList.remove('wc-hidden');
+      notice.classList.remove('wc-hidden');
+    } else {
+      btn.textContent = 'Create lesson';
+      cancel.classList.add('wc-hidden');
+      notice.classList.add('wc-hidden');
+    }
+  }
+
+  $('cancelEditBtn').addEventListener('click', cancelEditing);
   function countGiftsToday(lessonId) {
     const today = new Date().toISOString().slice(0, 10);
     return messages.filter(m =>
@@ -518,6 +582,7 @@
   // ----------------------------------------------------------------
   let lessonImages = [];      // accumulates while teacher composes a lesson
   let pendingInsertPos = null;  // cursor position at the moment of image trigger
+  let editingLessonId = null;   // null = creating new; UUID = editing existing
 
   function rememberCursor() {
     const ta = $('lessonBody');
@@ -702,21 +767,36 @@
       msg.textContent = 'Please enter a title and body.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden'); return;
     }
+    const payload = {
+      title, body,
+      animal_set: $('lessonAnimalSet').value,
+      gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
+      images: lessonImages,
+    };
     try {
-      await window.WCDB.lessons.create({
-        class_id: currentClass.id, created_by: me.id,
-        title, body,
-        animal_set: $('lessonAnimalSet').value,
-        gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
-        images: lessonImages,
-      });
-      $('lessonTitle').value = ''; $('lessonBody').value = '';
+      if (editingLessonId) {
+        // PATCH only the editable fields — never overwrite created_by,
+        // class_id, created_at (those are immutable identity).
+        await window.WCDB.lessons.update(editingLessonId, payload);
+        msg.textContent = 'Lesson updated.';
+      } else {
+        await window.WCDB.lessons.create({
+          ...payload,
+          class_id:   currentClass.id,
+          created_by: me.id,
+        });
+        msg.textContent = 'Lesson created.';
+      }
+      // Reset form regardless of create/update.
+      editingLessonId = null;
+      $('lessonTitle').value = '';
+      $('lessonBody').value = '';
       resetImages();
-      msg.textContent = 'Lesson created.';
+      updateFormMode();
       msg.className = 'wc-alert ok'; msg.classList.remove('wc-hidden');
       await refreshAll();
     } catch (e) {
-      msg.textContent = e.message || 'Could not create lesson.';
+      msg.textContent = e.message || 'Could not save lesson.';
       msg.className = 'wc-alert error'; msg.classList.remove('wc-hidden');
     }
   });
