@@ -372,8 +372,10 @@ body.wc-lesson-layout {
 
 /* The lesson card itself — clean white, rounded, soft shadow.
    Viewport-fit height so the body doesn't grow into a long scrolling
-   page — content overflows are clipped and the user paginates instead
-   (matches 또박또박's "no scroll" reading experience). */
+   page — content overflows are clipped and the user paginates instead.
+   The 116-px subtraction = 24 px shell top padding + ~88 px lesson-bar
+   footprint (70 px height + 18 px bottom offset) + ~4 px gap, so the
+   card reaches almost down to the floating bar without overlapping. */
 body.wc-lesson-layout .wc-lesson-main {
   background: var(--tobok-card);
   border-radius: 14px;
@@ -382,7 +384,7 @@ body.wc-lesson-layout .wc-lesson-main {
   border: none;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 130px);  /* viewport − (top padding + bottom-bar) */
+  height: calc(100vh - 116px);
   min-height: 360px;
   overflow: hidden;
 }
@@ -622,36 +624,50 @@ body.wc-lesson-layout .w.punct {
      text-decoration), which avoids the 1-2 px gaps that appear
      between sibling inline spans with plain text-decoration. */
 
-/* Chunk underline — drawn as a 3 px background bar near the bottom
-   of each chunk member's line box, BELOW the descender so it never
-   crosses any glyph.
-   Crucially, the chunk RESETS the word-state background colour to
-   transparent. Without that reset, every chunk word's state-
-   coloured rectangle (s0 sky-blue, s1-s4 greens) renders an edge
-   between adjacent members, producing visible "vertical lines" along
-   the boundaries — which is what 또박또박 avoids by going
-   `background: transparent` on its `.focused-chunk` rule. The
-   focused word's own tint comes back via the `.w.focused` rules
-   below (specificity tie broken by source order). */
+/* Chunk underline — uses text-decoration (not background-image) so
+   sibling spans connect into one continuous line automatically, and
+   the position is anchored to the BASELINE via text-underline-offset
+   rather than the line-box bottom (which varies with line-height).
+   - offset 6 px = sits at the BOTTOM EDGE of the focused word's box-
+     shadow outline ring (font descent ~4 px + 2 px shadow spread).
+   - thickness 3 px reads at a glance without crowding the next line.
+   - skip-ink: none makes the line pass through descender glyphs AND
+     whitespace, so the bar is unbroken across "word _ word" gaps.
+   - The chunk RESETS the word's state-colour background to transparent
+     so adjacent chunk members don't show vertical-edge "boxes" between
+     them — only the continuous amber bar remains.
+   - Animation slides the underline UP from offset 24 to 6 each time
+     the chunk class is applied, matching 또박또박's "the line rises
+     into place" feel. */
+@keyframes wcChunkUnderlineRise {
+  from {
+    text-underline-offset: 24px;
+    text-decoration-color: rgba(245, 158, 11, 0);
+  }
+  to {
+    text-underline-offset: 6px;
+    text-decoration-color: rgba(245, 158, 11, 0.9);
+  }
+}
 body.wc-lesson-layout .w.focused-chunk {
   background-color: transparent;
-  background-image: linear-gradient(
-    rgba(245, 158, 11, 0.9),
-    rgba(245, 158, 11, 0.9)
-  ) !important;
-  background-position: 0 calc(100% - 4px);
-  background-repeat: no-repeat;
-  background-size: 100% 3px;
+  background-image: none !important;   /* discard old gradient approach */
+  text-decoration: underline;
+  text-decoration-color: rgba(245, 158, 11, 0.9);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+  text-decoration-skip-ink: none;
+  animation: wcChunkUnderlineRise .26s cubic-bezier(.22,.6,.36,1) both;
 }
 body.wc-lesson-layout .w.punct.focused-chunk {
   background-color: transparent;
-  background-image: linear-gradient(
-    rgba(245, 158, 11, 0.9),
-    rgba(245, 158, 11, 0.9)
-  ) !important;
-  background-position: 0 calc(100% - 4px);
-  background-repeat: no-repeat;
-  background-size: 100% 3px;
+  background-image: none !important;
+  text-decoration: underline;
+  text-decoration-color: rgba(245, 158, 11, 0.9);
+  text-decoration-thickness: 3px;
+  text-underline-offset: 6px;
+  text-decoration-skip-ink: none;
+  animation: wcChunkUnderlineRise .26s cubic-bezier(.22,.6,.36,1) both;
 }
 
 /* Focus ring — outline + outer glow colour MATCHES the word's state
@@ -807,9 +823,11 @@ body.wc-lesson-layout .w.focused.sx {
    arrows but a touch heavier so they read as "skip further". */
 .wc-lesson-bar .lb-arrow-page svg { width: 22px; height: 22px; }
 
-/* Reserve room at the bottom of the lesson card so text isn't hidden
-   behind the floating lesson-bar. */
-body.wc-lesson-layout .wc-shell-wide { padding-bottom: 100px; }
+/* Shell padding-bottom is small now that the lesson card AND sidebar
+   both extend close to the lesson-bar (height: calc(100vh - 116px)).
+   Just enough room for the floating bar (~70 px) + a comfortable
+   safety margin so a long content card never tucks under the bar. */
+body.wc-lesson-layout .wc-shell-wide { padding-bottom: 88px; }
 
 @media (max-width: 600px) {
   .wc-lesson-bar { gap: 8px; padding: 6px 10px; bottom: 12px; }
@@ -1090,11 +1108,13 @@ body.wc-lesson-layout .wc-side-section {
    SIDEBAR — ONE continuous panel (또박또박 .lesson-sidebar layout)
    White rounded card containing a scrollable content column on
    top and a bottom-fixed level-bar strip pinned to the bottom edge.
-   ============================================================= */
+   Same height as the lesson card so they end at the same y — the
+   level-bar strip lives in what used to be empty space below the
+   sidebar, anchored just above the floating lesson-bar. */
 body.wc-lesson-layout .wc-sidebar {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 130px);
+  height: calc(100vh - 116px);
   overflow: hidden;
   background: var(--tobok-card);
   border: 1px solid var(--tobok-line);
