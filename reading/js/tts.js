@@ -46,7 +46,22 @@
   }
 
   async function speak(text, opts) {
-    text = String(text || '').trim();
+    // Sanitise the input so the synthesiser never tries to "say" any
+    // of the structural / placeholder markup that leaks through from
+    // the body text. Without this, the TTS reads things like
+    // "double bracket I M G zero double bracket" out loud after every
+    // floating image.
+    text = String(text || '')
+      // Image markers: [[IMG:0]], [[IMG:12]], any [[KEY:value]] form.
+      .replace(/\[\[[^\]]+\]\]/g, ' ')
+      // Stray HTML tags (defensive — sentence text shouldn't have any
+      // by the time it reaches TTS, but page-break HRs / leftover
+      // markdown→HTML fragments occasionally sneak in).
+      .replace(/<[^>]+>/g, ' ')
+      // Markdown page-break (---) and consecutive whitespace collapse.
+      .replace(/^---+\s*$/gm, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!text) return;
     stop();
 
