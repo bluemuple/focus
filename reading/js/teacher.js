@@ -691,6 +691,28 @@
     });
   }
 
+  // ── Page break ── inserts an <hr class="wc-page-break"> at the
+  // caret. The lesson renderer splits the body by these HR markers
+  // so each segment becomes its own page, REGARDLESS of font size /
+  // sentence count / paragraph count. Teachers get exact control
+  // over what lives on each page.
+  const pageBreakBtn = document.getElementById('addPageBreakBtn');
+  if (pageBreakBtn) {
+    pageBreakBtn.addEventListener('mousedown', e => {
+      e.preventDefault();
+      const body = $('lessonBody');
+      body.focus();
+      if (pendingInsertPos && body.contains(pendingInsertPos.startContainer)) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(pendingInsertPos);
+      }
+      document.execCommand('insertHTML', false,
+        '<hr class="wc-page-break" />');
+      rememberCursor();
+    });
+  }
+
   $('addImageBtn').addEventListener('click', () => {
     rememberCursor();
     $('addImageFile').click();

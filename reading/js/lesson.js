@@ -208,9 +208,9 @@
   // pagination without doing the full layout-measurement dance.
   function paginate(parts /*, rawBody */) {
     if (!parts.length) return [];
-    // HTML body — one page (pagination of arbitrary HTML is brittle;
-    // teachers structure their lessons via headings instead).
-    if (parts.length === 1 && parts[0].kind === 'html') return [parts];
+    // HTML body — every part is one page. The teacher's <hr> markers
+    // already decided where the page breaks are.
+    if (parts.every(p => p.kind === 'html')) return parts.map(p => [p]);
 
     const MAX_SENTENCES_PER_PAGE = 6;
     const out  = [];
@@ -292,34 +292,39 @@
   // their text nodes at render time to tokenise words/sentences while
   // keeping the surrounding markup.
   function isHtmlBody(body) {
-    return /<(p|h[1-6]|div|br|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
+    return /<(p|h[1-6]|div|br|hr|span|b|i|u|em|strong|font|a\s)/i.test(body || '');
   }
 
   function tokeniseBody(body) {
     if (isHtmlBody(body)) {
-      // HTML path — pre-extract a flat sentence list so 1문장씩 mode
-      // still works, and stash the raw HTML for the renderer.
-      const tmp = document.createElement('div');
-      tmp.innerHTML = body;
-      const flat = [];
-      const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
-      let n;
-      while ((n = walker.nextNode())) {
-        const text = n.textContent;
-        if (!text || !text.trim()) continue;
-        const re = /[^.!?]+[.!?]+["'’)\]]*/g;
-        let m;
-        let lastEnd = 0;
-        while ((m = re.exec(text)) !== null) {
-          flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
-          lastEnd = m.index + m[0].length;
+      // HTML path. Teacher-inserted <hr class="wc-page-break"> markers
+      // split the body into pages — each segment becomes one page,
+      // ignoring font size / sentence count. Each page also gets its
+      // own pre-extracted sentence list for 1문장씩 nav + TTS playback.
+      const PAGE_BREAK_RE = /<hr\b[^>]*class=["'][^"']*wc-page-break[^"']*["'][^>]*\/?>/gi;
+      const segments = body.split(PAGE_BREAK_RE);
+      return segments.map(segHtml => {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = segHtml;
+        const flat = [];
+        const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
+        let n;
+        while ((n = walker.nextNode())) {
+          const text = n.textContent;
+          if (!text || !text.trim()) continue;
+          const re = /[^.!?]+[.!?]+["'’)\]]*/g;
+          let m, lastEnd = 0;
+          while ((m = re.exec(text)) !== null) {
+            flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
+            lastEnd = m.index + m[0].length;
+          }
+          if (lastEnd < text.length) {
+            const tail = text.slice(lastEnd);
+            if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
+          }
         }
-        if (lastEnd < text.length) {
-          const tail = text.slice(lastEnd);
-          if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
-        }
-      }
-      return [{ kind: 'html', html: body, sentences: flat }];
+        return { kind: 'html', html: segHtml, sentences: flat };
+      });
     }
 
     // Plain text path — split out [[IMG:N]] markers first, then split
@@ -389,11 +394,14 @@
 
     // HTML body — render the raw HTML, then walk text nodes and
     // tokenise each in-place. This preserves H1/H2/H3/B/U/colour
-    // markup while making every word individually clickable.
+    // markup while making every word individually clickable. The
+    // offset = sentence count of all previous pages, so the
+    // .wc-sentence data-idx values are GLOBAL (the TTS auto-advance
+    // and keyboard nav rely on this).
     const parts = pages[pageIdx] || sentences;
     if (parts.length === 1 && parts[0].kind === 'html') {
       root.innerHTML = parts[0].html;
-      tokenizeTextNodesInPlace(root);
+      tokenizeTextNodesInPlace(root, globalStartOfPage(pageIdx));
       return;
     }
     let globalStart = 0;
@@ -450,13 +458,13 @@
   // .w word spans). Image markers `[[IMG:N]]` in the text become
   // floating <img> elements inside the sentence flow. Global sentence
   // index increments across all text nodes so 1문장씩 nav still works.
-  function tokenizeTextNodesInPlace(rootEl) {
+  function tokenizeTextNodesInPlace(rootEl, startIdx) {
     const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, null, false);
     const textNodes = [];
     let n;
     while ((n = walker.nextNode())) textNodes.push(n);
 
-    let globalSentIdx = 0;
+    let globalSentIdx = startIdx || 0;
     textNodes.forEach(tn => {
       // Skip text nodes inside img / script / style — defensive, the
       // walker shouldn't surface these anyway.
@@ -569,13 +577,48 @@
     return list.some(wi => (wi.word || '').toLowerCase() === want);
   }
 
-  // Flat list of all sentences across the lesson (page-blind).
+  // Flat list of all sentences across the lesson (page-blind). For
+  // HTML bodies with page-break markers, sentences are pre-extracted
+  // into each html part — concat them all to get the global list.
   function sentenceList() {
-    // HTML body — sentences are pre-extracted into the lone html part.
-    if (sentences.length === 1 && sentences[0].kind === 'html') {
-      return sentences[0].sentences || [];
+    if (sentences.length && sentences.every(p => p.kind === 'html')) {
+      const out = [];
+      sentences.forEach(p => { (p.sentences || []).forEach(s => out.push(s)); });
+      return out;
     }
     return sentences.filter(p => p.kind === 'sent');
+  }
+
+  // Which page contains the Nth global sentence? Returns the page idx,
+  // or null if the global idx is out of range. Used by the TTS auto-
+  // advance to flip pages when reading crosses a page boundary.
+  function pageForGlobalSent(globalIdx) {
+    if (!pages.length) return null;
+    let acc = 0;
+    for (let p = 0; p < pages.length; p++) {
+      const partList = pages[p] || [];
+      let pageCount = 0;
+      partList.forEach(part => {
+        if (part.kind === 'sent') pageCount++;
+        else if (part.kind === 'html') pageCount += (part.sentences || []).length;
+      });
+      if (globalIdx < acc + pageCount) return p;
+      acc += pageCount;
+    }
+    return null;
+  }
+
+  // Local sentence index within `pageIdx` for the given global idx.
+  function localSentInPage(globalIdx, pageNum) {
+    let acc = 0;
+    for (let p = 0; p < pageNum; p++) {
+      const partList = pages[p] || [];
+      partList.forEach(part => {
+        if (part.kind === 'sent') acc++;
+        else if (part.kind === 'html') acc += (part.sentences || []).length;
+      });
+    }
+    return globalIdx - acc;
   }
   function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
 
@@ -711,6 +754,12 @@
       case 'ArrowRight': e.preventDefault(); navWord(+1);  return;
       case 'ArrowUp':    e.preventDefault(); navChunk(-1); return;
       case 'ArrowDown':  e.preventDefault(); navChunk(+1); return;
+      // ','  → previous page,  '.' → next page (또박또박 convention).
+      case ',':          e.preventDefault(); counterMode = 'page'; flashCounter(); goPage(pageIdx - 1); return;
+      case '.':          e.preventDefault(); counterMode = 'page'; flashCounter(); goPage(pageIdx + 1); return;
+      // Spacebar → play / pause whole-lesson TTS reading. Most
+      // natural for a reading app — same as a media player.
+      case ' ':          e.preventDefault(); playAllFromCurrent();  return;
     }
     // Level-picker shortcuts — same mapping as 또박또박:
     //   0   → -1 (무시 / skip)
@@ -796,42 +845,102 @@
     if (adjEl) focusWord(adjIdx, 0);
   }
 
-  // First global sentence-idx of the given page (used after page-flip).
+  // First global sentence-idx of the given page (used after page-flip
+  // and by the TTS auto-advance to find the right sentence span).
+  // Handles both plain-text parts (kind 'sent') AND html parts whose
+  // sentences are pre-extracted into part.sentences.
   function globalStartOfPage(pi) {
-    let start = 0;
+    let count = 0;
     for (let i = 0; i < pi; i++) {
-      start += (pages[i] || []).filter(p => p.kind === 'sent').length;
+      (pages[i] || []).forEach(part => {
+        if (part.kind === 'sent') count++;
+        else if (part.kind === 'html') count += (part.sentences || []).length;
+      });
     }
-    return start;
+    return count;
+  }
+
+  // ============================================================
+  //  WHOLE-LESSON TTS PLAYBACK
+  //
+  //  Reads each sentence with .wc-tts-reading underline, scrolls
+  //  the active sentence into view, and flips to the next page
+  //  automatically when reading crosses a page boundary. Toggle
+  //  on/off with ▶/⏸ or the spacebar.
+  // ============================================================
+  let ttsPlaying = false;
+  let ttsAbort   = false;
+
+  async function playAllFromCurrent() {
+    if (ttsPlaying) { stopAllTts(); return; }
+    ttsPlaying = true; ttsAbort = false;
+    setPlayUiState(true);
+
+    const flat = sentenceList();
+    // Start sentence — focused word's sentence > single-mode index > page start.
+    let i = (focusedSentIdx != null) ? focusedSentIdx
+          : (singleMode ? singleIdx : globalStartOfPage(pageIdx));
+
+    for (; i < flat.length; i++) {
+      if (ttsAbort) break;
+
+      // If this sentence lives on a different page (HTML body with
+      // page-break markers, or plain-text overflow page), flip first.
+      if (!singleMode) {
+        const sentPage = pageForGlobalSent(i);
+        if (sentPage != null && sentPage !== pageIdx) {
+          goPage(sentPage);
+          // Wait for the slide animation (~460 ms) so the new DOM is
+          // mounted before we try to find the sentence span.
+          await new Promise(r => setTimeout(r, 500));
+        }
+      } else {
+        // Single-sentence mode — keep its index in sync.
+        singleIdx = i;
+        renderBody();
+      }
+
+      const span = document.querySelector(`.wc-sentence[data-idx="${i}"]`);
+      if (span) {
+        span.classList.add('wc-tts-reading');
+        try { span.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+      }
+
+      const sent = flat[i];
+      try { if (sent && sent.text) await window.WCTTS.speak(sent.text); }
+      catch (e) { /* network / TTS hiccup — keep going */ }
+
+      if (span) span.classList.remove('wc-tts-reading');
+    }
+    ttsPlaying = false;
+    setPlayUiState(false);
+  }
+
+  function stopAllTts() {
+    ttsAbort = true;
+    if (window.WCTTS) window.WCTTS.stop();
+    document.querySelectorAll('.wc-sentence.wc-tts-reading')
+      .forEach(el => el.classList.remove('wc-tts-reading'));
+    ttsPlaying = false;
+    setPlayUiState(false);
+  }
+
+  function setPlayUiState(playing) {
+    const btn = $('btnPlay');
+    if (!btn) return;
+    btn.textContent = playing ? '⏸' : '▶';
+    btn.classList.toggle('playing', playing);
+    btn.setAttribute('aria-label', playing ? '일시정지' : '재생');
   }
 
   // ---------- toolbar / bottom-bar wiring ----------
   function wireToolbar() {
-    // ▶ Play / pause TTS — icon flips between ▶ and ⏸ to mirror state,
-    // and `.playing` toggles the green-filled style.
-    let isPlaying = false;
-    const playBtn = $('btnPlay');
-    const setPlayUi = (playing) => {
-      playBtn.textContent = playing ? '⏸' : '▶';
-      playBtn.classList.toggle('playing', playing);
-      playBtn.setAttribute('aria-label', playing ? '일시정지' : '재생');
-    };
-    setPlayUi(false);
-    playBtn.addEventListener('click', async () => {
-      if (isPlaying) {
-        window.WCTTS.stop();
-        isPlaying = false;
-        setPlayUi(false);
-        return;
-      }
-      isPlaying = true;
-      setPlayUi(true);
-      const text = singleMode ? currentSentenceText() : currentPageText();
-      try { await window.WCTTS.speak(text); }
-      catch (e) { console.warn('TTS error', e); }
-      isPlaying = false;
-      setPlayUi(false);
-    });
+    // ▶ Play / pause — toggles the lesson-wide TTS playback (which
+    // reads sentence-by-sentence with an active underline, scrolls
+    // each into view, and auto-flips to the next page when reading
+    // crosses a page boundary).
+    setPlayUiState(false);
+    $('btnPlay').addEventListener('click', playAllFromCurrent);
 
     // Single-sentence chip in the header → enter focused-reading. When
     // the user just clicked a word, start from THAT sentence; otherwise
