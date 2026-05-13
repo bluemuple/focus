@@ -5646,8 +5646,18 @@ function updateCountdowns() {
   const fbtCd = document.getElementById('focus-bedtime-cd');
   const hasDl = !!(state.deadline && state.deadline.trim());
   const hasBt = !!(state.bedtime  && state.bedtime.trim());
-  if (fdlT) { fdlT.textContent = fmtClock(state.deadline); fdlT.style.display = hasDl ? '' : 'none'; }
-  if (fbtT) { fbtT.textContent = fmtClock(state.bedtime);  fbtT.style.display = hasBt ? '' : 'none'; }
+  // Append "+N day" suffix when the saved date is BEYOND today so a glance
+  // at the Mana area communicates "this is for tomorrow, not today's past".
+  function _daySuffix(dateStr) {
+    if (!dateStr) return '';
+    const a = new Date(dateStr + 'T00:00:00');
+    const b = new Date(fmtDateLocal(new Date()) + 'T00:00:00');
+    const diff = Math.round((a - b) / 86400000);
+    if (diff <= 0) return '';
+    return ' +' + diff + ' day' + (diff > 1 ? 's' : '');
+  }
+  if (fdlT) { fdlT.textContent = fmtClock(state.deadline) + _daySuffix(state.deadlineDate); fdlT.style.display = hasDl ? '' : 'none'; }
+  if (fbtT) { fbtT.textContent = fmtClock(state.bedtime)  + _daySuffix(state.bedtimeDate);  fbtT.style.display = hasBt ? '' : 'none'; }
   if (fdlCd) fdlCd.style.display = hasDl ? '' : 'none';
   if (fbtCd) fbtCd.style.display = hasBt ? '' : 'none';
   // The labels (GTD by / Sleep at) AND containing rows stay visible always —
@@ -9664,11 +9674,23 @@ refreshMotivation(false);
    quick-add buttons (+10m / +30m / +1h). Click "Clear" to wipe the goal. */
 async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
   // Determine current value, default to "now + 30m" if unset
-  const cur = (kind === 'deadline') ? state.deadline : state.bedtime;
+  const cur     = (kind === 'deadline') ? state.deadline     : state.bedtime;
+  const curDate = (kind === 'deadline') ? state.deadlineDate : state.bedtimeDate;
   const initial = cur || (() => {
     const d = new Date(Date.now() + 30 * 60 * 1000);
     return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   })();
+  // Day offset: number of full calendar days BEYOND today this goal lives on.
+  // The popup remembers this across + button presses so a user at 10pm who
+  // taps +1h three times ends up at "01:00 +1 day" (tomorrow 1am), not at
+  // today's already-past 01:00.
+  function _dayDiff(dateStr) {
+    if (!dateStr) return 0;
+    const a = new Date(dateStr + 'T00:00:00');
+    const b = new Date(fmtDateLocal(new Date()) + 'T00:00:00');
+    return Math.max(0, Math.round((a - b) / 86400000));
+  }
+  let dayOffset = _dayDiff(curDate);
   const titleEl   = document.getElementById('custom-prompt-title');
   const msgEl     = document.getElementById('custom-prompt-message');
   const inputEl   = document.getElementById('custom-prompt-input');
@@ -9678,9 +9700,23 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
   const modal     = document.getElementById('custom-prompt-modal');
   if (!modal) return;
   titleEl.textContent = (kind === 'deadline') ? 'Get things done by' : 'Sleep at';
-  msgEl.innerHTML     = 'Pick a time today (HH:MM). Use the quick buttons to add minutes, or tap "Current Time" to start from now.';
+  msgEl.innerHTML     = 'Pick a time (HH:MM). Use the quick buttons to add minutes — crossing midnight automatically rolls to the next day (shown as "+1 day").';
   inputEl.type        = 'time';
   inputEl.value       = initial;
+  // "+N day" badge next to the time input — visible whenever the popup's
+  // dayOffset is > 0. Re-created per open so styling stays in sync.
+  let badge = inputEl.parentNode.querySelector('.tg-day-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'tg-day-badge';
+    badge.style.cssText = 'margin-left:8px; font-size:.85rem; font-weight:700; color:#dc2626; vertical-align:middle;';
+    inputEl.parentNode.insertBefore(badge, inputEl.nextSibling);
+  }
+  function updateBadge() {
+    if (dayOffset > 0) badge.textContent = '+' + dayOffset + ' day' + (dayOffset > 1 ? 's' : '');
+    else               badge.textContent = '';
+  }
+  updateBadge();
   // Inject quick-add buttons + Clear (recreated per open so we can clean up).
   // Two rows: top row = +1h / +30m / +10m. Bottom row = Clear / Current Time.
   let quickRow = modal.querySelector('.tg-quick-row');
@@ -9688,17 +9724,30 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
     quickRow = document.createElement('div');
     quickRow.className = 'tg-quick-row';
     quickRow.style.cssText = 'display:flex; flex-direction: column; gap:6px; margin: 6px 0 12px;';
-    inputEl.parentNode.insertBefore(quickRow, inputEl.nextSibling);
+    inputEl.parentNode.insertBefore(quickRow, inputEl.nextSibling.nextSibling /* after badge */);
   }
   function bumpInput(addMin) {
     const [h, m] = (inputEl.value || '00:00').split(':').map(Number);
-    const d = new Date(); d.setHours(h, m + addMin, 0, 0);
-    inputEl.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    let totalMin = h * 60 + m + addMin;
+    // Wrap forward across midnight, incrementing dayOffset for each wrap.
+    while (totalMin >= 24 * 60) { totalMin -= 24 * 60; dayOffset++; }
+    // Wrap backward (negative addMin) — decrement but never below 0.
+    while (totalMin < 0) { totalMin += 24 * 60; dayOffset = Math.max(0, dayOffset - 1); }
+    const newH = Math.floor(totalMin / 60);
+    const newM = totalMin % 60;
+    inputEl.value = `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+    updateBadge();
   }
   function setToNow() {
     const d = new Date();
     inputEl.value = `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    dayOffset = 0;
+    updateBadge();
   }
+  // Direct edits in the <input type="time"> reset dayOffset — typing a value
+  // is interpreted as "today at this time" unless the user explicitly bumps
+  // forward across midnight again.
+  inputEl.oninput = () => { dayOffset = 0; updateBadge(); };
   quickRow.innerHTML = `
     <div style="display:flex; gap:6px; flex-wrap:wrap;">
       <button class="btn" type="button" data-add="60">+1h</button>
@@ -9716,8 +9765,10 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
   function finish(value) {
     modal.classList.add('hidden');
     okBtn.onclick = null; cancelBtn.onclick = null; backdrop.onclick = null;
+    inputEl.oninput = null;
     inputEl.type = 'text';                  // reset for next prompt user
     quickRow.parentNode && quickRow.parentNode.removeChild(quickRow);
+    badge.parentNode    && badge.parentNode.removeChild(badge);
     handleResult(value, clearedFlag);
   }
   okBtn.onclick     = () => finish(inputEl.value);
@@ -9734,9 +9785,13 @@ async function openTimeGoalPopup(kind /* 'deadline'|'bedtime' */) {
     } else if (value === undefined) {
       return;   // Cancel
     } else if (value && /^\d{1,2}:\d{2}$/.test(value)) {
-      const today = fmtDateLocal(new Date());
-      if (kind === 'deadline') { state.deadline = value; state.deadlineDate = today; }
-      else                     { state.bedtime  = value; state.bedtimeDate  = today; }
+      // Today + dayOffset days. The popup tracked rollover via dayOffset so
+      // the saved date matches what the user actually saw on the badge.
+      const target = new Date();
+      target.setDate(target.getDate() + dayOffset);
+      const targetDate = fmtDateLocal(target);
+      if (kind === 'deadline') { state.deadline = value; state.deadlineDate = targetDate; }
+      else                     { state.bedtime  = value; state.bedtimeDate  = targetDate; }
     } else {
       return;
     }
