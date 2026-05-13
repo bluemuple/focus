@@ -95,15 +95,6 @@
   function renderCollection(pets) {
     const root = $('collection');
     root.innerHTML = '';
-    const uniq = uniqueKey(pets);
-    // Map (set::index → newest pet row) so the detail modal can show
-    // the caught_at and custom_name.
-    const byKey = new Map();
-    [...pets].sort((a,b) => new Date(b.caught_at) - new Date(a.caught_at))
-             .forEach(p => {
-               const k = `${p.animal_set}::${p.animal_index}`;
-               if (!byKey.has(k)) byKey.set(k, p);   // newest wins
-             });
 
     const SETS_META = {
       'animals':    { icon: '🌍', title: 'World animals' },
@@ -111,48 +102,55 @@
       'penguin':    { icon: '🐧', title: 'Penguins & seals' },
     };
 
+    // Group every catch (pet ROW, not unique animal) by set. One card
+    // per row: a student who caught the same mouse 3 times gets 3
+    // mouse cards stacked side by side. We keep them sorted by
+    // caught_at DESC so the most recent catch reads first.
+    const bySet = new Map();
+    [...pets]
+      .sort((a, b) => new Date(b.caught_at) - new Date(a.caught_at))
+      .forEach(p => {
+        if (!bySet.has(p.animal_set)) bySet.set(p.animal_set, []);
+        bySet.get(p.animal_set).push(p);
+      });
+
     window.WCAssets.allSetNames.forEach(setName => {
-      const meta = SETS_META[setName];
-      const setPets = window.WCAssets.sets[setName];
-      // Show ONLY the caught animals. Uncaught silhouettes used to
-      // fill the grid as "???" placeholders — the student kept asking
-      // what they were, so we hide them entirely. The header count
-      // still reads "N caught" so it's clear how many are out there.
-      const caughtAssets = setPets.filter(a =>
-        uniq.has(`${setName}::${a.index}`));
-      // A set the student has never caught from gets skipped — no
-      // empty section taking up vertical space on the profile page.
-      if (!caughtAssets.length) return;
+      const meta    = SETS_META[setName];
+      const setPets = bySet.get(setName) || [];
+      // Skip empty sets — no header for a set the student has never
+      // caught from.
+      if (!setPets.length) return;
 
       const section = document.createElement('section');
       section.className = 'wc-collect-section';
       section.innerHTML = `
         <header class="wc-collect-header">
           <h3>${meta.icon} ${meta.title}</h3>
-          <span class="wc-collect-count">${caughtAssets.length} caught</span>
+          <span class="wc-collect-count">${setPets.length} caught</span>
         </header>
         <div class="wc-collect-grid"></div>
       `;
       const grid = section.querySelector('.wc-collect-grid');
-      caughtAssets.forEach(a => {
-        const key  = `${setName}::${a.index}`;
-        const pet  = byKey.get(key);
-        const name = pet && pet.custom_name && pet.custom_name.trim();
-        // Label format:
-        //   no nickname → "Rabbit"
-        //   nickname    → "Rabbit (Sam)"
+
+      // Render ONE card per pet row so duplicates pile up visually.
+      // Mouse caught 3 times → 3 mouse cards.
+      setPets.forEach(pet => {
+        const asset = window.WCAssets.sets[setName][pet.animal_index];
+        if (!asset) return;
+        const name = pet.custom_name && pet.custom_name.trim();
         const labelText = name
-          ? `${a.label} (${name})`
-          : a.label;
+          ? `${asset.label} (${name})`
+          : asset.label;
         const card = document.createElement('button');
         card.className = 'wc-pet-card caught';
         card.innerHTML = `
-          <img src="${a.real}" alt="${escapeHtml(labelText)}" />
+          <img src="${asset.real}" alt="${escapeHtml(labelText)}" />
           <div class="wc-pet-label">${escapeHtml(labelText)}</div>
         `;
-        card.addEventListener('click', () => openPetDetail(pet, setName, a));
+        card.addEventListener('click', () => openPetDetail(pet, setName, asset));
         grid.appendChild(card);
       });
+
       root.appendChild(section);
     });
   }

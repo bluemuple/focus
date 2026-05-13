@@ -196,14 +196,20 @@
       }
     }
 
-    // Pull the class's hide_features so sidebar/encounter/popup
-    // modules can opt out of disabled features. Failing to fetch is
-    // non-fatal — we just behave like nothing's hidden.
+    // Pull the class's hide_features + level_probabilities so
+    // sidebar/encounter/popup modules can opt out of disabled features
+    // and apply teacher-tuned encounter probabilities. Failing to
+    // fetch is non-fatal — we just behave like nothing's overridden.
     if (me.class_id) {
       try {
         const cls = await window.WCDB.classes.byId(me.class_id);
         if (cls && cls.hide_features && typeof cls.hide_features === 'object') {
           classFlags = cls.hide_features;
+        }
+        if (cls && Array.isArray(cls.level_probabilities)) {
+          // Stash on the global WCLesson surface so encounter.js can
+          // read it without round-tripping the class table again.
+          window.WCLesson.levelProbabilities = cls.level_probabilities;
         }
       } catch {}
     }

@@ -32,11 +32,17 @@
 
   const PER_WORD_THROTTLE_MS = 60 * 1000;
   const GLOBAL_THROTTLE_MS   =  5 * 1000;
-  // Probability that a qualifying level-up actually fires an encounter.
-  // Previously every Nth click (N = level threshold) triggered for sure;
-  // we now roll the dice on each color-change so animals feel like a
-  // surprise reward, not a counter the kids learn to game. 3/5 = 60%.
-  const TRIGGER_PROBABILITY = 0.6;
+  // Cooldown after an encounter ends. Failing is more demoralising
+  // than catching, so we give a longer reset after a fail — the
+  // student wants to keep reading without another animal pouncing.
+  // Catches keep the cooldown short so the reward loop stays snappy.
+  const COOLDOWN_AFTER_CATCH_MS = 30 * 1000;   // 30s
+  const COOLDOWN_AFTER_FAIL_MS  = 90 * 1000;   // 90s
+  // Per-level probabilities now live in window.WCLevels.probability(lvl).
+  // Lv 1 starts at 20% and scales up to 65% at Lv 10 — beginners get
+  // breathing room, advanced readers get the challenge they're
+  // climbing towards.
+  let cooldownUntil = 0;   // ms timestamp; before this, encounters skip.
 
   // Tiny stopword list — words a Year-4 reader has long since mastered
   // and which therefore make boring quiz subjects ("What does 'was'
@@ -131,8 +137,24 @@
     // feel surprising, not earned by grinding.
     window.WCDB.encounters.bump(lessonState.me.id, lessonState.lesson.id).catch(() => {});
 
-    // Probability gate — 60% chance per qualifying color-change.
-    if (Math.random() >= TRIGGER_PROBABILITY) return;
+    // Cooldown gate — after an encounter (especially a fail) we wait
+    // a bit before another animal can spawn so the student can keep
+    // reading without immediate interruption.
+    if (now < cooldownUntil) return;
+
+    // Per-level probability gate. Defaults from WCLevels (20% at
+    // Lv 1 → 65% at Lv 10), but the class teacher can override the
+    // whole table via wc_classes.level_probabilities (a 10-element
+    // array of 0..1). Per-level null/undefined entries fall through
+    // to the WCLevels default.
+    const lvl  = lessonState.me.encounter_level || 1;
+    const ov   = (window.WCLesson && Array.isArray(window.WCLesson.levelProbabilities))
+                  ? window.WCLesson.levelProbabilities[lvl - 1]
+                  : null;
+    const prob = (typeof ov === 'number' && isFinite(ov) && ov >= 0 && ov <= 1)
+                  ? ov
+                  : window.WCLevels.probability(lvl);
+    if (Math.random() >= prob) return;
 
     try { await runEncounter(detail); }
     catch (e) { console.error('encounter run', e); }
@@ -150,7 +172,20 @@
     window.dispatchEvent(new CustomEvent('wc:counter-changed',
       { detail: { count: 0, threshold: 0, remain: 0 } }));
 
-    const lvl       = lessonState.me.encounter_level || 1;
+    // The student's current ceiling level. We use this as both the
+    // quiz difficulty AND the upper bound on which animal can show up.
+    const ceiling   = lessonState.me.encounter_level || 1;
+    // Roll for which animal actually appears. 70% of the time we show
+    // the ceiling-level animal (the next one to catch), 30% of the
+    // time we pick a UNIFORMLY-random LOWER level so the student can
+    // collect duplicates of earlier animals. At Lv 1 there's no
+    // "lower" pool so it always shows Lv 1.
+    let encounterLvl = ceiling;
+    if (ceiling > 1 && Math.random() < 0.3) {
+      // 1 .. ceiling-1 inclusive
+      encounterLvl = 1 + Math.floor(Math.random() * (ceiling - 1));
+    }
+    const lvl       = encounterLvl;
     const spec      = window.WCLevels.spec(lvl);
     const setName   = pickAnimalSet(lessonState.lesson.animal_set, lvl);
     const animalIdx = lvl - 1;  // 1..10 maps to index 0..9
@@ -264,20 +299,43 @@
   //  Outcome — catch (level up + pet + coins) or fail (level down).
   // ----------------------------------------------------------------
   async function onEncounterEnd(outcome, setName, animalIdx, level) {
+    // `level` here is the LEVEL OF THE ANIMAL the student just faced
+    // — which may be lower than their ceiling (30% bonus picks). The
+    // ceiling only moves when the student catches/fails an animal AT
+    // their current ceiling. Lower-level animals are pure bonus
+    // collectibles: catch = pet + coins, fail = no progression hit.
+    const ceiling = lessonState.me.encounter_level || 1;
+    const isCeilingEncounter = (level >= ceiling);
     if (outcome === 'caught') {
-      // pet row
+      // pet row — always insert, so duplicates of the same animal
+      // pile up in the collection.
       try {
         await window.WCDB.pets.catch_(lessonState.me.id, setName, animalIdx, level);
       } catch (e) { console.warn('pets.catch_', e); }
-      // coins
+      // Coins scale with the animal's level (a Lv 1 mouse caught as
+      // a bonus pays 50 coins, a ceiling Lv 5 catch pays 250).
       await bumpCoins(50 * level);
-      // encounter_level → up (cap 10)
-      const next = Math.min(window.WCLevels.MAX, level + 1);
-      await setEncounterLevel(next);
+      // Ceiling only bumps when the student caught the animal that
+      // matched their ceiling. Bonus catches give pet + coins but
+      // don't push them to the next tier.
+      if (isCeilingEncounter) {
+        const next = Math.min(window.WCLevels.MAX, ceiling + 1);
+        await setEncounterLevel(next);
+      }
+      // Short breathing room after a catch — keeps the loop snappy
+      // for a student on a hot streak.
+      cooldownUntil = Date.now() + COOLDOWN_AFTER_CATCH_MS;
     } else if (outcome === 'failed') {
-      // encounter_level → down (floor 1)
-      const next = Math.max(window.WCLevels.MIN, level - 1);
-      await setEncounterLevel(next);
+      // Ceiling only drops on a ceiling fail. Failing a bonus Lv 1
+      // animal at ceiling Lv 5 isn't fair grounds to demote them.
+      if (isCeilingEncounter) {
+        const next = Math.max(window.WCLevels.MIN, ceiling - 1);
+        await setEncounterLevel(next);
+      }
+      // Longer cooldown after a fail — getting questions wrong then
+      // immediately seeing another animal feels punishing. Give the
+      // student 90 seconds to read freely and recover.
+      cooldownUntil = Date.now() + COOLDOWN_AFTER_FAIL_MS;
     }
     // either way, sidebar progress panel should refresh — it reads
     // the live counter (already reset) and encounter_level.

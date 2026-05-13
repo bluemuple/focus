@@ -1910,6 +1910,43 @@
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
       { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
     ];
+
+    // Per-level encounter probabilities. Start from whatever is saved
+    // on the class row; if a slot is null/missing, fall back to the
+    // global default (20 → 65%). Sliders write back to the array in
+    // memory and Save persists the whole 10-element array.
+    const savedProbs = Array.isArray(currentClass.level_probabilities)
+      ? currentClass.level_probabilities : [];
+    const defaultsByLv = (window.WCLevels && window.WCLevels.all) ? window.WCLevels.all() : [];
+    function defaultFor(lv) {
+      const d = defaultsByLv[lv];
+      return d && typeof d.probability === 'number' ? d.probability : 0.5;
+    }
+    function effectiveProb(lv) {
+      const v = savedProbs[lv - 1];
+      return (typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1) ? v : defaultFor(lv);
+    }
+    let probDraft = [];
+    for (let lv = 1; lv <= 10; lv++) probDraft.push(effectiveProb(lv));
+
+    function probRowsHtml() {
+      let html = '';
+      for (let lv = 1; lv <= 10; lv++) {
+        const pct = Math.round(probDraft[lv - 1] * 100);
+        const def = Math.round(defaultFor(lv) * 100);
+        html += `
+          <div class="wc-prob-row" data-lv="${lv}">
+            <span class="wc-prob-label">Lv ${lv}</span>
+            <input type="range" class="wc-prob-slider"
+                   min="0" max="100" step="5" value="${pct}" />
+            <span class="wc-prob-value" id="probVal${lv}">${pct}%</span>
+            <span class="wc-prob-default">(default ${def}%)</span>
+          </div>
+        `;
+      }
+      return html;
+    }
+
     wrap.innerHTML = `
       <p class="wc-muted" style="margin: 0 0 16px;">
         These flags apply to <strong>${escapeHtml(currentClass.name)}</strong>. They take effect the next time a student opens a lesson.
@@ -1922,22 +1959,62 @@
           </label>
         `).join('')}
       </div>
+
+      <h3 style="margin: 28px 0 6px;">🐾 Animal-encounter probability</h3>
+      <p class="wc-muted" style="margin: 0 0 12px;">
+        Each time a student marks a word, this is the chance they meet
+        an animal — different per encounter level. Lower numbers = calmer
+        reading flow.
+      </p>
+      <div id="probRows">${probRowsHtml()}</div>
+      <div style="margin-top: 8px;">
+        <button id="probResetBtn" class="wc-btn ghost" type="button">Reset to defaults</button>
+      </div>
+
       <button id="saveSettingsBtn" class="wc-btn wc-mt-24">Save settings</button>
       <span id="settingsStatus" class="wc-muted" style="margin-left:10px;"></span>
     `;
+
+    // Wire sliders — live update of the "%" label as the teacher drags.
+    wrap.querySelectorAll('.wc-prob-slider').forEach(slider => {
+      const row = slider.closest('.wc-prob-row');
+      const lv  = parseInt(row.dataset.lv, 10);
+      slider.addEventListener('input', () => {
+        const pct = parseInt(slider.value, 10);
+        probDraft[lv - 1] = pct / 100;
+        const valEl = row.querySelector('.wc-prob-value');
+        if (valEl) valEl.textContent = pct + '%';
+      });
+    });
+
+    $('probResetBtn').addEventListener('click', () => {
+      probDraft = [];
+      for (let lv = 1; lv <= 10; lv++) probDraft.push(defaultFor(lv));
+      wrap.querySelectorAll('.wc-prob-row').forEach(row => {
+        const lv  = parseInt(row.dataset.lv, 10);
+        const pct = Math.round(probDraft[lv - 1] * 100);
+        row.querySelector('.wc-prob-slider').value = pct;
+        row.querySelector('.wc-prob-value').textContent = pct + '%';
+      });
+    });
+
     $('saveSettingsBtn').addEventListener('click', async () => {
       const next = {};
       wrap.querySelectorAll('[data-flag]').forEach(cb => {
         if (cb.checked) next[cb.dataset.flag] = true;
       });
       try {
-        await window.WCDB.classes.update(currentClass.id, { hide_features: next });
+        await window.WCDB.classes.update(currentClass.id, {
+          hide_features: next,
+          level_probabilities: probDraft.slice(),
+        });
         currentClass.hide_features = next;
+        currentClass.level_probabilities = probDraft.slice();
         $('settingsStatus').textContent = 'Saved ✓';
         $('settingsStatus').style.color = 'var(--good)';
         setTimeout(() => { $('settingsStatus').textContent = ''; }, 2500);
       } catch (e) {
-        $('settingsStatus').textContent = 'Save failed';
+        $('settingsStatus').textContent = 'Save failed: ' + (e.message || e);
         $('settingsStatus').style.color = 'var(--bad)';
       }
     });
