@@ -114,34 +114,43 @@
     window.WCAssets.allSetNames.forEach(setName => {
       const meta = SETS_META[setName];
       const setPets = window.WCAssets.sets[setName];
-      const caughtInSet = setPets.filter(a =>
-        uniq.has(`${setName}::${a.index}`)).length;
+      // Show ONLY the caught animals. Uncaught silhouettes used to
+      // fill the grid as "???" placeholders — the student kept asking
+      // what they were, so we hide them entirely. The header count
+      // still reads "N caught" so it's clear how many are out there.
+      const caughtAssets = setPets.filter(a =>
+        uniq.has(`${setName}::${a.index}`));
+      // A set the student has never caught from gets skipped — no
+      // empty section taking up vertical space on the profile page.
+      if (!caughtAssets.length) return;
 
       const section = document.createElement('section');
       section.className = 'wc-collect-section';
       section.innerHTML = `
         <header class="wc-collect-header">
           <h3>${meta.icon} ${meta.title}</h3>
-          <span class="wc-collect-count">${caughtInSet} / ${setPets.length}</span>
+          <span class="wc-collect-count">${caughtAssets.length} caught</span>
         </header>
         <div class="wc-collect-grid"></div>
       `;
       const grid = section.querySelector('.wc-collect-grid');
-      setPets.forEach(a => {
-        const key = `${setName}::${a.index}`;
-        const isCaught = uniq.has(key);
+      caughtAssets.forEach(a => {
+        const key  = `${setName}::${a.index}`;
+        const pet  = byKey.get(key);
+        const name = pet && pet.custom_name && pet.custom_name.trim();
+        // Label format:
+        //   no nickname → "Rabbit"
+        //   nickname    → "Rabbit (Sam)"
+        const labelText = name
+          ? `${a.label} (${name})`
+          : a.label;
         const card = document.createElement('button');
-        card.className = 'wc-pet-card' + (isCaught ? ' caught' : ' uncaught');
+        card.className = 'wc-pet-card caught';
         card.innerHTML = `
-          <img src="${isCaught ? a.real : a.silhouette}" alt="${isCaught ? a.label : '???'}" />
-          <div class="wc-pet-label">${isCaught ? escapeHtml(a.label) : '???'}</div>
+          <img src="${a.real}" alt="${escapeHtml(labelText)}" />
+          <div class="wc-pet-label">${escapeHtml(labelText)}</div>
         `;
-        if (isCaught) {
-          const pet = byKey.get(key);
-          card.addEventListener('click', () => openPetDetail(pet, setName, a));
-        } else {
-          card.disabled = true;
-        }
+        card.addEventListener('click', () => openPetDetail(pet, setName, a));
         grid.appendChild(card);
       });
       root.appendChild(section);

@@ -1581,6 +1581,32 @@
       applyReadBetter();
     });
 
+    // Animal encounter toggle — pauses the quiz/encounter system so
+    // the student can read quietly without random animals popping
+    // up. State stored per-device in localStorage; encounter.js
+    // reads the flag fresh on every level-up event so this button
+    // takes effect immediately without a page reload.
+    const HIDE_ENC_KEY = 'wc.hideEncounters.v1';
+    let hideEncounters = localStorage.getItem(HIDE_ENC_KEY) === '1';
+    function applyHideEncounters() {
+      const btn = $('btnHideEncounters');
+      const ico = $('btnHideEncountersIco');
+      const lbl = $('btnHideEncountersLabel');
+      if (!btn) return;
+      btn.classList.toggle('active', hideEncounters);
+      btn.setAttribute('aria-pressed', hideEncounters ? 'true' : 'false');
+      if (ico) ico.textContent = hideEncounters ? '🚫' : '🐾';
+      if (lbl) lbl.textContent = hideEncounters ? 'Animals off' : 'Animals on';
+      try { localStorage.setItem(HIDE_ENC_KEY, hideEncounters ? '1' : '0'); } catch {}
+    }
+    applyHideEncounters();
+    if ($('btnHideEncounters')) {
+      $('btnHideEncounters').addEventListener('click', () => {
+        hideEncounters = !hideEncounters;
+        applyHideEncounters();
+      });
+    }
+
     // Window resize — the card height changes (e.g. browser zoom,
     // window resize, mobile orientation). Re-fit the single-mode
     // sentence and re-paginate page mode. Debounced so a drag-resize

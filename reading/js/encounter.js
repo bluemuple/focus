@@ -103,6 +103,12 @@
     if (!word) return;
     if (window.WCEncounter?.busy) return;   // ignore clicks during an active encounter
 
+    // Per-device "quiet reading" toggle — lives in the lesson page
+    // head-tools row. We read it fresh on every event so flipping
+    // the button takes effect on the very next word the student
+    // marks (no need to reload the page).
+    if (localStorage.getItem('wc.hideEncounters.v1') === '1') return;
+
     const now = Date.now();
 
     // throttle 1: per-word
