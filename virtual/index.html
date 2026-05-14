@@ -665,6 +665,18 @@
     left:  'images/go left.gif',
     right: 'images/go right.gif',
   };
+  // After an actor stops moving for this many ms, freeze the GIF
+  // to a static frame so the legs stop pumping in place.
+  const IDLE_FREEZE_MS = 180;
+
+  // Warm the cache for every directional GIF so swapping between
+  // them (and back from a frozen still) doesn't show a flicker.
+  const _spritePreload = [];
+  for (const _d in SPRITES) {
+    const img = new Image();
+    img.src = SPRITES[_d];
+    _spritePreload.push(img);
+  }
 
   function isMobile() {
     return window.innerWidth <= 768;
@@ -774,6 +786,9 @@
     if (a.dir === dir) return;
     a.dir = dir;
     a.sprite.src = SPRITES[dir];
+    // Switching to a different GIF implicitly starts it playing
+    // from frame 1, so the frozen flag no longer applies.
+    a.frozen = false;
   }
 
   function showName(a, ms) {
@@ -798,6 +813,60 @@
     if (a.nameTimer)   clearTimeout(a.nameTimer);
     a.root.remove();
   }
+
+  // ---- GIF freeze / unfreeze ----------------------------------
+  //
+  //  Browsers will animate a GIF forever — there's no CSS or
+  //  `<img>` API to pause it. To make the character actually stop
+  //  walking when the player stops, we paint the currently-visible
+  //  frame onto an off-DOM <canvas> and swap the <img>'s src to
+  //  that PNG data URL. Unfreezing is just restoring the original
+  //  GIF src, which reloads from the in-memory cache (preloaded
+  //  above) so there's no visible flicker.
+  //
+  //  markMoved() is called whenever an actor's position actually
+  //  changes. A periodic ticker freezes any actor whose lastMoveAt
+  //  is older than IDLE_FREEZE_MS.
+  function freezeActor(a) {
+    if (a.frozen) return;
+    const img = a.sprite;
+    if (!img.complete || !img.naturalWidth) return; // not loaded yet
+    try {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      img.src = canvas.toDataURL('image/png');
+      a.frozen = true;
+    } catch (e) {
+      // Tainted canvas (shouldn't happen for same-origin assets)
+      // — fall back to leaving the GIF running.
+    }
+  }
+
+  function unfreezeActor(a) {
+    if (!a.frozen) return;
+    a.frozen = false;
+    a.sprite.src = SPRITES[a.dir];
+  }
+
+  function markMoved(a) {
+    a.lastMoveAt = performance.now();
+    if (a.frozen) unfreezeActor(a);
+  }
+
+  setInterval(function () {
+    const now = performance.now();
+    if (!me.frozen && now - (me.lastMoveAt || 0) > IDLE_FREEZE_MS) {
+      freezeActor(me);
+    }
+    for (const ra of remotes.values()) {
+      if (!ra.frozen && now - (ra.lastMoveAt || 0) > IDLE_FREEZE_MS) {
+        freezeActor(ra);
+      }
+    }
+  }, 100);
 
   // ---- me ------------------------------------------------------
   const me = createActor(ME.id, ME.name, false);
@@ -878,6 +947,7 @@
     if (Math.abs(dx) >= Math.abs(dy)) setDirection(me, dx > 0 ? 'right' : 'left');
     else                              setDirection(me, dy > 0 ? 'down' : 'up');
     placeActor(me);
+    markMoved(me);
     moved = true;
   }
 
@@ -906,6 +976,7 @@
           me.pos.x = moveTarget.x;
           me.pos.y = moveTarget.y;
           placeActor(me);
+          markMoved(me);
           moved = true;
         }
         moveTarget = null;
@@ -1046,12 +1117,19 @@
     if (!p.tab_id || p.tab_id === TAB_ID) return;
     const ra = remotes.get(p.tab_id);
     if (!ra) return;
+    let actuallyMoved = false;
     if (typeof p.x === 'number' && typeof p.y === 'number') {
+      if (p.x !== ra.pos.x || p.y !== ra.pos.y) actuallyMoved = true;
       ra.pos.x = p.x;
       ra.pos.y = p.y;
       placeActor(ra);
     }
     if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
+    // Only count this as motion when the position genuinely
+    // changed — otherwise the "rebroadcast on join" event would
+    // cause every idle character to twitch back into walking
+    // animation when a new player connects.
+    if (actuallyMoved) markMoved(ra);
   });
 
   channel.on('broadcast', { event: 'chat' }, function (msg) {
