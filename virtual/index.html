@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Space</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #0f1115;
+    color: #fff;
+    user-select: none;
+  }
+  body { display: flex; }
+
+  #sidebar {
+    width: 280px;
+    background: #161922;
+    border-right: 1px solid #262a36;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    flex-shrink: 0;
+  }
+  #sidebar header { margin-bottom: 18px; }
+  #sidebar h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f1f5f9;
+    letter-spacing: -0.2px;
+  }
+  #sidebar .subtitle {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 4px;
+  }
+  #sidebar .back {
+    display: inline-block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: #6366f1;
+    text-decoration: none;
+  }
+  #sidebar .back:hover { text-decoration: underline; }
+
+  .panel {
+    background: #1c2030;
+    border: 1px solid #262a36;
+    border-radius: 10px;
+    padding: 14px;
+    font-size: 13px;
+    color: #94a3b8;
+    line-height: 1.55;
+    margin-bottom: 16px;
+  }
+  .panel b { color: #e5e7eb; font-weight: 600; }
+
+  .keys {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    margin-top: 8px;
+  }
+  .key {
+    background: #262a36;
+    color: #e5e7eb;
+    text-align: center;
+    padding: 6px 0;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .key.empty { background: transparent; }
+
+  #presencePanel { padding: 12px 14px; }
+  #presencePanel .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  #presencePanel .header b { color: #e5e7eb; }
+  #presenceCount {
+    background: #262a36;
+    color: #cbd5e1;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  #presenceList {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+  .presence-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #cbd5e1;
+  }
+  .presence-row .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+    flex-shrink: 0;
+  }
+  .presence-row.me { color: #a5b4fc; font-weight: 600; }
+
+  #chatForm {
+    margin-top: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  #chatForm label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6b7280;
+    font-weight: 600;
+  }
+  #chatInput {
+    width: 100%;
+    padding: 11px 13px;
+    background: #1c2030;
+    color: #f1f5f9;
+    border: 1px solid #2a2f3e;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  #chatInput::placeholder { color: #4b5563; }
+  #chatInput:focus { border-color: #6366f1; }
+  #chatSend {
+    background: #6366f1;
+    color: #fff;
+    border: none;
+    padding: 11px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-family: inherit;
+    font-weight: 600;
+    transition: background 0.15s;
+  }
+  #chatSend:hover { background: #4f46e5; }
+  #chatSend:active { background: #4338ca; }
+  #chatSend:disabled { background: #2a2f3e; cursor: not-allowed; color: #6b7280; }
+
+  #world {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: radial-gradient(ellipse at center, #1a1f2e 0%, #0a0c12 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #stageWrap {
+    position: relative;
+    transform-origin: center center;
+  }
+  #stage {
+    position: relative;
+    width: 1448px;
+    height: 1086px;
+    background-image: url('images/classroom.png');
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+    cursor: pointer;
+  }
+
+  .actor {
+    position: absolute;
+    width: 140px;
+    height: 140px;
+    will-change: transform;
+  }
+  .actor-sprite {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: auto;
+    cursor: pointer;
+    -webkit-user-drag: none;
+  }
+  .actor-name {
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    transform: translateX(-50%);
+    margin-bottom: 2px;
+    background: rgba(15, 17, 21, 0.85);
+    color: #fff;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .actor-name.show { opacity: 1; }
+  .actor-name.always { opacity: 1; background: rgba(99, 102, 241, 0.9); }
+
+  .actor-bubble {
+    position: absolute;
+    left: 50%;
+    bottom: 100%;
+    transform: translateX(-50%);
+    margin-bottom: 30px;
+    background: #fff;
+    color: #111827;
+    padding: 10px 16px;
+    border-radius: 20px;
+    font-size: 18px;
+    font-weight: 500;
+    max-width: 360px;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    line-height: 1.35;
+    text-align: center;
+  }
+  .actor-bubble.show { opacity: 1; }
+  .actor-bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-style: solid;
+    border-width: 10px 9px 0 9px;
+    border-color: #fff transparent transparent transparent;
+  }
+
+  .hint {
+    position: absolute;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(8px);
+    color: #e5e7eb;
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 12px;
+    pointer-events: none;
+  }
+  .status {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(8px);
+    color: #e5e7eb;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: none;
+  }
+  .status .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #f59e0b;
+    transition: background 0.3s;
+  }
+  .status.connected .dot { background: #22c55e; }
+  .status.full .dot { background: #ef4444; }
+
+  #blocker {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 17, 21, 0.92);
+    color: #fff;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    z-index: 100;
+    padding: 24px;
+    text-align: center;
+  }
+  #blocker.show { display: flex; }
+  #blocker h2 { font-size: 22px; margin-bottom: 10px; }
+  #blocker p { color: #9ca3af; max-width: 360px; line-height: 1.5; }
+  #blocker a {
+    margin-top: 18px;
+    background: #6366f1;
+    color: #fff;
+    padding: 10px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 14px;
+  }
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <header>
+      <h1>The Space</h1>
+      <div class="subtitle">virtual classroom</div>
+      <a class="back" href="../reading/home.html">← Back to lessons</a>
+    </header>
+
+    <div class="panel">
+      <b>이동</b> · 화살표 키로 움직이거나, 가고 싶은 곳을 클릭해도 캐릭터가 따라갑니다.
+      <div class="keys">
+        <div class="key empty"></div>
+        <div class="key">↑</div>
+        <div class="key empty"></div>
+        <div class="key">←</div>
+        <div class="key">↓</div>
+        <div class="key">→</div>
+      </div>
+    </div>
+
+    <div class="panel" id="presencePanel">
+      <div class="header">
+        <b>접속 중</b>
+        <span id="presenceCount">0 / 26</span>
+      </div>
+      <div id="presenceList"></div>
+    </div>
+
+    <form id="chatForm" autocomplete="off">
+      <label for="chatInput">말하기</label>
+      <input id="chatInput" type="text" placeholder="여기에 입력하고 Enter..." maxlength="120">
+      <button id="chatSend" type="submit">전송</button>
+    </form>
+  </aside>
+
+  <main id="world">
+    <div id="stageWrap">
+      <div id="stage"></div>
+    </div>
+    <div class="hint">화살표 키 또는 클릭으로 이동 · 다른 캐릭터를 누르면 이름이 보입니다</div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">연결 중...</span></div>
+  </main>
+
+  <div id="blocker">
+    <h2 id="blockerTitle">로그인이 필요합니다</h2>
+    <p id="blockerMsg">The Space에 입장하려면 먼저 WordCatch에 로그인하세요.</p>
+    <a id="blockerLink" href="../reading/index.html">로그인 화면으로</a>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function () {
+  // ---- config ---------------------------------------------------
+  const SUPABASE_URL  = 'https://sbatsnivlrlywpfytlio.supabase.co';
+  const SUPABASE_ANON = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';
+  const CHANNEL_NAME  = 'the-space-room';
+  const MAX_USERS     = 26;
+
+  // ---- session check -------------------------------------------
+  let session = null;
+  try { session = JSON.parse(localStorage.getItem('wc.session.v1') || 'null'); } catch {}
+  if (!session || !session.id || !session.real_name) {
+    document.getElementById('blocker').classList.add('show');
+    return;
+  }
+  const ME = {
+    id:   String(session.id),
+    name: String(session.real_name),
+  };
+
+  // ---- stage ---------------------------------------------------
+  const stage     = document.getElementById('stage');
+  const stageWrap = document.getElementById('stageWrap');
+  const world     = document.getElementById('world');
+  const input     = document.getElementById('chatInput');
+  const form      = document.getElementById('chatForm');
+  const sendBtn   = document.getElementById('chatSend');
+  const statusEl  = document.getElementById('status');
+  const statusTxt = document.getElementById('statusText');
+  const presList  = document.getElementById('presenceList');
+  const presCount = document.getElementById('presenceCount');
+
+  const STAGE_W = 1448;
+  const STAGE_H = 1086;
+  const CHAR_W  = 140;
+  const CHAR_H  = 140;
+  const SPEED   = 5;
+
+  const SPRITES = {
+    down:  'images/go down.gif',
+    up:    'images/go up.gif',
+    left:  'images/go left.gif',
+    right: 'images/go right.gif',
+  };
+
+  function fitStage() {
+    const pad = 40;
+    const sw = world.clientWidth - pad;
+    const sh = world.clientHeight - pad;
+    const scale = Math.min(sw / STAGE_W, sh / STAGE_H, 1);
+    stageWrap.style.transform = 'scale(' + scale + ')';
+  }
+  fitStage();
+  window.addEventListener('resize', fitStage);
+
+  // ---- actor (character) factory ------------------------------
+  function createActor(id, name, isMe) {
+    const root = document.createElement('div');
+    root.className = 'actor';
+    root.dataset.id = id;
+    root.innerHTML =
+      '<div class="actor-bubble"></div>' +
+      '<div class="actor-name"></div>' +
+      '<img class="actor-sprite" src="' + SPRITES.down + '" alt="character" draggable="false">';
+
+    const sprite = root.querySelector('.actor-sprite');
+    const nameEl = root.querySelector('.actor-name');
+    const bubble = root.querySelector('.actor-bubble');
+    nameEl.textContent = name;
+
+    const actor = {
+      id, name, isMe, root, sprite, nameEl, bubble,
+      pos: { x: STAGE_W / 2 - CHAR_W / 2, y: STAGE_H / 2 - CHAR_H / 2 },
+      dir: 'down',
+      bubbleTimer: null,
+      nameTimer: null,
+    };
+
+    // click own/remote character → show name 3s
+    sprite.addEventListener('click', function (e) {
+      e.stopPropagation();
+      showName(actor, 3000);
+    });
+
+    stage.appendChild(root);
+    placeActor(actor);
+    return actor;
+  }
+
+  function placeActor(a) {
+    a.root.style.left = a.pos.x + 'px';
+    a.root.style.top  = a.pos.y + 'px';
+  }
+
+  function setDirection(a, dir) {
+    if (a.dir === dir) return;
+    a.dir = dir;
+    a.sprite.src = SPRITES[dir];
+  }
+
+  function showName(a, ms) {
+    a.nameEl.classList.add('show');
+    if (a.nameTimer) clearTimeout(a.nameTimer);
+    a.nameTimer = setTimeout(function () {
+      a.nameEl.classList.remove('show');
+    }, ms);
+  }
+
+  function showBubble(a, text) {
+    a.bubble.textContent = text;
+    a.bubble.classList.add('show');
+    if (a.bubbleTimer) clearTimeout(a.bubbleTimer);
+    a.bubbleTimer = setTimeout(function () {
+      a.bubble.classList.remove('show');
+    }, 10000);
+  }
+
+  function removeActor(a) {
+    if (a.bubbleTimer) clearTimeout(a.bubbleTimer);
+    if (a.nameTimer)   clearTimeout(a.nameTimer);
+    a.root.remove();
+  }
+
+  // ---- me ------------------------------------------------------
+  const me = createActor(ME.id, ME.name, true);
+  // spawn at a random-ish corner so people don't pile up
+  me.pos.x = 200 + Math.random() * (STAGE_W - 400 - CHAR_W);
+  me.pos.y = 600 + Math.random() * (STAGE_H - 700 - CHAR_H);
+  placeActor(me);
+
+  const remotes = new Map(); // id → actor
+
+  // ---- input: keys + click-to-move -----------------------------
+  const keys = Object.create(null);
+  let moveTarget = null;
+
+  function isFormTarget(el) {
+    return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON');
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (isFormTarget(e.target)) return;
+    if (e.key in { ArrowUp:1, ArrowDown:1, ArrowLeft:1, ArrowRight:1 }) {
+      e.preventDefault();
+      keys[e.key] = true;
+      moveTarget = null; // keyboard cancels click target
+    }
+  });
+  window.addEventListener('keyup', function (e) {
+    if (e.key in { ArrowUp:1, ArrowDown:1, ArrowLeft:1, ArrowRight:1 }) {
+      keys[e.key] = false;
+    }
+  });
+  window.addEventListener('blur', function () {
+    for (const k in keys) keys[k] = false;
+  });
+
+  stage.addEventListener('click', function (e) {
+    // sprite clicks stopPropagation, so this only fires on empty stage
+    const rect  = stage.getBoundingClientRect();
+    const scale = rect.width / STAGE_W;
+    const sx = (e.clientX - rect.left) / scale;
+    const sy = (e.clientY - rect.top)  / scale;
+    moveTarget = {
+      x: clamp(sx - CHAR_W / 2, 0, STAGE_W - CHAR_W),
+      y: clamp(sy - CHAR_H / 2, 0, STAGE_H - CHAR_H),
+    };
+  });
+
+  function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+  // ---- main loop -----------------------------------------------
+  let moved = false;
+  function step() {
+    let dx = 0, dy = 0;
+
+    if (keys.ArrowUp)    dy -= 1;
+    if (keys.ArrowDown)  dy += 1;
+    if (keys.ArrowLeft)  dx -= 1;
+    if (keys.ArrowRight) dx += 1;
+
+    if (dx !== 0 || dy !== 0) {
+      moveTarget = null;
+      if (dx !== 0 && dy !== 0) {
+        const inv = 1 / Math.SQRT2;
+        dx *= inv; dy *= inv;
+      }
+      applyMove(dx * SPEED, dy * SPEED);
+    } else if (moveTarget) {
+      const tx = moveTarget.x - me.pos.x;
+      const ty = moveTarget.y - me.pos.y;
+      const dist = Math.hypot(tx, ty);
+      if (dist < SPEED) {
+        me.pos.x = moveTarget.x;
+        me.pos.y = moveTarget.y;
+        moveTarget = null;
+        placeActor(me);
+        moved = true;
+      } else {
+        applyMove((tx / dist) * SPEED, (ty / dist) * SPEED);
+      }
+    }
+
+    requestAnimationFrame(step);
+  }
+
+  function applyMove(dx, dy) {
+    me.pos.x = clamp(me.pos.x + dx, 0, STAGE_W - CHAR_W);
+    me.pos.y = clamp(me.pos.y + dy, 0, STAGE_H - CHAR_H);
+    if (Math.abs(dx) >= Math.abs(dy)) setDirection(me, dx > 0 ? 'right' : 'left');
+    else setDirection(me, dy > 0 ? 'down' : 'up');
+    placeActor(me);
+    moved = true;
+  }
+
+  // ---- realtime: presence + chat broadcast ---------------------
+  if (!window.supabase || !window.supabase.createClient) {
+    setStatus('offline', '오프라인 (Realtime 미지원)');
+    requestAnimationFrame(step);
+    return;
+  }
+
+  const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
+    realtime: { params: { eventsPerSecond: 20 } },
+  });
+
+  const channel = client.channel(CHANNEL_NAME, {
+    config: { presence: { key: ME.id } },
+  });
+
+  let subscribed = false;
+
+  channel.on('presence', { event: 'sync' }, function () {
+    const state = channel.presenceState();
+    const ids   = Object.keys(state);
+
+    // remove gone
+    for (const [rid, ra] of remotes) {
+      if (!state[rid]) {
+        removeActor(ra);
+        remotes.delete(rid);
+      }
+    }
+
+    // add / update
+    for (const rid of ids) {
+      if (rid === ME.id) continue;
+      const p = state[rid][0];
+      if (!p) continue;
+      let ra = remotes.get(rid);
+      if (!ra) {
+        ra = createActor(rid, p.name || 'Anonymous', false);
+        remotes.set(rid, ra);
+      }
+      if (typeof p.x === 'number' && typeof p.y === 'number') {
+        ra.pos.x = p.x;
+        ra.pos.y = p.y;
+        placeActor(ra);
+      }
+      if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
+      if (p.name && ra.name !== p.name) {
+        ra.name = p.name;
+        ra.nameEl.textContent = p.name;
+      }
+    }
+
+    renderPresenceList(state);
+  });
+
+  channel.on('broadcast', { event: 'chat' }, function (msg) {
+    const p = msg.payload || {};
+    if (!p.user_id || p.user_id === ME.id) return;
+    const ra = remotes.get(p.user_id);
+    if (ra && p.text) showBubble(ra, p.text);
+  });
+
+  channel.subscribe(async function (status) {
+    if (status === 'SUBSCRIBED') {
+      // capacity check using current presence state
+      const state = channel.presenceState();
+      const liveIds = Object.keys(state).filter(function (id) { return id !== ME.id; });
+      if (liveIds.length >= MAX_USERS) {
+        setStatus('full', '입장 인원 가득 참 (' + MAX_USERS + '/' + MAX_USERS + ')');
+        await channel.unsubscribe();
+        return;
+      }
+      subscribed = true;
+      await channel.track({
+        name: ME.name,
+        x: me.pos.x,
+        y: me.pos.y,
+        dir: me.dir,
+      });
+      setStatus('connected', '접속됨 · ' + ME.name);
+    } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+      setStatus('offline', '연결 실패');
+    } else if (status === 'CLOSED') {
+      setStatus('offline', '연결 끊김');
+    }
+  });
+
+  // throttled presence update for movement
+  let lastTrack = 0;
+  const TRACK_MS = 100; // 10 Hz
+  setInterval(function () {
+    if (!subscribed) return;
+    const now = performance.now();
+    if (!moved) return;
+    if (now - lastTrack < TRACK_MS) return;
+    lastTrack = now;
+    moved = false;
+    channel.track({
+      name: ME.name,
+      x: me.pos.x,
+      y: me.pos.y,
+      dir: me.dir,
+    });
+  }, TRACK_MS);
+
+  // ---- chat send ----------------------------------------------
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    showBubble(me, text);
+    if (subscribed) {
+      channel.send({
+        type: 'broadcast',
+        event: 'chat',
+        payload: { user_id: ME.id, text: text },
+      });
+    }
+    input.value = '';
+    input.blur();
+  });
+
+  // ---- ui helpers ---------------------------------------------
+  function setStatus(state, text) {
+    statusEl.className = 'status ' + state;
+    statusTxt.textContent = text;
+    if (state === 'full' || state === 'offline') {
+      sendBtn.disabled = (state === 'offline' ? false : true);
+    }
+  }
+
+  function renderPresenceList(state) {
+    const ids = Object.keys(state);
+    presCount.textContent = ids.length + ' / ' + MAX_USERS;
+    presList.innerHTML = '';
+    const sorted = ids.map(function (id) {
+      const p = state[id][0] || {};
+      return { id: id, name: p.name || 'Anonymous' };
+    }).sort(function (a, b) {
+      if (a.id === ME.id) return -1;
+      if (b.id === ME.id) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const u of sorted) {
+      const row = document.createElement('div');
+      row.className = 'presence-row' + (u.id === ME.id ? ' me' : '');
+      row.innerHTML = '<span class="dot"></span><span></span>';
+      row.querySelector('span:last-child').textContent =
+        u.name + (u.id === ME.id ? ' (나)' : '');
+      presList.appendChild(row);
+    }
+  }
+
+  window.addEventListener('beforeunload', function () {
+    try { channel.untrack(); } catch {}
+    try { client.removeAllChannels(); } catch {}
+  });
+
+  requestAnimationFrame(step);
+})();
+</script>
+</body>
+</html>
