@@ -192,7 +192,13 @@
     position: absolute;
     width: 140px;
     height: 140px;
-    will-change: transform;
+    will-change: left, top;
+  }
+  /* Remote characters get a short transition so their 10Hz updates
+     look smooth instead of stepping in chunks. Local "me" has no
+     transition so it stays perfectly responsive. */
+  .actor.remote {
+    transition: left 110ms linear, top 110ms linear;
   }
   .actor-sprite {
     position: absolute;
@@ -584,6 +590,17 @@
     name: String(session.real_name),
   };
 
+  // Per-tab unique id used as the Realtime presence key. Critical:
+  // if we used ME.id, two tabs/devices logged in as the same student
+  // would collide on the same presence key and overwrite each other
+  // (the newer track() would visually "kick" the older one off
+  // everyone else's screen). A fresh UUID per tab keeps them
+  // independent — multiple connections per user are allowed.
+  const TAB_ID =
+    (window.crypto && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : (Math.random().toString(36).slice(2) + Date.now().toString(36));
+
   // ---- refs ----------------------------------------------------
   const stage     = document.getElementById('stage');
   const stageWrap = document.getElementById('stageWrap');
@@ -637,9 +654,9 @@
   window.addEventListener('orientationchange', () => setTimeout(fitStage, 200));
 
   // ---- actor factory -------------------------------------------
-  function createActor(id, name) {
+  function createActor(id, name, isRemote) {
     const root = document.createElement('div');
-    root.className = 'actor';
+    root.className = 'actor' + (isRemote ? ' remote' : '');
     root.dataset.id = id;
     root.innerHTML =
       '<div class="actor-bubble"></div>' +
@@ -802,7 +819,7 @@
       channel.send({
         type: 'broadcast',
         event: 'chat',
-        payload: { user_id: ME.id, text: text },
+        payload: { tab_id: TAB_ID, text: text },
       });
     }
   }
@@ -837,8 +854,28 @@
     }
   });
 
-  // ---- realtime: presence + chat broadcast ---------------------
+  // ---- realtime: presence (identity) + broadcast (movement/chat) ----
+  //
+  //  Architecture
+  //  ------------
+  //  • Presence  → low-frequency: "who is online" + each tab's NAME
+  //                and initial spawn position. Keyed by TAB_ID so two
+  //                tabs from the same student account don't collide.
+  //  • Broadcast → high-frequency: 'move' events at ~10 Hz with the
+  //                sender's TAB_ID + position + facing direction, and
+  //                'chat' events for speech bubbles. Broadcast is the
+  //                right transport for ephemeral updates — presence
+  //                sync would rate-limit and feel choppy.
+  //  • Re-announce → when someone new joins, every existing tab fires
+  //                one extra 'move' broadcast so the new joiner sees
+  //                up-to-date positions instead of stale presence
+  //                spawn coordinates.
+  //  • Smoothing → remote actors carry CSS transition (110ms) so the
+  //                10 Hz broadcasts render as smooth motion, while the
+  //                local "me" stays instantly responsive.
   let subscribed = false;
+  let capacityChecked = false;
+  let kicked = false;
   let channel = null;
 
   if (!window.supabase || !window.supabase.createClient) {
@@ -852,35 +889,48 @@
   });
 
   channel = client.channel(CHANNEL_NAME, {
-    config: { presence: { key: ME.id } },
+    config: { presence: { key: TAB_ID } },
   });
 
   channel.on('presence', { event: 'sync' }, function () {
+    if (kicked) return;
     const state = channel.presenceState();
 
-    for (const [rid, ra] of remotes) {
-      if (!state[rid]) {
-        removeActor(ra);
-        remotes.delete(rid);
+    // First sync that includes our own track — verify capacity.
+    if (subscribed && !capacityChecked && state[TAB_ID]) {
+      capacityChecked = true;
+      const others = Object.keys(state).filter(function (k) { return k !== TAB_ID; });
+      if (others.length >= MAX_USERS) {
+        kicked = true;
+        setStatus('full', '입장 인원 가득 참 (' + MAX_USERS + '/' + MAX_USERS + ')');
+        try { channel.untrack(); } catch {}
+        try { channel.unsubscribe(); } catch {}
+        return;
       }
     }
 
-    for (const rid of Object.keys(state)) {
-      if (rid === ME.id) continue;
-      const p = state[rid][0];
+    // Reap remote actors whose tabs disappeared.
+    for (const [tid, ra] of remotes) {
+      if (!state[tid]) {
+        removeActor(ra);
+        remotes.delete(tid);
+      }
+    }
+
+    // Add new remotes (initial spawn pos comes from presence payload).
+    for (const tid of Object.keys(state)) {
+      if (tid === TAB_ID) continue;
+      const p = state[tid][0];
       if (!p) continue;
-      let ra = remotes.get(rid);
+      let ra = remotes.get(tid);
       if (!ra) {
-        ra = createActor(rid, p.name || 'Anonymous');
-        remotes.set(rid, ra);
-      }
-      if (typeof p.x === 'number' && typeof p.y === 'number') {
-        ra.pos.x = p.x;
-        ra.pos.y = p.y;
+        ra = createActor(tid, p.name || 'Anonymous', true);
+        if (typeof p.x === 'number') ra.pos.x = p.x;
+        if (typeof p.y === 'number') ra.pos.y = p.y;
+        if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
         placeActor(ra);
-      }
-      if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
-      if (p.name && ra.name !== p.name) {
+        remotes.set(tid, ra);
+      } else if (p.name && ra.name !== p.name) {
         ra.name = p.name;
         ra.nameEl.textContent = p.name;
       }
@@ -889,24 +939,49 @@
     renderPresenceList(state);
   });
 
+  // Someone else joined → re-broadcast our position so they see us
+  // at our current spot, not the stale presence spawn position.
+  channel.on('presence', { event: 'join' }, function (payload) {
+    if (!subscribed || kicked) return;
+    if (!payload || payload.key === TAB_ID) return;
+    channel.send({
+      type: 'broadcast',
+      event: 'move',
+      payload: { tab_id: TAB_ID, x: me.pos.x, y: me.pos.y, dir: me.dir },
+    });
+  });
+
+  // High-frequency position updates.
+  channel.on('broadcast', { event: 'move' }, function (msg) {
+    const p = msg.payload || {};
+    if (!p.tab_id || p.tab_id === TAB_ID) return;
+    const ra = remotes.get(p.tab_id);
+    if (!ra) return;
+    if (typeof p.x === 'number' && typeof p.y === 'number') {
+      ra.pos.x = p.x;
+      ra.pos.y = p.y;
+      placeActor(ra);
+    }
+    if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
+  });
+
   channel.on('broadcast', { event: 'chat' }, function (msg) {
     const p = msg.payload || {};
-    if (!p.user_id || p.user_id === ME.id) return;
-    const ra = remotes.get(p.user_id);
+    if (!p.tab_id || p.tab_id === TAB_ID) return;
+    const ra = remotes.get(p.tab_id);
     if (ra && p.text) showBubble(ra, p.text);
   });
 
   channel.subscribe(async function (status) {
     if (status === 'SUBSCRIBED') {
-      const state = channel.presenceState();
-      const liveIds = Object.keys(state).filter(function (id) { return id !== ME.id; });
-      if (liveIds.length >= MAX_USERS) {
-        setStatus('full', '입장 인원 가득 참 (' + MAX_USERS + '/' + MAX_USERS + ')');
-        await channel.unsubscribe();
-        return;
-      }
       subscribed = true;
-      await channel.track({ name: ME.name, x: me.pos.x, y: me.pos.y, dir: me.dir });
+      await channel.track({
+        user_id: ME.id,
+        name:    ME.name,
+        x:       me.pos.x,
+        y:       me.pos.y,
+        dir:     me.dir,
+      });
       setStatus('connected', '접속됨 · ' + ME.name);
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
       setStatus('offline', '연결 실패');
@@ -915,12 +990,19 @@
     }
   });
 
-  const TRACK_MS = 100;
+  // Movement broadcast — fire whenever the local actor has moved
+  // since the last tick. ~12 Hz keeps it under the 20 events/sec
+  // channel budget while staying smooth (CSS transition fills gaps).
+  const MOVE_MS = 80;
   setInterval(function () {
-    if (!subscribed || !moved) return;
+    if (!subscribed || kicked || !moved) return;
     moved = false;
-    channel.track({ name: ME.name, x: me.pos.x, y: me.pos.y, dir: me.dir });
-  }, TRACK_MS);
+    channel.send({
+      type: 'broadcast',
+      event: 'move',
+      payload: { tab_id: TAB_ID, x: me.pos.x, y: me.pos.y, dir: me.dir },
+    });
+  }, MOVE_MS);
 
   // ---- ui helpers ---------------------------------------------
   function setStatus(state, text) {
@@ -938,20 +1020,20 @@
     presCount.textContent = countText;
     mtCount.textContent   = countText;
     presList.innerHTML = '';
-    const sorted = ids.map(function (id) {
-      const p = state[id][0] || {};
-      return { id: id, name: p.name || 'Anonymous' };
+    const sorted = ids.map(function (tid) {
+      const p = state[tid][0] || {};
+      return { tab_id: tid, name: p.name || 'Anonymous', isMe: tid === TAB_ID };
     }).sort(function (a, b) {
-      if (a.id === ME.id) return -1;
-      if (b.id === ME.id) return 1;
+      if (a.isMe) return -1;
+      if (b.isMe) return 1;
       return a.name.localeCompare(b.name);
     });
     for (const u of sorted) {
       const row = document.createElement('div');
-      row.className = 'presence-row' + (u.id === ME.id ? ' me' : '');
+      row.className = 'presence-row' + (u.isMe ? ' me' : '');
       row.innerHTML = '<span class="dot"></span><span></span>';
       row.querySelector('span:last-child').textContent =
-        u.name + (u.id === ME.id ? ' (나)' : '');
+        u.name + (u.isMe ? ' (나)' : '');
       presList.appendChild(row);
     }
   }
