@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="en-NZ">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
@@ -160,20 +160,24 @@
   #chatSend:active { background: #4338ca; }
   #chatSend:disabled { background: #2a2f3e; cursor: not-allowed; color: #6b7280; }
 
-  /* ===== World / stage ===== */
+  /* ===== World / stage =====
+     Stage positioning is fully controlled by JS via a single
+     transform on #stageWrap (translate + scale). We removed the
+     previous flex-centering on #world so the same code path serves
+     both desktop (fit-to-viewport) and mobile (camera follow). */
   #world {
     flex: 1;
     position: relative;
     overflow: hidden;
     background: radial-gradient(ellipse at center, #1a1f2e 0%, #0a0c12 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
     min-width: 0;
   }
   #stageWrap {
-    position: relative;
-    transform-origin: center center;
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: 0 0;
+    will-change: transform;
   }
   #stage {
     position: relative;
@@ -188,17 +192,24 @@
     cursor: pointer;
   }
 
+  /* Actors are positioned via transform: translate3d() so that
+     position updates are GPU-composited. The previous left/top
+     animation caused thin streak artifacts on the trailing edge
+     when remotes moved (visible on desktop while watching a phone
+     player walk). Transform-only positioning + GPU layer fixes
+     that completely. */
   .actor {
     position: absolute;
+    left: 0;
+    top: 0;
     width: 140px;
     height: 140px;
-    will-change: left, top;
+    will-change: transform;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
   }
-  /* Remote characters get a short transition so their 10Hz updates
-     look smooth instead of stepping in chunks. Local "me" has no
-     transition so it stays perfectly responsive. */
   .actor.remote {
-    transition: left 110ms linear, top 110ms linear;
+    transition: transform 110ms linear;
   }
   .actor-sprite {
     position: absolute;
@@ -274,6 +285,7 @@
     border-radius: 999px;
     font-size: 12px;
     pointer-events: none;
+    z-index: 5;
   }
   .status {
     position: absolute;
@@ -290,6 +302,7 @@
     align-items: center;
     gap: 6px;
     pointer-events: none;
+    z-index: 5;
   }
   .status .dot {
     width: 8px; height: 8px;
@@ -307,10 +320,10 @@
     top: 0; left: 0; right: 0;
     z-index: 40;
     padding: calc(env(safe-area-inset-top) + 10px) 14px 10px;
-    background: rgba(15, 17, 21, 0.85);
+    background: rgba(15, 17, 21, 0.78);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border-bottom: 1px solid #262a36;
+    border-bottom: 1px solid rgba(38, 42, 54, 0.6);
     align-items: center;
     gap: 12px;
   }
@@ -357,8 +370,8 @@
     transition: background 0.3s;
   }
   .mt-dot.connected { background: #22c55e; }
-  .mt-dot.full       { background: #ef4444; }
-  .mt-dot.offline    { background: #6b7280; }
+  .mt-dot.full      { background: #ef4444; }
+  .mt-dot.offline   { background: #6b7280; }
 
   .fab {
     display: none;
@@ -366,23 +379,23 @@
     right: 18px;
     bottom: calc(env(safe-area-inset-bottom) + 22px);
     z-index: 50;
-    height: 52px;
-    padding: 0 20px;
-    border-radius: 999px;
+    width: 58px;
+    height: 58px;
+    border-radius: 50%;
     background: #6366f1;
     color: #fff;
+    font-size: 26px;
     font-family: inherit;
-    font-size: 15px;
-    font-weight: 700;
+    line-height: 1;
     border: none;
     box-shadow: 0 12px 28px rgba(99, 102, 241, 0.5);
     cursor: pointer;
     align-items: center;
-    gap: 8px;
+    justify-content: center;
     transition: transform 0.15s ease, opacity 0.15s ease;
+    padding: 0;
   }
-  .fab:active { transform: scale(0.96); }
-  .fab .fab-emoji { font-size: 18px; }
+  .fab:active { transform: scale(0.92); }
   body.chat-open .fab {
     opacity: 0;
     transform: translateY(20px) scale(0.9);
@@ -457,14 +470,26 @@
     #world {
       width: 100vw;
       height: 100vh;
-      padding-top: calc(env(safe-area-inset-top) + 64px);
-      padding-bottom: calc(env(safe-area-inset-bottom) + 92px);
     }
+    /* The desktop hint/status bubbles are replaced by the mobile
+       topbar; hide them to avoid duplication. */
+    .hint, .status { display: none; }
     .mobile-topbar { display: flex; }
     .fab { display: inline-flex; }
     .mobile-chat { display: flex; }
-    .hint, .status { display: none; }
-    .actor-bubble { font-size: 22px; max-width: 70vw; }
+    /* Speech bubbles and names live inside the scaled stage, so
+       their on-screen size is (CSS-size × stage-scale). Bump the
+       CSS size on mobile so they stay readable after scaling. */
+    .actor-bubble {
+      font-size: 28px;
+      max-width: 70vw;
+      padding: 12px 20px;
+      border-radius: 24px;
+    }
+    .actor-name {
+      font-size: 18px;
+      padding: 5px 14px;
+    }
   }
 
   /* ===== Blocker (no session) ===== */
@@ -505,7 +530,7 @@
     </header>
 
     <div class="panel">
-      <b>이동</b> · 화살표 키로 움직이거나, 가고 싶은 곳을 클릭해도 캐릭터가 따라갑니다.
+      <b>Move</b> · Use the arrow keys, or click where you want to walk to.
       <div class="keys">
         <div class="key empty"></div>
         <div class="key">↑</div>
@@ -518,16 +543,16 @@
 
     <div class="panel" id="presencePanel">
       <div class="header">
-        <b>접속 중</b>
+        <b>Online</b>
         <span id="presenceCount">0 / 26</span>
       </div>
       <div id="presenceList"></div>
     </div>
 
     <form id="chatForm" autocomplete="off">
-      <label for="chatInput">말하기</label>
-      <input id="chatInput" type="text" placeholder="여기에 입력하고 Enter..." maxlength="120">
-      <button id="chatSend" type="submit">전송</button>
+      <label for="chatInput">Say something</label>
+      <input id="chatInput" type="text" placeholder="Type and press Enter…" maxlength="120">
+      <button id="chatSend" type="submit">Send</button>
     </form>
   </aside>
 
@@ -535,38 +560,35 @@
     <div id="stageWrap">
       <div id="stage"></div>
     </div>
-    <div class="hint">화살표 키 또는 클릭으로 이동 · 다른 캐릭터를 누르면 이름이 보입니다</div>
-    <div class="status" id="status"><span class="dot"></span><span id="statusText">연결 중...</span></div>
+    <div class="hint">Arrow keys or click to walk · Click a character to see their name</div>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">Connecting…</span></div>
   </main>
 
   <!-- Mobile-only UI -->
   <header class="mobile-topbar" id="mobileTopbar">
-    <a class="mt-back" href="../reading/home.html" aria-label="나가기">←</a>
+    <a class="mt-back" href="../reading/home.html" aria-label="Leave">←</a>
     <div class="mt-info">
       <div class="mt-name" id="mtName">…</div>
       <div class="mt-meta">
         <span class="mt-dot" id="mtDot"></span>
         <span id="mtCount">0 / 26</span>
-        <span>· 화면을 탭해 이동</span>
+        <span>· Tap to walk</span>
       </div>
     </div>
   </header>
 
-  <button id="fab" type="button" class="fab" aria-label="말하기 열기">
-    <span class="fab-emoji">💬</span>
-    <span>말하기</span>
-  </button>
+  <button id="fab" type="button" class="fab" aria-label="Open chat">💬</button>
 
   <form id="mobileChatForm" class="mobile-chat" autocomplete="off">
-    <input id="mobileChatInput" type="text" placeholder="여기에 입력하고 전송" maxlength="120" enterkeyhint="send">
-    <button class="mc-btn" type="submit">전송</button>
-    <button class="mc-close" type="button" id="mobileChatClose" aria-label="닫기">✕</button>
+    <input id="mobileChatInput" type="text" placeholder="Type a message…" maxlength="120" enterkeyhint="send">
+    <button class="mc-btn" type="submit">Send</button>
+    <button class="mc-close" type="button" id="mobileChatClose" aria-label="Close">✕</button>
   </form>
 
   <div id="blocker">
-    <h2 id="blockerTitle">로그인이 필요합니다</h2>
-    <p id="blockerMsg">The Space에 입장하려면 먼저 WordCatch에 로그인하세요.</p>
-    <a id="blockerLink" href="../reading/index.html">로그인 화면으로</a>
+    <h2>Sign in required</h2>
+    <p>Sign in to WordCatch before entering The Space.</p>
+    <a href="../reading/index.html">Go to sign in</a>
   </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -577,6 +599,12 @@
   const SUPABASE_ANON = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';
   const CHANNEL_NAME  = 'the-space-room';
   const MAX_USERS     = 26;
+  // Effective collision half-extent. Two characters can approach
+  // until their centres are HITBOX*2 apart on either axis; beyond
+  // that they block each other. Smaller than the 140 sprite box so
+  // characters can stand close without their hitboxes touching the
+  // empty padding around the sprite.
+  const HITBOX        = 38;
 
   // ---- session check -------------------------------------------
   let session = null;
@@ -591,11 +619,10 @@
   };
 
   // Per-tab unique id used as the Realtime presence key. Critical:
-  // if we used ME.id, two tabs/devices logged in as the same student
-  // would collide on the same presence key and overwrite each other
-  // (the newer track() would visually "kick" the older one off
-  // everyone else's screen). A fresh UUID per tab keeps them
-  // independent — multiple connections per user are allowed.
+  // if we used ME.id, two tabs/devices logged in as the same
+  // student would collide on the same presence key and overwrite
+  // each other's track() (the newer track would visually "kick"
+  // the older one off everyone else's screen).
   const TAB_ID =
     (window.crypto && crypto.randomUUID)
       ? crypto.randomUUID()
@@ -613,22 +640,24 @@
   const presList  = document.getElementById('presenceList');
   const presCount = document.getElementById('presenceCount');
 
-  const fab          = document.getElementById('fab');
-  const mForm        = document.getElementById('mobileChatForm');
-  const mInput       = document.getElementById('mobileChatInput');
-  const mCloseBtn    = document.getElementById('mobileChatClose');
-  const mtName       = document.getElementById('mtName');
-  const mtDot        = document.getElementById('mtDot');
-  const mtCount      = document.getElementById('mtCount');
+  const fab       = document.getElementById('fab');
+  const mForm     = document.getElementById('mobileChatForm');
+  const mInput    = document.getElementById('mobileChatInput');
+  const mCloseBtn = document.getElementById('mobileChatClose');
+  const mtName    = document.getElementById('mtName');
+  const mtDot     = document.getElementById('mtDot');
+  const mtCount   = document.getElementById('mtCount');
 
   mtName.textContent = ME.name;
 
-  // ---- stage scaling -------------------------------------------
+  // ---- stage dims ---------------------------------------------
   const STAGE_W = 1448;
   const STAGE_H = 1086;
   const CHAR_W  = 140;
   const CHAR_H  = 140;
   const SPEED   = 5;
+  // Target on-screen character height on phones, in CSS pixels.
+  const MOBILE_CHAR_PX = 100;
 
   const SPRITES = {
     down:  'images/go down.gif',
@@ -637,21 +666,70 @@
     right: 'images/go right.gif',
   };
 
-  function fitStage() {
-    const cs = getComputedStyle(world);
-    const pt = parseFloat(cs.paddingTop)    || 0;
-    const pb = parseFloat(cs.paddingBottom) || 0;
-    const pl = parseFloat(cs.paddingLeft)   || 0;
-    const pr = parseFloat(cs.paddingRight)  || 0;
-    const buf = 16;
-    const sw = world.clientWidth  - pl - pr - buf;
-    const sh = world.clientHeight - pt - pb - buf;
-    const scale = Math.min(sw / STAGE_W, sh / STAGE_H, 1);
-    stageWrap.style.transform = 'scale(' + scale + ')';
+  function isMobile() {
+    return window.innerWidth <= 768;
   }
-  fitStage();
-  window.addEventListener('resize', fitStage);
-  window.addEventListener('orientationchange', () => setTimeout(fitStage, 200));
+
+  // ---- camera / fit -------------------------------------------
+  //
+  //  Desktop  → fit the whole stage inside #world (no follow).
+  //  Mobile   → camera follows the local player. Scale is
+  //             max(charScale, fillScale) so the character is at
+  //             least MOBILE_CHAR_PX tall AND the map fills the
+  //             viewport on both axes (whichever is bigger wins,
+  //             so neither black bars nor undersized chars appear).
+  let lastTx = NaN, lastTy = NaN, lastScale = NaN;
+  function fitOrFollow() {
+    const vw = world.clientWidth;
+    const vh = world.clientHeight;
+    let tx, ty, scale;
+
+    if (isMobile()) {
+      const charScale = MOBILE_CHAR_PX / CHAR_H;
+      const fillScale = Math.max(vw / STAGE_W, vh / STAGE_H);
+      scale = Math.max(charScale, fillScale);
+
+      const charCx = (me.pos.x + CHAR_W / 2) * scale;
+      const charCy = (me.pos.y + CHAR_H / 2) * scale;
+
+      // Aim the camera at the centre of the visible playable area
+      // (between the topbar and the FAB) rather than the raw
+      // viewport centre — keeps the player from being hidden
+      // behind the chrome.
+      const TOPBAR_H = 70;
+      const FAB_H    = 110;
+      const playCx = vw / 2;
+      const playCy = (TOPBAR_H + (vh - FAB_H)) / 2;
+
+      tx = playCx - charCx;
+      ty = playCy - charCy;
+
+      // Clamp so the map's edges never reveal a gap.
+      const sw = STAGE_W * scale, sh = STAGE_H * scale;
+      if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
+      else         tx = (vw - sw) / 2;
+      if (sh > vh) ty = Math.min(0, Math.max(vh - sh, ty));
+      else         ty = (vh - sh) / 2;
+    } else {
+      const buf = 40;
+      scale = Math.min((vw - buf) / STAGE_W, (vh - buf) / STAGE_H, 1);
+      const scaledW = STAGE_W * scale, scaledH = STAGE_H * scale;
+      tx = (vw - scaledW) / 2;
+      ty = (vh - scaledH) / 2;
+    }
+
+    tx = Math.round(tx);
+    ty = Math.round(ty);
+    if (tx !== lastTx || ty !== lastTy || scale !== lastScale) {
+      stageWrap.style.transform =
+        'translate3d(' + tx + 'px, ' + ty + 'px, 0) scale(' + scale + ')';
+      lastTx = tx; lastTy = ty; lastScale = scale;
+    }
+  }
+  window.addEventListener('resize', fitOrFollow);
+  window.addEventListener('orientationchange', function () {
+    setTimeout(fitOrFollow, 200);
+  });
 
   // ---- actor factory -------------------------------------------
   function createActor(id, name, isRemote) {
@@ -669,7 +747,8 @@
     nameEl.textContent = name;
 
     const actor = {
-      id, name, root, sprite, nameEl, bubble,
+      id: id, name: name, isRemote: !!isRemote,
+      root: root, sprite: sprite, nameEl: nameEl, bubble: bubble,
       pos: { x: STAGE_W / 2 - CHAR_W / 2, y: STAGE_H / 2 - CHAR_H / 2 },
       dir: 'down',
       bubbleTimer: null,
@@ -687,8 +766,8 @@
   }
 
   function placeActor(a) {
-    a.root.style.left = a.pos.x + 'px';
-    a.root.style.top  = a.pos.y + 'px';
+    a.root.style.transform =
+      'translate3d(' + a.pos.x + 'px, ' + a.pos.y + 'px, 0)';
   }
 
   function setDirection(a, dir) {
@@ -721,14 +800,29 @@
   }
 
   // ---- me ------------------------------------------------------
-  const me = createActor(ME.id, ME.name);
+  const me = createActor(ME.id, ME.name, false);
   me.pos.x = 200 + Math.random() * (STAGE_W - 400 - CHAR_W);
   me.pos.y = 600 + Math.random() * (STAGE_H - 700 - CHAR_H);
   placeActor(me);
+  fitOrFollow();
 
   const remotes = new Map();
 
-  // ---- input: keys + click-to-move -----------------------------
+  // ---- collision against other characters ----------------------
+  function collidesWithRemotes(x, y) {
+    const cx = x + CHAR_W / 2, cy = y + CHAR_H / 2;
+    for (const ra of remotes.values()) {
+      const ox = ra.pos.x + CHAR_W / 2;
+      const oy = ra.pos.y + CHAR_H / 2;
+      if (Math.abs(cx - ox) < HITBOX * 2 &&
+          Math.abs(cy - oy) < HITBOX * 2) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // ---- input: keys + click/tap-to-move -------------------------
   const keys = Object.create(null);
   let moveTarget = null;
 
@@ -766,11 +860,31 @@
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-  // ---- main loop -----------------------------------------------
+  // ---- movement core ------------------------------------------
+  function applyMove(dx, dy) {
+    const nx = clamp(me.pos.x + dx, 0, STAGE_W - CHAR_W);
+    const ny = clamp(me.pos.y + dy, 0, STAGE_H - CHAR_H);
+
+    // Axis-separated collision so the player slides along an
+    // obstacle instead of jamming. Moving diagonally into a wall
+    // still progresses on whichever axis is clear.
+    if (dx !== 0 && !collidesWithRemotes(nx, me.pos.y)) {
+      me.pos.x = nx;
+    }
+    if (dy !== 0 && !collidesWithRemotes(me.pos.x, ny)) {
+      me.pos.y = ny;
+    }
+
+    if (Math.abs(dx) >= Math.abs(dy)) setDirection(me, dx > 0 ? 'right' : 'left');
+    else                              setDirection(me, dy > 0 ? 'down' : 'up');
+    placeActor(me);
+    moved = true;
+  }
+
+  // ---- main loop ----------------------------------------------
   let moved = false;
   function step() {
     let dx = 0, dy = 0;
-
     if (keys.ArrowUp)    dy -= 1;
     if (keys.ArrowDown)  dy += 1;
     if (keys.ArrowLeft)  dx -= 1;
@@ -788,26 +902,24 @@
       const ty = moveTarget.y - me.pos.y;
       const dist = Math.hypot(tx, ty);
       if (dist < SPEED) {
-        me.pos.x = moveTarget.x;
-        me.pos.y = moveTarget.y;
+        if (!collidesWithRemotes(moveTarget.x, moveTarget.y)) {
+          me.pos.x = moveTarget.x;
+          me.pos.y = moveTarget.y;
+          placeActor(me);
+          moved = true;
+        }
         moveTarget = null;
-        placeActor(me);
-        moved = true;
       } else {
+        const oldX = me.pos.x, oldY = me.pos.y;
         applyMove((tx / dist) * SPEED, (ty / dist) * SPEED);
+        // Fully blocked → abandon the click target rather than
+        // burning frames pressed against an obstacle.
+        if (me.pos.x === oldX && me.pos.y === oldY) moveTarget = null;
       }
     }
 
+    fitOrFollow();
     requestAnimationFrame(step);
-  }
-
-  function applyMove(dx, dy) {
-    me.pos.x = clamp(me.pos.x + dx, 0, STAGE_W - CHAR_W);
-    me.pos.y = clamp(me.pos.y + dy, 0, STAGE_H - CHAR_H);
-    if (Math.abs(dx) >= Math.abs(dy)) setDirection(me, dx > 0 ? 'right' : 'left');
-    else setDirection(me, dy > 0 ? 'down' : 'up');
-    placeActor(me);
-    moved = true;
   }
 
   // ---- chat: shared send + UI ---------------------------------
@@ -843,8 +955,7 @@
   mCloseBtn.addEventListener('click', closeMobileChat);
   mForm.addEventListener('submit', function (e) {
     e.preventDefault();
-    const v = mInput.value;
-    sendChat(v);
+    sendChat(mInput.value);
     mInput.value = '';
     closeMobileChat();
   });
@@ -854,32 +965,14 @@
     }
   });
 
-  // ---- realtime: presence (identity) + broadcast (movement/chat) ----
-  //
-  //  Architecture
-  //  ------------
-  //  • Presence  → low-frequency: "who is online" + each tab's NAME
-  //                and initial spawn position. Keyed by TAB_ID so two
-  //                tabs from the same student account don't collide.
-  //  • Broadcast → high-frequency: 'move' events at ~10 Hz with the
-  //                sender's TAB_ID + position + facing direction, and
-  //                'chat' events for speech bubbles. Broadcast is the
-  //                right transport for ephemeral updates — presence
-  //                sync would rate-limit and feel choppy.
-  //  • Re-announce → when someone new joins, every existing tab fires
-  //                one extra 'move' broadcast so the new joiner sees
-  //                up-to-date positions instead of stale presence
-  //                spawn coordinates.
-  //  • Smoothing → remote actors carry CSS transition (110ms) so the
-  //                10 Hz broadcasts render as smooth motion, while the
-  //                local "me" stays instantly responsive.
+  // ---- realtime: presence (identity) + broadcast (motion/chat) ----
   let subscribed = false;
   let capacityChecked = false;
   let kicked = false;
   let channel = null;
 
   if (!window.supabase || !window.supabase.createClient) {
-    setStatus('offline', '오프라인 (Realtime 미지원)');
+    setStatus('offline', 'Offline (no realtime)');
     requestAnimationFrame(step);
     return;
   }
@@ -896,20 +989,18 @@
     if (kicked) return;
     const state = channel.presenceState();
 
-    // First sync that includes our own track — verify capacity.
     if (subscribed && !capacityChecked && state[TAB_ID]) {
       capacityChecked = true;
       const others = Object.keys(state).filter(function (k) { return k !== TAB_ID; });
       if (others.length >= MAX_USERS) {
         kicked = true;
-        setStatus('full', '입장 인원 가득 참 (' + MAX_USERS + '/' + MAX_USERS + ')');
-        try { channel.untrack(); } catch {}
-        try { channel.unsubscribe(); } catch {}
+        setStatus('full', 'The Space is full (' + MAX_USERS + '/' + MAX_USERS + ')');
+        try { channel.untrack();    } catch {}
+        try { channel.unsubscribe();} catch {}
         return;
       }
     }
 
-    // Reap remote actors whose tabs disappeared.
     for (const [tid, ra] of remotes) {
       if (!state[tid]) {
         removeActor(ra);
@@ -917,7 +1008,6 @@
       }
     }
 
-    // Add new remotes (initial spawn pos comes from presence payload).
     for (const tid of Object.keys(state)) {
       if (tid === TAB_ID) continue;
       const p = state[tid][0];
@@ -939,11 +1029,11 @@
     renderPresenceList(state);
   });
 
-  // Someone else joined → re-broadcast our position so they see us
-  // at our current spot, not the stale presence spawn position.
   channel.on('presence', { event: 'join' }, function (payload) {
     if (!subscribed || kicked) return;
     if (!payload || payload.key === TAB_ID) return;
+    // Someone new joined → re-announce our current position so
+    // they don't see us at a stale spawn coordinate.
     channel.send({
       type: 'broadcast',
       event: 'move',
@@ -951,7 +1041,6 @@
     });
   });
 
-  // High-frequency position updates.
   channel.on('broadcast', { event: 'move' }, function (msg) {
     const p = msg.payload || {};
     if (!p.tab_id || p.tab_id === TAB_ID) return;
@@ -982,17 +1071,16 @@
         y:       me.pos.y,
         dir:     me.dir,
       });
-      setStatus('connected', '접속됨 · ' + ME.name);
+      setStatus('connected', 'Online · ' + ME.name);
     } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-      setStatus('offline', '연결 실패');
+      setStatus('offline', 'Connection failed');
     } else if (status === 'CLOSED') {
-      setStatus('offline', '연결 끊김');
+      setStatus('offline', 'Disconnected');
     }
   });
 
-  // Movement broadcast — fire whenever the local actor has moved
-  // since the last tick. ~12 Hz keeps it under the 20 events/sec
-  // channel budget while staying smooth (CSS transition fills gaps).
+  // High-frequency motion broadcasts, fired only when the local
+  // actor actually moved since the last tick (~12 Hz).
   const MOVE_MS = 80;
   setInterval(function () {
     if (!subscribed || kicked || !moved) return;
@@ -1009,9 +1097,7 @@
     statusEl.className = 'status ' + state;
     statusTxt.textContent = text;
     mtDot.className = 'mt-dot ' + state;
-    if (state === 'offline' || state === 'full') {
-      sendBtn.disabled = (state === 'full');
-    }
+    sendBtn.disabled = (state === 'full');
   }
 
   function renderPresenceList(state) {
@@ -1033,14 +1119,14 @@
       row.className = 'presence-row' + (u.isMe ? ' me' : '');
       row.innerHTML = '<span class="dot"></span><span></span>';
       row.querySelector('span:last-child').textContent =
-        u.name + (u.isMe ? ' (나)' : '');
+        u.name + (u.isMe ? ' (you)' : '');
       presList.appendChild(row);
     }
   }
 
   window.addEventListener('beforeunload', function () {
     try { channel && channel.untrack(); } catch {}
-    try { client.removeAllChannels(); } catch {}
+    try { client.removeAllChannels();   } catch {}
   });
 
   requestAnimationFrame(step);
