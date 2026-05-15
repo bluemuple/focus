@@ -192,6 +192,29 @@
     cursor: pointer;
   }
 
+  /* Foreground overlay layer.
+     classroom-overlay.png is an OPTIONAL same-sized image that
+     contains only the parts of objects that should appear ABOVE
+     the character — typically the bottom/front face of desks and
+     walls. Painting this over the actors gives a "walk behind a
+     desk" effect: the character's feet are hidden when they stand
+     just above the desk's front edge, but the character isn't
+     covered when they walk past in front of it.
+     Same z-index trick can be repeated with more layers if you
+     ever need multiple depth bands. */
+  .stage-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 1448px;
+    height: 1086px;
+    background-size: 100% 100%;
+    background-repeat: no-repeat;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #stageOverlay { background-image: url('images/classroom-overlay.png'); }
+
   /* Actors are positioned via transform: translate3d() so that
      position updates are GPU-composited. The previous left/top
      animation caused thin streak artifacts on the trailing edge
@@ -558,7 +581,9 @@
 
   <main id="world">
     <div id="stageWrap">
-      <div id="stage"></div>
+      <div id="stage">
+        <div id="stageOverlay" class="stage-overlay"></div>
+      </div>
     </div>
     <div class="hint">Arrow keys or click to walk · Click a character to see their name</div>
     <div class="status" id="status"><span class="dot"></span><span id="statusText">Connecting…</span></div>
@@ -676,6 +701,40 @@
     const img = new Image();
     img.src = SPRITES[_d];
     _spritePreload.push(img);
+  }
+
+  // ---- map collision mask --------------------------------------
+  //
+  //  images/classroom-mask.png is an OPTIONAL same-sized overlay
+  //  (1448 × 1086) where any opaque pixel marks a blocked tile
+  //  (desk, wall, etc.) and fully transparent pixels are walkable.
+  //  We rasterise it once into an ImageData buffer and sample the
+  //  alpha channel at the character's feet for each candidate
+  //  step. If the file is missing, isBlockedByMap() just returns
+  //  false → the world is fully open (same as before this feature
+  //  shipped).
+  let maskData = null;
+  {
+    const mImg = new Image();
+    mImg.onload = function () {
+      try {
+        const c = document.createElement('canvas');
+        c.width  = STAGE_W;
+        c.height = STAGE_H;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(mImg, 0, 0, STAGE_W, STAGE_H);
+        maskData = ctx.getImageData(0, 0, STAGE_W, STAGE_H).data;
+      } catch (e) {
+        // getImageData throws on file:// + non-same-origin canvases;
+        // surface a hint so the user knows to serve via HTTP.
+        console.warn('Collision mask loaded but pixel access blocked. ' +
+                     'Serve this page over http(s):// (not file://) to enable map collision.', e);
+      }
+    };
+    mImg.onerror = function () {
+      // No mask yet — walking is unrestricted.
+    };
+    mImg.src = 'images/classroom-mask.png';
   }
 
   function isMobile() {
@@ -891,6 +950,31 @@
     return false;
   }
 
+  // ---- collision against the map mask --------------------------
+  //
+  //  We sample a small rectangle at the character's "feet" rather
+  //  than the centre of the sprite so the head can still overlap
+  //  the top edge of a desk visually (matches gather.town's feel).
+  //  Four corners of the feet rect are checked so a player can't
+  //  thread a 1-pixel gap into an obstacle.
+  function isBlockedByMap(x, y) {
+    if (!maskData) return false;
+    const fx = x + CHAR_W / 2;
+    const fy = y + CHAR_H * 0.82;
+    const HW = 18, HH = 8; // feet hitbox half-extents
+    return (
+      sampleMask(fx - HW, fy - HH) ||
+      sampleMask(fx + HW, fy - HH) ||
+      sampleMask(fx - HW, fy + HH) ||
+      sampleMask(fx + HW, fy + HH)
+    );
+  }
+  function sampleMask(x, y) {
+    const px = x | 0, py = y | 0;
+    if (px < 0 || py < 0 || px >= STAGE_W || py >= STAGE_H) return true;
+    return maskData[(py * STAGE_W + px) * 4 + 3] > 128;
+  }
+
   // ---- input: keys + click/tap-to-move -------------------------
   const keys = Object.create(null);
   let moveTarget = null;
@@ -936,11 +1020,12 @@
 
     // Axis-separated collision so the player slides along an
     // obstacle instead of jamming. Moving diagonally into a wall
-    // still progresses on whichever axis is clear.
-    if (dx !== 0 && !collidesWithRemotes(nx, me.pos.y)) {
+    // still progresses on whichever axis is clear. The map mask
+    // and remote-character hitboxes are both checked per axis.
+    if (dx !== 0 && !collidesWithRemotes(nx, me.pos.y) && !isBlockedByMap(nx, me.pos.y)) {
       me.pos.x = nx;
     }
-    if (dy !== 0 && !collidesWithRemotes(me.pos.x, ny)) {
+    if (dy !== 0 && !collidesWithRemotes(me.pos.x, ny) && !isBlockedByMap(me.pos.x, ny)) {
       me.pos.y = ny;
     }
 
@@ -972,7 +1057,8 @@
       const ty = moveTarget.y - me.pos.y;
       const dist = Math.hypot(tx, ty);
       if (dist < SPEED) {
-        if (!collidesWithRemotes(moveTarget.x, moveTarget.y)) {
+        if (!collidesWithRemotes(moveTarget.x, moveTarget.y) &&
+            !isBlockedByMap(moveTarget.x, moveTarget.y)) {
           me.pos.x = moveTarget.x;
           me.pos.y = moveTarget.y;
           placeActor(me);
