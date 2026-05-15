@@ -309,7 +309,13 @@
         b.style.background = '#fff';
         b.style.color = '#374151';
       }
-      b.addEventListener('click', function () { toggleCat(cat); });
+      b.addEventListener('click', function (ev) {
+        toggleCat(cat);
+        // Let go of focus so the next arrow-key press isn't
+        // mistaken for "tab to next button" by the browser —
+        // keeps single-click → ↑↓←→ a totally fluid flow.
+        if (ev.currentTarget && ev.currentTarget.blur) ev.currentTarget.blur();
+      });
       row.appendChild(b);
     });
   }
