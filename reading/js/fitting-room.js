@@ -13,9 +13,10 @@
 // =============================================================
 
 (function () {
-  const STORAGE_KEY      = 'virtual.wear_offsets.v1';
-  const SIZE_STORAGE_KEY = 'virtual.wear_sizes.v1';
-  const SAMPLE_KEY       = 'virtual.fitting_sample.v1';
+  const STORAGE_KEY       = 'virtual.wear_offsets.v1';
+  const SIZE_STORAGE_KEY  = 'virtual.wear_sizes.v1';
+  const LAYER_STORAGE_KEY = 'virtual.wear_layers.v1';
+  const SAMPLE_KEY        = 'virtual.fitting_sample.v1';
   // Must match the CSS `transform: scale(...)` on #fitPreview in
   // teacher.html so drag-distance maps cleanly to 1-px logical
   // movement inside the preview.
@@ -38,14 +39,27 @@
     top:     { x: -27, y: -16 },
   };
 
-  // z-order is fixed in code (matches the spec face << glasses,
-  // beard << hair << hat / bottom << top). Size is editable;
-  // SIZE_DEFAULTS is the starting square dimension per category
-  // — wearables are 1:1 so a single value covers width and height.
-  const Z_ORDER = {
-    face:    1, glasses: 2, beard:   2, hair:    3,
-    hat:     4, shoes:   5, bottom:  6, top:     7,
+  // LAYER_DEFAULTS uses teacher-facing numbering where 1 = top
+  // (front-most) and bigger numbers sink behind. CSS z-index is
+  // computed as (100 − layer) when applied. Inverting the spec
+  // face << glasses, beard << hair << hat / bottom << top gives:
+  //   top=1, bottom=2, shoes=3, hat=4, hair=5, glasses=6,
+  //   beard=6, face=7.
+  const LAYER_DEFAULTS = {
+    top:    1, bottom: 2, shoes:  3, hat:    4,
+    hair:   5, glasses: 6, beard:  6, face:   7,
   };
+  function layerToZ(layer) {
+    return 100 - (parseInt(layer, 10) || 1);
+  }
+  function clampLayer(n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n)) return 1;
+    if (n < 1)  return 1;
+    if (n > 99) return 99;
+    return n;
+  }
+
   const SIZE_DEFAULTS = {
     face:    52,  glasses: 100, beard:   100, hair:    100,
     hat:     100, shoes:   100, bottom:  100, top:     100,
@@ -124,6 +138,7 @@
   //  dropdown when several are selected.
   let offsets    = loadOffsets();
   let sizes      = loadSizes();
+  let layers     = loadLayers();
   const editSet  = new Set();
   let lastClicked = null;
   const wearImgs = {}; // cat → img element, for in-place drag updates
@@ -172,6 +187,21 @@
   }
   function saveSizes() {
     try { localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(sizes)); } catch {}
+  }
+  function loadLayers() {
+    try {
+      const raw = localStorage.getItem(LAYER_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return Object.assign({}, LAYER_DEFAULTS, parsed);
+        }
+      }
+    } catch {}
+    return Object.assign({}, LAYER_DEFAULTS);
+  }
+  function saveLayers() {
+    try { localStorage.setItem(LAYER_STORAGE_KEY, JSON.stringify(layers)); } catch {}
   }
   function loadSample() {
     try {
@@ -258,7 +288,8 @@
     CATEGORIES.forEach(function (cat) {
       const b = document.createElement('button');
       b.type = 'button';
-      b.textContent = cat[0].toUpperCase() + cat.slice(1);
+      const layerN = layers[cat] || LAYER_DEFAULTS[cat] || 1;
+      b.textContent = cat[0].toUpperCase() + cat.slice(1) + ' (' + layerN + ')';
       b.style.padding = '6px 12px';
       b.style.fontSize = '13px';
       b.style.borderRadius = '999px';
@@ -344,7 +375,8 @@
     const off = offsets[cat] || { x: 0, y: 0 };
     document.getElementById('fitX').textContent = off.x;
     document.getElementById('fitY').textContent = off.y;
-    document.getElementById('fitSize').value = sizes[cat] || SIZE_DEFAULTS[cat] || 100;
+    document.getElementById('fitSize').value  = sizes[cat]  || SIZE_DEFAULTS[cat]  || 100;
+    document.getElementById('fitLayer').value = layers[cat] || LAYER_DEFAULTS[cat] || 1;
   }
   function clampSize(n) {
     n = parseInt(n, 10);
@@ -376,6 +408,29 @@
     renderPreview();
   }
 
+  // Layer is per-element (not group). +/- and input act on the
+  // current focus category only — stacking is intrinsically a
+  // single-element property, even when multiple are selected.
+  function bumpLayer(delta) {
+    const cat = focusCat();
+    if (!cat) return;
+    const cur = layers[cat] || LAYER_DEFAULTS[cat] || 1;
+    layers[cat] = clampLayer(cur + delta);
+    saveLayers();
+    renderCatRow();      // button label refreshes "Name (N)"
+    renderOffsetDisplay();
+    renderPreview();
+  }
+  function setLayer(value) {
+    const cat = focusCat();
+    if (!cat) return;
+    layers[cat] = clampLayer(value);
+    saveLayers();
+    renderCatRow();
+    renderOffsetDisplay();
+    renderPreview();
+  }
+
   function renderPreview() {
     const preview = document.getElementById('fitPreview');
     if (!preview) return;
@@ -403,7 +458,7 @@
       img.style.top    = off.y + 'px';
       img.style.width  = size + 'px';
       img.style.height = size + 'px';
-      img.style.zIndex = Z_ORDER[cat] || 1;
+      img.style.zIndex = layerToZ(layers[cat] || LAYER_DEFAULTS[cat] || 1);
       img.style.imageRendering = 'pixelated';
       img.style.userSelect = 'none';
       img.style.webkitUserDrag = 'none';
@@ -468,12 +523,15 @@
   // selected. When more than one is selected, the label spells
   // out every one so the teacher can see the full group.
   function renderEditModeUI() {
-    const minus = document.getElementById('fitSizeMinus');
-    const plus  = document.getElementById('fitSizePlus');
-    const input = document.getElementById('fitSize');
-    const label = document.getElementById('fitActiveLabel');
-    const xEl   = document.getElementById('fitX');
-    const yEl   = document.getElementById('fitY');
+    const sMinus = document.getElementById('fitSizeMinus');
+    const sPlus  = document.getElementById('fitSizePlus');
+    const sInput = document.getElementById('fitSize');
+    const lMinus = document.getElementById('fitLayerMinus');
+    const lPlus  = document.getElementById('fitLayerPlus');
+    const lInput = document.getElementById('fitLayer');
+    const label  = document.getElementById('fitActiveLabel');
+    const xEl    = document.getElementById('fitX');
+    const yEl    = document.getElementById('fitY');
 
     const enabled = editSet.size > 0;
 
@@ -481,7 +539,8 @@
       label.textContent = '(none selected — click an element button)';
       xEl.textContent = '–';
       yEl.textContent = '–';
-      input.value = '';
+      sInput.value = '';
+      lInput.value = '';
     } else {
       const names = [];
       CATEGORIES.forEach(function (c) {
@@ -491,7 +550,8 @@
         (editSet.size > 1 ? ' ✏ group edit' : ' ✏ edit');
     }
 
-    [minus, plus, input].forEach(function (el) {
+    [sMinus, sPlus, sInput, lMinus, lPlus, lInput].forEach(function (el) {
+      if (!el) return;
       el.disabled = !enabled;
       el.style.opacity = enabled ? '1' : '0.4';
       el.style.cursor  = enabled ? '' : 'not-allowed';
@@ -521,17 +581,23 @@
       for (const cat of editSet) {
         offsets[cat] = Object.assign({}, DEFAULTS[cat]);
         sizes[cat]   = SIZE_DEFAULTS[cat];
+        layers[cat]  = LAYER_DEFAULTS[cat];
       }
       saveOffsets();
       saveSizes();
+      saveLayers();
+      renderCatRow();
       renderOffsetDisplay();
       renderPreview();
     });
     document.getElementById('fitResetAllBtn').addEventListener('click', function () {
       offsets = Object.assign({}, DEFAULTS);
       sizes   = Object.assign({}, SIZE_DEFAULTS);
+      layers  = Object.assign({}, LAYER_DEFAULTS);
       saveOffsets();
       saveSizes();
+      saveLayers();
+      renderCatRow();
       renderOffsetDisplay();
       renderPreview();
     });
@@ -545,8 +611,18 @@
     document.getElementById('fitSize').addEventListener('input', function (e) {
       setSizeAll(e.target.value);
     });
+
+    // Layer controls. Operate on the focus category only
+    // (lastClicked) — layer is an intrinsically single-element
+    // property. The +/- buttons step by 1, the input takes any
+    // value 1–99.
+    document.getElementById('fitLayerMinus').addEventListener('click', function () { bumpLayer(-1); });
+    document.getElementById('fitLayerPlus' ).addEventListener('click', function () { bumpLayer( 1); });
+    document.getElementById('fitLayer').addEventListener('input', function (e) {
+      setLayer(e.target.value);
+    });
     document.getElementById('fitCopyBtn').addEventListener('click', function () {
-      const json = JSON.stringify({ offsets: offsets, sizes: sizes }, null, 2);
+      const json = JSON.stringify({ offsets: offsets, sizes: sizes, layers: layers }, null, 2);
       const msg = document.getElementById('fitCopyMsg');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(json).then(function () {
@@ -597,6 +673,7 @@
           id:         'global',
           offsets:    offsets,
           sizes:      sizes,
+          layers:     layers,
           updated_at: new Date().toISOString(),
         }),
       });
@@ -640,7 +717,7 @@
         await channel.send({
           type:    'broadcast',
           event:   'offsets',
-          payload: { offsets: offsets, sizes: sizes, at: Date.now() },
+          payload: { offsets: offsets, sizes: sizes, layers: layers, at: Date.now() },
         });
         liveOk = true;
         // Tidy up — we only needed a one-shot send.

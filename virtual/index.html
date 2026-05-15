@@ -1403,6 +1403,13 @@
     face:    52,  glasses: 100, beard:   100, hair:    100,
     hat:     100, shoes:   100, bottom:  100, top:     100,
   };
+  // Layer numbering: 1 = topmost (front), bigger = behind. CSS
+  // z-index is computed as (100 − layer). Teacher Fitting Room
+  // ships per-category overrides through Supabase + Realtime.
+  const WEAR_LAYERS_DEFAULTS = {
+    top:    1, bottom: 2, shoes:  3, hat:    4,
+    hair:   5, glasses: 6, beard:  6, face:   7,
+  };
   function loadWearOffsets() {
     try {
       const raw = localStorage.getItem('virtual.wear_offsets.v1');
@@ -1427,8 +1434,25 @@
     } catch {}
     return Object.assign({}, WEAR_SIZES_DEFAULTS);
   }
+  function loadWearLayers() {
+    try {
+      const raw = localStorage.getItem('virtual.wear_layers.v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return Object.assign({}, WEAR_LAYERS_DEFAULTS, parsed);
+        }
+      }
+    } catch {}
+    return Object.assign({}, WEAR_LAYERS_DEFAULTS);
+  }
+  function wearZIndex(cat) {
+    const layer = WEAR_LAYERS[cat] || WEAR_LAYERS_DEFAULTS[cat] || 1;
+    return 100 - layer;
+  }
   let WEAR_OFFSETS = loadWearOffsets();
   let WEAR_SIZES   = loadWearSizes();
+  let WEAR_LAYERS  = loadWearLayers();
 
   // Refresh every active actor with whatever WEAR_OFFSETS now
   // holds. Used after a fresh DB fetch or a live broadcast.
@@ -1449,6 +1473,9 @@
     } else if (e.key === 'virtual.wear_sizes.v1') {
       WEAR_SIZES = loadWearSizes();
       refreshAllAvatarOffsets();
+    } else if (e.key === 'virtual.wear_layers.v1') {
+      WEAR_LAYERS = loadWearLayers();
+      refreshAllAvatarOffsets();
     }
   });
 
@@ -1459,7 +1486,7 @@
   (async function () {
     try {
       const r = await fetch(SUPABASE_URL +
-        '/rest/v1/wc_avatar_offsets?id=eq.global&select=offsets,sizes', {
+        '/rest/v1/wc_avatar_offsets?id=eq.global&select=offsets,sizes,layers', {
         headers: { apikey: SUPABASE_ANON, Authorization: 'Bearer ' + SUPABASE_ANON },
       });
       if (!r.ok) return;
@@ -1473,6 +1500,10 @@
       if (row.sizes && typeof row.sizes === 'object') {
         WEAR_SIZES = Object.assign({}, WEAR_SIZES_DEFAULTS, row.sizes);
         try { localStorage.setItem('virtual.wear_sizes.v1', JSON.stringify(row.sizes)); } catch {}
+      }
+      if (row.layers && typeof row.layers === 'object') {
+        WEAR_LAYERS = Object.assign({}, WEAR_LAYERS_DEFAULTS, row.layers);
+        try { localStorage.setItem('virtual.wear_layers.v1', JSON.stringify(row.layers)); } catch {}
       }
       refreshAllAvatarOffsets();
     } catch {}
@@ -1684,13 +1715,14 @@
         // Per-category tint (hue saved in avatar.color[cat]).
         const hue = actor.avatar.color && actor.avatar.color[cat];
         el.style.filter = tintFilter(hue);
-        // Per-category position offset + size (teacher-adjustable).
+        // Per-category position, size and layer (teacher-adjustable).
         const off  = WEAR_OFFSETS[cat] || { x: 0, y: 0 };
         const size = WEAR_SIZES[cat]   || WEAR_SIZES_DEFAULTS[cat] || 100;
-        el.style.left   = off.x + 'px';
-        el.style.top    = off.y + 'px';
-        el.style.width  = size  + 'px';
-        el.style.height = size  + 'px';
+        el.style.left    = off.x + 'px';
+        el.style.top     = off.y + 'px';
+        el.style.width   = size  + 'px';
+        el.style.height  = size  + 'px';
+        el.style.zIndex  = wearZIndex(cat);
       });
     }
   }
@@ -2288,8 +2320,8 @@
     if (ra && p.text) deliverChat(ra, p.text);
   });
 
-  // Live teacher pushes from the Fitting Room → swap offsets and
-  // sizes, then re-render every actor without reloading the page.
+  // Live teacher pushes from the Fitting Room → swap offsets,
+  // sizes, layers and re-render every actor without reloading.
   channel.on('broadcast', { event: 'offsets' }, function (msg) {
     const p = msg.payload || {};
     let changed = false;
@@ -2301,6 +2333,11 @@
     if (p.sizes && typeof p.sizes === 'object') {
       WEAR_SIZES = Object.assign({}, WEAR_SIZES_DEFAULTS, p.sizes);
       try { localStorage.setItem('virtual.wear_sizes.v1', JSON.stringify(p.sizes)); } catch {}
+      changed = true;
+    }
+    if (p.layers && typeof p.layers === 'object') {
+      WEAR_LAYERS = Object.assign({}, WEAR_LAYERS_DEFAULTS, p.layers);
+      try { localStorage.setItem('virtual.wear_layers.v1', JSON.stringify(p.layers)); } catch {}
       changed = true;
     }
     if (changed) refreshAllAvatarOffsets();
