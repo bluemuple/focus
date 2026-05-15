@@ -44,3 +44,9 @@ on conflict (id) do nothing;
 -- can push position + size in the same upsert.
 alter table wc_avatar_offsets
   add column if not exists sizes jsonb not null default '{}'::jsonb;
+
+-- Per-category layer numbers (1 = topmost, larger = behind). The
+-- in-game CSS z-index is computed as (100 - layer) so layer 1
+-- always renders on top of the others.
+alter table wc_avatar_offsets
+  add column if not exists layers jsonb not null default '{}'::jsonb;
