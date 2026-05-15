@@ -58,26 +58,10 @@
     font-size: 13px;
     color: #94a3b8;
     line-height: 1.55;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
   }
   .panel b { color: #e5e7eb; font-weight: 600; }
-
-  .keys {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 4px;
-    margin-top: 8px;
-  }
-  .key {
-    background: #262a36;
-    color: #e5e7eb;
-    text-align: center;
-    padding: 6px 0;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .key.empty { background: transparent; }
 
   #presencePanel { padding: 12px 14px; }
   #presencePanel .header {
@@ -117,11 +101,69 @@
   }
   .presence-row.me { color: #a5b4fc; font-weight: 600; }
 
+  /* Fitting Room button — opens the avatar editor popup. */
+  #fittingRoomBtn {
+    width: 100%;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    color: #fff;
+    border: none;
+    padding: 11px;
+    border-radius: 10px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+    transition: filter 0.15s;
+  }
+  #fittingRoomBtn:hover  { filter: brightness(1.1); }
+  #fittingRoomBtn:active { filter: brightness(0.9); }
+
+  /* Chat log — fills the remaining vertical space between the
+     fitting-room button and the chat input form. Auto-scrolls
+     to keep the latest line visible. */
+  #chatLogPanel {
+    flex: 1 1 0;
+    min-height: 60px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+  }
+  #chatLog {
+    flex: 1 1 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .chat-log-row {
+    color: #cbd5e1;
+    word-wrap: break-word;
+  }
+  .chat-log-name {
+    color: #a5b4fc;
+    font-weight: 700;
+    margin-right: 4px;
+  }
+  .chat-log-row.me .chat-log-name { color: #f0abfc; }
+  .chat-log-empty {
+    color: #4b5563;
+    font-style: italic;
+    text-align: center;
+    margin-top: 12px;
+  }
+
   #chatForm {
-    margin-top: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    flex-shrink: 0;
   }
   #chatForm label {
     font-size: 11px;
@@ -564,24 +606,20 @@
       <a class="back" href="../reading/home.html">← Back to lessons</a>
     </header>
 
-    <div class="panel">
-      <b>Move</b> · Use the arrow keys, or click where you want to walk to.
-      <div class="keys">
-        <div class="key empty"></div>
-        <div class="key">↑</div>
-        <div class="key empty"></div>
-        <div class="key">←</div>
-        <div class="key">↓</div>
-        <div class="key">→</div>
-      </div>
-    </div>
-
     <div class="panel" id="presencePanel">
       <div class="header">
         <b>Online</b>
         <span id="presenceCount">0 / 26</span>
       </div>
       <div id="presenceList"></div>
+    </div>
+
+    <button type="button" id="fittingRoomBtn">Fitting Room</button>
+
+    <div class="panel" id="chatLogPanel">
+      <div id="chatLog">
+        <div class="chat-log-empty">No messages yet</div>
+      </div>
     </div>
 
     <form id="chatForm" autocomplete="off">
@@ -693,7 +731,7 @@
   const STAGE_H = 1086;
   const CHAR_W  = 46;
   const CHAR_H  = 68;
-  const SPEED   = 5;
+  const SPEED   = 8;
   // Target on-screen character height on phones, in CSS pixels.
   const MOBILE_CHAR_PX = 100;
 
@@ -1001,6 +1039,40 @@
   function deliverChat(a, text) {
     showBubble(a, text);
     if (isJoyText(text)) playJoy(a);
+    appendChatLog(a, text);
+  }
+
+  // ---- chat log ------------------------------------------------
+  //
+  //  Side-panel running transcript of everything anyone says. We
+  //  cap the row count so a long session doesn't grow the DOM
+  //  unbounded — older lines are dropped, never persisted.
+  const CHAT_LOG_MAX = 200;
+  const chatLogEl = document.getElementById('chatLog');
+  // Clear the placeholder once a real message arrives.
+  let chatLogPrimed = false;
+
+  function appendChatLog(actor, text) {
+    if (!chatLogPrimed) {
+      chatLogEl.innerHTML = '';
+      chatLogPrimed = true;
+    }
+    const row = document.createElement('div');
+    row.className = 'chat-log-row' + (actor === me ? ' me' : '');
+    const nameEl = document.createElement('span');
+    nameEl.className = 'chat-log-name';
+    nameEl.textContent = actor.name;
+    const txtEl = document.createElement('span');
+    txtEl.className = 'chat-log-text';
+    txtEl.textContent = text;
+    row.appendChild(nameEl);
+    row.appendChild(document.createTextNode(' '));
+    row.appendChild(txtEl);
+    chatLogEl.appendChild(row);
+    while (chatLogEl.childNodes.length > CHAT_LOG_MAX) {
+      chatLogEl.removeChild(chatLogEl.firstChild);
+    }
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
   }
 
   function markMoved(a) {
