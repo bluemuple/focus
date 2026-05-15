@@ -798,17 +798,19 @@
   }
 
   /* Colour swatches that tint the CURRENTLY selected category's
-     wearable on the avatar. One row of round buttons below the
-     item grid; the value is stored per-category in avatar.color
-     and applied via CSS `filter: sepia + saturate + hue-rotate`. */
+     wearable on the avatar. Anchored above the Back / Finish
+     Editing bar so it stays visible no matter how far the user
+     scrolls the item grid. Swatch palette swaps to skin tones
+     when the Skin pill is active. */
   .fr-colors {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
     justify-content: center;
-    margin-top: 14px;
-    padding-top: 14px;
+    padding: 12px 16px;
     border-top: 1px solid #3a3f5c;
+    background: #1f2333;
+    flex-shrink: 0;
   }
   .fr-color {
     width: 28px;
@@ -1015,8 +1017,11 @@
           </div>
         </div>
         <div class="fr-grid" id="frGrid"></div>
-        <div class="fr-colors" id="frColors"></div>
       </div>
+      <!-- Colour / skin-tone swatches — sits above the action bar
+           so it's always reachable, no matter how far down the
+           grid the user scrolled. -->
+      <div class="fr-colors" id="frColors"></div>
       <div class="fr-actions">
         <button class="fr-btn fr-btn-back" type="button" id="frBack">Back</button>
         <button class="fr-btn fr-btn-finish" type="button" id="frFinish">Finish Editing</button>
@@ -1723,18 +1728,24 @@
   function applyAvatarToActor(actor, avatar) {
     actor.avatar = avatar || {};
 
-    // Face is auto-managed: there's no Skin picker any more, so
-    // face2 is stamped on whenever any other wearable is chosen
-    // and stripped off when the avatar is cleared. The base
-    // boy/girl GIF only re-appears when no "real" wearables (any
-    // non-face category) are selected.
+    // Face is still convenience-attached: if the user has picked
+    // any non-face wearable but didn't explicitly pick a face,
+    // face2 is auto-added so the body isn't floating bald. The
+    // user CAN now pick face directly via the Skin pill (and tint
+    // it via SKIN_SWATCHES), and that choice is preserved.
     const hasReal = WEAR_CATEGORIES.some(function (c) {
       return c !== 'face' && !!actor.avatar[c];
     });
-    actor.avatar.face = hasReal ? 'face2' : null;
+    if (hasReal && !actor.avatar.face) {
+      actor.avatar.face = 'face2';
+    }
 
+    // The base boy/girl GIF stays hidden whenever ANY wearable
+    // (including a stand-alone face) is on; it only re-appears
+    // when the avatar is completely empty.
+    const hasAny = WEAR_CATEGORIES.some(function (c) { return !!actor.avatar[c]; });
     if (actor.sprite && !actor.joyMode) {
-      actor.sprite.style.display = hasReal ? 'none' : '';
+      actor.sprite.style.display = hasAny ? 'none' : '';
     }
 
     applyWearablesToActor(actor);
@@ -2484,29 +2495,47 @@
   //  preview at the top of the popup is a mini-actor rendered
   //  with applyAvatarToActor() so the same code drives both.
   const FR_STRUCTURE = [
-    { tab: 'Base',        pills: [['Hair','hair'], ['Facial Hair','beard']] },
+    { tab: 'Base',        pills: [['Skin','face'], ['Hair','hair'], ['Facial Hair','beard']] },
     { tab: 'Clothing',    pills: [['Top','top'], ['Bottom','bottom'], ['Shoes','shoes']] },
     { tab: 'Accessories', pills: [['Glasses','glasses'], ['Hat','hat']] },
   ];
 
-  // Round swatches under the picker grid. `hue: null` is the
-  // "reset" tile (no tint). The rest map to hue-rotate angles
-  // around the colour wheel, combined with sepia + saturate so
-  // even greyscale or low-saturation art picks up the colour.
+  // Round swatches under the picker grid. `value: null` is the
+  // "reset" tile (no tint). The rest are either:
+  //   • a number — interpreted as a hue-rotate angle and turned
+  //                into `sepia(1) saturate(3) hue-rotate(Ndeg)`
+  //                for vivid rainbow tints (hair, top, etc.)
+  //   • a string — applied verbatim as a CSS filter, used by
+  //                SKIN_SWATCHES to give realistic skin tones.
   const COLOR_SWATCHES = [
-    { hue: null, label: 'Reset' },
-    { hue: 0,    color: '#ef4444', label: 'Red' },
-    { hue: 30,   color: '#f97316', label: 'Orange' },
-    { hue: 60,   color: '#eab308', label: 'Yellow' },
-    { hue: 120,  color: '#22c55e', label: 'Green' },
-    { hue: 200,  color: '#0ea5e9', label: 'Sky' },
-    { hue: 240,  color: '#3b82f6', label: 'Blue' },
-    { hue: 280,  color: '#a855f7', label: 'Purple' },
-    { hue: 320,  color: '#ec4899', label: 'Pink' },
+    { value: null, label: 'Reset' },
+    { value: 0,    color: '#ef4444', label: 'Red' },
+    { value: 30,   color: '#f97316', label: 'Orange' },
+    { value: 60,   color: '#eab308', label: 'Yellow' },
+    { value: 120,  color: '#22c55e', label: 'Green' },
+    { value: 200,  color: '#0ea5e9', label: 'Sky' },
+    { value: 240,  color: '#3b82f6', label: 'Blue' },
+    { value: 280,  color: '#a855f7', label: 'Purple' },
+    { value: 320,  color: '#ec4899', label: 'Pink' },
   ];
-  function tintFilter(hue) {
-    if (typeof hue !== 'number') return '';
-    return 'sepia(1) saturate(3) hue-rotate(' + hue + 'deg)';
+  // Skin tones for the Skin pill. The face2.png base is light
+  // peach so darker tones rely on a sepia+brightness mix; the
+  // 'Default' swatch leaves face2 at its native colour.
+  const SKIN_SWATCHES = [
+    { value: null,                                         color: '#f0c8a0', label: 'Default' },
+    { value: 'brightness(1.12) saturate(0.85)',            color: '#fde6cd', label: 'Pale' },
+    { value: 'sepia(0.2) brightness(0.95) saturate(0.95)', color: '#f0c79b', label: 'Light' },
+    { value: 'sepia(0.4) brightness(0.85) saturate(0.95)', color: '#d8a777', label: 'Tan' },
+    { value: 'sepia(0.55) brightness(0.7) saturate(0.95)', color: '#a87852', label: 'Medium' },
+    { value: 'sepia(0.6) brightness(0.55) saturate(0.95)', color: '#7a553a', label: 'Brown' },
+    { value: 'sepia(0.65) brightness(0.4) saturate(0.9)',  color: '#503626', label: 'Dark' },
+    { value: 'sepia(0.7) brightness(0.28) saturate(0.85)', color: '#33231a', label: 'Very Dark' },
+  ];
+  function tintFilter(value) {
+    if (value == null) return '';
+    if (typeof value === 'number') return 'sepia(1) saturate(3) hue-rotate(' + value + 'deg)';
+    if (typeof value === 'string') return value;
+    return '';
   }
 
   const frOverlay   = document.getElementById('frOverlay');
@@ -2581,29 +2610,31 @@
     });
   }
 
-  // Render the colour-swatch row. The active swatch (whatever
-  // hue is saved for the current pill category) gets the
-  // "selected" outline. Clicking a swatch updates frDraft.color
-  // and re-renders the preview so the user sees the tint live.
+  // Render the colour-swatch row. Palette swaps based on the
+  // current pill category: SKIN_SWATCHES for "Skin" (face),
+  // COLOR_SWATCHES for everything else. The active swatch
+  // (whatever value is saved for the current pill category) gets
+  // the "selected" outline. Clicking updates frDraft.color and
+  // re-renders the preview live.
   const frColorsEl = document.getElementById('frColors');
   function renderFRColors() {
     frColorsEl.innerHTML = '';
     const cat = FR_STRUCTURE[frActiveTab].pills[frActivePill][1];
+    const swatches = (cat === 'face') ? SKIN_SWATCHES : COLOR_SWATCHES;
     const current = (frDraft.color && frDraft.color[cat]);
-    COLOR_SWATCHES.forEach(function (sw) {
+    swatches.forEach(function (sw) {
       const b = document.createElement('button');
       b.type = 'button';
-      const isMe = (sw.hue === null && (current === null || current === undefined)) ||
-                   (typeof current === 'number' && current === sw.hue);
+      const isMe = (sw.value === null && current == null) || (current === sw.value);
       b.className = 'fr-color' +
-                    (sw.hue === null ? ' reset' : '') +
+                    (sw.value === null ? ' reset' : '') +
                     (isMe ? ' selected' : '');
       b.title = sw.label;
       if (sw.color) b.style.background = sw.color;
       b.addEventListener('click', function () {
         if (!frDraft.color) frDraft.color = {};
-        if (sw.hue === null) delete frDraft.color[cat];
-        else                 frDraft.color[cat] = sw.hue;
+        if (sw.value === null) delete frDraft.color[cat];
+        else                   frDraft.color[cat] = sw.value;
         renderFRColors();
         renderFRPreview();
       });
