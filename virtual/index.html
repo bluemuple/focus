@@ -596,6 +596,12 @@
   .wear.shoes   { z-index: 5; top: 18px; }
   .wear.top     { z-index: 6; }
   .wear.hidden  { display: none; }
+  /* Auto-mirror: when {id}-left.png is missing but {id}-right.png
+     exists (or vice versa), the loader serves the mirror and we
+     flip it visually here so the artist only needs to draw one
+     of the two side views. scaleX is in-place so positioning is
+     unaffected. */
+  .wear.flipped { transform: scaleX(-1); }
   .actor-bubble { z-index: 100; }
   .actor-name   { z-index: 100; }
 
@@ -665,30 +671,29 @@
   }
   .fr-close:hover { background: rgba(0, 0, 0, 0.3); }
   .fr-preview-char {
-    width: 92px;
-    height: 136px;
+    /* Native 46×68 — same dimensions the avatar takes on the
+       map, so what you see here is what other players see. */
+    width: 46px;
+    height: 68px;
     margin: 56px auto 18px;
     position: relative;
   }
   .fr-preview-char .fr-shadow {
     position: absolute;
-    bottom: -14px;
+    bottom: -10px;
     left: 50%;
     transform: translateX(-50%);
-    width: 90px;
-    height: 22px;
+    width: 56px;
+    height: 14px;
     background: radial-gradient(ellipse, rgba(0,0,0,0.4) 0%, transparent 70%);
   }
   .fr-preview-char .fr-canvas {
     position: absolute;
     inset: 0;
-    transform: scale(2);
-    transform-origin: top left;
     width: 46px;
     height: 68px;
     image-rendering: pixelated;
   }
-  .fr-preview-char .fr-canvas .wear { transform: none; }
 
   .fr-tabs {
     display: flex;
@@ -1268,8 +1273,13 @@
     ],
   };
 
-  function wearableUrl(cat, id) {
-    return 'wearables/' + cat + '/' + id + '.png';
+  // The "down" (front) view lives at the bare path. Other
+  // facings live alongside with a -up / -left / -right suffix.
+  // When a directional file is missing the loader silently falls
+  // back to the front view, so a partial set of art still works.
+  function wearableUrl(cat, id, dir) {
+    if (!dir || dir === 'down') return 'wearables/' + cat + '/' + id + '.png';
+    return 'wearables/' + cat + '/' + id + '-' + dir + '.png';
   }
 
   // ---- #9193a6 colour-key -------------------------------------
@@ -1330,13 +1340,30 @@
     }
   }
 
-  // Process a wearable: download, colour-key, output as data URL.
-  // Returns a Promise<string> that resolves to the final src.
-  // The cache stores Promises so concurrent requests for the same
-  // URL share a single decode pass.
-  const processedSrcCache = new Map();
-  function processWearable(url) {
-    if (processedSrcCache.has(url)) return processedSrcCache.get(url);
+  // Two-layer wearable loader:
+  //
+  //   tryLoadWearable(cat, id, dir)
+  //     Attempts EXACTLY one file. Returns Promise<dataURL|null>
+  //     where null means the file isn't on the server.
+  //
+  //   processWearable(cat, id, dir)
+  //     Orchestrates the fallback chain on top of tryLoadWearable:
+  //       1. exact match for the requested direction
+  //       2. for 'left'  → try 'right' and mirror horizontally
+  //          for 'right' → try 'left'  and mirror horizontally
+  //       3. fall back to the front view ('down')
+  //     Resolves to { src, flipped } so the caller knows whether
+  //     to apply the .flipped CSS transform.
+  //
+  // The grey #9193a6 background is colour-keyed during the canvas
+  // decode in tryLoadWearable, so processed results are ready to
+  // drop straight into an <img>.
+  const rawWearableCache = new Map();
+  function tryLoadWearable(cat, id, dir) {
+    const key = cat + ':' + id + ':' + (dir || 'down');
+    if (rawWearableCache.has(key)) return rawWearableCache.get(key);
+
+    const url = wearableUrl(cat, id, dir);
     const p = new Promise(function (resolve) {
       const img = new Image();
       img.crossOrigin = 'anonymous';
@@ -1352,40 +1379,98 @@
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) {
-          // Tainted canvas (file:// or CORS) — fall back to the
-          // raw image; the grey background will show but the
-          // outfit still appears.
+          // Tainted canvas (file:// or CORS). Use the raw URL —
+          // the colour-key won't apply but the outfit still shows.
           resolve(url);
         }
       };
-      img.onerror = function () { resolve(url); };
+      img.onerror = function () { resolve(null); };
       img.src = url;
     });
-    processedSrcCache.set(url, p);
+    rawWearableCache.set(key, p);
+    return p;
+  }
+
+  const processedSrcCache = new Map();
+  function processWearable(cat, id, dir) {
+    const key = cat + ':' + id + ':' + (dir || 'down');
+    if (processedSrcCache.has(key)) return processedSrcCache.get(key);
+
+    const p = (async function () {
+      const exact = await tryLoadWearable(cat, id, dir);
+      if (exact) return { src: exact, flipped: false };
+
+      // Mirror the opposite side if it exists.
+      if (dir === 'left') {
+        const right = await tryLoadWearable(cat, id, 'right');
+        if (right) return { src: right, flipped: true };
+      } else if (dir === 'right') {
+        const left = await tryLoadWearable(cat, id, 'left');
+        if (left) return { src: left, flipped: true };
+      }
+
+      // Final fallback: front view (never mirrored — that would
+      // look wrong even for left/right).
+      if (dir && dir !== 'down') {
+        const down = await tryLoadWearable(cat, id, 'down');
+        if (down) return { src: down, flipped: false };
+      }
+
+      return { src: '', flipped: false };
+    })();
+
+    processedSrcCache.set(key, p);
     return p;
   }
 
   // Update one actor's wearable <img> layers to match the given
   // avatar config. Hides the layer if no item is selected for
   // that category; otherwise loads the processed src.
+  //
+  // Once the user has chosen ANY wearable, the underlying boy/
+  // girl base sprite is hidden — the avatar is meant to replace
+  // it, not stack on top. playJoy() temporarily un-hides the
+  // base so the joy GIF can still play.
   function applyAvatarToActor(actor, avatar) {
     actor.avatar = avatar || {};
+
+    const hasAvatar = WEAR_CATEGORIES.some(function (c) {
+      return !!actor.avatar[c];
+    });
+    if (actor.sprite && !actor.joyMode) {
+      actor.sprite.style.display = hasAvatar ? 'none' : '';
+    }
+
+    applyWearablesToActor(actor);
+  }
+
+  // Load (or re-load) each wearable layer for the actor's CURRENT
+  // facing direction. Called both when the avatar config changes
+  // and whenever setDirection() flips the actor — so wearables
+  // swap to their -up.png / -left.png / -right.png variants when
+  // those exist (and fall back to the front view when they don't).
+  function applyWearablesToActor(actor) {
     if (!actor.wearEls) return;
+    const dir = actor.dir || 'down';
     for (const cat of WEAR_CATEGORIES) {
       const el = actor.wearEls[cat];
       if (!el) continue;
-      const id = actor.avatar[cat];
+      const id = actor.avatar && actor.avatar[cat];
       const valid = id && (WEARABLES[cat] || []).indexOf(id) >= 0;
       if (!valid) {
         el.classList.add('hidden');
         el.removeAttribute('src');
         continue;
       }
-      processWearable(wearableUrl(cat, id)).then(function (src) {
-        // The selection might have changed by the time the image
-        // finishes loading — only apply if it still matches.
-        if (actor.avatar[cat] !== id) return;
-        el.src = src;
+      processWearable(cat, id, dir).then(function (result) {
+        // The selection — or the actor's facing — might have
+        // changed by the time this resolves. Only apply if both
+        // still match what we asked for.
+        if (!actor.avatar || actor.avatar[cat] !== id) return;
+        if ((actor.dir || 'down') !== dir) return;
+        if (!result.src) { el.classList.add('hidden'); return; }
+        el.src = result.src;
+        el.classList.toggle('flipped', !!result.flipped);
         el.classList.remove('hidden');
       });
     }
@@ -1474,6 +1559,8 @@
     // walking or standing. Switching to a new GIF implicitly
     // restarts its animation from frame 1.
     a.sprite.src = a.frozen ? a.sprites.stop[dir] : a.sprites.walk[dir];
+    // Wearables also have per-direction art — swap them to match.
+    applyWearablesToActor(a);
   }
 
   function showName(a, ms) {
@@ -1532,11 +1619,18 @@
     if (a.joyTimer) clearTimeout(a.joyTimer);
     a.joyMode = true;
     a.sprite.src = a.sprites.joy;
+    // Force the base sprite visible during joy even if an avatar
+    // would normally hide it — otherwise the joy GIF wouldn't
+    // show through the wearables.
+    a.sprite.style.display = '';
     a.joyTimer = setTimeout(function () {
       a.joyMode = false;
       a.joyTimer = null;
       // Restore whichever sprite the actor's current state wants.
       a.sprite.src = a.frozen ? a.sprites.stop[a.dir] : a.sprites.walk[a.dir];
+      // And hide the base again if the avatar dictates.
+      const hasAvatar = WEAR_CATEGORIES.some(function (c) { return !!(a.avatar && a.avatar[c]); });
+      a.sprite.style.display = hasAvatar ? 'none' : '';
     }, JOY_MS);
   }
 
@@ -2151,8 +2245,10 @@
       const img = document.createElement('img');
       img.alt = '';
       img.draggable = false;
-      processWearable(wearableUrl(cat, id)).then(function (src) {
-        img.src = src;
+      // Picker thumbnails always show the front view — students
+      // see the same down-facing pose they see in the preview.
+      processWearable(cat, id, 'down').then(function (result) {
+        img.src = result.src;
       });
       b.appendChild(img);
       b.addEventListener('click', function () {
@@ -2186,9 +2282,13 @@
       sprite.style.height = '68px';
       const wearEls = {};
       for (const cat of WEAR_CATEGORIES) wearEls[cat] = frPreviewEl.querySelector('.wear.' + cat);
-      frPreviewActor = { wearEls: wearEls, avatar: {} };
+      // Pass the sprite ref through so applyAvatarToActor() can
+      // hide/show the underlying boy/girl PNG to match the game.
+      // dir is fixed to 'down' so the preview always shows the
+      // front view (matching the picker thumbnails).
+      frPreviewActor = { wearEls: wearEls, sprite: sprite, dir: 'down', avatar: {} };
     }
-    frPreviewActor.wearEls.face.parentNode.querySelector('.actor-sprite').src = me.sprites.stop.down;
+    frPreviewActor.sprite.src = me.sprites.stop.down;
     applyAvatarToActor(frPreviewActor, frDraft);
   }
 
