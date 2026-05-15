@@ -1123,6 +1123,18 @@
   //             viewport on both axes (whichever is bigger wins,
   //             so neither black bars nor undersized chars appear).
   let lastTx = NaN, lastTy = NaN, lastScale = NaN;
+  // Drag-pan state — declared up here (rather than alongside the
+  // touch handlers further down) because fitOrFollow() below reads
+  // panOffset, and the first call happens during `me` creation
+  // before the touch-handler block has been reached. `let` is TDZ
+  // so deferring the declaration would crash with a ReferenceError.
+  let panOffset = { x: 0, y: 0 };
+  let touchPan = null;
+  let suppressClickAfterDrag = false;
+  // The remotes map is also referenced by the idle-freeze ticker
+  // that gets installed slightly above the `const me = ...` line;
+  // declare it here so the ticker can close over it safely.
+  const remotes = new Map();
   function fitOrFollow() {
     const vw = world.clientWidth;
     const vh = world.clientHeight;
@@ -1591,8 +1603,8 @@
   placeActor(me);
   applyAvatarToActor(me, ME.avatar);
   fitOrFollow();
-
-  const remotes = new Map();
+  // `remotes` is declared earlier (next to fitOrFollow) so the
+  // idle-freeze setInterval can safely close over it.
 
   // ---- collision against other characters ----------------------
   function collidesWithRemotes(x, y) {
@@ -1636,15 +1648,8 @@
   // ---- input: keys + click/tap-to-move + drag-pan --------------
   const keys = Object.create(null);
   let moveTarget = null;
-  // Drag-pan state. panOffset is added to the camera transform in
-  // fitOrFollow so the user can swipe the map to look around;
-  // releasing the finger resets it to (0,0) and the camera snaps
-  // back to following the player. suppressClickAfterDrag stops
-  // the synthetic click that ends a drag from also triggering a
-  // tap-to-move.
-  let panOffset = { x: 0, y: 0 };
-  let touchPan = null;
-  let suppressClickAfterDrag = false;
+  // panOffset / touchPan / suppressClickAfterDrag are declared up
+  // near fitOrFollow() (they're read by it before this block runs).
   const DRAG_THRESHOLD = 8; // px before a touch counts as a drag
 
   function isFormTarget(el) {
