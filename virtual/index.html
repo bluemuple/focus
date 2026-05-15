@@ -272,8 +272,8 @@
     position: absolute;
     left: 0;
     top: 0;
-    width: 46px;
-    height: 68px;
+    width: 92px;
+    height: 136px;
     will-change: transform;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
@@ -580,20 +580,20 @@
      so we offset it down to align with the character's feet. */
   .wear {
     position: absolute;
-    width: 50px;
-    height: 50px;
-    left: -2px;
-    top: -2px;
+    width: 100px;
+    height: 100px;
+    left: -4px;
+    top: -4px;
     pointer-events: none;
     image-rendering: pixelated;
     -webkit-user-drag: none;
   }
-  .wear.face    { width: 26px; height: 26px; left: 10px; top: 2px; z-index: 1; }
+  .wear.face    { width: 52px; height: 52px; left: 20px; top: 4px; z-index: 1; }
   .wear.glasses { z-index: 2; }
   .wear.beard   { z-index: 2; }
   .wear.hair    { z-index: 3; }
   .wear.hat     { z-index: 4; }
-  .wear.shoes   { z-index: 5; top: 18px; }
+  .wear.shoes   { z-index: 5; top: 36px; }
   .wear.bottom  { z-index: 6; }  /* pants — under the top */
   .wear.top     { z-index: 7; }
   .wear.hidden  { display: none; }
@@ -672,27 +672,27 @@
   }
   .fr-close:hover { background: rgba(0, 0, 0, 0.3); }
   .fr-preview-char {
-    /* Native 46×68 — same dimensions the avatar takes on the
-       map, so what you see here is what other players see. */
-    width: 46px;
-    height: 68px;
-    margin: 56px auto 18px;
+    /* Same 92×136 box the avatar occupies on the map — what you
+       see here is what other players see. */
+    width: 92px;
+    height: 136px;
+    margin: 36px auto 18px;
     position: relative;
   }
   .fr-preview-char .fr-shadow {
     position: absolute;
-    bottom: -10px;
+    bottom: -12px;
     left: 50%;
     transform: translateX(-50%);
-    width: 56px;
-    height: 14px;
+    width: 110px;
+    height: 22px;
     background: radial-gradient(ellipse, rgba(0,0,0,0.4) 0%, transparent 70%);
   }
   .fr-preview-char .fr-canvas {
     position: absolute;
     inset: 0;
-    width: 46px;
-    height: 68px;
+    width: 92px;
+    height: 136px;
     image-rendering: pixelated;
   }
 
@@ -787,6 +787,46 @@
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 10px;
+  }
+
+  /* Colour swatches that tint the CURRENTLY selected category's
+     wearable on the avatar. One row of round buttons below the
+     item grid; the value is stored per-category in avatar.color
+     and applied via CSS `filter: sepia + saturate + hue-rotate`. */
+  .fr-colors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid #3a3f5c;
+  }
+  .fr-color {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+    padding: 0;
+    position: relative;
+    transition: transform 0.1s;
+  }
+  .fr-color:active   { transform: scale(0.9); }
+  .fr-color.selected { border-color: #fff; }
+  .fr-color.reset {
+    background: #4a5076;
+  }
+  .fr-color.reset::after {
+    content: '✕';
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #cbd5e1;
+    font-weight: 700;
   }
   .fr-item {
     aspect-ratio: 1;
@@ -967,6 +1007,7 @@
           </div>
         </div>
         <div class="fr-grid" id="frGrid"></div>
+        <div class="fr-colors" id="frColors"></div>
       </div>
       <div class="fr-actions">
         <button class="fr-btn fr-btn-back" type="button" id="frBack">Back</button>
@@ -985,10 +1026,10 @@
   const MAX_USERS     = 26;
   // Effective collision half-extent. Two characters can approach
   // until their centres are HITBOX*2 apart on either axis; beyond
-  // that they block each other. Scaled down for the 46×68 sprite
-  // so characters can stand shoulder-to-shoulder without the
+  // that they block each other. Scaled for the 92×136 sprite so
+  // characters can stand shoulder-to-shoulder without the
   // hitboxes prematurely jamming on the empty sprite padding.
-  const HITBOX        = 14;
+  const HITBOX        = 28;
 
   // ---- session check -------------------------------------------
   let session = null;
@@ -1051,8 +1092,11 @@
   // ---- stage dims ---------------------------------------------
   const STAGE_W = 1448;
   const STAGE_H = 1086;
-  const CHAR_W  = 46;
-  const CHAR_H  = 68;
+  // Character is rendered 2× the native sprite size (46×68 → 92×136)
+  // so face wearables (originally 26×26) end up at 52×52 with the
+  // rest of the avatar scaled by the same ratio.
+  const CHAR_W  = 92;
+  const CHAR_H  = 136;
   const SPEED   = 8;
   // Target on-screen character height on phones, in CSS pixels.
   const MOBILE_CHAR_PX = 100;
@@ -1258,10 +1302,10 @@
   // static host gives no directory listing API, so this list has
   // to live in code. Update it when new wearables are added.
   const WEARABLES = {
-    face: [
-      '-Z2xNior-Z-kMp0HHceC0','3tpGZrnuYNBTJk7bqeGpX','6sIq0d9q6vdyD8VNq-x6P',
-      'EPdRZedFBWYB4tffuiDWV','WxgRSIcWZM3GrBO-bTcFG'
-    ],
+    // Face is auto-attached: face2 is the only option and there
+    // is no "Skin" picker — it gets stamped on whenever any other
+    // wearable is chosen, and removed when the avatar is cleared.
+    face: ['face2'],
     hair: [
       '1H1-7Y8oSBdWFYWKq633H','1ZCuGaKs09jbzO35J8oZ3','2QKU5hkFBGSn1woB5CDNE',
       '3DCrAmizMwmXldUiUq1nO','3XklMM_tyRipq20tNztwb','6NX7-ZE6Xcs9je6TJZA5R',
@@ -1324,6 +1368,47 @@
     if (!dir || dir === 'down') return 'wearables/' + cat + '/' + id + '.png';
     return 'wearables/' + cat + '/' + id + '-' + dir + '.png';
   }
+
+  // Per-category position offsets (left, top in px relative to
+  // the actor box). The teacher's Fitting Room tool writes to
+  // localStorage 'virtual.wear_offsets.v1' as the same shape.
+  // Defaults below match the CSS — overriding from localStorage
+  // lets a teacher fine-tune alignment without a code change.
+  const WEAR_OFFSETS_DEFAULTS = {
+    face:    { x: 20, y: 4   },
+    glasses: { x: -4, y: -4  },
+    beard:   { x: -4, y: -4  },
+    hair:    { x: -4, y: -4  },
+    hat:     { x: -4, y: -4  },
+    shoes:   { x: -4, y: 36  },
+    bottom:  { x: -4, y: -4  },
+    top:     { x: -4, y: -4  },
+  };
+  function loadWearOffsets() {
+    try {
+      const raw = localStorage.getItem('virtual.wear_offsets.v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return Object.assign({}, WEAR_OFFSETS_DEFAULTS, parsed);
+        }
+      }
+    } catch {}
+    return Object.assign({}, WEAR_OFFSETS_DEFAULTS);
+  }
+  let WEAR_OFFSETS = loadWearOffsets();
+  // If the teacher tool saves on a different tab, pick up the
+  // new values the next time the player loads in.
+  window.addEventListener('storage', function (e) {
+    if (e.key === 'virtual.wear_offsets.v1') {
+      WEAR_OFFSETS = loadWearOffsets();
+      // Re-apply on every active actor so live tabs update too.
+      if (typeof me !== 'undefined') applyAvatarToActor(me, me.avatar);
+      if (typeof remotes !== 'undefined') {
+        for (const ra of remotes.values()) applyAvatarToActor(ra, ra.avatar);
+      }
+    }
+  });
 
   // ---- #9193a6 colour-key -------------------------------------
   //
@@ -1477,11 +1562,18 @@
   function applyAvatarToActor(actor, avatar) {
     actor.avatar = avatar || {};
 
-    const hasAvatar = WEAR_CATEGORIES.some(function (c) {
-      return !!actor.avatar[c];
+    // Face is auto-managed: there's no Skin picker any more, so
+    // face2 is stamped on whenever any other wearable is chosen
+    // and stripped off when the avatar is cleared. The base
+    // boy/girl GIF only re-appears when no "real" wearables (any
+    // non-face category) are selected.
+    const hasReal = WEAR_CATEGORIES.some(function (c) {
+      return c !== 'face' && !!actor.avatar[c];
     });
+    actor.avatar.face = hasReal ? 'face2' : null;
+
     if (actor.sprite && !actor.joyMode) {
-      actor.sprite.style.display = hasAvatar ? 'none' : '';
+      actor.sprite.style.display = hasReal ? 'none' : '';
     }
 
     applyWearablesToActor(actor);
@@ -1515,6 +1607,13 @@
         el.src = result.src;
         el.classList.toggle('flipped', !!result.flipped);
         el.classList.remove('hidden');
+        // Per-category tint (hue saved in avatar.color[cat]).
+        const hue = actor.avatar.color && actor.avatar.color[cat];
+        el.style.filter = tintFilter(hue);
+        // Per-category position offset (teacher-adjustable).
+        const off = WEAR_OFFSETS[cat] || { x: 0, y: 0 };
+        el.style.left = off.x + 'px';
+        el.style.top  = off.y + 'px';
       });
     }
   }
@@ -2193,10 +2292,30 @@
   //  preview at the top of the popup is a mini-actor rendered
   //  with applyAvatarToActor() so the same code drives both.
   const FR_STRUCTURE = [
-    { tab: 'Base',        pills: [['Skin','face'], ['Hair','hair'], ['Facial Hair','beard']] },
+    { tab: 'Base',        pills: [['Hair','hair'], ['Facial Hair','beard']] },
     { tab: 'Clothing',    pills: [['Top','top'], ['Bottom','bottom'], ['Shoes','shoes']] },
     { tab: 'Accessories', pills: [['Glasses','glasses'], ['Hat','hat']] },
   ];
+
+  // Round swatches under the picker grid. `hue: null` is the
+  // "reset" tile (no tint). The rest map to hue-rotate angles
+  // around the colour wheel, combined with sepia + saturate so
+  // even greyscale or low-saturation art picks up the colour.
+  const COLOR_SWATCHES = [
+    { hue: null, label: 'Reset' },
+    { hue: 0,    color: '#ef4444', label: 'Red' },
+    { hue: 30,   color: '#f97316', label: 'Orange' },
+    { hue: 60,   color: '#eab308', label: 'Yellow' },
+    { hue: 120,  color: '#22c55e', label: 'Green' },
+    { hue: 200,  color: '#0ea5e9', label: 'Sky' },
+    { hue: 240,  color: '#3b82f6', label: 'Blue' },
+    { hue: 280,  color: '#a855f7', label: 'Purple' },
+    { hue: 320,  color: '#ec4899', label: 'Pink' },
+  ];
+  function tintFilter(hue) {
+    if (typeof hue !== 'number') return '';
+    return 'sepia(1) saturate(3) hue-rotate(' + hue + 'deg)';
+  }
 
   const frOverlay   = document.getElementById('frOverlay');
   const frTabsEl    = document.getElementById('frTabs');
@@ -2212,6 +2331,9 @@
 
   function openFittingRoom() {
     frDraft = Object.assign({}, ME.avatar || {});
+    // Deep-copy the per-category colour map so editing the draft
+    // doesn't mutate the live avatar before Finish Editing.
+    frDraft.color = Object.assign({}, (ME.avatar && ME.avatar.color) || {});
     frNamePill.textContent = ME.name;
     frOverlay.classList.add('show');
     frOverlay.setAttribute('aria-hidden', 'false');
@@ -2220,6 +2342,7 @@
     renderFRTabs();
     renderFRPills();
     renderFRGrid();
+    renderFRColors();
     renderFRPreview();
   }
   function closeFittingRoom() {
@@ -2241,6 +2364,7 @@
         renderFRTabs();
         renderFRPills();
         renderFRGrid();
+        renderFRColors();
       });
       frTabsEl.appendChild(b);
     });
@@ -2259,8 +2383,39 @@
         frActivePill = i;
         renderFRPills();
         renderFRGrid();
+        renderFRColors();
       });
       frPillsEl.appendChild(b);
+    });
+  }
+
+  // Render the colour-swatch row. The active swatch (whatever
+  // hue is saved for the current pill category) gets the
+  // "selected" outline. Clicking a swatch updates frDraft.color
+  // and re-renders the preview so the user sees the tint live.
+  const frColorsEl = document.getElementById('frColors');
+  function renderFRColors() {
+    frColorsEl.innerHTML = '';
+    const cat = FR_STRUCTURE[frActiveTab].pills[frActivePill][1];
+    const current = (frDraft.color && frDraft.color[cat]);
+    COLOR_SWATCHES.forEach(function (sw) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      const isMe = (sw.hue === null && (current === null || current === undefined)) ||
+                   (typeof current === 'number' && current === sw.hue);
+      b.className = 'fr-color' +
+                    (sw.hue === null ? ' reset' : '') +
+                    (isMe ? ' selected' : '');
+      b.title = sw.label;
+      if (sw.color) b.style.background = sw.color;
+      b.addEventListener('click', function () {
+        if (!frDraft.color) frDraft.color = {};
+        if (sw.hue === null) delete frDraft.color[cat];
+        else                 frDraft.color[cat] = sw.hue;
+        renderFRColors();
+        renderFRPreview();
+      });
+      frColorsEl.appendChild(b);
     });
   }
 
@@ -2323,8 +2478,8 @@
       sprite.style.position = 'absolute';
       sprite.style.left   = '0';
       sprite.style.top    = '0';
-      sprite.style.width  = '46px';
-      sprite.style.height = '68px';
+      sprite.style.width  = '92px';
+      sprite.style.height = '136px';
       const wearEls = {};
       for (const cat of WEAR_CATEGORIES) wearEls[cat] = frPreviewEl.querySelector('.wear.' + cat);
       // Pass the sprite ref through so applyAvatarToActor() can
@@ -2351,6 +2506,7 @@
       frDraft[cat] = items[Math.floor(Math.random() * items.length)];
     }
     renderFRGrid();
+    renderFRColors();
     renderFRPreview();
   });
 
@@ -2361,7 +2517,9 @@
   // again will re-hide that GIF.
   document.getElementById('frDefault').addEventListener('click', function () {
     for (const cat of WEAR_CATEGORIES) frDraft[cat] = null;
+    frDraft.color = {};
     renderFRGrid();
+    renderFRColors();
     renderFRPreview();
   });
   document.getElementById('frFinish').addEventListener('click', function () {
