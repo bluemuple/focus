@@ -272,8 +272,8 @@
     position: absolute;
     left: 0;
     top: 0;
-    width: 92px;
-    height: 136px;
+    width: 46px;
+    height: 68px;
     will-change: transform;
     backface-visibility: hidden;
     -webkit-backface-visibility: hidden;
@@ -578,22 +578,27 @@
      positioned relative to the actor's 46×68 box. shoes is the
      odd one out — its art sits at the bottom of the 50×50 frame
      so we offset it down to align with the character's feet. */
+  /* CSS values are fallbacks for the brief moment before JS
+     applies the inline left/top/width/height from WEAR_OFFSETS +
+     WEAR_SIZES. 100×100 wearables intentionally overflow the
+     46×68 actor box — the visible character IS the wearable
+     stack once any item is selected. */
   .wear {
     position: absolute;
     width: 100px;
     height: 100px;
-    left: -4px;
-    top: -4px;
+    left: -27px;
+    top: -16px;
     pointer-events: none;
     image-rendering: pixelated;
     -webkit-user-drag: none;
   }
-  .wear.face    { width: 52px; height: 52px; left: 20px; top: 4px; z-index: 1; }
+  .wear.face    { width: 52px; height: 52px; left: -3px; top: 4px; z-index: 1; }
   .wear.glasses { z-index: 2; }
   .wear.beard   { z-index: 2; }
   .wear.hair    { z-index: 3; }
   .wear.hat     { z-index: 4; }
-  .wear.shoes   { z-index: 5; top: 36px; }
+  .wear.shoes   { z-index: 5; top: -32px; }
   .wear.bottom  { z-index: 6; }  /* pants — under the top */
   .wear.top     { z-index: 7; }
   .wear.hidden  { display: none; }
@@ -672,28 +677,31 @@
   }
   .fr-close:hover { background: rgba(0, 0, 0, 0.3); }
   .fr-preview-char {
-    /* Same 92×136 box the avatar occupies on the map — what you
-       see here is what other players see. */
-    width: 92px;
-    height: 136px;
-    margin: 36px auto 18px;
+    /* Same 46×68 base box the avatar occupies on the map. The
+       100×100 wearables visually overflow this box; the preview
+       wrapper above has enough space for the overflow. */
+    width: 46px;
+    height: 68px;
+    margin: 56px auto 18px;
     position: relative;
+    overflow: visible;
   }
   .fr-preview-char .fr-shadow {
     position: absolute;
-    bottom: -12px;
+    bottom: -10px;
     left: 50%;
     transform: translateX(-50%);
-    width: 110px;
-    height: 22px;
+    width: 70px;
+    height: 14px;
     background: radial-gradient(ellipse, rgba(0,0,0,0.4) 0%, transparent 70%);
   }
   .fr-preview-char .fr-canvas {
     position: absolute;
     inset: 0;
-    width: 92px;
-    height: 136px;
+    width: 46px;
+    height: 68px;
     image-rendering: pixelated;
+    overflow: visible;
   }
 
   .fr-tabs {
@@ -1026,10 +1034,10 @@
   const MAX_USERS     = 26;
   // Effective collision half-extent. Two characters can approach
   // until their centres are HITBOX*2 apart on either axis; beyond
-  // that they block each other. Scaled for the 92×136 sprite so
-  // characters can stand shoulder-to-shoulder without the
-  // hitboxes prematurely jamming on the empty sprite padding.
-  const HITBOX        = 28;
+  // that they block each other. Sized for the 46×68 base sprite —
+  // wearables can visually extend beyond the actor box but the
+  // collision math stays on the base footprint.
+  const HITBOX        = 14;
 
   // ---- session check -------------------------------------------
   let session = null;
@@ -1092,11 +1100,13 @@
   // ---- stage dims ---------------------------------------------
   const STAGE_W = 1448;
   const STAGE_H = 1086;
-  // Character is rendered 2× the native sprite size (46×68 → 92×136)
-  // so face wearables (originally 26×26) end up at 52×52 with the
-  // rest of the avatar scaled by the same ratio.
-  const CHAR_W  = 92;
-  const CHAR_H  = 136;
+  // Character base sprites (boy/girl) are 46×68 native and render
+  // at that exact size — no stretching, crisp pixel art. Wearables
+  // remain at their larger 50/100 px canvases and overflow the
+  // actor box; once an avatar is selected the base is hidden so
+  // the visible character is the (larger) wearable stack.
+  const CHAR_W  = 46;
+  const CHAR_H  = 68;
   const SPEED   = 8;
   // Target on-screen character height on phones, in CSS pixels.
   const MOBILE_CHAR_PX = 100;
@@ -1373,14 +1383,21 @@
   // writes to localStorage / Supabase as the same shapes, and we
   // read them back here so individual browsers stay in sync.
   const WEAR_OFFSETS_DEFAULTS = {
-    face:    { x: 20, y: 4   },
-    glasses: { x: -4, y: -4  },
-    beard:   { x: -4, y: -4  },
-    hair:    { x: -4, y: -4  },
-    hat:     { x: -4, y: -4  },
-    shoes:   { x: -4, y: 36  },
-    bottom:  { x: -4, y: -4  },
-    top:     { x: -4, y: -4  },
+    // Defaults centre each 100×100 wearable on the 46×68 actor:
+    //   x = (46 − 100) / 2 = −27
+    //   y = (68 − 100) / 2 = −16   (head/torso/shirt area)
+    // Face is 52×52 so its centred offset is tighter.
+    // Shoes need their bottom canvas edge aligned with the actor
+    // feet, hence top = 68 − 100 = −32. The teacher's Fitting
+    // Room tool overrides these per-category.
+    face:    { x: -3,  y: 4   },
+    glasses: { x: -27, y: -16 },
+    beard:   { x: -27, y: -16 },
+    hair:    { x: -27, y: -16 },
+    hat:     { x: -27, y: -16 },
+    shoes:   { x: -27, y: -32 },
+    bottom:  { x: -27, y: -16 },
+    top:     { x: -27, y: -16 },
   };
   const WEAR_SIZES_DEFAULTS = {
     face:    52,  glasses: 100, beard:   100, hair:    100,
@@ -2559,8 +2576,8 @@
       sprite.style.position = 'absolute';
       sprite.style.left   = '0';
       sprite.style.top    = '0';
-      sprite.style.width  = '92px';
-      sprite.style.height = '136px';
+      sprite.style.width  = '46px';
+      sprite.style.height = '68px';
       const wearEls = {};
       for (const cat of WEAR_CATEGORIES) wearEls[cat] = frPreviewEl.querySelector('.wear.' + cat);
       // Pass the sprite ref through so applyAvatarToActor() can

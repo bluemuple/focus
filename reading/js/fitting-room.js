@@ -19,15 +19,19 @@
 
   const CATEGORIES = ['hair','hat','top','bottom','shoes','face','glasses','beard'];
 
+  // Matches WEAR_OFFSETS_DEFAULTS in focus/virtual/index.html.
+  // Wearables are 100×100 (face is 52×52) on a 46×68 actor, so
+  // the centred offset is x=-27 horizontally and y=-16 for the
+  // body-area items; shoes need y=-32 to bottom-align.
   const DEFAULTS = {
-    face:    { x: 20, y: 4   },
-    glasses: { x: -4, y: -4  },
-    beard:   { x: -4, y: -4  },
-    hair:    { x: -4, y: -4  },
-    hat:     { x: -4, y: -4  },
-    shoes:   { x: -4, y: 36  },
-    bottom:  { x: -4, y: -4  },
-    top:     { x: -4, y: -4  },
+    face:    { x: -3,  y: 4   },
+    glasses: { x: -27, y: -16 },
+    beard:   { x: -27, y: -16 },
+    hair:    { x: -27, y: -16 },
+    hat:     { x: -27, y: -16 },
+    shoes:   { x: -27, y: -32 },
+    bottom:  { x: -27, y: -16 },
+    top:     { x: -27, y: -16 },
   };
 
   // z-order is fixed in code (matches the spec face << glasses,
@@ -101,7 +105,8 @@
   // -------- state --------
   let offsets    = loadOffsets();
   let sizes      = loadSizes();
-  let activeCat  = 'hair';
+  let activeCat  = null;   // null until the teacher picks a category
+  let editMode   = false;  // 1st click selects; 2nd click toggles edit
   let activeBase = 'boy';
   let sampleItem = loadSample();
 
@@ -220,6 +225,16 @@
   }
 
   // -------- UI rendering --------
+  //
+  //  Two-state per category-button:
+  //    • Inactive — white pill, grey text. Clicking selects.
+  //    • Selected (view) — indigo pill. Clicking again toggles
+  //      Edit mode. The preview shows ONLY this category.
+  //    • Selected (edit) — orange pill. Position/size controls
+  //      are enabled (arrow keys nudge, size buttons usable).
+  //
+  //  Switching to a different category drops you back into view
+  //  mode for that category.
   function renderCatRow() {
     const row = document.getElementById('fitCatRow');
     if (!row) return;
@@ -235,8 +250,12 @@
       b.style.cursor = 'pointer';
       b.style.fontFamily = 'inherit';
       b.style.fontWeight = '600';
-      if (cat === activeCat) {
-        b.style.background = '#6366f1';
+      if (cat === activeCat && editMode) {
+        b.style.background = '#f97316';   // orange — edit mode
+        b.style.color = '#fff';
+        b.style.borderColor = '#ea580c';
+      } else if (cat === activeCat) {
+        b.style.background = '#6366f1';   // indigo — view mode
         b.style.color = '#fff';
         b.style.borderColor = '#6366f1';
       } else {
@@ -244,9 +263,15 @@
         b.style.color = '#374151';
       }
       b.addEventListener('click', function () {
-        activeCat = cat;
+        if (cat === activeCat) {
+          editMode = !editMode;
+        } else {
+          activeCat = cat;
+          editMode = false;
+        }
         renderCatRow();
         renderItemSelect();
+        renderEditModeUI();
       });
       row.appendChild(b);
     });
@@ -256,6 +281,17 @@
     const sel = document.getElementById('fitItemSelect');
     if (!sel) return;
     sel.innerHTML = '';
+    if (!activeCat) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = '(pick an element above)';
+      sel.appendChild(opt);
+      sel.disabled = true;
+      renderEditModeUI();
+      renderPreview();
+      return;
+    }
+    sel.disabled = false;
     const items = WEARABLES[activeCat] || [];
     if (!items.length) {
       const opt = document.createElement('option');
@@ -277,13 +313,13 @@
         saveSample();
       }
     }
-    document.getElementById('fitActiveLabel').textContent =
-      activeCat[0].toUpperCase() + activeCat.slice(1);
     renderOffsetDisplay();
+    renderEditModeUI();
     renderPreview();
   }
 
   function renderOffsetDisplay() {
+    if (!activeCat) return; // handled by renderEditModeUI
     const off = offsets[activeCat] || { x: 0, y: 0 };
     document.getElementById('fitX').textContent = off.x;
     document.getElementById('fitY').textContent = off.y;
@@ -297,6 +333,7 @@
     return n;
   }
   function updateSize(newSize) {
+    if (!activeCat || !editMode) return;
     sizes[activeCat] = clampSize(newSize);
     saveSizes();
     renderOffsetDisplay();
@@ -312,33 +349,67 @@
     // Drop any previously-rendered wearable images.
     Array.from(preview.querySelectorAll('img.fit-wear')).forEach(function (n) { n.remove(); });
 
-    for (const cat of CATEGORIES) {
-      const id = sampleItem[cat];
-      if (!id) continue;
-      const off  = offsets[cat] || { x: 0, y: 0 };
-      const size = sizes[cat]   || SIZE_DEFAULTS[cat] || 100;
-      const img = document.createElement('img');
-      img.className = 'fit-wear';
-      img.alt = '';
-      img.style.position = 'absolute';
-      img.style.left   = off.x + 'px';
-      img.style.top    = off.y + 'px';
-      img.style.width  = size + 'px';
-      img.style.height = size + 'px';
-      img.style.zIndex = Z_ORDER[cat] || 1;
-      img.style.imageRendering = 'pixelated';
-      img.style.pointerEvents  = 'none';
-      // Visually highlight the active category to make positioning
-      // adjustments easier to spot.
-      if (cat === activeCat) {
-        img.style.outline = '1px dashed rgba(99, 102, 241, 0.8)';
-        img.style.outlineOffset = '0px';
-      }
-      preview.appendChild(img);
-      processWearable(cat, id).then(function (src) {
-        if (src) img.src = src;
-      });
+    // Show only the active category (or nothing if none selected).
+    if (!activeCat) return;
+    const cat  = activeCat;
+    const id   = sampleItem[cat];
+    if (!id) return;
+    const off  = offsets[cat] || { x: 0, y: 0 };
+    const size = sizes[cat]   || SIZE_DEFAULTS[cat] || 100;
+    const img = document.createElement('img');
+    img.className = 'fit-wear';
+    img.alt = '';
+    img.style.position = 'absolute';
+    img.style.left   = off.x + 'px';
+    img.style.top    = off.y + 'px';
+    img.style.width  = size + 'px';
+    img.style.height = size + 'px';
+    img.style.zIndex = Z_ORDER[cat] || 1;
+    img.style.imageRendering = 'pixelated';
+    img.style.pointerEvents  = 'none';
+    // Dashed outline in edit mode so the teacher can see what
+    // they're nudging vs. just inspecting.
+    if (editMode) {
+      img.style.outline = '1px dashed rgba(249, 115, 22, 0.9)';
+      img.style.outlineOffset = '0px';
     }
+    preview.appendChild(img);
+    processWearable(cat, id).then(function (src) {
+      if (src) img.src = src;
+    });
+  }
+
+  // Toggle the size controls' visual disabled state and add a hint
+  // about edit mode. Arrow keys are gated separately inside the
+  // keydown handler.
+  function renderEditModeUI() {
+    const minus = document.getElementById('fitSizeMinus');
+    const plus  = document.getElementById('fitSizePlus');
+    const input = document.getElementById('fitSize');
+    const label = document.getElementById('fitActiveLabel');
+    const xEl   = document.getElementById('fitX');
+    const yEl   = document.getElementById('fitY');
+
+    if (!activeCat) {
+      label.textContent = '(none selected)';
+      xEl.textContent = '–';
+      yEl.textContent = '–';
+      input.value = '';
+      [minus, plus, input].forEach(function (el) {
+        el.disabled = true;
+        el.style.opacity = '0.4';
+        el.style.cursor = 'not-allowed';
+      });
+      return;
+    }
+
+    const labelText = activeCat[0].toUpperCase() + activeCat.slice(1);
+    label.textContent = editMode ? labelText + '  ✏ edit' : labelText;
+    [minus, plus, input].forEach(function (el) {
+      el.disabled = !editMode;
+      el.style.opacity = editMode ? '1' : '0.4';
+      el.style.cursor  = editMode ? '' : 'not-allowed';
+    });
   }
 
   function bindEvents() {
@@ -355,6 +426,7 @@
     });
 
     document.getElementById('fitResetBtn').addEventListener('click', function () {
+      if (!activeCat) return;
       offsets[activeCat] = Object.assign({}, DEFAULTS[activeCat]);
       sizes[activeCat]   = SIZE_DEFAULTS[activeCat];
       saveOffsets();
@@ -497,11 +569,12 @@
     btn.disabled = false;
 
     // Arrow keys nudge the active element 1 px. Only fires when
-    // the Fitting Room tab is visible and the user isn't typing
-    // into an input/select.
+    // the Fitting Room tab is visible, a category is in edit mode,
+    // and the user isn't typing into an input/select.
     window.addEventListener('keydown', function (e) {
       const tab = document.getElementById('tab-fitting');
       if (!tab || tab.classList.contains('wc-hidden')) return;
+      if (!activeCat || !editMode) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
       let dx = 0, dy = 0;
@@ -524,6 +597,7 @@
     if (!document.getElementById('fitPreview')) return; // not on teacher page
     renderCatRow();
     renderItemSelect();
+    renderEditModeUI();
     renderPreview();
     bindEvents();
   }
