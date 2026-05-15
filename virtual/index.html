@@ -639,8 +639,9 @@
     return;
   }
   const ME = {
-    id:   String(session.id),
-    name: String(session.real_name),
+    id:     String(session.id),
+    name:   String(session.real_name),
+    gender: session.gender || 'boy',
   };
 
   // Per-tab unique id used as the Realtime presence key. Critical:
@@ -684,23 +685,64 @@
   // Target on-screen character height on phones, in CSS pixels.
   const MOBILE_CHAR_PX = 100;
 
-  const SPRITES = {
-    down:  'images/go down.gif',
-    up:    'images/go up.gif',
-    left:  'images/go left.gif',
-    right: 'images/go right.gif',
-  };
-  // After an actor stops moving for this many ms, freeze the GIF
-  // to a static frame so the legs stop pumping in place.
+  // Each gender has its own folder of sprites:
+  //   characters/{boy|girl}/
+  //     down.gif up.gif left.gif right.gif       — walking
+  //     stop down.png stop up.png ...            — standing still
+  //     joy.gif                                  — happy emote
+  // 'other' (and anything unrecognised) falls back to 'boy'.
+  function genderFolder(g) {
+    return g === 'girl' ? 'girl' : 'boy';
+  }
+  function spritesFor(gender) {
+    const base = 'images/characters/' + genderFolder(gender) + '/';
+    return {
+      walk: {
+        down:  base + 'down.gif',
+        up:    base + 'up.gif',
+        left:  base + 'left.gif',
+        right: base + 'right.gif',
+      },
+      stop: {
+        down:  base + 'stop down.png',
+        up:    base + 'stop up.png',
+        left:  base + 'stop left.png',
+        right: base + 'stop right.png',
+      },
+      joy: base + 'joy.gif',
+    };
+  }
+
+  // After an actor stops moving for this many ms, swap the
+  // walking GIF for the matching "stop {dir}.png" so the legs
+  // stop pumping in place.
   const IDLE_FREEZE_MS = 180;
 
-  // Warm the cache for every directional GIF so swapping between
-  // them (and back from a frozen still) doesn't show a flicker.
+  // Chat texts that briefly swap the character to joy.gif. Match
+  // anywhere in the message; case-insensitive for "lol". Korean
+  // laughs only fire on 3+ repeats so a single "ㅋ" doesn't trigger.
+  const JOY_PATTERNS = [
+    /\^\^/,
+    /:\)/,
+    /\blol\b/i,
+    /ㅎㅎㅎ/,
+    /ㅋㅋㅋ/,
+  ];
+  const JOY_MS = 10000;
+  function isJoyText(t) {
+    for (const p of JOY_PATTERNS) if (p.test(t)) return true;
+    return false;
+  }
+
+  // Warm the cache for every variant (walking, stopped, joy) of
+  // both genders, so direction changes and joy reactions don't
+  // show a flash of broken-image while the GIF/PNG loads.
   const _spritePreload = [];
-  for (const _d in SPRITES) {
-    const img = new Image();
-    img.src = SPRITES[_d];
-    _spritePreload.push(img);
+  for (const _g of ['boy', 'girl']) {
+    const s = spritesFor(_g);
+    for (const _k in s.walk) { const i = new Image(); i.src = s.walk[_k]; _spritePreload.push(i); }
+    for (const _k in s.stop) { const i = new Image(); i.src = s.stop[_k]; _spritePreload.push(i); }
+    const i = new Image(); i.src = s.joy; _spritePreload.push(i);
   }
 
   // ---- map collision mask --------------------------------------
@@ -803,14 +845,17 @@
   });
 
   // ---- actor factory -------------------------------------------
-  function createActor(id, name, isRemote) {
+  function createActor(id, name, gender, isRemote) {
+    const sprites = spritesFor(gender);
     const root = document.createElement('div');
     root.className = 'actor' + (isRemote ? ' remote' : '');
     root.dataset.id = id;
+    // Start on the standing-still frame so a freshly-spawned
+    // character isn't briefly seen walking in place.
     root.innerHTML =
       '<div class="actor-bubble"></div>' +
       '<div class="actor-name"></div>' +
-      '<img class="actor-sprite" src="' + SPRITES.down + '" alt="character" draggable="false">';
+      '<img class="actor-sprite" src="' + sprites.stop.down + '" alt="character" draggable="false">';
 
     const sprite = root.querySelector('.actor-sprite');
     const nameEl = root.querySelector('.actor-name');
@@ -818,12 +863,18 @@
     nameEl.textContent = name;
 
     const actor = {
-      id: id, name: name, isRemote: !!isRemote,
+      id: id, name: name, gender: gender, isRemote: !!isRemote,
+      sprites: sprites,
       root: root, sprite: sprite, nameEl: nameEl, bubble: bubble,
       pos: { x: STAGE_W / 2 - CHAR_W / 2, y: STAGE_H / 2 - CHAR_H / 2 },
       dir: 'down',
       bubbleTimer: null,
       nameTimer: null,
+      // Start frozen — they're not moving yet, so the "stop" PNG
+      // we set above is the correct sprite.
+      frozen: true,
+      joyMode: false,
+      joyTimer: null,
     };
 
     sprite.addEventListener('click', function (e) {
@@ -844,10 +895,11 @@
   function setDirection(a, dir) {
     if (a.dir === dir) return;
     a.dir = dir;
-    a.sprite.src = SPRITES[dir];
-    // Switching to a different GIF implicitly starts it playing
-    // from frame 1, so the frozen flag no longer applies.
-    a.frozen = false;
+    if (a.joyMode) return; // joy lock — keep joy.gif on screen
+    // Pick the sprite that matches whether the actor is currently
+    // walking or standing. Switching to a new GIF implicitly
+    // restarts its animation from frame 1.
+    a.sprite.src = a.frozen ? a.sprites.stop[dir] : a.sprites.walk[dir];
   }
 
   function showName(a, ms) {
@@ -873,41 +925,50 @@
     a.root.remove();
   }
 
-  // ---- GIF freeze / unfreeze ----------------------------------
+  // ---- freeze / unfreeze / joy --------------------------------
   //
   //  Browsers will animate a GIF forever — there's no CSS or
-  //  `<img>` API to pause it. To make the character actually stop
-  //  walking when the player stops, we paint the currently-visible
-  //  frame onto an off-DOM <canvas> and swap the <img>'s src to
-  //  that PNG data URL. Unfreezing is just restoring the original
-  //  GIF src, which reloads from the in-memory cache (preloaded
-  //  above) so there's no visible flicker.
+  //  `<img>` API to pause one. We sidestep that by shipping a
+  //  matching "stop {dir}.png" still for every walking GIF and
+  //  swapping the <img>'s src to that PNG when the player stops.
+  //  Unfreezing just restores the walking GIF src (the file is
+  //  preloaded so there's no flicker).
+  //
+  //  joyMode overrides both — while it's active the actor stays
+  //  on joy.gif regardless of movement state. When the joy timer
+  //  expires we fall back to whichever sprite (walk vs stop) the
+  //  actor's current state dictates.
   //
   //  markMoved() is called whenever an actor's position actually
   //  changes. A periodic ticker freezes any actor whose lastMoveAt
   //  is older than IDLE_FREEZE_MS.
   function freezeActor(a) {
     if (a.frozen) return;
-    const img = a.sprite;
-    if (!img.complete || !img.naturalWidth) return; // not loaded yet
-    try {
-      const w = img.naturalWidth, h = img.naturalHeight;
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      img.src = canvas.toDataURL('image/png');
-      a.frozen = true;
-    } catch (e) {
-      // Tainted canvas (shouldn't happen for same-origin assets)
-      // — fall back to leaving the GIF running.
-    }
+    a.frozen = true;
+    if (!a.joyMode) a.sprite.src = a.sprites.stop[a.dir];
   }
 
   function unfreezeActor(a) {
     if (!a.frozen) return;
     a.frozen = false;
-    a.sprite.src = SPRITES[a.dir];
+    if (!a.joyMode) a.sprite.src = a.sprites.walk[a.dir];
+  }
+
+  function playJoy(a) {
+    if (a.joyTimer) clearTimeout(a.joyTimer);
+    a.joyMode = true;
+    a.sprite.src = a.sprites.joy;
+    a.joyTimer = setTimeout(function () {
+      a.joyMode = false;
+      a.joyTimer = null;
+      // Restore whichever sprite the actor's current state wants.
+      a.sprite.src = a.frozen ? a.sprites.stop[a.dir] : a.sprites.walk[a.dir];
+    }, JOY_MS);
+  }
+
+  function deliverChat(a, text) {
+    showBubble(a, text);
+    if (isJoyText(text)) playJoy(a);
   }
 
   function markMoved(a) {
@@ -928,7 +989,7 @@
   }, 100);
 
   // ---- me ------------------------------------------------------
-  const me = createActor(ME.id, ME.name, false);
+  const me = createActor(ME.id, ME.name, ME.gender, false);
   me.pos.x = 200 + Math.random() * (STAGE_W - 400 - CHAR_W);
   me.pos.y = 600 + Math.random() * (STAGE_H - 700 - CHAR_H);
   placeActor(me);
@@ -1083,7 +1144,7 @@
   function sendChat(rawText) {
     const text = String(rawText || '').trim();
     if (!text) return;
-    showBubble(me, text);
+    deliverChat(me, text);
     if (subscribed) {
       channel.send({
         type: 'broadcast',
@@ -1171,10 +1232,10 @@
       if (!p) continue;
       let ra = remotes.get(tid);
       if (!ra) {
-        ra = createActor(tid, p.name || 'Anonymous', true);
+        ra = createActor(tid, p.name || 'Anonymous', p.gender, true);
         if (typeof p.x === 'number') ra.pos.x = p.x;
         if (typeof p.y === 'number') ra.pos.y = p.y;
-        if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
+        if (p.dir && ra.sprites.walk[p.dir]) setDirection(ra, p.dir);
         placeActor(ra);
         remotes.set(tid, ra);
       } else if (p.name && ra.name !== p.name) {
@@ -1210,7 +1271,7 @@
       ra.pos.y = p.y;
       placeActor(ra);
     }
-    if (p.dir && SPRITES[p.dir]) setDirection(ra, p.dir);
+    if (p.dir && ra.sprites.walk[p.dir]) setDirection(ra, p.dir);
     // Only count this as motion when the position genuinely
     // changed — otherwise the "rebroadcast on join" event would
     // cause every idle character to twitch back into walking
@@ -1222,7 +1283,7 @@
     const p = msg.payload || {};
     if (!p.tab_id || p.tab_id === TAB_ID) return;
     const ra = remotes.get(p.tab_id);
-    if (ra && p.text) showBubble(ra, p.text);
+    if (ra && p.text) deliverChat(ra, p.text);
   });
 
   channel.subscribe(async function (status) {
@@ -1231,6 +1292,7 @@
       await channel.track({
         user_id: ME.id,
         name:    ME.name,
+        gender:  ME.gender,
         x:       me.pos.x,
         y:       me.pos.y,
         dir:     me.dir,
