@@ -16,6 +16,10 @@
   const STORAGE_KEY      = 'virtual.wear_offsets.v1';
   const SIZE_STORAGE_KEY = 'virtual.wear_sizes.v1';
   const SAMPLE_KEY       = 'virtual.fitting_sample.v1';
+  // Must match the CSS `transform: scale(...)` on #fitPreview in
+  // teacher.html so drag-distance maps cleanly to 1-px logical
+  // movement inside the preview.
+  const PREVIEW_SCALE    = 2.5;
 
   const CATEGORIES = ['hair','hat','top','bottom','shoes','face','glasses','beard'];
 
@@ -359,6 +363,7 @@
     const img = document.createElement('img');
     img.className = 'fit-wear';
     img.alt = '';
+    img.draggable = false; // suppress native HTML5 image drag
     img.style.position = 'absolute';
     img.style.left   = off.x + 'px';
     img.style.top    = off.y + 'px';
@@ -366,17 +371,55 @@
     img.style.height = size + 'px';
     img.style.zIndex = Z_ORDER[cat] || 1;
     img.style.imageRendering = 'pixelated';
-    img.style.pointerEvents  = 'none';
-    // Dashed outline in edit mode so the teacher can see what
-    // they're nudging vs. just inspecting.
+    img.style.userSelect = 'none';
+    img.style.webkitUserDrag = 'none';
     if (editMode) {
+      // Dashed orange outline + grab cursor signal that this layer
+      // is draggable; click-and-drag updates offsets[activeCat]
+      // live and persists on mouseup.
       img.style.outline = '1px dashed rgba(249, 115, 22, 0.9)';
       img.style.outlineOffset = '0px';
+      img.style.pointerEvents = 'auto';
+      img.style.cursor = 'grab';
+      img.addEventListener('mousedown', function (e) { startWearableDrag(e, img); });
+    } else {
+      img.style.pointerEvents = 'none';
     }
     preview.appendChild(img);
     processWearable(cat, id).then(function (src) {
       if (src) img.src = src;
     });
+  }
+
+  // Mouse-drag the wearable layer inside the preview. Distance is
+  // divided by PREVIEW_SCALE so 1 logical px per (scale) viewport
+  // pixels — matching the arrow-key step. The element's left/top
+  // are updated live while dragging; localStorage write happens
+  // once on mouseup so we don't thrash storage with every pixel.
+  function startWearableDrag(e, img) {
+    if (!activeCat || !editMode) return;
+    e.preventDefault();
+    const startMouseX = e.clientX;
+    const startMouseY = e.clientY;
+    const start = Object.assign({}, offsets[activeCat] || { x: 0, y: 0 });
+    img.style.cursor = 'grabbing';
+
+    function onMove(ev) {
+      const dx = Math.round((ev.clientX - startMouseX) / PREVIEW_SCALE);
+      const dy = Math.round((ev.clientY - startMouseY) / PREVIEW_SCALE);
+      offsets[activeCat] = { x: start.x + dx, y: start.y + dy };
+      img.style.left = offsets[activeCat].x + 'px';
+      img.style.top  = offsets[activeCat].y + 'px';
+      renderOffsetDisplay();
+    }
+    function onUp() {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+      img.style.cursor = 'grab';
+      saveOffsets();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
   }
 
   // Toggle the size controls' visual disabled state and add a hint
