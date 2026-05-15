@@ -234,10 +234,14 @@
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0);
           const data = ctx.getImageData(0, 0, c.width, c.height);
-          // Two background-fill greys: #9193a6 and #696c72. Either
-          // becomes transparent on a 5+ pixel run.
+          // Backgrounds + silhouette outline all colour-keyed on
+          // 5+ consecutive pixel runs:
+          //   #9193a6 — lighter grey background
+          //   #696c72 — darker grey background
+          //   #000000 — black outline around shapes
           colourKey(data, 5, 0x91, 0x93, 0xa6);
           colourKey(data, 5, 0x69, 0x6c, 0x72);
+          colourKey(data, 5, 0x00, 0x00, 0x00);
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) { resolve(url); }
