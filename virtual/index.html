@@ -1352,11 +1352,9 @@
     shoes: [
       '4i9zz74WVce3Ol4KaGTbT','FXeNUfzZ0g8dLWW95_JiG','XwHDSL9cO1Gye2aYoTk1U'
     ],
-    // Drop pants PNGs into wearables/bottom/ and list their
-    // filenames (without .png) here. Same conventions as the
-    // other categories — 50×50 canvas, #9193a6 background,
-    // optional -up/-left/-right variants.
     bottom: [
+      '7GbcGCfjgqfw-N0mAtSq4','RsawWs-u5jOXRH0fdixuB','_rQxF69mPUwMtqtNBuLP1',
+      'iqRXSd6PYhP2fiDCOSj6V','zqyAIcohhN_5XKtlA0DKN'
     ],
   };
 
@@ -1370,10 +1368,10 @@
   }
 
   // Per-category position offsets (left, top in px relative to
-  // the actor box). The teacher's Fitting Room tool writes to
-  // localStorage 'virtual.wear_offsets.v1' as the same shape.
-  // Defaults below match the CSS — overriding from localStorage
-  // lets a teacher fine-tune alignment without a code change.
+  // the actor box) AND per-category size (width = height because
+  // wearables are 1:1 squares). The teacher's Fitting Room tool
+  // writes to localStorage / Supabase as the same shapes, and we
+  // read them back here so individual browsers stay in sync.
   const WEAR_OFFSETS_DEFAULTS = {
     face:    { x: 20, y: 4   },
     glasses: { x: -4, y: -4  },
@@ -1383,6 +1381,10 @@
     shoes:   { x: -4, y: 36  },
     bottom:  { x: -4, y: -4  },
     top:     { x: -4, y: -4  },
+  };
+  const WEAR_SIZES_DEFAULTS = {
+    face:    52,  glasses: 100, beard:   100, hair:    100,
+    hat:     100, shoes:   100, bottom:  100, top:     100,
   };
   function loadWearOffsets() {
     try {
@@ -1396,19 +1398,68 @@
     } catch {}
     return Object.assign({}, WEAR_OFFSETS_DEFAULTS);
   }
+  function loadWearSizes() {
+    try {
+      const raw = localStorage.getItem('virtual.wear_sizes.v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return Object.assign({}, WEAR_SIZES_DEFAULTS, parsed);
+        }
+      }
+    } catch {}
+    return Object.assign({}, WEAR_SIZES_DEFAULTS);
+  }
   let WEAR_OFFSETS = loadWearOffsets();
-  // If the teacher tool saves on a different tab, pick up the
-  // new values the next time the player loads in.
+  let WEAR_SIZES   = loadWearSizes();
+
+  // Refresh every active actor with whatever WEAR_OFFSETS now
+  // holds. Used after a fresh DB fetch or a live broadcast.
+  function refreshAllAvatarOffsets() {
+    if (typeof me !== 'undefined') applyAvatarToActor(me, me.avatar);
+    if (typeof remotes !== 'undefined') {
+      for (const ra of remotes.values()) applyAvatarToActor(ra, ra.avatar);
+    }
+  }
+
+  // If the teacher tool saves on a different tab of the same
+  // browser, pick up the new values immediately via the storage
+  // event. Cross-device sync happens through Supabase (below).
   window.addEventListener('storage', function (e) {
     if (e.key === 'virtual.wear_offsets.v1') {
       WEAR_OFFSETS = loadWearOffsets();
-      // Re-apply on every active actor so live tabs update too.
-      if (typeof me !== 'undefined') applyAvatarToActor(me, me.avatar);
-      if (typeof remotes !== 'undefined') {
-        for (const ra of remotes.values()) applyAvatarToActor(ra, ra.avatar);
-      }
+      refreshAllAvatarOffsets();
+    } else if (e.key === 'virtual.wear_sizes.v1') {
+      WEAR_SIZES = loadWearSizes();
+      refreshAllAvatarOffsets();
     }
   });
+
+  // Cross-device sync: on load, fetch the teacher's saved offsets
+  // AND sizes from Supabase in one request. Falls back silently
+  // to localStorage / defaults if the request fails (e.g. table
+  // not yet created or `sizes` column not yet added).
+  (async function () {
+    try {
+      const r = await fetch(SUPABASE_URL +
+        '/rest/v1/wc_avatar_offsets?id=eq.global&select=offsets,sizes', {
+        headers: { apikey: SUPABASE_ANON, Authorization: 'Bearer ' + SUPABASE_ANON },
+      });
+      if (!r.ok) return;
+      const rows = await r.json();
+      const row = rows && rows[0];
+      if (!row) return;
+      if (row.offsets && typeof row.offsets === 'object') {
+        WEAR_OFFSETS = Object.assign({}, WEAR_OFFSETS_DEFAULTS, row.offsets);
+        try { localStorage.setItem('virtual.wear_offsets.v1', JSON.stringify(row.offsets)); } catch {}
+      }
+      if (row.sizes && typeof row.sizes === 'object') {
+        WEAR_SIZES = Object.assign({}, WEAR_SIZES_DEFAULTS, row.sizes);
+        try { localStorage.setItem('virtual.wear_sizes.v1', JSON.stringify(row.sizes)); } catch {}
+      }
+      refreshAllAvatarOffsets();
+    } catch {}
+  })();
 
   // ---- #9193a6 colour-key -------------------------------------
   //
@@ -1503,7 +1554,13 @@
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0);
           const data = ctx.getImageData(0, 0, c.width, c.height);
+          // Two background-fill colours seen in the wearable PNGs:
+          //   #9193a6 — lighter grey
+          //   #696c72 — darker grey
+          // Either one becomes transparent when it runs 5+ pixels
+          // in any single row or column.
           colourKey(data, 5, 0x91, 0x93, 0xa6);
+          colourKey(data, 5, 0x69, 0x6c, 0x72);
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) {
@@ -1610,10 +1667,13 @@
         // Per-category tint (hue saved in avatar.color[cat]).
         const hue = actor.avatar.color && actor.avatar.color[cat];
         el.style.filter = tintFilter(hue);
-        // Per-category position offset (teacher-adjustable).
-        const off = WEAR_OFFSETS[cat] || { x: 0, y: 0 };
-        el.style.left = off.x + 'px';
-        el.style.top  = off.y + 'px';
+        // Per-category position offset + size (teacher-adjustable).
+        const off  = WEAR_OFFSETS[cat] || { x: 0, y: 0 };
+        const size = WEAR_SIZES[cat]   || WEAR_SIZES_DEFAULTS[cat] || 100;
+        el.style.left   = off.x + 'px';
+        el.style.top    = off.y + 'px';
+        el.style.width  = size  + 'px';
+        el.style.height = size  + 'px';
       });
     }
   }
@@ -2211,6 +2271,24 @@
     if (ra && p.text) deliverChat(ra, p.text);
   });
 
+  // Live teacher pushes from the Fitting Room → swap offsets and
+  // sizes, then re-render every actor without reloading the page.
+  channel.on('broadcast', { event: 'offsets' }, function (msg) {
+    const p = msg.payload || {};
+    let changed = false;
+    if (p.offsets && typeof p.offsets === 'object') {
+      WEAR_OFFSETS = Object.assign({}, WEAR_OFFSETS_DEFAULTS, p.offsets);
+      try { localStorage.setItem('virtual.wear_offsets.v1', JSON.stringify(p.offsets)); } catch {}
+      changed = true;
+    }
+    if (p.sizes && typeof p.sizes === 'object') {
+      WEAR_SIZES = Object.assign({}, WEAR_SIZES_DEFAULTS, p.sizes);
+      try { localStorage.setItem('virtual.wear_sizes.v1', JSON.stringify(p.sizes)); } catch {}
+      changed = true;
+    }
+    if (changed) refreshAllAvatarOffsets();
+  });
+
   channel.subscribe(async function (status) {
     if (status === 'SUBSCRIBED') {
       subscribed = true;
@@ -2446,7 +2524,10 @@
       img.draggable = false;
       // Picker thumbnails always show the front view — students
       // see the same down-facing pose they see in the preview.
+      // If the file is gone (404), hide the tile so the manifest
+      // can keep stale entries without breaking the UI.
       processWearable(cat, id, 'down').then(function (result) {
+        if (!result.src) { b.style.display = 'none'; return; }
         img.src = result.src;
       });
       b.appendChild(img);

@@ -13,8 +13,9 @@
 // =============================================================
 
 (function () {
-  const STORAGE_KEY = 'virtual.wear_offsets.v1';
-  const SAMPLE_KEY  = 'virtual.fitting_sample.v1';
+  const STORAGE_KEY      = 'virtual.wear_offsets.v1';
+  const SIZE_STORAGE_KEY = 'virtual.wear_sizes.v1';
+  const SAMPLE_KEY       = 'virtual.fitting_sample.v1';
 
   const CATEGORIES = ['hair','hat','top','bottom','shoes','face','glasses','beard'];
 
@@ -29,18 +30,17 @@
     top:     { x: -4, y: -4  },
   };
 
-  // CSS-equivalent dimensions / z-order for each category. Kept
-  // small here because the teacher preview always uses defaults
-  // (the teacher tool only changes position, not size).
-  const WEAR_DIM = {
-    face:    { w: 52,  h: 52,  z: 1 },
-    glasses: { w: 100, h: 100, z: 2 },
-    beard:   { w: 100, h: 100, z: 2 },
-    hair:    { w: 100, h: 100, z: 3 },
-    hat:     { w: 100, h: 100, z: 4 },
-    shoes:   { w: 100, h: 100, z: 5 },
-    bottom:  { w: 100, h: 100, z: 6 },
-    top:     { w: 100, h: 100, z: 7 },
+  // z-order is fixed in code (matches the spec face << glasses,
+  // beard << hair << hat / bottom << top). Size is editable;
+  // SIZE_DEFAULTS is the starting square dimension per category
+  // — wearables are 1:1 so a single value covers width and height.
+  const Z_ORDER = {
+    face:    1, glasses: 2, beard:   2, hair:    3,
+    hat:     4, shoes:   5, bottom:  6, top:     7,
+  };
+  const SIZE_DEFAULTS = {
+    face:    52,  glasses: 100, beard:   100, hair:    100,
+    hat:     100, shoes:   100, bottom:  100, top:     100,
   };
 
   // Mirror of WEARABLES in focus/virtual/index.html.
@@ -92,11 +92,15 @@
     shoes: [
       '4i9zz74WVce3Ol4KaGTbT','FXeNUfzZ0g8dLWW95_JiG','XwHDSL9cO1Gye2aYoTk1U'
     ],
-    bottom: [],
+    bottom: [
+      '7GbcGCfjgqfw-N0mAtSq4','RsawWs-u5jOXRH0fdixuB','_rQxF69mPUwMtqtNBuLP1',
+      'iqRXSd6PYhP2fiDCOSj6V','zqyAIcohhN_5XKtlA0DKN'
+    ],
   };
 
   // -------- state --------
   let offsets    = loadOffsets();
+  let sizes      = loadSizes();
   let activeCat  = 'hair';
   let activeBase = 'boy';
   let sampleItem = loadSample();
@@ -122,6 +126,21 @@
   }
   function saveOffsets() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(offsets)); } catch {}
+  }
+  function loadSizes() {
+    try {
+      const raw = localStorage.getItem(SIZE_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          return Object.assign({}, SIZE_DEFAULTS, parsed);
+        }
+      }
+    } catch {}
+    return Object.assign({}, SIZE_DEFAULTS);
+  }
+  function saveSizes() {
+    try { localStorage.setItem(SIZE_STORAGE_KEY, JSON.stringify(sizes)); } catch {}
   }
   function loadSample() {
     try {
@@ -154,7 +173,10 @@
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0);
           const data = ctx.getImageData(0, 0, c.width, c.height);
+          // Two background-fill greys: #9193a6 and #696c72. Either
+          // becomes transparent on a 5+ pixel run.
           colourKey(data, 5, 0x91, 0x93, 0xa6);
+          colourKey(data, 5, 0x69, 0x6c, 0x72);
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) { resolve(url); }
@@ -265,6 +287,20 @@
     const off = offsets[activeCat] || { x: 0, y: 0 };
     document.getElementById('fitX').textContent = off.x;
     document.getElementById('fitY').textContent = off.y;
+    document.getElementById('fitSize').value = sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100;
+  }
+  function clampSize(n) {
+    n = parseInt(n, 10);
+    if (!isFinite(n)) return SIZE_DEFAULTS[activeCat] || 100;
+    if (n < 1)   return 1;
+    if (n > 500) return 500;
+    return n;
+  }
+  function updateSize(newSize) {
+    sizes[activeCat] = clampSize(newSize);
+    saveSizes();
+    renderOffsetDisplay();
+    renderPreview();
   }
 
   function renderPreview() {
@@ -279,17 +315,17 @@
     for (const cat of CATEGORIES) {
       const id = sampleItem[cat];
       if (!id) continue;
-      const dim = WEAR_DIM[cat];
-      const off = offsets[cat] || { x: 0, y: 0 };
+      const off  = offsets[cat] || { x: 0, y: 0 };
+      const size = sizes[cat]   || SIZE_DEFAULTS[cat] || 100;
       const img = document.createElement('img');
       img.className = 'fit-wear';
       img.alt = '';
       img.style.position = 'absolute';
       img.style.left   = off.x + 'px';
       img.style.top    = off.y + 'px';
-      img.style.width  = dim.w + 'px';
-      img.style.height = dim.h + 'px';
-      img.style.zIndex = dim.z;
+      img.style.width  = size + 'px';
+      img.style.height = size + 'px';
+      img.style.zIndex = Z_ORDER[cat] || 1;
       img.style.imageRendering = 'pixelated';
       img.style.pointerEvents  = 'none';
       // Visually highlight the active category to make positioning
@@ -320,18 +356,35 @@
 
     document.getElementById('fitResetBtn').addEventListener('click', function () {
       offsets[activeCat] = Object.assign({}, DEFAULTS[activeCat]);
+      sizes[activeCat]   = SIZE_DEFAULTS[activeCat];
       saveOffsets();
+      saveSizes();
       renderOffsetDisplay();
       renderPreview();
     });
     document.getElementById('fitResetAllBtn').addEventListener('click', function () {
       offsets = Object.assign({}, DEFAULTS);
+      sizes   = Object.assign({}, SIZE_DEFAULTS);
       saveOffsets();
+      saveSizes();
       renderOffsetDisplay();
       renderPreview();
     });
+
+    // Size controls. +/- buttons step by 1px; the number input
+    // lets the teacher type an exact value. Width and height are
+    // locked together because all wearables are 1:1 squares.
+    document.getElementById('fitSizeMinus').addEventListener('click', function () {
+      updateSize((sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100) - 1);
+    });
+    document.getElementById('fitSizePlus').addEventListener('click', function () {
+      updateSize((sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100) + 1);
+    });
+    document.getElementById('fitSize').addEventListener('input', function (e) {
+      updateSize(e.target.value);
+    });
     document.getElementById('fitCopyBtn').addEventListener('click', function () {
-      const json = JSON.stringify(offsets, null, 2);
+      const json = JSON.stringify({ offsets: offsets, sizes: sizes }, null, 2);
       const msg = document.getElementById('fitCopyMsg');
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(json).then(function () {
@@ -344,6 +397,104 @@
         msg.textContent = 'JSON: ' + json;
       }
     });
+
+    // 💾 Save & Apply — push the offsets to Supabase so every
+    // student picks them up on next load, AND broadcast on the
+    // Realtime channel so currently-open The Space tabs reflect
+    // the change without reloading.
+    document.getElementById('fitSaveBtn').addEventListener('click', function () {
+      saveAndApply();
+    });
+  }
+
+  async function saveAndApply() {
+    const msg = document.getElementById('fitCopyMsg');
+    const btn = document.getElementById('fitSaveBtn');
+    const SUPA = window.WC_SUPABASE;
+
+    if (!SUPA || !SUPA.url || !SUPA.anon) {
+      msg.textContent = 'Supabase config missing — check supabase-config.js.';
+      return;
+    }
+
+    btn.disabled = true;
+    msg.textContent = 'Saving…';
+
+    // 1) Durable persistence: upsert the single 'global' row.
+    let dbOk = false;
+    try {
+      const r = await fetch(SUPA.url + '/rest/v1/wc_avatar_offsets?on_conflict=id', {
+        method: 'POST',
+        headers: {
+          apikey:         SUPA.anon,
+          Authorization:  'Bearer ' + SUPA.anon,
+          'Content-Type': 'application/json',
+          Prefer:         'resolution=merge-duplicates,return=minimal',
+        },
+        body: JSON.stringify({
+          id:         'global',
+          offsets:    offsets,
+          sizes:      sizes,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      if (!r.ok) {
+        const txt = await r.text().catch(function () { return ''; });
+        throw new Error('HTTP ' + r.status + ' ' + txt.slice(0, 200));
+      }
+      dbOk = true;
+    } catch (e) {
+      msg.textContent = 'Save failed: ' + e.message +
+        '. Did you run supabase-add-avatar-offsets.sql in Supabase SQL Editor?';
+      btn.disabled = false;
+      return;
+    }
+
+    // 2) Live push: broadcast on the same Realtime channel that
+    //    students already listen on. Best-effort — the durable
+    //    upsert is the source of truth, this just shortens the
+    //    "wait until reload" window for connected tabs.
+    let liveOk = false;
+    if (window.supabase && window.supabase.createClient) {
+      try {
+        const client = window.supabase.createClient(SUPA.url, SUPA.anon, {
+          realtime: { params: { eventsPerSecond: 5 } },
+        });
+        const channel = client.channel('the-space-room');
+        await new Promise(function (resolve, reject) {
+          const timeout = setTimeout(function () {
+            reject(new Error('subscribe timeout'));
+          }, 4000);
+          channel.subscribe(function (status) {
+            if (status === 'SUBSCRIBED') {
+              clearTimeout(timeout);
+              resolve();
+            } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+              clearTimeout(timeout);
+              reject(new Error('subscribe ' + status));
+            }
+          });
+        });
+        await channel.send({
+          type:    'broadcast',
+          event:   'offsets',
+          payload: { offsets: offsets, sizes: sizes, at: Date.now() },
+        });
+        liveOk = true;
+        // Tidy up — we only needed a one-shot send.
+        setTimeout(function () {
+          try { client.removeAllChannels(); } catch {}
+        }, 300);
+      } catch (e) {
+        console.warn('Live broadcast failed (non-fatal):', e);
+      }
+    }
+
+    msg.textContent = dbOk && liveOk
+      ? '✓ Saved and pushed live to everyone.'
+      : '✓ Saved. Currently-connected students will see it on next reload.';
+    setTimeout(function () { msg.textContent = ''; }, 6000);
+    btn.disabled = false;
 
     // Arrow keys nudge the active element 1 px. Only fires when
     // the Fitting Room tab is visible and the user isn't typing
