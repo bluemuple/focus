@@ -1053,9 +1053,11 @@
     avatar: loadSavedAvatar(),
   };
 
-  // Load whatever wearable selection this user finished editing
-  // last time on this browser. localStorage only — no server
-  // round-trip, no DB schema.
+  // Load the avatar this user last finished editing. localStorage
+  // is the fast cache; wc_users.avatar in Supabase is the source
+  // of truth (so signing in on a different device shows the same
+  // outfit). fetchAvatarFromDB() below refreshes from the server
+  // shortly after page load.
   function loadSavedAvatar() {
     try {
       const raw = localStorage.getItem('virtual.avatar.v1');
@@ -1063,6 +1065,60 @@
       const parsed = JSON.parse(raw);
       return (parsed && typeof parsed === 'object') ? parsed : {};
     } catch { return {}; }
+  }
+
+  // Pulls wc_users.avatar for this user. If it differs from what
+  // we currently have, applies it, persists to localStorage, and
+  // re-broadcasts via Realtime so other open tabs see the swap.
+  async function fetchAvatarFromDB() {
+    try {
+      const r = await fetch(SUPABASE_URL +
+        '/rest/v1/wc_users?id=eq.' + encodeURIComponent(ME.id) + '&select=avatar', {
+        headers: { apikey: SUPABASE_ANON, Authorization: 'Bearer ' + SUPABASE_ANON },
+      });
+      if (!r.ok) return;
+      const rows = await r.json();
+      const dbAvatar = rows && rows[0] && rows[0].avatar;
+      if (!dbAvatar || typeof dbAvatar !== 'object') return;
+      // Skip if identical to what we already have.
+      if (JSON.stringify(dbAvatar) === JSON.stringify(ME.avatar || {})) return;
+      ME.avatar = dbAvatar;
+      applyAvatarToActor(me, ME.avatar);
+      try { localStorage.setItem('virtual.avatar.v1', JSON.stringify(dbAvatar)); } catch {}
+      if (subscribed) {
+        channel.track({
+          user_id: ME.id,
+          name:    ME.name,
+          gender:  ME.gender,
+          avatar:  ME.avatar,
+          x:       me.pos.x,
+          y:       me.pos.y,
+          dir:     me.dir,
+        });
+      }
+    } catch (e) {
+      console.warn('fetchAvatarFromDB failed', e);
+    }
+  }
+
+  // PATCH wc_users.avatar. Fire-and-forget — the realtime broadcast
+  // handles the immediate visual sync; this just makes the save
+  // durable so the next page load (anywhere) picks it up.
+  async function saveAvatarToDB(avatar) {
+    try {
+      await fetch(SUPABASE_URL + '/rest/v1/wc_users?id=eq.' + encodeURIComponent(ME.id), {
+        method: 'PATCH',
+        headers: {
+          apikey:         SUPABASE_ANON,
+          Authorization:  'Bearer ' + SUPABASE_ANON,
+          'Content-Type': 'application/json',
+          Prefer:         'return=minimal',
+        },
+        body: JSON.stringify({ avatar: avatar }),
+      });
+    } catch (e) {
+      console.warn('saveAvatarToDB failed', e);
+    }
   }
 
   // Per-tab unique id used as the Realtime presence key. Critical:
@@ -1949,6 +2005,10 @@
   placeActor(me);
   applyAvatarToActor(me, ME.avatar);
   fitOrFollow();
+  // Background refresh of the avatar from Supabase. If the user
+  // changed clothes on another device, the local cache is stale
+  // — this overrides it the moment the fetch resolves.
+  fetchAvatarFromDB();
   // `remotes` is declared earlier (next to fitOrFollow) so the
   // idle-freeze setInterval can safely close over it.
 
@@ -2663,7 +2723,10 @@
     try {
       localStorage.setItem('virtual.avatar.v1', JSON.stringify(ME.avatar));
     } catch {}
-    // Push the new outfit to everyone else's screen.
+    // Persist to the database so other devices of the same user
+    // get this outfit on next page load.
+    saveAvatarToDB(ME.avatar);
+    // Push the new outfit to everyone else's screen right now.
     if (subscribed) {
       channel.track({
         user_id: ME.id,
