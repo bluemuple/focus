@@ -107,12 +107,34 @@
   };
 
   // -------- state --------
+  //
+  //  Two-state-per-category button:
+  //    • Off      — not in editSet, button is white. Wearable
+  //                 hidden from the preview.
+  //    • Selected — in editSet, button is orange with a dashed
+  //                 outline on the preview. Visible AND editable
+  //                 (drag, arrow keys, size controls all act).
+  //
+  //  Clicking a button toggles in/out of editSet. Multiple
+  //  buttons can be selected at the same time; every selected
+  //  category moves and resizes together as a group.
+  //
+  //  lastClicked is the most-recent button press, used as the
+  //  "focus" for the X/Y/size display and the sample-item
+  //  dropdown when several are selected.
   let offsets    = loadOffsets();
   let sizes      = loadSizes();
-  let activeCat  = null;   // null until the teacher picks a category
-  let editMode   = false;  // 1st click selects; 2nd click toggles edit
+  const editSet  = new Set();
+  let lastClicked = null;
+  const wearImgs = {}; // cat → img element, for in-place drag updates
   let activeBase = 'boy';
   let sampleItem = loadSample();
+
+  function focusCat() {
+    if (lastClicked && editSet.has(lastClicked)) return lastClicked;
+    if (editSet.size) return editSet.values().next().value;
+    return null;
+  }
 
   // Seed default sample item per category (first manifest entry).
   for (const cat of CATEGORIES) {
@@ -229,16 +251,6 @@
   }
 
   // -------- UI rendering --------
-  //
-  //  Two-state per category-button:
-  //    • Inactive — white pill, grey text. Clicking selects.
-  //    • Selected (view) — indigo pill. Clicking again toggles
-  //      Edit mode. The preview shows ONLY this category.
-  //    • Selected (edit) — orange pill. Position/size controls
-  //      are enabled (arrow keys nudge, size buttons usable).
-  //
-  //  Switching to a different category drops you back into view
-  //  mode for that category.
   function renderCatRow() {
     const row = document.getElementById('fitCatRow');
     if (!row) return;
@@ -254,38 +266,42 @@
       b.style.cursor = 'pointer';
       b.style.fontFamily = 'inherit';
       b.style.fontWeight = '600';
-      if (cat === activeCat && editMode) {
-        b.style.background = '#f97316';   // orange — edit mode
+      if (editSet.has(cat)) {
+        b.style.background = '#f97316';   // orange — selected
         b.style.color = '#fff';
         b.style.borderColor = '#ea580c';
-      } else if (cat === activeCat) {
-        b.style.background = '#6366f1';   // indigo — view mode
-        b.style.color = '#fff';
-        b.style.borderColor = '#6366f1';
       } else {
         b.style.background = '#fff';
         b.style.color = '#374151';
       }
-      b.addEventListener('click', function () {
-        if (cat === activeCat) {
-          editMode = !editMode;
-        } else {
-          activeCat = cat;
-          editMode = false;
-        }
-        renderCatRow();
-        renderItemSelect();
-        renderEditModeUI();
-      });
+      b.addEventListener('click', function () { toggleCat(cat); });
       row.appendChild(b);
     });
+  }
+
+  // Toggle a category in/out of editSet. Multi-select works
+  // because each click is independent — clicking Hat doesn't
+  // affect Hair's state.
+  function toggleCat(cat) {
+    if (editSet.has(cat)) {
+      editSet.delete(cat);
+      if (lastClicked === cat) lastClicked = null;
+    } else {
+      editSet.add(cat);
+      lastClicked = cat;
+    }
+    renderCatRow();
+    renderItemSelect();
+    renderEditModeUI();
+    renderPreview();
   }
 
   function renderItemSelect() {
     const sel = document.getElementById('fitItemSelect');
     if (!sel) return;
     sel.innerHTML = '';
-    if (!activeCat) {
+    const cat = focusCat();
+    if (!cat) {
       const opt = document.createElement('option');
       opt.value = '';
       opt.textContent = '(pick an element above)';
@@ -296,11 +312,11 @@
       return;
     }
     sel.disabled = false;
-    const items = WEARABLES[activeCat] || [];
+    const items = WEARABLES[cat] || [];
     if (!items.length) {
       const opt = document.createElement('option');
       opt.value = '';
-      opt.textContent = '(no items in ' + activeCat + ')';
+      opt.textContent = '(no items in ' + cat + ')';
       sel.appendChild(opt);
     } else {
       items.forEach(function (id) {
@@ -309,11 +325,11 @@
         opt.textContent = id.length > 24 ? id.slice(0, 24) + '…' : id;
         sel.appendChild(opt);
       });
-      if (sampleItem[activeCat] && items.indexOf(sampleItem[activeCat]) >= 0) {
-        sel.value = sampleItem[activeCat];
+      if (sampleItem[cat] && items.indexOf(sampleItem[cat]) >= 0) {
+        sel.value = sampleItem[cat];
       } else {
         sel.value = items[0];
-        sampleItem[activeCat] = items[0];
+        sampleItem[cat] = items[0];
         saveSample();
       }
     }
@@ -323,22 +339,38 @@
   }
 
   function renderOffsetDisplay() {
-    if (!activeCat) return; // handled by renderEditModeUI
-    const off = offsets[activeCat] || { x: 0, y: 0 };
+    const cat = focusCat();
+    if (!cat) return; // handled by renderEditModeUI
+    const off = offsets[cat] || { x: 0, y: 0 };
     document.getElementById('fitX').textContent = off.x;
     document.getElementById('fitY').textContent = off.y;
-    document.getElementById('fitSize').value = sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100;
+    document.getElementById('fitSize').value = sizes[cat] || SIZE_DEFAULTS[cat] || 100;
   }
   function clampSize(n) {
     n = parseInt(n, 10);
-    if (!isFinite(n)) return SIZE_DEFAULTS[activeCat] || 100;
+    if (!isFinite(n)) return 100;
     if (n < 1)   return 1;
     if (n > 500) return 500;
     return n;
   }
-  function updateSize(newSize) {
-    if (!activeCat || !editMode) return;
-    sizes[activeCat] = clampSize(newSize);
+  // Increment / decrement EVERY category in editSet by `delta` —
+  // preserves relative sizes between selected elements.
+  function bumpSize(delta) {
+    if (!editSet.size) return;
+    for (const cat of editSet) {
+      const current = sizes[cat] || SIZE_DEFAULTS[cat] || 100;
+      sizes[cat] = clampSize(current + delta);
+    }
+    saveSizes();
+    renderOffsetDisplay();
+    renderPreview();
+  }
+  // Set every category in editSet to the same absolute value
+  // (typed into the number input).
+  function setSizeAll(value) {
+    if (!editSet.size) return;
+    const v = clampSize(value);
+    for (const cat of editSet) sizes[cat] = v;
     saveSizes();
     renderOffsetDisplay();
     renderPreview();
@@ -350,81 +382,91 @@
     const base = document.getElementById('fitBase');
     base.src = '../virtual/images/characters/' + activeBase + '/down.png';
 
-    // Drop any previously-rendered wearable images.
     Array.from(preview.querySelectorAll('img.fit-wear')).forEach(function (n) { n.remove(); });
+    for (const k of Object.keys(wearImgs)) delete wearImgs[k];
 
-    // Show only the active category (or nothing if none selected).
-    if (!activeCat) return;
-    const cat  = activeCat;
-    const id   = sampleItem[cat];
-    if (!id) return;
-    const off  = offsets[cat] || { x: 0, y: 0 };
-    const size = sizes[cat]   || SIZE_DEFAULTS[cat] || 100;
-    const img = document.createElement('img');
-    img.className = 'fit-wear';
-    img.alt = '';
-    img.draggable = false; // suppress native HTML5 image drag
-    img.style.position = 'absolute';
-    img.style.left   = off.x + 'px';
-    img.style.top    = off.y + 'px';
-    img.style.width  = size + 'px';
-    img.style.height = size + 'px';
-    img.style.zIndex = Z_ORDER[cat] || 1;
-    img.style.imageRendering = 'pixelated';
-    img.style.userSelect = 'none';
-    img.style.webkitUserDrag = 'none';
-    if (editMode) {
-      // Dashed orange outline + grab cursor signal that this layer
-      // is draggable; click-and-drag updates offsets[activeCat]
-      // live and persists on mouseup.
+    // Render EVERY category in editSet — they're all visible
+    // AND draggable. Walking CATEGORIES order keeps z-stacking
+    // deterministic (face below hair below hat, etc.).
+    CATEGORIES.forEach(function (cat) {
+      if (!editSet.has(cat)) return;
+      const id = sampleItem[cat];
+      if (!id) return;
+      const off  = offsets[cat] || { x: 0, y: 0 };
+      const size = sizes[cat]   || SIZE_DEFAULTS[cat] || 100;
+      const img = document.createElement('img');
+      img.className = 'fit-wear';
+      img.alt = '';
+      img.draggable = false;
+      img.style.position = 'absolute';
+      img.style.left   = off.x + 'px';
+      img.style.top    = off.y + 'px';
+      img.style.width  = size + 'px';
+      img.style.height = size + 'px';
+      img.style.zIndex = Z_ORDER[cat] || 1;
+      img.style.imageRendering = 'pixelated';
+      img.style.userSelect = 'none';
+      img.style.webkitUserDrag = 'none';
       img.style.outline = '1px dashed rgba(249, 115, 22, 0.9)';
       img.style.outlineOffset = '0px';
       img.style.pointerEvents = 'auto';
       img.style.cursor = 'grab';
-      img.addEventListener('mousedown', function (e) { startWearableDrag(e, img); });
-    } else {
-      img.style.pointerEvents = 'none';
-    }
-    preview.appendChild(img);
-    processWearable(cat, id).then(function (src) {
-      if (src) img.src = src;
+      img.addEventListener('mousedown', startWearableDrag);
+      preview.appendChild(img);
+      wearImgs[cat] = img;
+      processWearable(cat, id).then(function (src) {
+        if (src) img.src = src;
+      });
     });
   }
 
-  // Mouse-drag the wearable layer inside the preview. Distance is
-  // divided by PREVIEW_SCALE so 1 logical px per (scale) viewport
-  // pixels — matching the arrow-key step. The element's left/top
-  // are updated live while dragging; localStorage write happens
-  // once on mouseup so we don't thrash storage with every pixel.
-  function startWearableDrag(e, img) {
-    if (!activeCat || !editMode) return;
+  // Mouse-drag any wearable in editSet → moves the WHOLE editSet
+  // by the same delta (each wearable preserves its relative
+  // position). Distance is divided by PREVIEW_SCALE so the drag
+  // resolution matches the arrow-key 1-px step. localStorage is
+  // only written on mouseup to avoid hammering it 60 times per
+  // second.
+  function startWearableDrag(e) {
+    if (!editSet.size) return;
     e.preventDefault();
     const startMouseX = e.clientX;
     const startMouseY = e.clientY;
-    const start = Object.assign({}, offsets[activeCat] || { x: 0, y: 0 });
-    img.style.cursor = 'grabbing';
+    const snapshot = {};
+    for (const cat of editSet) {
+      snapshot[cat] = Object.assign({}, offsets[cat] || { x: 0, y: 0 });
+      if (wearImgs[cat]) wearImgs[cat].style.cursor = 'grabbing';
+    }
 
     function onMove(ev) {
       const dx = Math.round((ev.clientX - startMouseX) / PREVIEW_SCALE);
       const dy = Math.round((ev.clientY - startMouseY) / PREVIEW_SCALE);
-      offsets[activeCat] = { x: start.x + dx, y: start.y + dy };
-      img.style.left = offsets[activeCat].x + 'px';
-      img.style.top  = offsets[activeCat].y + 'px';
+      for (const cat of editSet) {
+        const o = { x: snapshot[cat].x + dx, y: snapshot[cat].y + dy };
+        offsets[cat] = o;
+        const img = wearImgs[cat];
+        if (img) {
+          img.style.left = o.x + 'px';
+          img.style.top  = o.y + 'px';
+        }
+      }
       renderOffsetDisplay();
     }
     function onUp() {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup',   onUp);
-      img.style.cursor = 'grab';
+      for (const cat of editSet) {
+        if (wearImgs[cat]) wearImgs[cat].style.cursor = 'grab';
+      }
       saveOffsets();
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup',   onUp);
   }
 
-  // Toggle the size controls' visual disabled state and add a hint
-  // about edit mode. Arrow keys are gated separately inside the
-  // keydown handler.
+  // Reflect the selection state in the small panel beside the
+  // preview. Controls are active iff at least one category is
+  // selected. When more than one is selected, the label spells
+  // out every one so the teacher can see the full group.
   function renderEditModeUI() {
     const minus = document.getElementById('fitSizeMinus');
     const plus  = document.getElementById('fitSizePlus');
@@ -433,25 +475,26 @@
     const xEl   = document.getElementById('fitX');
     const yEl   = document.getElementById('fitY');
 
-    if (!activeCat) {
-      label.textContent = '(none selected)';
+    const enabled = editSet.size > 0;
+
+    if (!enabled) {
+      label.textContent = '(none selected — click an element button)';
       xEl.textContent = '–';
       yEl.textContent = '–';
       input.value = '';
-      [minus, plus, input].forEach(function (el) {
-        el.disabled = true;
-        el.style.opacity = '0.4';
-        el.style.cursor = 'not-allowed';
+    } else {
+      const names = [];
+      CATEGORIES.forEach(function (c) {
+        if (editSet.has(c)) names.push(c[0].toUpperCase() + c.slice(1));
       });
-      return;
+      label.textContent = names.join(' + ') +
+        (editSet.size > 1 ? ' ✏ group edit' : ' ✏ edit');
     }
 
-    const labelText = activeCat[0].toUpperCase() + activeCat.slice(1);
-    label.textContent = editMode ? labelText + '  ✏ edit' : labelText;
     [minus, plus, input].forEach(function (el) {
-      el.disabled = !editMode;
-      el.style.opacity = editMode ? '1' : '0.4';
-      el.style.cursor  = editMode ? '' : 'not-allowed';
+      el.disabled = !enabled;
+      el.style.opacity = enabled ? '1' : '0.4';
+      el.style.cursor  = enabled ? '' : 'not-allowed';
     });
   }
 
@@ -463,15 +506,22 @@
     document.getElementById('fitItemSelect').addEventListener('change', function (e) {
       const v = e.target.value;
       if (!v) return;
-      sampleItem[activeCat] = v;
+      const cat = focusCat();
+      if (!cat) return;
+      sampleItem[cat] = v;
       saveSample();
       renderPreview();
     });
 
+    // Reset this element → reset EVERY category in editSet to its
+    // defaults (offset + size). If nothing is in edit mode, do
+    // nothing rather than silently picking one for the teacher.
     document.getElementById('fitResetBtn').addEventListener('click', function () {
-      if (!activeCat) return;
-      offsets[activeCat] = Object.assign({}, DEFAULTS[activeCat]);
-      sizes[activeCat]   = SIZE_DEFAULTS[activeCat];
+      if (!editSet.size) return;
+      for (const cat of editSet) {
+        offsets[cat] = Object.assign({}, DEFAULTS[cat]);
+        sizes[cat]   = SIZE_DEFAULTS[cat];
+      }
       saveOffsets();
       saveSizes();
       renderOffsetDisplay();
@@ -486,17 +536,14 @@
       renderPreview();
     });
 
-    // Size controls. +/- buttons step by 1px; the number input
-    // lets the teacher type an exact value. Width and height are
-    // locked together because all wearables are 1:1 squares.
-    document.getElementById('fitSizeMinus').addEventListener('click', function () {
-      updateSize((sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100) - 1);
-    });
-    document.getElementById('fitSizePlus').addEventListener('click', function () {
-      updateSize((sizes[activeCat] || SIZE_DEFAULTS[activeCat] || 100) + 1);
-    });
+    // Size controls. +/- buttons step every editSet member by 1
+    // (preserving relative sizes). Number input sets every
+    // editSet member to the typed absolute value. Width and
+    // height stay locked because wearables are 1:1 squares.
+    document.getElementById('fitSizeMinus').addEventListener('click', function () { bumpSize(-1); });
+    document.getElementById('fitSizePlus' ).addEventListener('click', function () { bumpSize( 1); });
     document.getElementById('fitSize').addEventListener('input', function (e) {
-      updateSize(e.target.value);
+      setSizeAll(e.target.value);
     });
     document.getElementById('fitCopyBtn').addEventListener('click', function () {
       const json = JSON.stringify({ offsets: offsets, sizes: sizes }, null, 2);
@@ -611,13 +658,14 @@
     setTimeout(function () { msg.textContent = ''; }, 6000);
     btn.disabled = false;
 
-    // Arrow keys nudge the active element 1 px. Only fires when
-    // the Fitting Room tab is visible, a category is in edit mode,
-    // and the user isn't typing into an input/select.
+    // Arrow keys nudge EVERY editSet member 1 px in the chosen
+    // direction. Only fires when the Fitting Room tab is visible,
+    // something is in edit mode, and the user isn't typing into
+    // a form control.
     window.addEventListener('keydown', function (e) {
       const tab = document.getElementById('tab-fitting');
       if (!tab || tab.classList.contains('wc-hidden')) return;
-      if (!activeCat || !editMode) return;
+      if (!editSet.size) return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
       let dx = 0, dy = 0;
@@ -627,9 +675,11 @@
       if (e.key === 'ArrowDown')  dy =  1;
       if (!dx && !dy) return;
       e.preventDefault();
-      const off = offsets[activeCat] || (offsets[activeCat] = { x: 0, y: 0 });
-      off.x += dx;
-      off.y += dy;
+      for (const cat of editSet) {
+        const off = offsets[cat] || (offsets[cat] = { x: 0, y: 0 });
+        off.x += dx;
+        off.y += dy;
+      }
       saveOffsets();
       renderOffsetDisplay();
       renderPreview();
