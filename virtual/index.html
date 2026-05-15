@@ -190,6 +190,9 @@
     overflow: hidden;
     box-shadow: 0 24px 60px rgba(0,0,0,0.5);
     cursor: pointer;
+    /* Disable the browser's own pan/zoom gestures so our drag-pan
+       handler is the only thing reacting to touch on the map. */
+    touch-action: none;
   }
 
   /* Foreground overlay layer.
@@ -211,7 +214,9 @@
     background-size: 100% 100%;
     background-repeat: no-repeat;
     pointer-events: none;
-    z-index: 10;
+    /* Sits above every actor. Actors get y-based z-index up to
+       STAGE_H (1086) so the overlay must be higher than that. */
+    z-index: 2000;
   }
   #stageOverlay { background-image: url('images/classroom-overlay.png'); }
 
@@ -822,10 +827,12 @@
       const playCx = vw / 2;
       const playCy = (TOPBAR_H + (vh - FAB_H)) / 2;
 
-      tx = playCx - charCx;
-      ty = playCy - charCy;
+      // panOffset lets a finger-drag temporarily slide the camera
+      // away from the player; clamping below still keeps the map
+      // edges flush with the viewport.
+      tx = playCx - charCx + panOffset.x;
+      ty = playCy - charCy + panOffset.y;
 
-      // Clamp so the map's edges never reveal a gap.
       const sw = STAGE_W * scale, sh = STAGE_H * scale;
       if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
       else         tx = (vw - sw) / 2;
@@ -834,9 +841,15 @@
     } else {
       const buf = 40;
       scale = Math.min((vw - buf) / STAGE_W, (vh - buf) / STAGE_H, 1);
-      const scaledW = STAGE_W * scale, scaledH = STAGE_H * scale;
-      tx = (vw - scaledW) / 2;
-      ty = (vh - scaledH) / 2;
+      const sw = STAGE_W * scale, sh = STAGE_H * scale;
+      tx = (vw - sw) / 2 + panOffset.x;
+      ty = (vh - sh) / 2 + panOffset.y;
+      // Match the mobile clamp so a touchscreen desktop / tablet
+      // drag also can't push the map past the viewport edges.
+      if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
+      else         tx = (vw - sw) / 2;
+      if (sh > vh) ty = Math.min(0, Math.max(vh - sh, ty));
+      else         ty = (vh - sh) / 2;
     }
 
     tx = Math.round(tx);
@@ -887,6 +900,12 @@
 
     sprite.addEventListener('click', function (e) {
       e.stopPropagation();
+      // A drag-pan ends with a synthetic click — swallow that one
+      // so dragging across a character doesn't surface their name.
+      if (suppressClickAfterDrag) {
+        suppressClickAfterDrag = false;
+        return;
+      }
       showName(actor, 3000);
     });
 
@@ -898,6 +917,11 @@
   function placeActor(a) {
     a.root.style.transform =
       'translate3d(' + a.pos.x + 'px, ' + a.pos.y + 'px, 0)';
+    // Y-sort by the character's feet: the actor lower on the
+    // screen (greater pos.y) gets a higher z-index and renders
+    // in front of the actor above it. The overlay stays above
+    // everyone (z-index: 2000).
+    a.root.style.zIndex = Math.floor(a.pos.y + CHAR_H);
   }
 
   function setDirection(a, dir) {
@@ -1044,9 +1068,19 @@
     return maskData[(py * STAGE_W + px) * 4 + 3] > 128;
   }
 
-  // ---- input: keys + click/tap-to-move -------------------------
+  // ---- input: keys + click/tap-to-move + drag-pan --------------
   const keys = Object.create(null);
   let moveTarget = null;
+  // Drag-pan state. panOffset is added to the camera transform in
+  // fitOrFollow so the user can swipe the map to look around;
+  // releasing the finger resets it to (0,0) and the camera snaps
+  // back to following the player. suppressClickAfterDrag stops
+  // the synthetic click that ends a drag from also triggering a
+  // tap-to-move.
+  let panOffset = { x: 0, y: 0 };
+  let touchPan = null;
+  let suppressClickAfterDrag = false;
+  const DRAG_THRESHOLD = 8; // px before a touch counts as a drag
 
   function isFormTarget(el) {
     return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON');
@@ -1054,6 +1088,15 @@
 
   window.addEventListener('keydown', function (e) {
     if (isFormTarget(e.target)) return;
+    // Spacebar in the world → jump focus into the chat input
+    // (or open the mobile chat panel) so you can type without
+    // reaching for the mouse.
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      if (isMobile()) openMobileChat();
+      else            input.focus();
+      return;
+    }
     if (e.key in { ArrowUp:1, ArrowDown:1, ArrowLeft:1, ArrowRight:1 }) {
       e.preventDefault();
       keys[e.key] = true;
@@ -1070,6 +1113,10 @@
   });
 
   stage.addEventListener('click', function (e) {
+    if (suppressClickAfterDrag) {
+      suppressClickAfterDrag = false;
+      return;
+    }
     const rect  = stage.getBoundingClientRect();
     const scale = rect.width / STAGE_W;
     const sx = (e.clientX - rect.left) / scale;
@@ -1080,10 +1127,56 @@
     };
   });
 
+  // Touch drag → pan the camera. The synthetic click after the
+  // drag is suppressed so panning doesn't accidentally also move
+  // the player. Single-finger only; multi-touch cancels.
+  stage.addEventListener('touchstart', function (e) {
+    if (e.touches.length !== 1) { touchPan = null; return; }
+    const t = e.touches[0];
+    touchPan = {
+      startX: t.clientX,
+      startY: t.clientY,
+      baseX:  panOffset.x,
+      baseY:  panOffset.y,
+      moved:  false,
+    };
+  }, { passive: true });
+
+  stage.addEventListener('touchmove', function (e) {
+    if (!touchPan || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - touchPan.startX;
+    const dy = t.clientY - touchPan.startY;
+    if (!touchPan.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+      touchPan.moved = true;
+    }
+    if (touchPan.moved) {
+      panOffset.x = touchPan.baseX + dx;
+      panOffset.y = touchPan.baseY + dy;
+      e.preventDefault(); // stop the page from scrolling
+    }
+  }, { passive: false });
+
+  stage.addEventListener('touchend', function () {
+    if (touchPan && touchPan.moved) {
+      suppressClickAfterDrag = true;
+      // Snap the camera back to follow the player.
+      panOffset.x = 0;
+      panOffset.y = 0;
+    }
+    touchPan = null;
+  });
+  stage.addEventListener('touchcancel', function () {
+    touchPan = null;
+    panOffset.x = 0;
+    panOffset.y = 0;
+  });
+
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
   // ---- movement core ------------------------------------------
   function applyMove(dx, dy) {
+    const oldX = me.pos.x, oldY = me.pos.y;
     const nx = clamp(me.pos.x + dx, 0, STAGE_W - CHAR_W);
     const ny = clamp(me.pos.y + dy, 0, STAGE_H - CHAR_H);
 
@@ -1101,8 +1194,18 @@
     if (Math.abs(dx) >= Math.abs(dy)) setDirection(me, dx > 0 ? 'right' : 'left');
     else                              setDirection(me, dy > 0 ? 'down' : 'up');
     placeActor(me);
-    markMoved(me);
-    moved = true;
+
+    if (me.pos.x !== oldX || me.pos.y !== oldY) {
+      // Actually moved → refresh the idle timer and queue a
+      // broadcast so other clients see the step.
+      markMoved(me);
+      moved = true;
+    } else if (!me.frozen) {
+      // Fully blocked on both axes (wall or another character).
+      // Don't wait for IDLE_FREEZE_MS — snap to the stop sprite
+      // for the direction we're facing right now.
+      freezeActor(me);
+    }
   }
 
   // ---- main loop ----------------------------------------------
