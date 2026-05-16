@@ -103,7 +103,52 @@
     background: #22c55e;
     flex-shrink: 0;
   }
+  .presence-row .name {
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .presence-row .coin {
+    margin-left: auto;
+    flex-shrink: 0;
+    color: #fde68a;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
   .presence-row.me { color: #a5b4fc; font-weight: 600; }
+  /* Tagger row — small red bullet so they're easy to spot inside
+     the Tag-players group. */
+  .presence-row.tagger .dot { background: #ef4444; }
+  .presence-row.tagger .name::after {
+    content: ' · IT';
+    color: #ef4444;
+    font-weight: 800;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+  }
+  /* Tag-players group — boxed, sits at the top of the list while
+     a round is running. Disappears when phase === 'idle'. */
+  .presence-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .presence-group.tag-box {
+    border: 1px solid rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.08);
+    border-radius: 10px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+  }
+  .presence-group-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    color: #fde68a;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
 
   /* Fitting Room button — opens the avatar editor popup. */
   #fittingRoomBtn {
@@ -156,6 +201,18 @@
     margin-right: 4px;
   }
   .chat-log-row.me .chat-log-name { color: #f0abfc; }
+  /* System rows announce tag-game events ("A caught B …"). */
+  .chat-log-row.system {
+    color: #fde68a;
+    font-style: italic;
+    background: rgba(245, 158, 11, 0.08);
+    border-left: 2px solid #f59e0b;
+    padding: 4px 8px;
+    border-radius: 4px;
+    margin: 2px 0;
+  }
+  .chat-log-row.system .coin-plus  { color: #6ee7b7; font-style: normal; font-weight: 700; }
+  .chat-log-row.system .coin-minus { color: #fca5a5; font-style: normal; font-weight: 700; }
   .chat-log-empty {
     color: #4b5563;
     font-style: italic;
@@ -1610,6 +1667,7 @@
           name:    ME.name,
           gender:  ME.gender,
           avatar:  ME.avatar,
+          money:   ME.money,
           x:       me.pos.x,
           y:       me.pos.y,
           dir:     me.dir,
@@ -3192,6 +3250,39 @@
     flashWallet();
     showCoinToast(delta);
     patchMoneyToDB(ME.money);
+    // Re-publish presence so the new balance shows up in everyone
+    // else's online list, and re-render our own list immediately.
+    if (subscribed && channel) {
+      channel.track({
+        user_id: ME.id,
+        name:    ME.name,
+        gender:  ME.gender,
+        avatar:  ME.avatar,
+        money:   ME.money,
+        x:       me.pos.x,
+        y:       me.pos.y,
+        dir:     me.dir,
+      });
+      try { renderPresenceList(channel.presenceState()); } catch {}
+    }
+  }
+
+  // Drops a system-style row into the chat log — used for tag-game
+  // announcements ("A caught B · +10 / −10"). Skipped when no chat
+  // log has been primed yet (the empty placeholder is still showing).
+  function appendChatSystemMsg(html) {
+    if (!chatLogPrimed) {
+      chatLogEl.innerHTML = '';
+      chatLogPrimed = true;
+    }
+    const row = document.createElement('div');
+    row.className = 'chat-log-row system';
+    row.innerHTML = html;
+    chatLogEl.appendChild(row);
+    while (chatLogEl.childNodes.length > CHAT_LOG_MAX) {
+      chatLogEl.removeChild(chatLogEl.firstChild);
+    }
+    chatLogEl.scrollTop = chatLogEl.scrollHeight;
   }
 
   const WHEEL_COLORS = [
@@ -3467,12 +3558,27 @@
   function applyTagTagged(p) {
     if (tag.phase !== 'play') return;
     if (!p || !p.newTagger) return;
+    // Announce who caught whom in the chat log. Names come from the
+    // participants snapshot taken at tag-start time, so they're the
+    // same on every client.
+    const catcherTabId = tag.taggerTabId;
+    const victimTabId  = p.newTagger;
+    const catcher = tag.participants.find(function (x) { return x.tab_id === catcherTabId; });
+    const victim  = tag.participants.find(function (x) { return x.tab_id === victimTabId;  });
+    if (catcher && victim) {
+      appendChatSystemMsg(
+        '🎯 <b>' + tagEscape(catcher.name) + '</b> caught ' +
+        '<b>' + tagEscape(victim.name) + '</b>. ' +
+        '<span class="coin-plus">+🪙10 ' + tagEscape(catcher.name) + '</span> · ' +
+        '<span class="coin-minus">−🪙10 ' + tagEscape(victim.name) + '</span>'
+      );
+    }
     // Coin transfer — the catcher (the previous Tagger) takes 10
     // coins from the freshly-caught player. Each client only
     // touches their own wc_users row so there's no cross-user
     // write; everyone else just updates the tagger state.
-    const iCaught    = tag.taggerTabId === TAB_ID && p.newTagger !== TAB_ID;
-    const iWasCaught = p.newTagger     === TAB_ID && tag.taggerTabId !== TAB_ID;
+    const iCaught    = catcherTabId === TAB_ID && victimTabId  !== TAB_ID;
+    const iWasCaught = victimTabId  === TAB_ID && catcherTabId !== TAB_ID;
     if (iCaught)    bumpMoney(+10);
     if (iWasCaught) bumpMoney(-10);
     // Re-run the 7-second countdown so the freshly-caught player
@@ -3572,6 +3678,7 @@
         name:    ME.name,
         gender:  ME.gender,
         avatar:  ME.avatar,
+        money:   ME.money,
         x:       me.pos.x,
         y:       me.pos.y,
         dir:     me.dir,
@@ -3611,22 +3718,64 @@
     presCount.textContent = countText;
     mtCount.textContent   = countText;
     presList.innerHTML = '';
+
+    // Build a uniform user list with name + money. Self uses the
+    // live ME.money rather than the (slightly stale) tracked value.
     const sorted = ids.map(function (tid) {
       const p = state[tid][0] || {};
-      return { tab_id: tid, name: p.name || 'Anonymous', isMe: tid === TAB_ID };
+      const isMe = tid === TAB_ID;
+      return {
+        tab_id: tid,
+        name:   p.name || 'Anonymous',
+        money:  isMe ? ME.money : (Number(p.money) || 0),
+        isMe:   isMe,
+      };
     }).sort(function (a, b) {
       if (a.isMe) return -1;
       if (b.isMe) return 1;
       return a.name.localeCompare(b.name);
     });
-    for (const u of sorted) {
+
+    // Split into "tag round" players and everyone else. The tag
+    // group only appears while a game is running; participants
+    // were locked in at tag-start time.
+    const tagSet = new Set();
+    if (tag.phase !== 'idle') {
+      for (const part of tag.participants) tagSet.add(part.tab_id);
+    }
+
+    function makeRow(u) {
       const row = document.createElement('div');
       row.className = 'presence-row' + (u.isMe ? ' me' : '');
-      row.innerHTML = '<span class="dot"></span><span></span>';
-      row.querySelector('span:last-child').textContent =
-        u.name + (u.isMe ? ' (you)' : '');
-      presList.appendChild(row);
+      if (tag.taggerTabId === u.tab_id) row.classList.add('tagger');
+      const dot  = document.createElement('span');  dot.className  = 'dot';
+      const name = document.createElement('span');  name.className = 'name';
+      name.textContent = u.name + (u.isMe ? ' (you)' : '');
+      const coin = document.createElement('span');  coin.className = 'coin';
+      coin.textContent = '🪙 ' + u.money;
+      row.appendChild(dot);
+      row.appendChild(name);
+      row.appendChild(coin);
+      return row;
     }
+
+    const tagPlayers = sorted.filter(function (u) { return tagSet.has(u.tab_id); });
+    const others     = sorted.filter(function (u) { return !tagSet.has(u.tab_id); });
+
+    if (tagPlayers.length) {
+      const box = document.createElement('div');
+      box.className = 'presence-group tag-box';
+      const label = document.createElement('div');
+      label.className = 'presence-group-label';
+      label.textContent = '🎯 Tag round (' + tagPlayers.length + ')';
+      box.appendChild(label);
+      for (const u of tagPlayers) box.appendChild(makeRow(u));
+      presList.appendChild(box);
+    }
+    const rest = document.createElement('div');
+    rest.className = 'presence-group';
+    for (const u of others) rest.appendChild(makeRow(u));
+    presList.appendChild(rest);
   }
 
   window.addEventListener('beforeunload', function () {
@@ -3907,6 +4056,7 @@
         name:    ME.name,
         gender:  ME.gender,
         avatar:  ME.avatar,
+        money:   ME.money,
         x:       me.pos.x,
         y:       me.pos.y,
         dir:     me.dir,
