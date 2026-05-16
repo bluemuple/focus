@@ -512,7 +512,8 @@
         <div class="sub">Click any animal to edit its info or add a YouTube video.</div>
       </div>
       <div class="actions">
-        <button id="addAnimalBtn" class="btn approve" title="Add a brand-new animal to the list">＋ Add animal</button>
+        <button id="addAnimalBtn"     class="btn approve" title="Add a brand-new animal to the list">＋ Add animal</button>
+        <button id="prewarmWikiBtn"   class="btn ghost"   title="Generate + cache the GPT wiki summary for every animal. Skips ones already cached.">🔥 Prewarm Wiki</button>
         <a class="btn ghost" href="index.html">👁 View site</a>
         <button id="exportBtn" class="btn ghost">⬇ Export</button>
         <button id="importBtn" class="btn ghost">⬆ Import</button>
@@ -520,6 +521,7 @@
         <input id="importFile" type="file" accept="application/json" hidden>
         <button id="resetAllBtn" class="btn danger">↺ Reset all</button>
       </div>
+      <div id="prewarmStatus" style="grid-column:1/-1; margin-top:8px; font-family:monospace; font-size:12px; color:#666; max-height:120px; overflow-y:auto; display:none;"></div>
     </header>
 
     <div class="search-row">
@@ -632,6 +634,7 @@
 
   <div class="toast" id="toast"></div>
 
+<script src="../edu/js/supabase-config.js"></script>
 <script src="animals-data.js"></script>
 <script>
 // ---------- Ako teacher gate ----------
@@ -1154,6 +1157,72 @@
     localStorage.setItem(KEY, JSON.stringify(added));
     alert('✓ Added "' + name + '" — refreshing.');
     location.reload();
+  });
+
+  // 🔥 Prewarm Wiki — walk every animal in getMergedAnimals() and
+  // POST to the wc-animal-wiki-gpt edge function so the server
+  // generates + caches the GPT digest. Skips animals whose cache
+  // already has a row (the edge function returns cached:true,
+  // costing no GPT credits). Throttled to one request at a time
+  // with a small delay so we don't spike OpenAI's rate limit.
+  document.getElementById('prewarmWikiBtn').addEventListener('click', async () => {
+    const btn      = document.getElementById('prewarmWikiBtn');
+    const statusEl = document.getElementById('prewarmStatus');
+    const SB_URL   = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
+    const ANON     = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
+    const FN_URL   = SB_URL ? SB_URL.replace(/\/+$/, '') + '/functions/v1/wc-animal-wiki-gpt' : '';
+    if (!FN_URL) { alert('Supabase URL not configured.'); return; }
+    const all = getMergedAnimals();
+    if (!confirm('Generate + cache the GPT wiki summary for all '
+      + all.length + ' animals?\n\nAlready-cached entries are skipped (no extra GPT cost).')) return;
+
+    btn.disabled = true;
+    btn.textContent = '🔥 Prewarming…';
+    statusEl.style.display = '';
+    statusEl.textContent = '';
+    const log = (msg) => {
+      statusEl.textContent += msg + '\n';
+      statusEl.scrollTop = statusEl.scrollHeight;
+    };
+
+    let ok = 0, hit = 0, fail = 0;
+    for (let i = 0; i < all.length; i++) {
+      const a = all[i];
+      const wikiKey = (typeof ANIMAL_WIKI !== 'undefined' && ANIMAL_WIKI[a.id]) || a.name;
+      try {
+        const r = await fetch(FN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey:         ANON,
+            Authorization:  'Bearer ' + ANON,
+          },
+          body: JSON.stringify({
+            animal_id:   a.id,
+            animal_name: a.name,
+            wiki_title:  wikiKey,
+          }),
+        });
+        if (!r.ok) {
+          fail++;
+          log('✗ ' + a.name + ' — HTTP ' + r.status);
+        } else {
+          const j = await r.json();
+          if (j.cached) { hit++; log('· ' + a.name + ' (cached)'); }
+          else          { ok++;  log('✓ ' + a.name + ' (generated)'); }
+        }
+      } catch (e) {
+        fail++;
+        log('✗ ' + a.name + ' — ' + (e.message || e));
+      }
+      btn.textContent = '🔥 Prewarming… ' + (i + 1) + '/' + all.length;
+      // Brief pause so we don't hammer the OpenAI rate limit.
+      await new Promise(res => setTimeout(res, 250));
+    }
+    log('—');
+    log('Done. ' + ok + ' generated · ' + hit + ' already cached · ' + fail + ' failed.');
+    btn.disabled = false;
+    btn.textContent = '🔥 Prewarm Wiki';
   });
   document.getElementById('logoutBtn').addEventListener('click', () => {
     if (!confirm('Log out and lock the admin?')) return;

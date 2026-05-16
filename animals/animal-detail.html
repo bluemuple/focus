@@ -511,7 +511,23 @@
     font-weight: 700;
     font-size: 0.88rem;
   }
+  .wiki-readmore-wrap {
+    margin: 16px 0 0;
+    text-align: center;
+    padding-top: 12px;
+    border-top: 1px solid var(--bg2);
+  }
   .wiki-body.loading, .wiki-body.error { color: var(--muted); font-style: italic; }
+  .wiki-body strong { background: rgba(255, 209, 102, 0.45); padding: 0 2px; border-radius: 3px; }
+  .wiki-body ul { padding-left: 20px; margin: 0 0 12px; }
+  .wiki-body li { margin: 0 0 4px; line-height: 1.5; font-size: 0.92rem; color: var(--muted); }
+  .wiki-stamp {
+    margin: 12px 0 0;
+    font-size: 0.72rem;
+    color: var(--muted);
+    text-align: right;
+    font-style: italic;
+  }
 
   /* Container max-width tightens when wiki panel is open so the
      existing hero/info cards remain pleasantly centred next to it
@@ -885,37 +901,51 @@
     title.textContent = 'Wikipedia · ' + animal.name;
     let loaded = false;
 
-    async function loadSummary() {
+    const SB_URL = (window.WC_SUPABASE && window.WC_SUPABASE.url)  || '';
+    const ANON   = (window.WC_SUPABASE && window.WC_SUPABASE.anon) || '';
+    const FN_URL = SB_URL ? SB_URL.replace(/\/+$/, '') + '/functions/v1/wc-animal-wiki-gpt' : '';
+
+    async function loadGptDigest() {
       body.classList.add('loading');
       body.classList.remove('error');
-      body.textContent = 'Loading…';
+      body.textContent = 'Reading Wikipedia and writing an easy-read summary…';
       try {
-        const r = await fetch(
-          'https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(wikiTitleSlug),
-          { headers: { Accept: 'application/json' } }
-        );
+        if (!FN_URL) throw new Error('no edge function url');
+        const r = await fetch(FN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey:         ANON,
+            Authorization:  'Bearer ' + ANON,
+          },
+          body: JSON.stringify({
+            animal_id:   animal.id,
+            animal_name: animal.name,
+            wiki_title:  wikiKey,
+          }),
+        });
         if (!r.ok) throw new Error('http ' + r.status);
         const j = await r.json();
-        const thumb = j.thumbnail && j.thumbnail.source
-          ? '<img src="' + j.thumbnail.source + '" alt="">' : '';
-        const heading = '<h4>' + escapeHTML(j.title || animal.name) + '</h4>';
-        const extract = j.extract_html || ('<p>' + escapeHTML(j.extract || '') + '</p>');
+        if (!j.html) throw new Error('no html');
         const more = '<a class="wiki-readmore" href="' + fullArticleUrl
           + '" target="_blank" rel="noopener">Read more on Wikipedia →</a>';
+        const stamp = j.cached ? '<div class="wiki-stamp">Cached summary</div>'
+                               : '<div class="wiki-stamp">Freshly generated</div>';
         body.classList.remove('loading');
-        body.innerHTML = thumb + heading + extract + more;
+        body.innerHTML = j.html + '<div class="wiki-readmore-wrap">' + more + '</div>' + stamp;
       } catch (e) {
         body.classList.remove('loading');
         body.classList.add('error');
-        body.innerHTML = 'Could not load Wikipedia summary. <br>'
-          + '<a class="wiki-readmore" href="' + fullArticleUrl
-          + '" target="_blank" rel="noopener">Open Wikipedia →</a>';
+        body.innerHTML =
+          'Could not generate an easy-read summary right now.<br>' +
+          '<a class="wiki-readmore" href="' + fullArticleUrl +
+          '" target="_blank" rel="noopener">Open Wikipedia →</a>';
       }
     }
 
     function open() {
       if (shell.classList.contains('open')) return;
-      if (!loaded) { loadSummary(); loaded = true; }
+      if (!loaded) { loadGptDigest(); loaded = true; }
       shell.classList.add('open');
       document.body.classList.add('wiki-open');
     }
