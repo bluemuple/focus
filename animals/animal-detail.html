@@ -241,6 +241,60 @@
     margin: 10px 0 8px;
     position: relative;
     z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .hero-name .hero-heart {
+    background: transparent;
+    border: 2px solid var(--primary);
+    color: var(--primary-dark);
+    border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit;
+    font-size: 1.2rem;
+    font-weight: 800;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: transform 0.1s ease, background 0.15s ease, color 0.15s ease;
+  }
+  .hero-name .hero-heart:hover  { transform: scale(1.06); }
+  .hero-name .hero-heart:active { transform: scale(0.96); }
+  .hero-name .hero-heart.mine   { background: var(--primary); color: white; }
+  .hero-name .hero-heart-count { font-size: 0.9em; font-weight: 700; }
+
+  /* "Now you can edit ___!" overlay — shown for 2 s after a
+     successful heart, on either index.html or animal-detail.html. */
+  .edit-unlock-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.72);
+    z-index: 1000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .edit-unlock-overlay.shown { display: flex; opacity: 1; }
+  .edit-unlock-overlay .euo-text {
+    color: white;
+    font-weight: 900;
+    font-size: clamp(2rem, 6vw, 3.5rem);
+    text-align: center;
+    letter-spacing: -0.01em;
+    text-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+    line-height: 1.2;
+  }
+  .edit-unlock-overlay .euo-text .euo-name {
+    color: var(--accent);
+    display: inline-block;
+    transform: scale(1.05);
   }
 
   .hero-category {
@@ -662,6 +716,9 @@
     font-size: 18px; line-height: 1; padding: 4px;
   }
   body.student-editing .fact-remove:hover { color: var(--text); }
+  /* Hidden unless we're in edit mode — pre-existing readers
+     shouldn't see the dotted "add" placeholder. */
+  .fact-add-row { display: none; }
   body.student-editing .fact-add-row {
     display: flex; gap: 8px; align-items: center;
     background: rgba(255, 209, 102, 0.18);
@@ -930,6 +987,23 @@
   .reply-form {
     margin: 6px 0 0 28px;
   }
+  /* Bottom-of-page hint shown ONLY when nobody has yet added
+     anything to this animal (so the comments-card is still
+     hidden). Once the first contribution arrives, JS swaps in
+     the real comment box and hides this hint. */
+  .comment-unlock-hint {
+    text-align: center;
+    background: linear-gradient(135deg, var(--mint), var(--bg2));
+    color: var(--text);
+    border-radius: 16px;
+    padding: 16px 18px;
+    margin: 20px 0;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    box-shadow: var(--shadow);
+    border: 2px dashed rgba(0, 0, 0, 0.06);
+  }
+  .comment-unlock-hint b { color: var(--primary-dark); }
 
   /* Edit button (teacher only) */
   .edit-fab {
@@ -975,6 +1049,12 @@
   <button id="editStudentFab" class="edit-student-fab" title="You hearted this animal — you can edit its page">📝 Edit</button>
   <div id="liveEditChip" class="live-edit-chip"><span class="dot"></span><span id="liveEditMsg">Someone is editing…</span></div>
   <div id="pasteToast" class="paste-toast">📋 Press <b>Ctrl+V</b> (or Cmd+V) to paste your copied image</div>
+
+  <!-- Full-screen overlay shown for ~2s after a successful heart.
+       Tells the student they can now edit this animal's page. -->
+  <div id="editUnlockOverlay" class="edit-unlock-overlay">
+    <div class="euo-text">Now you can edit <span class="euo-name" id="euoName">…</span>!</div>
+  </div>
   <div class="container">
     <a class="back-link" href="index.html">← Back to all animals</a>
     <!-- The wiki shell wraps the floating Wiki button + the original
@@ -1058,7 +1138,13 @@
             <span class="photo-edit-fab" data-paste="coloringPages" title="Paste an image here">📋</span>
           </button>
         </div>
-        <h1 class="hero-name">${escapeHTML(animal.name)}</h1>
+        <h1 class="hero-name">
+          <span>${escapeHTML(animal.name)}</span>
+          <button type="button" class="hero-heart" id="heroHeart"
+                  title="Heart this animal — one heart per person">
+            <span class="hero-heart-icon">🤍</span><span class="hero-heart-count" id="heroHeartCount"></span>
+          </button>
+        </h1>
         <div class="loved-by-line" id="lovedByLine" style="display:none;"></div>
         <div class="hero-category">${cat ? cat.emoji : ''} ${escapeHTML(cat ? cat.name : '')}</div>
       </div>
@@ -1091,8 +1177,13 @@
       <div class="facts-card collapsible${facts.length ? '' : ' facts-empty'}" id="factsCard"${facts.length ? '' : ' style="display:none;"'}>
         <h2 class="collapsible-header" role="button" tabindex="0"><div class="info-icon">💡</div>Fun Facts</h2>
         <div class="collapsible-body">
+          <!-- Existing rows render WITHOUT a ✕ button — pre-existing
+               content can't be deleted. Only rows the student adds
+               in the current edit session get a ✕ (added by
+               addFunFactRow). The add-row placeholder is hidden by
+               default and revealed via body.student-editing in CSS. -->
           <ul class="facts-list" id="factsList" data-field="funFacts">
-            ${facts.map((f, i) => `<li data-idx="${i}"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div><button type="button" class="fact-remove" title="Remove this fact">✕</button></li>`).join('')}
+            ${facts.map((f, i) => `<li data-idx="${i}" data-original="1"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div></li>`).join('')}
           </ul>
           <div class="fact-add-row" id="factAddRow" tabindex="0">＋ Click to add a fun fact</div>
         </div>
@@ -1114,6 +1205,14 @@
           <button type="button" id="commentSubmit">Post</button>
         </div>
         <div id="commentLocked" class="comment-locked" style="display:none;"></div>
+      </div>
+
+      <!-- When no contributor exists yet, this banner sits at the
+           very bottom of the page so visitors clearly understand
+           how to unlock the comment thread. JS hides it once the
+           comment box becomes visible. -->
+      <div id="commentUnlockHint" class="comment-unlock-hint">
+        💬 Add something to this page (a fun fact, a photo, or a new topic) and a <b>comment box</b> will appear right here for everyone.
       </div>
 
       ${ytId ? `
@@ -1385,6 +1484,9 @@
         // Run the GPT digest fetch + the secondary photo fetch in
         // parallel — the digest is the slow part, photo finishes
         // independently and both render together when ready.
+        // Prefer the Google Image 2nd-result lookup; fall back to
+        // a different photo from Wikipedia's media list if Google
+        // isn't configured yet.
         const [r, photoSrc] = await Promise.all([
           fetch(FN_URL, {
             method: 'POST',
@@ -1399,7 +1501,7 @@
               wiki_title:  wikiKey,
             }),
           }),
-          fetchSecondWikipediaPhoto(wikiTitleSlug),
+          fetchTopPanelPhoto(animal, wikiTitleSlug),
         ]);
         if (!r.ok) throw new Error('http ' + r.status);
         const j = await r.json();
@@ -1424,6 +1526,36 @@
     }
     function escapeAttr(s) {
       return String(s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+
+    // Primary path — ask the wc-animal-image-2nd edge function for
+    // the second Google Image search result (cached server-side
+    // after the first call). If Google isn't configured, the
+    // function returns image_url:null and we fall back to a
+    // second Wikipedia photo so the panel still has imagery.
+    async function fetchTopPanelPhoto(animal, titleSlug) {
+      const fnUrl = SB_URL ? SB_URL.replace(/\/+$/, '') + '/functions/v1/wc-animal-image-2nd' : '';
+      if (fnUrl) {
+        try {
+          const r = await fetch(fnUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey:         ANON,
+              Authorization:  'Bearer ' + ANON,
+            },
+            body: JSON.stringify({
+              animal_id:   animal.id,
+              animal_name: animal.name,
+            }),
+          });
+          if (r.ok) {
+            const j = await r.json();
+            if (j && j.image_url) return j.image_url;
+          }
+        } catch (e) { /* fall through to Wikipedia */ }
+      }
+      return fetchSecondWikipediaPhoto(titleSlug);
     }
 
     // Pull /page/media-list to find the SECOND article photo (the
@@ -1511,6 +1643,12 @@
       line.style.display = '';
     }
 
+    // Hero heart button — counts every supporter and lights up
+    // when the active user is one of them. Clicking commits the
+    // heart (with the change-confirm popup if the user already
+    // hearted a different animal).
+    setupHeroHeart(animalId, rows);
+
     // Student Edit button — shown only when THIS user has hearted
     // THIS animal. Teachers don't need it (they have ✏️ Edit).
     const me = currentSession();
@@ -1524,6 +1662,70 @@
       }
     }
   }
+
+  // ---- Hero heart button + edit-unlock overlay -----------------
+  function setupHeroHeart(animalId, rows) {
+    const btn = document.getElementById('heroHeart');
+    if (!btn) return;
+    const cnt = document.getElementById('heroHeartCount');
+    const icon = btn.querySelector('.hero-heart-icon');
+    const me = currentSession();
+    const myCurrent = me && me.id ? (rows.find(r => r.user_id === me.id) || {}).animal_id || null : null;
+    const here = rows.filter(r => r.animal_id === animalId).length;
+    cnt.textContent = here > 0 ? here : '';
+    if (myCurrent === animalId) { btn.classList.add('mine'); icon.textContent = '❤️'; }
+    else                        { btn.classList.remove('mine'); icon.textContent = '🤍'; }
+    if (btn._wired) return;
+    btn._wired = true;
+    btn.addEventListener('click', async () => {
+      if (!me || !me.id) {
+        alert('Sign in on Ako first to heart an animal.');
+        return;
+      }
+      // Already hearted this one — no-op (matches list-page rule).
+      if (myCurrent === animalId) return;
+      // Hearted something else → ask permission via the change-
+      // confirm popup that already lives on /animals/index.html.
+      // On this page we don't have that modal, so just confirm()
+      // and require the same password.
+      if (myCurrent) {
+        const wantName = (function () {
+          const a = (typeof getMergedAnimal === 'function') && getMergedAnimal(myCurrent);
+          return a ? a.name : 'that one';
+        })();
+        const ok = confirm('You already know all about ' + wantName +
+          '. Switch your heart to ' + animal.name + '?');
+        if (!ok) return;
+        const pw = prompt("Mr. Charlie's password to switch:");
+        if (pw === null) return;
+        if (pw !== '2316') { alert('Wrong password. Ask Mr. Charlie.'); return; }
+      }
+      try {
+        await window.WCDB.animalHearts.setHeart(me.id, animalId);
+        showEditUnlockOverlay(animal.name);
+        // Re-load hearts + reload page after the overlay fades so
+        // every dependent UI (loved-by line, student fab, etc.) is
+        // freshly in sync without us hand-wiring every piece.
+        setTimeout(() => location.reload(), 2200);
+      } catch (e) {
+        alert('Could not heart: ' + (e.message || e));
+      }
+    });
+  }
+
+  function showEditUnlockOverlay(name) {
+    const ov   = document.getElementById('editUnlockOverlay');
+    const nm   = document.getElementById('euoName');
+    if (!ov || !nm) return;
+    nm.textContent = name;
+    ov.classList.add('shown');
+    setTimeout(() => ov.classList.remove('shown'), 2000);
+  }
+  // Expose globally so animals/index.html can call it too after
+  // its own heart click (the function is just a CSS class + a
+  // timer; no dependencies on this page's animal context beyond
+  // the name string).
+  window.showEditUnlockOverlay = showEditUnlockOverlay;
 
   // ============================================================
   //  Student inline-edit mode + Realtime sync
@@ -2059,8 +2261,11 @@
       // the remote re-render so we don't trash the local input.
       const anyEditing = list && list.querySelector('.inline-textarea');
       if (list && !anyEditing) {
+        // Remote-arrived facts are "existing" from this viewer's
+        // perspective → no ✕ button (they can't delete others'
+        // content). Their own additions stay in this session only.
         list.innerHTML = patch.funFacts.map((f, i) =>
-          `<li data-idx="${i}"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div><button type="button" class="fact-remove" title="Remove this fact">✕</button></li>`
+          `<li data-idx="${i}" data-original="1"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div></li>`
         ).join('');
         if (card) card.style.display = patch.funFacts.length ? '' : 'none';
         wireInlineEditors();
@@ -2132,13 +2337,17 @@
     const card    = document.getElementById('commentsCard');
     const form    = document.getElementById('commentForm');
     const locked  = document.getElementById('commentLocked');
+    const hint    = document.getElementById('commentUnlockHint');
     if (!card) return;
     if (!_animalHasContrib) {
-      // No contributor on this animal yet → no comment box.
+      // No contributor on this animal yet → no comment box, show
+      // the bottom hint so visitors know how to unlock it.
       card.classList.remove('shown');
+      if (hint) hint.style.display = '';
       return;
     }
     card.classList.add('shown');
+    if (hint) hint.style.display = 'none';
     if (!_commentsLoaded) loadAndRenderComments(animalId);
     const me = currentSession();
     if (me && me.id && _canPostComment) {
