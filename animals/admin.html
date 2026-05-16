@@ -636,6 +636,9 @@
 
 <script src="../edu/js/supabase-config.js"></script>
 <script src="animals-data.js"></script>
+<!-- Realtime SDK — broadcasts admin saves on the per-animal channel
+     so any detail page open in another tab updates instantly. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 // ---------- Ako teacher gate ----------
 // Admin actions require an active Ako teacher session, which
@@ -808,6 +811,14 @@
     fHabitat.value = animal.habitat || '';
     fDiet.value    = animal.diet || '';
 
+    // Async-merge any newer cloud values (e.g. a student's inline
+    // edits from the detail page) on top of the form. Fires after
+    // the localStorage-based values are already painted so the form
+    // is never empty while we wait. Fields the teacher hasn't yet
+    // typed into get the cloud value; if they've already started
+    // typing, leave the form alone.
+    mergeCloudCustomIntoForm(id);
+
     factsRows.innerHTML = '';
     const facts = Array.isArray(animal.funFacts) ? animal.funFacts : [];
     if (facts.length === 0) {
@@ -853,6 +864,10 @@
 
     modalBackdrop.classList.add('open');
     setTimeout(() => fHabitat.focus(), 50);
+    // Cache the form's initial state so mergeCloudCustomIntoForm
+    // can tell what the teacher has typed vs. what came from local
+    // overrides (and decide whether the cloud value can take over).
+    snapshotForm(id);
   }
 
   function closeEditor() {
@@ -1065,9 +1080,133 @@
       alert("Couldn't save — your browser storage might be full. Try removing the photo or clearing old edits.");
       return;
     }
+    // Mirror the save into wc_animal_custom so the student-side
+    // detail page (which now reads from the cloud) sees the same
+    // edits, and broadcast on the per-animal Realtime channel so
+    // open detail tabs update in-place.
+    pushAdminSaveToCloud(activeId, next).catch(() => {});
     toast('Saved ✓');
     closeEditor();
     renderList();
+  }
+
+  // Fetch the cloud row for `id` and merge any fields the teacher
+  // hasn't started editing yet. Keeps the admin in sync with
+  // student inline-edits done from the detail page. Best-effort —
+  // network failures are silent so the form is always usable.
+  async function mergeCloudCustomIntoForm(id) {
+    if (typeof fetchAnimalCustomFromCloud !== 'function') return;
+    let cloud = null;
+    try { cloud = await fetchAnimalCustomFromCloud(id); } catch (e) { return; }
+    if (!cloud || activeId !== id) return; // bail if user already closed/switched
+    const initial = (overrideSnapshot && overrideSnapshot.id === id) ? overrideSnapshot : null;
+    // Habitat / Diet — prefer cloud if the textarea hasn't been
+    // touched since it was first opened.
+    if (typeof cloud.habitat === 'string' && cloud.habitat &&
+        (!initial || fHabitat.value === initial.habitat)) {
+      fHabitat.value = cloud.habitat;
+    }
+    if (typeof cloud.diet === 'string' && cloud.diet &&
+        (!initial || fDiet.value === initial.diet)) {
+      fDiet.value = cloud.diet;
+    }
+    // Fun facts — if the current rows match the initial set, swap
+    // to the cloud's list.
+    if (Array.isArray(cloud.fun_facts) && cloud.fun_facts.length &&
+        (!initial || sameFacts(currentFactsFromDom(), initial.funFacts))) {
+      factsRows.innerHTML = '';
+      cloud.fun_facts.forEach(f => factsRows.appendChild(makeFactRow(f)));
+    }
+    // Pictures — if no custom photos have been pasted into the
+    // form yet, take the cloud's. (cloud rows are {src, source},
+    // admin's pendingCustom is plain strings.)
+    const unwrap = (arr) => (arr || []).map(p => typeof p === 'string' ? p : (p && p.src) || '').filter(Boolean);
+    if (Array.isArray(cloud.photos)         && cloud.photos.length         && pendingCustom.photos.length        === 0) {
+      pendingCustom.photos = unwrap(cloud.photos);          renderPhotoGallery('photos');
+    }
+    if (Array.isArray(cloud.cartoons)       && cloud.cartoons.length       && pendingCustom.cartoons.length      === 0) {
+      pendingCustom.cartoons = unwrap(cloud.cartoons);      renderPhotoGallery('cartoons');
+    }
+    if (Array.isArray(cloud.coloring_pages) && cloud.coloring_pages.length && pendingCustom.coloringPages.length === 0) {
+      pendingCustom.coloringPages = unwrap(cloud.coloring_pages); renderPhotoGallery('coloringPages');
+    }
+  }
+  // Cache the snapshot taken at openEditor() time so we can detect
+  // "teacher hasn't typed anything yet" when the cloud fetch resolves.
+  let overrideSnapshot = null;
+  function snapshotForm(id) {
+    overrideSnapshot = {
+      id,
+      habitat: fHabitat.value,
+      diet:    fDiet.value,
+      funFacts: currentFactsFromDom(),
+    };
+  }
+  function currentFactsFromDom() {
+    return Array.from(factsRows.querySelectorAll('input'))
+      .map(i => i.value.trim()).filter(Boolean);
+  }
+  function sameFacts(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b)) return false;
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+  }
+
+  // Push the admin's saved fields up to wc_animal_custom. Mirrors
+  // the camelCase fields the student inline editor uses but with
+  // the photos / cartoons / coloringPages arrays reshaped from raw
+  // dataURL strings into the {src, source:'custom'} shape that
+  // animals-data.js and the detail-page renderer expect.
+  async function pushAdminSaveToCloud(animalId, next) {
+    if (typeof saveAnimalCustomToCloud !== 'function') return;
+    let teacher = null;
+    try { teacher = JSON.parse(localStorage.getItem('wc.session.v1') || 'null'); } catch (e) {}
+    const wrapAsObj = (arr) => (arr || []).map(src =>
+      typeof src === 'string' ? { src, source: 'custom' } : src);
+    const patch = {
+      habitat:        next.habitat || '',
+      diet:           next.diet    || '',
+      funFacts:       next.funFacts || [],
+      youtubeId:      next.youtubeId || '',
+      photos:         wrapAsObj(next.photos),
+      cartoons:       wrapAsObj(next.cartoons),
+      coloringPages:  wrapAsObj(next.coloringPages),
+    };
+    try {
+      await saveAnimalCustomToCloud(animalId, patch,
+        teacher ? { id: teacher.id, name: teacher.real_name } : null);
+    } catch (e) {
+      console.warn('[admin] cloud sync failed', e);
+      // Local save already succeeded — don't bother the teacher
+      // with a toast unless they reload and notice the desync.
+      return;
+    }
+    // Broadcast so any open animal-detail.html tab updates live.
+    try {
+      if (!window.supabase || !window.WC_SUPABASE) return;
+      if (!window._adminBroadcastClient) {
+        window._adminBroadcastClient = window.supabase.createClient(
+          window.WC_SUPABASE.url, window.WC_SUPABASE.anon);
+      }
+      const ch = window._adminBroadcastClient.channel('animal-' + animalId, {
+        config: { broadcast: { self: false } },
+      });
+      ch.subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        ch.send({
+          type: 'broadcast',
+          event: 'animal-edit',
+          payload: {
+            patch,
+            who: teacher ? { id: teacher.id, name: teacher.real_name + ' (teacher)' } : null,
+            ts:  Date.now(),
+          },
+        });
+        // Unsubscribe shortly after so we don't pile up channels.
+        setTimeout(() => { try { ch.unsubscribe(); } catch (e) {} }, 800);
+      });
+    } catch (e) { /* non-fatal */ }
   }
 
   function resetCurrent() {

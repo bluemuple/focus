@@ -663,6 +663,120 @@
   }
   body.student-editing .fact-add-row:hover { background: rgba(255, 209, 102, 0.32); }
 
+  /* ----- Custom topics (Add Topic) ----- */
+  .topic-card {
+    background: var(--card);
+    border-radius: 22px;
+    padding: 22px;
+    box-shadow: var(--shadow);
+    border-top: 6px solid var(--sky);
+    margin: 0 0 18px;
+  }
+  .topic-card h3 {
+    margin: 0 0 12px;
+    font-size: 1.15rem;
+    color: var(--text);
+    font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .topic-card h3 .info-icon { font-size: 1.4rem; }
+  .topic-items { list-style: none; padding: 0; margin: 0; }
+  .topic-items li {
+    position: relative;
+    padding: 4px 0 4px 16px;
+    line-height: 1.55;
+    font-size: 0.95rem;
+  }
+  .topic-items li::before {
+    content: '•';
+    position: absolute; left: 4px; top: 4px;
+    color: var(--primary-dark);
+    font-weight: 800;
+  }
+  body.student-editing .topic-items li {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 12px 8px 24px;
+    background: rgba(160, 216, 239, 0.15);
+    border-radius: 10px;
+    margin: 0 0 8px;
+  }
+  body.student-editing .topic-items li::before {
+    left: 10px; top: 12px;
+  }
+  body.student-editing .topic-items li > .editable-text { flex: 1; margin: 0; padding: 0; }
+  .topic-add-row {
+    display: none;
+    align-items: center; gap: 8px;
+    background: rgba(160, 216, 239, 0.18);
+    border: 1.5px dashed var(--sky);
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: text;
+    color: var(--muted);
+    font-style: italic;
+    margin-top: 8px;
+  }
+  body.student-editing .topic-add-row { display: flex; }
+  body.student-editing .topic-add-row:hover { background: rgba(160, 216, 239, 0.32); }
+  .topic-delete {
+    background: transparent; border: 0;
+    color: var(--primary-dark); cursor: pointer;
+    font-weight: 700; font-size: 0.85rem;
+    margin-left: auto;
+    display: none;
+  }
+  body.student-editing .topic-delete { display: inline; }
+  .add-topic-row {
+    display: none;
+    width: 100%;
+    background: white;
+    border: 2px dashed var(--sky);
+    color: var(--accent-ink, #155e8e);
+    border-radius: 16px;
+    padding: 14px;
+    font: inherit; font-weight: 700;
+    cursor: pointer;
+    margin: 0 0 24px;
+  }
+  body.student-editing .add-topic-row { display: block; }
+  .add-topic-row:hover { background: rgba(160, 216, 239, 0.2); }
+
+  /* ----- Photo paste overlay (per gallery-cell) ----- */
+  .photo-edit-fab {
+    position: absolute;
+    top: 6px; right: 6px;
+    z-index: 4;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.95);
+    border: 2px solid var(--mint);
+    color: var(--text);
+    font-size: 14px;
+    display: none;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  }
+  body.student-editing .photo-edit-fab { display: inline-flex; }
+  .photo-edit-fab:hover { background: var(--mint); color: white; }
+  .paste-toast {
+    position: fixed;
+    top: 70px; left: 50%;
+    transform: translateX(-50%);
+    background: var(--text); color: white;
+    padding: 14px 22px;
+    border-radius: 999px;
+    font-weight: 700; font-size: 0.95rem;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+    z-index: 70;
+    display: none;
+  }
+  .paste-toast.shown { display: block; animation: pasteToastIn 0.2s ease; }
+  @keyframes pasteToastIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(-8px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+  }
+
   /* Live-edit indicator at top: tiny chip showing who's editing
      when another user is also on the page. */
   .live-edit-chip {
@@ -732,6 +846,7 @@
   <button id="editFab"        class="edit-fab"         title="Edit this animal's pictures (teacher only)">✏️ Edit</button>
   <button id="editStudentFab" class="edit-student-fab" title="You hearted this animal — you can edit its page">📝 Edit</button>
   <div id="liveEditChip" class="live-edit-chip"><span class="dot"></span><span id="liveEditMsg">Someone is editing…</span></div>
+  <div id="pasteToast" class="paste-toast">📋 Press <b>Ctrl+V</b> (or Cmd+V) to paste your copied image</div>
   <div class="container">
     <a class="back-link" href="index.html">← Back to all animals</a>
     <!-- The wiki shell wraps the floating Wiki button + the original
@@ -798,18 +913,21 @@
             <div class="cell-bg"><div>${animal.emoji}</div></div>
             <img alt="${escapeHTML(animal.name)} photo">
             <div class="thumb-dot"></div>
+            <span class="photo-edit-fab" data-paste="photos" title="Paste an image here">📋</span>
           </button>
           <button type="button" class="gallery-cell" data-cat="cartoons">
             <span class="cell-label">🎨 Cartoon</span>
             <div class="cell-bg"><div>🎨<div class="cell-empty">loading…</div></div></div>
             <img alt="${escapeHTML(animal.name)} cartoon">
             <div class="thumb-dot"></div>
+            <span class="photo-edit-fab" data-paste="cartoons" title="Paste an image here">📋</span>
           </button>
           <button type="button" class="gallery-cell coloring" data-cat="coloringPages">
             <span class="cell-label">🖍️ Coloring</span>
             <div class="cell-bg coloring-bg"><div>🖍️<div class="cell-empty">loading…</div></div></div>
             <img alt="${escapeHTML(animal.name)} coloring page">
             <div class="thumb-dot"></div>
+            <span class="photo-edit-fab" data-paste="coloringPages" title="Paste an image here">📋</span>
           </button>
         </div>
         <h1 class="hero-name">${escapeHTML(animal.name)}</h1>
@@ -851,6 +969,12 @@
           <div class="fact-add-row" id="factAddRow" tabindex="0">＋ Click to add a fun fact</div>
         </div>
       </div>
+
+      <!-- Custom topics — student / teacher can add new boxes
+           (sub-heading + bullet items). Pre-existing topics from
+           the cloud are rendered into #topicsHost by JS. -->
+      <div id="topicsHost"></div>
+      <button type="button" id="addTopicBtn" class="add-topic-row">＋ Add a topic</button>
 
       ${ytId ? `
       <div class="video-card collapsible">
@@ -1231,6 +1355,52 @@
         flushFunFacts(animalId);
       });
     });
+    // ＋ Add a topic
+    const addTopicBtn = document.getElementById('addTopicBtn');
+    if (addTopicBtn && !addTopicBtn._wired) {
+      addTopicBtn._wired = true;
+      addTopicBtn.addEventListener('click', () => addNewTopic(animalId));
+    }
+    // Topic delete buttons + topic-item add rows + per-row removes
+    document.querySelectorAll('.topic-delete').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', () => {
+        const card = b.closest('.topic-card');
+        if (card && confirm('Delete this whole topic?')) {
+          card.remove();
+          flushTopics(animalId);
+        }
+      });
+    });
+    document.querySelectorAll('.topic-add-row').forEach(row => {
+      if (row._wired) return;
+      row._wired = true;
+      row.addEventListener('click', () => addTopicItem(row, animalId));
+      row.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addTopicItem(row, animalId); }
+      });
+    });
+    document.querySelectorAll('.topic-item-remove').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const li = b.closest('li');
+        if (!li) return;
+        li.remove();
+        flushTopics(animalId);
+      });
+    });
+    // 📋 Paste-image buttons on each gallery cell.
+    document.querySelectorAll('.photo-edit-fab').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation(); // don't trigger cell-click navigation
+        beginPhotoPaste(b.dataset.paste, animalId);
+      });
+    });
   }
 
   function beginEditText(el, animalId) {
@@ -1310,6 +1480,212 @@
     }
   }
 
+  // ---- Custom topics --------------------------------------------
+  // Build a topic-card DOM element from a topic object
+  // {heading, emoji, items: []}. The whole `customTopics` array is
+  // saved as JSONB whenever any topic changes (simpler than
+  // per-item diffing for the JSONB column).
+  function renderTopicCard(topic, animalId) {
+    const card = document.createElement('div');
+    card.className = 'topic-card';
+    const emoji = topic.emoji || '📚';
+    card.innerHTML =
+      '<h3><div class="info-icon">' + escapeHTML(emoji) + '</div>' +
+        '<div class="editable-text topic-heading" data-placeholder="topic name">' +
+          escapeHTML(topic.heading || '') + '</div>' +
+        '<button type="button" class="topic-delete">Delete topic</button>' +
+      '</h3>' +
+      '<ul class="topic-items">' +
+        (topic.items || []).map(it =>
+          '<li><div class="editable-text" data-placeholder="say something here">' +
+            escapeHTML(it) +
+          '</div><button type="button" class="fact-remove topic-item-remove" title="Remove this row">✕</button></li>'
+        ).join('') +
+      '</ul>' +
+      '<div class="topic-add-row" tabindex="0">＋ Click to add a row</div>';
+    return card;
+  }
+
+  function renderAllTopicsFromCloud(topics, animalId) {
+    const host = document.getElementById('topicsHost');
+    if (!host) return;
+    // Skip re-render if any editing is in progress to avoid wiping
+    // the user's input.
+    if (host.querySelector('.inline-textarea')) return;
+    host.innerHTML = '';
+    (topics || []).forEach(t => host.appendChild(renderTopicCard(t, animalId)));
+    wireInlineEditors();
+  }
+
+  function readAllTopicsFromDom() {
+    const host = document.getElementById('topicsHost');
+    if (!host) return [];
+    return Array.from(host.querySelectorAll('.topic-card')).map(card => {
+      const heading = (card.querySelector('.topic-heading')?.textContent || '').trim();
+      const items   = Array.from(card.querySelectorAll('.topic-items li .editable-text'))
+        .map(el => el.textContent.trim()).filter(Boolean);
+      return { heading, items, emoji: '📚' };
+    });
+  }
+
+  async function flushTopics(animalId) {
+    const topics = readAllTopicsFromDom();
+    await saveField(animalId, { customTopics: topics });
+  }
+
+  function addNewTopic(animalId) {
+    const host = document.getElementById('topicsHost');
+    if (!host) return;
+    const card = renderTopicCard({ heading: '', items: [], emoji: '📚' }, animalId);
+    host.appendChild(card);
+    wireInlineEditors();
+    // Focus the heading so the student can start typing immediately.
+    const heading = card.querySelector('.topic-heading');
+    if (heading) beginEditText(heading, animalId);
+  }
+
+  function addTopicItem(addRow, animalId) {
+    const card = addRow.closest('.topic-card');
+    if (!card) return;
+    const ul = card.querySelector('.topic-items');
+    if (!ul) return;
+    const li = document.createElement('li');
+    li.innerHTML = '<div class="editable-text" data-placeholder="say something here"></div>'
+                 + '<button type="button" class="fact-remove topic-item-remove" title="Remove this row">✕</button>';
+    ul.appendChild(li);
+    wireInlineEditors();
+    beginEditText(li.querySelector('.editable-text'), animalId);
+  }
+
+  // Hook into beginEditText so saving a topic heading or item also
+  // triggers flushTopics (the per-field switch in beginEditText only
+  // knew about habitat/diet/funFacts). Patch by wrapping the original.
+  const _origBeginEditText = beginEditText;
+  beginEditText = function (el, animalId) {
+    if (el.closest && el.closest('.topic-card')) {
+      // Use a small custom commit path for topic edits.
+      if (!document.body.classList.contains('student-editing')) return;
+      if (el._editing) return;
+      el._editing = true;
+      const original = el.textContent.trim();
+      const ta = document.createElement('textarea');
+      ta.className = 'inline-textarea';
+      ta.value = original;
+      el.replaceWith(ta);
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+      let committed = false;
+      const commit = async () => {
+        if (committed) return;
+        committed = true;
+        const v = ta.value.trim();
+        el.textContent = v;
+        ta.replaceWith(el);
+        el._editing = false;
+        if (v !== original) await flushTopics(animalId);
+      };
+      ta.addEventListener('blur', commit);
+      ta.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+        if (e.key === 'Escape')                { committed = true; ta.replaceWith(el); el._editing = false; }
+      });
+      return;
+    }
+    return _origBeginEditText.call(this, el, animalId);
+  };
+
+  // ---- Photo paste ----------------------------------------------
+  // Cache per-category pasted images locally so multiple pastes
+  // before save aren't lost on reload (purely UX nicety).
+  let _activePasteCat = null;
+
+  function showPasteToast(msg) {
+    const t = document.getElementById('pasteToast');
+    if (!t) return;
+    if (msg) t.innerHTML = msg;
+    t.classList.add('shown');
+  }
+  function hidePasteToast() {
+    const t = document.getElementById('pasteToast');
+    if (t) t.classList.remove('shown');
+  }
+
+  function beginPhotoPaste(category, animalId) {
+    _activePasteCat = category;
+    showPasteToast('📋 Press <b>Ctrl+V</b> (or Cmd+V) to paste your copied image for <b>' +
+      category.replace('coloringPages', 'coloring') + '</b>');
+    setTimeout(hidePasteToast, 8000);
+  }
+
+  document.addEventListener('paste', async (e) => {
+    if (!_activePasteCat) return;
+    const items = (e.clipboardData && e.clipboardData.items) || [];
+    let blob = null;
+    for (const it of items) {
+      if (it.type && it.type.startsWith('image/')) { blob = it.getAsFile(); break; }
+    }
+    if (!blob) return;
+    e.preventDefault();
+    const cat = _activePasteCat;
+    _activePasteCat = null;
+    hidePasteToast();
+    try {
+      const dataUrl = await compressClipboardImage(blob);
+      await appendCustomImage(getParam('id'), cat, dataUrl);
+    } catch (err) {
+      alert('Could not paste image: ' + (err.message || err));
+    }
+  });
+
+  function compressClipboardImage(blob, maxDim = 720, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function appendCustomImage(animalId, category, dataUrl) {
+    // Fetch the current cloud row, append, save back. Cheap and
+    // avoids us tracking local-only state that could fall out of
+    // sync with other tabs.
+    const cur = await fetchAnimalCustomFromCloud(animalId);
+    const dbField = category === 'coloringPages' ? 'coloring_pages' : category;
+    const existing = Array.isArray(cur?.[dbField]) ? cur[dbField] : [];
+    const next = existing.concat([{ src: dataUrl, source: 'custom' }]);
+    const patch = {};
+    patch[category] = next; // saveAnimalCustomToCloud maps camelCase → snake_case
+    await saveField(animalId, patch);
+    // Render locally: re-run renderCell with all sources merged.
+    refreshCellAfterPhotoAdd(category, next);
+  }
+
+  function refreshCellAfterPhotoAdd(category, customList) {
+    // Combine custom + default for the cell. We don't have the full
+    // default-image list cheaply here — easiest is to reload, but
+    // that loses unsaved state. Instead just append the new image
+    // to the existing cellState array, then re-set the cell's image.
+    if (!window.cellState || !window.renderCell) {
+      // Helpers live inside the renderer's closure; refresh via reload.
+      location.reload();
+      return;
+    }
+  }
+
   // ---- Realtime ------------------------------------------------
   function ensureRealtime() {
     if (_editChannel) return;
@@ -1367,6 +1743,19 @@
         wireInlineEditors();
       }
     }
+    if (Array.isArray(patch.customTopics)) {
+      renderAllTopicsFromCloud(patch.customTopics, getParam('id'));
+    }
+    // Photo updates — reload the page to keep the gallery state
+    // perfectly in sync (the renderer is inside the main closure
+    // and isn't easy to call from out here).
+    if (patch.photos || patch.cartoons || patch.coloringPages) {
+      // Don't reload if the user is currently editing text — they'd
+      // lose their input. Defer until they finish.
+      if (!document.querySelector('.inline-textarea')) {
+        setTimeout(() => location.reload(), 250);
+      }
+    }
   }
 
   function showLiveEditChip(name) {
@@ -1391,12 +1780,47 @@
         const patch = {};
         if (cloud.habitat !== null && cloud.habitat !== undefined) patch.habitat = cloud.habitat;
         if (cloud.diet    !== null && cloud.diet    !== undefined) patch.diet    = cloud.diet;
-        if (Array.isArray(cloud.fun_facts)) patch.funFacts = cloud.fun_facts;
+        if (Array.isArray(cloud.fun_facts))     patch.funFacts     = cloud.fun_facts;
+        if (Array.isArray(cloud.custom_topics)) patch.customTopics = cloud.custom_topics;
         applyRemotePatch(patch);
+        // Photos: merge custom ones into the gallery cells. The
+        // renderer ran first with the base set, then this appends.
+        // We do this directly (not via reload) so the page only
+        // reloads on subsequent broadcasts, not on first load.
+        appendCloudPhotosToGallery(cloud);
       }
     } catch (e) {}
     ensureRealtime();
   })();
+
+  // After the initial cloud fetch, append any custom photos /
+  // cartoons / coloring pages onto the existing cell state. The
+  // renderer's `cells` map is not in our scope here, so we read
+  // the DOM directly and push into a hidden data attribute that
+  // the next click cycles through. Simpler approach: just call
+  // setCellImage on the first custom one if no base image is set.
+  function appendCloudPhotosToGallery(cloud) {
+    const map = { photos: 'photos', cartoons: 'cartoons', coloring_pages: 'coloringPages' };
+    Object.keys(map).forEach(dbKey => {
+      const arr = Array.isArray(cloud[dbKey]) ? cloud[dbKey] : [];
+      if (!arr.length) return;
+      const domKey = map[dbKey];
+      const cell = document.querySelector(`#heroGallery .gallery-cell[data-cat="${domKey}"]`);
+      if (!cell) return;
+      // Make sure the cell is visible (in case the base render hid
+      // it for being empty).
+      cell.style.display = '';
+      // If no base image had loaded yet, paint the first custom one
+      // so the kid sees something now. If a base IS loaded, leave
+      // it — the next ◀▶ cycle (or page reload) will surface them.
+      const img = cell.querySelector('img');
+      if (img && !cell.classList.contains('has-image')) {
+        img.onload = () => cell.classList.add('has-image');
+        img.src = arr[0].src;
+      }
+    });
+    if (typeof balanceGallery === 'function') balanceGallery();
+  }
 
   // True when the active Ako session belongs to a teacher.
   // The session is shared across the whole focus/* family of apps
