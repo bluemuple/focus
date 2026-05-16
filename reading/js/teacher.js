@@ -1910,6 +1910,12 @@
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
       { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
     ];
+    // Buttons that show in the student-home header. Toggled here,
+    // applied by home.html on next page load.
+    const NAV_TOGGLES = [
+      { key: 'hideTheSpace', label: 'Hide the "The Space" button on the student home page', tip: 'Students won\'t see or be able to enter the virtual classroom.' },
+      { key: 'hideMyPets',   label: 'Hide the "My Pets" button on the student home page',   tip: 'Hides the profile / pet collection link.' },
+    ];
 
     // Per-level encounter probabilities. Start from whatever is saved
     // on the class row; if a slot is null/missing, fall back to the
@@ -1953,6 +1959,21 @@
       </p>
       <div class="wc-toggles">
         ${TOGGLES.map(t => `
+          <label class="wc-toggle">
+            <input type="checkbox" data-flag="${t.key}" ${flags[t.key] ? 'checked' : ''} />
+            <span><strong>${t.label}</strong><br><small class="wc-muted">${t.tip}</small></span>
+          </label>
+        `).join('')}
+      </div>
+
+      <h3 style="margin: 28px 0 6px;">🏠 Student home — navigation buttons</h3>
+      <p class="wc-muted" style="margin: 0 0 12px;">
+        Tick to remove a button from the top-right of the student
+        home page. Takes effect the next time the student opens
+        WordCatch (or refreshes the page).
+      </p>
+      <div class="wc-toggles">
+        ${NAV_TOGGLES.map(t => `
           <label class="wc-toggle">
             <input type="checkbox" data-flag="${t.key}" ${flags[t.key] ? 'checked' : ''} />
             <span><strong>${t.label}</strong><br><small class="wc-muted">${t.tip}</small></span>
