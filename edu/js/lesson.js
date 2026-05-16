@@ -461,15 +461,22 @@
 
     // Walk line-by-line to wrap prose in <p>. Each blank line OR
     // block-level tag flushes the current paragraph. Adjacent non-
-    // blank lines within a paragraph get joined with <br>. Matches
-    // the way the toolbar produces output: a heading on its own line
-    // doesn't need a blank line before the next paragraph.
+    // blank lines within a paragraph used to be joined with <br>,
+    // but that surfaced each hard line wrap as its own text node,
+    // and the sentence tokenizer would then treat short lines like
+    // "By John Smith" as one-word "sentences" — which the TTS read
+    // out with audible pauses between them, sounding word-by-word.
+    // Joining with a space makes the paragraph one flowing string,
+    // so sentence detection spans the whole paragraph and TTS reads
+    // it naturally. Visual line wraps are now driven by word-wrap
+    // on the container; teachers use a blank line to force a new
+    // paragraph.
     const lines  = s.split('\n');
     const out    = [];
     let   buffer = [];
     const flush  = () => {
       if (!buffer.length) return;
-      const joined = buffer.join('<br>');
+      const joined = buffer.join(' ');
       if (joined.trim()) out.push('<p>' + joined + '</p>');
       buffer = [];
     };
