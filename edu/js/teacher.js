@@ -1942,16 +1942,15 @@
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
       { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
     ];
-    // Compact home-page toggles — short labels, 2 rows. Each tick
-    // removes one button from the student home. Saved into the
-    // same hide_features JSONB column the longer toggles above use.
+    // Compact home-page toggles — short labels. Each tick removes
+    // one button from the student home. Saved into the same
+    // hide_features JSONB column the longer toggles above use.
     const NAV_TOGGLES = [
-      // Row 1 — Reading + Maths bars
+      // Maths bars + Reading
       { key: 'hideReading',     label: 'Reading' },
-      { key: 'hideMathsGame',   label: 'Maths Game' },
       { key: 'hideSubtraction', label: 'Subtraction' },
       { key: 'hideFraction',    label: 'Fraction' },
-      // Row 2 — other app tiles
+      // Other app tiles
       { key: 'hideMyPets',      label: 'My Pets' },
       { key: 'hideTheSpace',    label: 'The Space' },
       { key: 'hidePhonics',     label: 'Phonics' },
