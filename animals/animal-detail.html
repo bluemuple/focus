@@ -503,6 +503,18 @@
     background: white;
     color: var(--text);
   }
+  /* Lead Wikipedia photo at the very top of the panel — second
+     image from /page/media-list (different from the gallery one). */
+  .wiki-top-photo {
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border-radius: 12px;
+    overflow: hidden;
+    background: linear-gradient(135deg, #FFF6E6, #FFE5D1);
+    margin: 0 0 14px;
+    box-shadow: 0 4px 14px rgba(202, 122, 122, 0.16);
+  }
+  .wiki-top-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .wiki-body img { max-width: 100%; height: auto; border-radius: 10px; margin: 0 0 12px; }
   .wiki-body h4  { margin: 0 0 8px; font-size: 1.05rem; color: var(--primary-dark); }
   .wiki-body p   { margin: 0 0 12px; line-height: 1.55; font-size: 0.95rem; }
@@ -820,6 +832,105 @@
   }
   @keyframes livePulse { 0%,100%{opacity:.4} 50%{opacity:1} }
 
+  /* ===== Comment thread ===== */
+  /* Surfaces under the content (after custom topics) ONLY when at
+     least one user has added content to this animal. Anyone may
+     READ; only logged-in users with their own contribution row may
+     POST. */
+  .comments-card {
+    background: var(--card);
+    border-radius: 22px;
+    padding: 22px;
+    box-shadow: var(--shadow);
+    border-top: 6px solid var(--primary);
+    margin: 20px 0;
+    display: none;
+  }
+  .comments-card.shown { display: block; }
+  .comments-card h3 {
+    margin: 0 0 14px;
+    font-size: 1.15rem;
+    color: var(--text);
+    font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .comments-card h3 .info-icon { font-size: 1.4rem; }
+  .comment-list { list-style: none; padding: 0; margin: 0 0 14px; }
+  .comment-list li { margin: 0 0 10px; }
+  .comment-list .replies { list-style: none; padding: 0; margin: 8px 0 0 28px; }
+  .comment-row {
+    background: rgba(176, 224, 230, 0.18);
+    border-radius: 12px;
+    padding: 10px 14px;
+  }
+  .comment-row .meta {
+    display: flex; align-items: baseline; gap: 8px;
+    margin-bottom: 4px;
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .comment-row .meta .author {
+    color: var(--primary-dark);
+    font-weight: 800;
+    font-size: 0.88rem;
+  }
+  .comment-row .meta .when { font-style: italic; }
+  .comment-row .body {
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  .comment-row .reply-btn {
+    display: inline-block;
+    background: transparent; border: 0;
+    color: var(--primary-dark);
+    font: inherit; font-weight: 700; font-size: 0.78rem;
+    cursor: pointer;
+    margin-top: 6px;
+    padding: 0;
+  }
+  .comment-row .reply-btn:hover { text-decoration: underline; }
+  .comment-empty {
+    text-align: center;
+    color: var(--muted);
+    font-style: italic;
+    padding: 12px 0;
+  }
+  .comment-form {
+    display: flex; gap: 8px; align-items: flex-end;
+    background: rgba(255, 209, 102, 0.12);
+    border: 1.5px dashed var(--accent);
+    border-radius: 12px;
+    padding: 10px 12px;
+  }
+  .comment-form textarea {
+    flex: 1;
+    border: 0; background: transparent;
+    resize: vertical; min-height: 38px; max-height: 200px;
+    font: inherit; font-size: 0.95rem;
+    outline: none;
+  }
+  .comment-form button {
+    background: var(--primary-dark); color: white;
+    border: 0; border-radius: 999px;
+    padding: 8px 16px;
+    font: inherit; font-weight: 700; font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .comment-form button:disabled { background: var(--muted); cursor: not-allowed; }
+  .comment-locked {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-style: italic;
+    margin-top: 8px;
+  }
+  .reply-form {
+    margin: 6px 0 0 28px;
+  }
+
   /* Edit button (teacher only) */
   .edit-fab {
     position: fixed;
@@ -992,6 +1103,18 @@
            the cloud are rendered into #topicsHost by JS. -->
       <div id="topicsHost"></div>
       <button type="button" id="addTopicBtn" class="add-topic-row">＋ Add a topic</button>
+
+      <!-- Comment thread — JS un-hides this when any user has
+           added content to this animal. -->
+      <div id="commentsCard" class="comments-card" aria-live="polite">
+        <h3><div class="info-icon">💬</div>Comments</h3>
+        <ul class="comment-list" id="commentList"></ul>
+        <div id="commentForm" class="comment-form" style="display:none;">
+          <textarea id="commentInput" placeholder="Say something nice about this page…" maxlength="500"></textarea>
+          <button type="button" id="commentSubmit">Post</button>
+        </div>
+        <div id="commentLocked" class="comment-locked" style="display:none;"></div>
+      </div>
 
       ${ytId ? `
       <div class="video-card collapsible">
@@ -1259,19 +1382,25 @@
       body.textContent = 'Reading Wikipedia and writing an easy-read summary…';
       try {
         if (!FN_URL) throw new Error('no edge function url');
-        const r = await fetch(FN_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey:         ANON,
-            Authorization:  'Bearer ' + ANON,
-          },
-          body: JSON.stringify({
-            animal_id:   animal.id,
-            animal_name: animal.name,
-            wiki_title:  wikiKey,
+        // Run the GPT digest fetch + the secondary photo fetch in
+        // parallel — the digest is the slow part, photo finishes
+        // independently and both render together when ready.
+        const [r, photoSrc] = await Promise.all([
+          fetch(FN_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              apikey:         ANON,
+              Authorization:  'Bearer ' + ANON,
+            },
+            body: JSON.stringify({
+              animal_id:   animal.id,
+              animal_name: animal.name,
+              wiki_title:  wikiKey,
+            }),
           }),
-        });
+          fetchSecondWikipediaPhoto(wikiTitleSlug),
+        ]);
         if (!r.ok) throw new Error('http ' + r.status);
         const j = await r.json();
         if (!j.html) throw new Error('no html');
@@ -1279,8 +1408,11 @@
           + '" target="_blank" rel="noopener">Read more on Wikipedia →</a>';
         const stamp = j.cached ? '<div class="wiki-stamp">Cached summary</div>'
                                : '<div class="wiki-stamp">Freshly generated</div>';
+        const topPhoto = photoSrc
+          ? '<div class="wiki-top-photo"><img src="' + escapeAttr(photoSrc) + '" alt="' + escapeAttr(animal.name) + '" loading="lazy"></div>'
+          : '';
         body.classList.remove('loading');
-        body.innerHTML = j.html + '<div class="wiki-readmore-wrap">' + more + '</div>' + stamp;
+        body.innerHTML = topPhoto + j.html + '<div class="wiki-readmore-wrap">' + more + '</div>' + stamp;
       } catch (e) {
         body.classList.remove('loading');
         body.classList.add('error');
@@ -1289,6 +1421,51 @@
           '<a class="wiki-readmore" href="' + fullArticleUrl +
           '" target="_blank" rel="noopener">Open Wikipedia →</a>';
       }
+    }
+    function escapeAttr(s) {
+      return String(s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+
+    // Pull /page/media-list to find the SECOND article photo (the
+    // first is normally the lead, which already lives in the
+    // gallery's Photo cell — showing it again would be redundant).
+    // Returns a usable image URL or null. Quietly returns null on
+    // any error so the wiki panel still loads the GPT digest.
+    async function fetchSecondWikipediaPhoto(titleSlug) {
+      try {
+        // Lead image src (what the gallery used) so we can skip it.
+        let leadSrc = '';
+        const photoCell = document.querySelector('#heroGallery .gallery-cell[data-cat="photos"] img');
+        if (photoCell && photoCell.src) leadSrc = photoCell.src;
+
+        const url = 'https://en.wikipedia.org/api/rest_v1/page/media-list/' + encodeURIComponent(titleSlug);
+        const r = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!r.ok) return null;
+        const j = await r.json();
+        const items = Array.isArray(j.items) ? j.items : [];
+        // Pick the first item that's an image (svg / video / audio
+        // filtered out), preferring originals, and that's not the
+        // gallery's lead photo.
+        const candidates = items
+          .filter(it => (it.type === 'image' || !it.type) && it.srcset && it.srcset.length)
+          .map(it => {
+            // srcset has multiple resolutions — pick the largest.
+            const best = it.srcset.reduce((a, b) =>
+              (parseFloat(b.scale || '1') > parseFloat(a.scale || '1')) ? b : a, it.srcset[0]);
+            let src = best.src || '';
+            if (src.startsWith('//')) src = 'https:' + src;
+            return src;
+          })
+          .filter(Boolean);
+        if (!candidates.length) return null;
+        const leadFile = leadSrc.split('/').pop().split('?')[0].toLowerCase();
+        // Skip any candidate whose filename matches the lead photo's filename.
+        for (const src of candidates) {
+          const file = src.split('/').pop().split('?')[0].toLowerCase();
+          if (file && file !== leadFile) return src;
+        }
+        return null;
+      } catch (e) { return null; }
     }
 
     function open() {
@@ -1525,12 +1702,52 @@
   }
 
   async function saveField(animalId, patch) {
+    // Compare against the current cloud row to decide whether this
+    // is an ADDITION (grew the text / added an array item) vs a
+    // pure deletion / shrink. Additions promote the user to the
+    // contributors table, which gates the comment box + posting.
+    let prevCloud = null;
+    try { prevCloud = await fetchAnimalCustomFromCloud(animalId); } catch (e) {}
+    const isAddition = detectAdditionAgainst(prevCloud, patch);
     try {
       await saveAnimalCustomToCloud(animalId, patch, _editorMe || currentSession());
       broadcastEdit(animalId, patch);
+      if (isAddition) {
+        const who = _editorMe || currentSession();
+        if (who && who.id) {
+          window.WCDB.animalContributions.record(animalId, who).catch(() => {});
+          // Re-evaluate the comment box visibility after our save —
+          // it's possible we're the very first contributor.
+          setTimeout(() => refreshCommentBoxVisibility(animalId), 200);
+        }
+      }
     } catch (e) {
       alert('Could not save: ' + (e.message || e));
     }
+  }
+
+  // True if `patch` represents net-growth on at least one field
+  // compared to `prev`. Empty → non-empty counts; new array entry
+  // counts; pure delete / shrink / no-change does NOT count.
+  function detectAdditionAgainst(prev, patch) {
+    const prevText = (k) => (prev && typeof prev[k] === 'string') ? prev[k] : '';
+    const prevArr  = (k) => (prev && Array.isArray(prev[k])) ? prev[k] : [];
+    // String fields
+    if (typeof patch.habitat === 'string') {
+      const before = prevText('habitat');
+      if (patch.habitat.length > before.length) return true;
+    }
+    if (typeof patch.diet === 'string') {
+      const before = prevText('diet');
+      if (patch.diet.length > before.length) return true;
+    }
+    // Array fields (length grew)
+    if (Array.isArray(patch.funFacts)     && patch.funFacts.length     > prevArr('fun_facts').length)     return true;
+    if (Array.isArray(patch.customTopics) && patch.customTopics.length > prevArr('custom_topics').length) return true;
+    if (Array.isArray(patch.photos)        && patch.photos.length        > prevArr('photos').length)        return true;
+    if (Array.isArray(patch.cartoons)      && patch.cartoons.length      > prevArr('cartoons').length)      return true;
+    if (Array.isArray(patch.coloringPages) && patch.coloringPages.length > prevArr('coloring_pages').length) return true;
+    return false;
   }
 
   // ---- Custom topics --------------------------------------------
@@ -1802,6 +2019,11 @@
         setTimeout(() => location.reload(), 200);
       }
     });
+    // New comment posted by someone else on this animal — reload
+    // the thread so it appears live.
+    _editChannel.on('broadcast', { event: 'animal-comment' }, () => {
+      loadAndRenderComments(animalId);
+    });
     _editChannel.subscribe();
   }
 
@@ -1884,6 +2106,196 @@
     _liveTimer = setTimeout(() => chip.classList.remove('shown'), 3000);
   }
 
+  // ============================================================
+  //  Comment thread (per animal)
+  // ============================================================
+  let _commentsLoaded = false;
+  let _canPostComment = false;
+  let _animalHasContrib = false;
+
+  async function refreshCommentBoxVisibility(animalId) {
+    if (!window.WCDB || !window.WCDB.animalContributions) return;
+    try {
+      _animalHasContrib = await window.WCDB.animalContributions.hasAnyOnAnimal(animalId);
+    } catch (e) { _animalHasContrib = false; }
+    const me = currentSession();
+    if (me && me.id) {
+      try { _canPostComment = await window.WCDB.animalContributions.hasAny(me.id); }
+      catch (e) { _canPostComment = false; }
+    } else {
+      _canPostComment = false;
+    }
+    applyCommentUiState(animalId);
+  }
+
+  function applyCommentUiState(animalId) {
+    const card    = document.getElementById('commentsCard');
+    const form    = document.getElementById('commentForm');
+    const locked  = document.getElementById('commentLocked');
+    if (!card) return;
+    if (!_animalHasContrib) {
+      // No contributor on this animal yet → no comment box.
+      card.classList.remove('shown');
+      return;
+    }
+    card.classList.add('shown');
+    if (!_commentsLoaded) loadAndRenderComments(animalId);
+    const me = currentSession();
+    if (me && me.id && _canPostComment) {
+      form.style.display = '';
+      locked.style.display = 'none';
+    } else {
+      form.style.display = 'none';
+      locked.style.display = '';
+      locked.textContent = me && me.id
+        ? 'Add some content to an animal page first, then you can comment here.'
+        : 'Sign in on Ako to join the conversation.';
+    }
+  }
+
+  async function loadAndRenderComments(animalId) {
+    if (!window.WCDB || !window.WCDB.animalComments) return;
+    let rows = [];
+    try { rows = await window.WCDB.animalComments.listForAnimal(animalId); }
+    catch (e) { return; }
+    _commentsLoaded = true;
+    renderComments(rows);
+  }
+
+  function renderComments(rows) {
+    const list = document.getElementById('commentList');
+    if (!list) return;
+    if (!rows.length) {
+      list.innerHTML = '<li class="comment-empty">No comments yet — be the first!</li>';
+      return;
+    }
+    // Build a tree (1-level nesting). Anything with parent_id goes
+    // under that parent's replies array; orphans (parent missing)
+    // are promoted to top level.
+    const byId = new Map();
+    rows.forEach(r => byId.set(r.id, Object.assign({ replies: [] }, r)));
+    const top = [];
+    byId.forEach(r => {
+      if (r.parent_id && byId.has(r.parent_id)) {
+        byId.get(r.parent_id).replies.push(r);
+      } else {
+        top.push(r);
+      }
+    });
+    list.innerHTML = '';
+    top.forEach(r => list.appendChild(makeCommentNode(r)));
+  }
+
+  function makeCommentNode(c) {
+    const li = document.createElement('li');
+    li.dataset.id = c.id;
+    const stamp = friendlyTime(c.created_at);
+    li.innerHTML =
+      '<div class="comment-row">' +
+        '<div class="meta"><span class="author">' + escapeHTML(c.author_name || 'Anonymous') +
+          '</span><span class="when">' + escapeHTML(stamp) + '</span></div>' +
+        '<div class="body">' + escapeHTML(c.text || '') + '</div>' +
+        (_canPostComment ? '<button type="button" class="reply-btn">Reply</button>' : '') +
+      '</div>';
+    if (c.replies && c.replies.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'replies';
+      c.replies.forEach(rep => ul.appendChild(makeCommentNode(rep)));
+      li.appendChild(ul);
+    }
+    const replyBtn = li.querySelector('.reply-btn');
+    if (replyBtn) {
+      replyBtn.addEventListener('click', () => showReplyForm(li, c.id));
+    }
+    return li;
+  }
+
+  function friendlyTime(iso) {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      const now = Date.now();
+      const diff = (now - d.getTime()) / 1000;
+      if (diff < 60) return 'just now';
+      if (diff < 3600) return Math.floor(diff / 60) + ' min ago';
+      if (diff < 86400) return Math.floor(diff / 3600) + ' h ago';
+      return d.toLocaleDateString();
+    } catch (e) { return ''; }
+  }
+
+  function showReplyForm(parentLi, parentId) {
+    // Toggle — clicking Reply again on the same parent closes it.
+    const existing = parentLi.querySelector('.reply-form');
+    if (existing) { existing.remove(); return; }
+    const form = document.createElement('div');
+    form.className = 'comment-form reply-form';
+    form.innerHTML =
+      '<textarea placeholder="Write a reply…" maxlength="500"></textarea>' +
+      '<button type="button">Reply</button>';
+    parentLi.appendChild(form);
+    const ta = form.querySelector('textarea');
+    const btn = form.querySelector('button');
+    ta.focus();
+    btn.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      btn.disabled = true;
+      try {
+        await submitComment(getParam('id'), text, parentId);
+        form.remove();
+      } catch (e) {
+        alert('Could not post reply: ' + (e.message || e));
+        btn.disabled = false;
+      }
+    });
+  }
+
+  async function submitComment(animalId, text, parentId) {
+    const me = currentSession();
+    if (!me || !me.id) throw new Error('not signed in');
+    const row = await window.WCDB.animalComments.post({
+      animalId, parentId,
+      authorId:   me.id,
+      authorName: me.real_name || me.name || 'Anonymous',
+      text,
+    });
+    // Optimistic re-fetch + broadcast.
+    await loadAndRenderComments(animalId);
+    broadcastNewComment(animalId, row);
+  }
+
+  function broadcastNewComment(animalId, comment) {
+    ensureRealtime();
+    if (!_editChannel) return;
+    try {
+      _editChannel.send({
+        type: 'broadcast',
+        event: 'animal-comment',
+        payload: { animalId, comment, ts: Date.now() },
+      });
+    } catch (e) {}
+  }
+
+  // Wire the top-level comment form (only fires when shown).
+  (function wireCommentForm() {
+    const btn = document.getElementById('commentSubmit');
+    const ta  = document.getElementById('commentInput');
+    if (!btn || !ta) return;
+    btn.addEventListener('click', async () => {
+      const text = ta.value.trim();
+      if (!text) return;
+      btn.disabled = true;
+      try {
+        await submitComment(getParam('id'), text, null);
+        ta.value = '';
+      } catch (e) {
+        alert('Could not post comment: ' + (e.message || e));
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  })();
+
   // ---- Initial cloud fetch + listen even when not editing -------
   // Everyone (read-only viewers too) listens for Realtime edits so a
   // page that's been open for a while picks up new edits live.
@@ -1907,6 +2319,10 @@
       }
     } catch (e) {}
     ensureRealtime();
+    // Comment box visibility is checked independently — it depends
+    // on whether ANY user has ever contributed to this animal,
+    // which is its own table.
+    refreshCommentBoxVisibility(animalId);
   })();
 
   // After the initial cloud fetch, append any custom photos /

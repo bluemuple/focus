@@ -333,5 +333,60 @@
     },
   };
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts };
+  // ---------- animal comments + contributions ----------
+  //  Comments are a threaded discussion on each animal page.
+  //  Contributions track which user added content to which animal
+  //  (idempotent — one row per (animal, user)) so we can:
+  //    • show the comment box only on animals with any contributor;
+  //    • allow only users who have added content somewhere to POST.
+  const animalComments = {
+    async listForAnimal(animalId) {
+      return rGet('/wc_animal_comments?animal_id=eq.' + encodeURIComponent(animalId)
+        + '&select=*&order=created_at.asc');
+    },
+    async post({ animalId, parentId, authorId, authorName, text }) {
+      const rows = await rPost('/wc_animal_comments', {
+        animal_id:   animalId,
+        parent_id:   parentId || null,
+        author_id:   authorId || null,
+        author_name: authorName || 'Anonymous',
+        text:        text,
+      }, true);
+      return rows && rows[0];
+    },
+  };
+
+  const animalContributions = {
+    async hasAny(userId) {
+      if (!userId) return false;
+      const rows = await rGet('/wc_animal_contributions?contributor_id=eq.'
+        + encodeURIComponent(userId) + '&select=animal_id&limit=1');
+      return !!(rows && rows.length);
+    },
+    async hasAnyOnAnimal(animalId) {
+      const rows = await rGet('/wc_animal_contributions?animal_id=eq.'
+        + encodeURIComponent(animalId) + '&select=contributor_id&limit=1');
+      return !!(rows && rows.length);
+    },
+    // Idempotent — upserts a (animal_id, contributor_id) row.
+    async record(animalId, user) {
+      if (!user || !user.id) return;
+      if (!REST) return;
+      try {
+        await fetch(REST + '/wc_animal_contributions?on_conflict=animal_id,contributor_id', {
+          method: 'POST',
+          headers: headers({
+            Prefer: 'resolution=merge-duplicates,return=minimal',
+          }),
+          body: JSON.stringify({
+            animal_id:        animalId,
+            contributor_id:   user.id,
+            contributor_name: user.real_name || user.name || null,
+          }),
+        });
+      } catch (e) { /* non-fatal */ }
+    },
+  };
+
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions };
 })();
