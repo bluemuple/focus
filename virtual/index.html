@@ -1149,7 +1149,45 @@
     100% { transform: scale(1);    opacity: 1; }
   }
 
-  /* "Catch me!" badge above the current tagger's head. */
+  /* Tag-attempt button — visible only when the local player is
+     the current Tagger in the play phase. Bottom-right on desktop
+     (where the FAB is hidden); on mobile we stack it above the
+     chat FAB so both stay reachable. */
+  .tag-attack-btn {
+    display: none;
+    position: fixed;
+    right: 18px;
+    bottom: calc(env(safe-area-inset-bottom) + 22px);
+    z-index: 270;
+    background: #ef4444;
+    color: #fff;
+    border: none;
+    padding: 0;
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    font-weight: 900;
+    font-size: 22px;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    box-shadow: 0 16px 36px rgba(239, 68, 68, 0.55);
+    transition: transform 0.1s ease, opacity 0.15s ease;
+    line-height: 1;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tag-attack-btn.show { display: inline-flex; align-items: center; justify-content: center; }
+  .tag-attack-btn:active { transform: scale(0.92); }
+  @media (max-width: 768px) {
+    .tag-attack-btn {
+      /* Sit above the chat FAB so the two don't overlap. FAB is
+         58 tall + 22 bottom = 80; add a small gap. */
+      bottom: calc(env(safe-area-inset-bottom) + 96px);
+    }
+  }
+
+  /* "I'm it!" badge above the current tagger's head. */
   .actor-tagger {
     position: absolute;
     left: 50%;
@@ -1231,6 +1269,12 @@
   <!-- End-game button — visible to the host while a tag round is
        running (wheel / countdown / play). -->
   <button type="button" id="tagEndBtn" class="tag-end-btn">End Game</button>
+
+  <!-- Mobile/iPad tag button — large circular tap target shown
+       only while the local player is the current Tagger in the
+       play phase. Pressing it is equivalent to the desktop
+       spacebar. -->
+  <button type="button" id="tagAttackBtn" class="tag-attack-btn" aria-label="Tag the nearest player">TAG!</button>
 
   <!-- Wheel modal. The conic-gradient disc spins for 4s; labels are
        kept upright via a manual rAF loop. -->
@@ -2167,7 +2211,7 @@
     // doesn't need to mutate the DOM — it just toggles src/visibility.
     root.innerHTML =
       '<div class="actor-bubble"></div>' +
-      '<div class="actor-tagger">Catch me!</div>' +
+      '<div class="actor-tagger">I&apos;m it!</div>' +
       '<div class="actor-name"></div>' +
       '<img class="actor-sprite" src="' + sprites.stop.down + '" alt="character" draggable="false">' +
       '<img class="wear face hidden"    alt="" draggable="false">' +
@@ -2439,17 +2483,21 @@
 
   window.addEventListener('keydown', function (e) {
     if (isFormTarget(e.target)) return;
-    // Spacebar in the world → during a tag round, if this player is
-    // the Tagger, attempt to tag the nearest participant. Otherwise
-    // fall back to focusing the chat input (mobile: open panel).
+    // Enter (in the world) → jump focus into the chat input, or
+    // open the mobile chat panel.
+    if (e.key === 'Enter' || e.code === 'Enter' || e.code === 'NumpadEnter') {
+      e.preventDefault();
+      if (isMobile()) openMobileChat();
+      else            input.focus();
+      return;
+    }
+    // Spacebar is dedicated to tagging — only the current Tagger
+    // (in play phase) can act on it. Always swallow it so the page
+    // doesn't scroll.
     if (e.key === ' ' || e.code === 'Space') {
       e.preventDefault();
       if (tag.phase === 'play' && tag.taggerTabId === TAB_ID) {
         attemptTag();
-      } else if (isMobile()) {
-        openMobileChat();
-      } else {
-        input.focus();
       }
       return;
     }
@@ -2853,6 +2901,7 @@
   const tagWheelTitle   = document.getElementById('tagWheelTitle');
   const tagCountdown    = document.getElementById('tagCountdown');
   const tagCountdownNum = document.getElementById('tagCountdownNum');
+  const tagAttackBtn    = document.getElementById('tagAttackBtn');
 
   const WHEEL_COLORS = [
     '#fda4af', '#86efac', '#fde047', '#93c5fd',
@@ -3079,6 +3128,9 @@
         tag.countdownTimer = null;
         tagCountdown.classList.remove('show');
         tag.phase = 'play';
+        // Now in play phase — the local Tagger needs the TAG!
+        // button to appear, so re-run the badge/button sync.
+        renderTaggerBadge();
         return;
       }
       showCountdownTick(n);
@@ -3134,6 +3186,11 @@
     for (const [tid, ra] of remotes) {
       set(ra, tag.taggerTabId === tid);
     }
+    // The mobile TAG! button piggybacks on the same state — show
+    // it only when this client is the active Tagger in play phase.
+    tagAttackBtn.classList.toggle(
+      'show', tag.phase === 'play' && tag.taggerTabId === TAB_ID
+    );
   }
 
   function hostEndTagGame() {
@@ -3196,9 +3253,10 @@
   });
 
   // --- button wiring ------------------------------------------
-  tagStartBtn.addEventListener('click', hostStartTagGame);
-  tagSpinBtn .addEventListener('click', hostSpinWheel);
-  tagEndBtn  .addEventListener('click', hostEndTagGame);
+  tagStartBtn .addEventListener('click', hostStartTagGame);
+  tagSpinBtn  .addEventListener('click', hostSpinWheel);
+  tagEndBtn   .addEventListener('click', hostEndTagGame);
+  tagAttackBtn.addEventListener('click', attemptTag);
 
   channel.subscribe(async function (status) {
     if (status === 'SUBSCRIBED') {
