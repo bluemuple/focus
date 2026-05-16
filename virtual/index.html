@@ -899,6 +899,76 @@
   }
   .fr-btn-finish:hover { filter: brightness(1.05); }
 
+  /* ===== Fitting Room — mobile / tablet (≤768px) =====
+     The modal goes fully edge-to-edge with no rounded corners or
+     overlay padding so the limited screen space is used for the
+     wearable grid and colour swatches. Touch targets bump up,
+     preview margin shrinks, and the action bar is taller for
+     thumb-friendly tapping. */
+  @media (max-width: 768px) {
+    .fr-overlay { padding: 0; }
+    .fr-modal {
+      max-width: 100%;
+      width: 100%;
+      max-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      border-radius: 0;
+    }
+    .fr-preview { padding: 12px 14px 10px; }
+    .fr-name-pill {
+      top: 10px;
+      left: 12px;
+      font-size: 12px;
+      padding: 6px 12px;
+    }
+    .fr-close {
+      top: 8px;
+      right: 8px;
+      width: 36px;
+      height: 36px;
+      font-size: 26px;
+    }
+    .fr-preview-char {
+      margin: 38px auto 12px;
+    }
+    .fr-tabs { padding: 0 6px; }
+    .fr-tab {
+      font-size: 13px;
+      padding: 12px 0;
+    }
+    .fr-body { padding: 12px 12px 12px; }
+    .fr-toolbar { gap: 6px; margin-bottom: 12px; }
+    .fr-pill {
+      padding: 7px 14px;
+      font-size: 13px;
+    }
+    .fr-quick-btn {
+      padding: 7px 12px;
+      font-size: 12px;
+    }
+    .fr-grid {
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+    }
+    .fr-colors {
+      padding: 10px 12px;
+      gap: 8px;
+    }
+    .fr-color {
+      width: 34px;
+      height: 34px;
+    }
+    .fr-actions {
+      gap: 10px;
+      padding: 12px 14px calc(env(safe-area-inset-bottom) + 12px);
+    }
+    .fr-btn {
+      padding: 14px;
+      font-size: 16px;
+    }
+  }
+
   /* ===== Blocker (no session) ===== */
   #blocker {
     position: fixed;
@@ -1059,11 +1129,12 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    z-index: 2;
   }
   .tag-wheel-label {
     position: absolute;
-    /* left/top set inline by JS — kept upright while the disc spins */
+    /* left/top set inline by JS at build time; the label is a child
+       of the rotating disc, so it inherits the disc's rotation and
+       stays welded to its segment as the wheel spins. */
   }
   .tag-wheel-label > span {
     display: inline-block;
@@ -1132,7 +1203,7 @@
     background: rgba(15, 17, 21, 0.4);
     pointer-events: none;
   }
-  .tag-countdown.show { display: flex; }
+  .tag-countdown.show { display: flex; flex-direction: column; }
   .tag-countdown-num {
     font-size: 220px;
     font-weight: 900;
@@ -1143,6 +1214,20 @@
     line-height: 1;
   }
   .tag-countdown-num.pulse { animation: tagCountPulse 1s ease-in-out; }
+  .tag-countdown-sub {
+    margin-top: 12px;
+    font-size: 42px;
+    font-weight: 900;
+    color: #fde68a;
+    letter-spacing: 6px;
+    text-shadow:
+      0 6px 18px rgba(0,0,0,0.8),
+      0 0 40px rgba(239, 68, 68, 0.7);
+  }
+  @media (max-width: 768px) {
+    .tag-countdown-num { font-size: 140px; }
+    .tag-countdown-sub { font-size: 28px; letter-spacing: 4px; }
+  }
   @keyframes tagCountPulse {
     0%   { transform: scale(0.35); opacity: 0; }
     35%  { transform: scale(1.25); opacity: 1; }
@@ -1281,8 +1366,11 @@
   <div id="tagWheelOverlay" class="tag-wheel-overlay" aria-hidden="true">
     <div class="tag-wheel-title" id="tagWheelTitle">Spin to pick the Tagger</div>
     <div class="tag-wheel-frame">
-      <div class="tag-wheel" id="tagWheelDisc"></div>
-      <div class="tag-wheel-labels" id="tagWheelLabels"></div>
+      <div class="tag-wheel" id="tagWheelDisc">
+        <!-- Labels live INSIDE the rotating disc so each name stays
+             fixed to its segment as the wheel spins. -->
+        <div class="tag-wheel-labels" id="tagWheelLabels"></div>
+      </div>
       <div class="tag-wheel-pointer"></div>
       <div class="tag-wheel-hub"></div>
     </div>
@@ -1292,9 +1380,12 @@
     <div class="tag-wheel-result" id="tagWheelResult"></div>
   </div>
 
-  <!-- 7 → 0 countdown overlay, shown to every participant. -->
+  <!-- 7 → 0 countdown overlay, shown to every participant. Re-runs
+       on every new Tagger so the caught player gets a grace window
+       to scatter before the chase resumes. -->
   <div id="tagCountdown" class="tag-countdown" aria-hidden="true">
     <div class="tag-countdown-num" id="tagCountdownNum">7</div>
+    <div class="tag-countdown-sub" id="tagCountdownSub">RUN!</div>
   </div>
 
   <!-- Mobile-only UI -->
@@ -1499,9 +1590,11 @@
   const CHAR_W  = 46;
   const CHAR_H  = 68;
   const SPEED   = 8;
-  // Target on-screen character height in CSS pixels — applied to
-  // both desktop and mobile now that the camera follows on both.
-  const TARGET_CHAR_PX = 100;
+  // Target on-screen character height in CSS pixels. Mobile uses
+  // a smaller target so more of the map is visible at once (more
+  // of a top-down "drone" view), which suits the smaller viewport.
+  const TARGET_CHAR_PX        = 100;
+  const TARGET_CHAR_PX_MOBILE = 60;
 
   // Each gender has its own folder of sprites — direction is the
   // file's name, extension picks the state:
@@ -1660,7 +1753,8 @@
     const vh = world.clientHeight;
     const isM = isMobile();
 
-    const charScale = TARGET_CHAR_PX / CHAR_H;
+    const target    = isM ? TARGET_CHAR_PX_MOBILE : TARGET_CHAR_PX;
+    const charScale = target / CHAR_H;
     const fillScale = Math.max(vw / STAGE_W, vh / STAGE_H);
     const scale = Math.max(charScale, fillScale);
 
@@ -3009,17 +3103,20 @@
       div.innerHTML = '<span>' + tagEscape(participants[i].name) + '</span>';
       tagWheelLabels.appendChild(div);
     }
-    updateWheelLabelPositions(0);
+    placeWheelLabels();
   }
 
-  function updateWheelLabelPositions(currentRot) {
+  // Position each label at its segment's midpoint inside the disc's
+  // local coordinate space. Computed once — since the labels are
+  // children of the rotating disc they ride along with it for free.
+  function placeWheelLabels() {
     const frame = tagWheelDisc.getBoundingClientRect();
-    const radius = (frame.width / 2) * 0.62; // 62% from centre
+    if (frame.width === 0) return; // modal not laid out yet
+    const radius = (frame.width / 2) * 0.62;
     const labels = tagWheelLabels.children;
     for (let i = 0; i < labels.length; i++) {
       const midAngle = parseFloat(labels[i].dataset.midAngle);
-      const angle    = midAngle + currentRot; // CW from top
-      const rad      = angle * Math.PI / 180;
+      const rad = midAngle * Math.PI / 180;
       const x = Math.sin(rad) * radius;
       const y = -Math.cos(rad) * radius;
       labels[i].style.left      = 'calc(50% + ' + x + 'px)';
@@ -3038,7 +3135,6 @@
       const eased = 1 - Math.pow(1 - t, 3);
       const rot = startRot + (targetRot - startRot) * eased;
       tagWheelDisc.style.transform = 'rotate(' + rot + 'deg)';
-      updateWheelLabelPositions(rot);
       if (t < 1) requestAnimationFrame(step);
       else {
         tagWheelDisc.dataset.rot = String(targetRot);
@@ -3076,9 +3172,9 @@
     tagSpinBtn.disabled    = !iAmHost;
     tagSpinBtn.textContent = iAmHost ? 'Spin the Wheel' : 'Waiting for host…';
     tagEndBtn.classList.toggle('show', iAmHost);
-    // The wheel labels positioned via getBoundingClientRect — the
-    // overlay must already be visible. Re-apply now that it is.
-    updateWheelLabelPositions(0);
+    // Labels rely on getBoundingClientRect of the now-visible disc;
+    // re-run the placement so width === 0 isn't returned.
+    placeWheelLabels();
   }
 
   function hostSpinWheel() {
@@ -3173,8 +3269,11 @@
   function applyTagTagged(p) {
     if (tag.phase !== 'play') return;
     if (!p || !p.newTagger) return;
-    tag.taggerTabId = p.newTagger;
-    renderTaggerBadge();
+    // Re-run the 7-second countdown so the freshly-caught player
+    // (and everyone else) gets a grace window to scatter before
+    // the new Tagger can chase. startTagCountdown sets the badge
+    // and switches phase to 'countdown' for us.
+    startTagCountdown(p.newTagger);
   }
 
   function renderTaggerBadge() {
