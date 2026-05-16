@@ -244,28 +244,60 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    gap: 14px;
     flex-wrap: wrap;
   }
-  .hero-name .hero-heart {
+  /* Big SVG heart button — outlined when nobody (or this user)
+     hasn't hearted yet, filled gradient when this user owns it.
+     Count chip sits to the right. */
+  .hero-heart {
     background: transparent;
-    border: 2px solid var(--primary);
-    color: var(--primary-dark);
-    border-radius: 999px;
-    padding: 6px 14px;
-    font: inherit;
-    font-size: 1.2rem;
-    font-weight: 800;
+    border: 0;
+    padding: 0;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    transition: transform 0.1s ease, background 0.15s ease, color 0.15s ease;
+    gap: 8px;
+    line-height: 0;
+    transition: transform 0.15s ease;
   }
-  .hero-name .hero-heart:hover  { transform: scale(1.06); }
-  .hero-name .hero-heart:active { transform: scale(0.96); }
-  .hero-name .hero-heart.mine   { background: var(--primary); color: white; }
-  .hero-name .hero-heart-count { font-size: 0.9em; font-weight: 700; }
+  .hero-heart:hover  { transform: scale(1.08); }
+  .hero-heart:active { transform: scale(0.95); }
+  .hero-heart .hero-heart-svg {
+    width: 48px; height: 48px;
+    filter: drop-shadow(0 4px 10px rgba(244, 116, 126, 0.25));
+    transition: filter 0.2s ease, transform 0.2s ease;
+  }
+  .hero-heart.mine .hero-heart-svg {
+    filter: drop-shadow(0 6px 14px rgba(244, 116, 126, 0.55));
+  }
+  .hero-heart.popping .hero-heart-svg { animation: heartPop 0.6s ease; }
+  @keyframes heartPop {
+    0%   { transform: scale(1); }
+    35%  { transform: scale(1.35); }
+    65%  { transform: scale(0.94); }
+    100% { transform: scale(1); }
+  }
+  .hero-heart .hero-heart-count {
+    background: rgba(255, 255, 255, 0.85);
+    color: var(--primary-dark);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 1.05rem;
+    font-weight: 800;
+    line-height: 1;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    min-width: 24px;
+    text-align: center;
+  }
+  .hero-heart .hero-heart-count:empty { display: none; }
+
+  /* Center the category pill explicitly + add some breathing room
+     so it clearly sits BELOW the name + loved-by line. */
+  .hero-category-wrap {
+    text-align: center;
+    margin-top: 4px;
+  }
 
   /* "Now you can edit ___!" overlay — shown for 2 s after a
      successful heart, on either index.html or animal-detail.html. */
@@ -1130,11 +1162,28 @@
           <span>${escapeHTML(animal.name)}</span>
           <button type="button" class="hero-heart" id="heroHeart"
                   title="Heart this animal — one heart per person">
-            <span class="hero-heart-icon">🤍</span><span class="hero-heart-count" id="heroHeartCount"></span>
+            <!-- Outlined heart (default) -->
+            <svg class="hero-heart-svg hero-heart-outline" viewBox="0 0 32 32" fill="none"
+                 stroke="#F4747E" stroke-width="2.3" stroke-linejoin="round" aria-hidden="true">
+              <path d="M16 27.5C9.5 24 2 18.6 2 12.4 2 8.4 5.4 5 9.4 5c2.8 0 5.2 1.7 6.6 4.2C17.4 6.7 19.8 5 22.6 5 26.6 5 30 8.4 30 12.4c0 6.2-7.5 11.6-14 15.1z"/>
+            </svg>
+            <!-- Filled heart (when this user owns the heart) -->
+            <svg class="hero-heart-svg hero-heart-filled" viewBox="0 0 32 32" aria-hidden="true" style="display:none;">
+              <defs>
+                <linearGradient id="heartGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%"   stop-color="#FF9AA2"/>
+                  <stop offset="100%" stop-color="#F4747E"/>
+                </linearGradient>
+              </defs>
+              <path fill="url(#heartGrad)" d="M16 28.5C9 24.7 1 19 1 12.2 1 7.7 4.7 4 9.2 4c2.8 0 5.3 1.5 6.8 3.9C17.5 5.5 20 4 22.8 4 27.3 4 31 7.7 31 12.2 31 19 23 24.7 16 28.5z"/>
+            </svg>
+            <span class="hero-heart-count" id="heroHeartCount"></span>
           </button>
         </h1>
         <div class="loved-by-line" id="lovedByLine" style="display:none;"></div>
-        <div class="hero-category">${cat ? cat.emoji : ''} ${escapeHTML(cat ? cat.name : '')}</div>
+        <div class="hero-category-wrap">
+          <div class="hero-category">${cat ? cat.emoji : ''} ${escapeHTML(cat ? cat.name : '')}</div>
+        </div>
       </div>
 
       <div class="info-grid">
@@ -1569,13 +1618,21 @@
     const btn = document.getElementById('heroHeart');
     if (!btn) return;
     const cnt = document.getElementById('heroHeartCount');
-    const icon = btn.querySelector('.hero-heart-icon');
+    const outline = btn.querySelector('.hero-heart-outline');
+    const filled  = btn.querySelector('.hero-heart-filled');
     const me = currentSession();
     const myCurrent = me && me.id ? (rows.find(r => r.user_id === me.id) || {}).animal_id || null : null;
     const here = rows.filter(r => r.animal_id === animalId).length;
     cnt.textContent = here > 0 ? here : '';
-    if (myCurrent === animalId) { btn.classList.add('mine'); icon.textContent = '❤️'; }
-    else                        { btn.classList.remove('mine'); icon.textContent = '🤍'; }
+    if (myCurrent === animalId) {
+      btn.classList.add('mine');
+      outline.style.display = 'none';
+      filled.style.display  = '';
+    } else {
+      btn.classList.remove('mine');
+      outline.style.display = '';
+      filled.style.display  = 'none';
+    }
     if (btn._wired) return;
     btn._wired = true;
     btn.addEventListener('click', async () => {
@@ -1583,12 +1640,23 @@
         alert('Sign in on Ako first to heart an animal.');
         return;
       }
-      // Already hearted this one — no-op (matches list-page rule).
-      if (myCurrent === animalId) return;
-      // Hearted something else → ask permission via the change-
-      // confirm popup that already lives on /animals/index.html.
-      // On this page we don't have that modal, so just confirm()
-      // and require the same password.
+      // Already hearted THIS one → UNHEART flow (confirm + pwd).
+      if (myCurrent === animalId) {
+        const ok = confirm('Are you sure you want to remove your heart from '
+          + animal.name + '? Go ask Mr. Charlie first.');
+        if (!ok) return;
+        const pw = prompt("Mr. Charlie's password to remove the heart:");
+        if (pw === null) return;
+        if (pw !== '2316') { alert('Wrong password. Ask Mr. Charlie.'); return; }
+        try {
+          await window.WCDB.animalHearts.clearHeart(me.id);
+          setTimeout(() => location.reload(), 200);
+        } catch (e) {
+          alert('Could not remove heart: ' + (e.message || e));
+        }
+        return;
+      }
+      // Hearted something else → CHANGE flow (confirm + pwd).
       if (myCurrent) {
         const wantName = (function () {
           const a = (typeof getMergedAnimal === 'function') && getMergedAnimal(myCurrent);
@@ -1603,6 +1671,9 @@
       }
       try {
         await window.WCDB.animalHearts.setHeart(me.id, animalId);
+        // Pretty pop animation before the overlay takes the screen.
+        btn.classList.add('popping');
+        setTimeout(() => btn.classList.remove('popping'), 700);
         showEditUnlockOverlay(animal.name);
         // Re-load hearts + reload page after the overlay fades so
         // every dependent UI (loved-by line, student fab, etc.) is
@@ -2215,9 +2286,10 @@
   // ============================================================
   //  Comment thread (per animal)
   // ============================================================
-  let _commentsLoaded = false;
-  let _canPostComment = false;
-  let _animalHasContrib = false;
+  let _commentsLoaded   = false;
+  let _canPostComment   = false;  // user has contributed somewhere
+  let _animalHasContrib = false;  // this animal has any contributor
+  let _isMyHeartedAnimal = false; // current page == my hearted animal
 
   async function refreshCommentBoxVisibility(animalId) {
     if (!window.WCDB || !window.WCDB.animalContributions) return;
@@ -2228,8 +2300,14 @@
     if (me && me.id) {
       try { _canPostComment = await window.WCDB.animalContributions.hasAny(me.id); }
       catch (e) { _canPostComment = false; }
+      // Check whether this page IS the user's hearted animal.
+      try {
+        const myHeart = await window.WCDB.animalHearts.forUser(me.id);
+        _isMyHeartedAnimal = (myHeart === animalId);
+      } catch (e) { _isMyHeartedAnimal = false; }
     } else {
-      _canPostComment = false;
+      _canPostComment    = false;
+      _isMyHeartedAnimal = false;
     }
     applyCommentUiState(animalId);
   }
@@ -2239,28 +2317,59 @@
     const form    = document.getElementById('commentForm');
     const locked  = document.getElementById('commentLocked');
     const hint    = document.getElementById('commentUnlockHint');
+    const input   = document.getElementById('commentInput');
+    const submit  = document.getElementById('commentSubmit');
     if (!card) return;
+
+    // -------- Bottom unlock hint --------
+    // Only on the user's OWN hearted animal page and only while no
+    // contributor yet. Discourages nag-banners on other people's
+    // animals.
+    if (hint) {
+      const showHint = _isMyHeartedAnimal && !_animalHasContrib;
+      hint.style.display = showHint ? '' : 'none';
+    }
+
+    // -------- Comments card --------
+    // Whenever any contributor exists on this animal, the card +
+    // thread are visible (read-only for everyone, write-able for
+    // qualifying users).
     if (!_animalHasContrib) {
-      // No contributor on this animal yet → no comment box, show
-      // the bottom hint so visitors know how to unlock it.
       card.classList.remove('shown');
-      if (hint) hint.style.display = '';
       return;
     }
     card.classList.add('shown');
-    if (hint) hint.style.display = 'none';
     if (!_commentsLoaded) loadAndRenderComments(animalId);
+
     const me = currentSession();
-    if (me && me.id && _canPostComment) {
-      form.style.display = '';
-      locked.style.display = 'none';
-    } else {
-      form.style.display = 'none';
+    if (!me || !me.id) {
+      // Not signed in → no form, just a friendly nudge.
+      form.style.display   = 'none';
       locked.style.display = '';
-      locked.textContent = me && me.id
-        ? 'Add some content to an animal page first, then you can comment here.'
-        : 'Sign in on Ako to join the conversation.';
+      locked.textContent   = 'Sign in on Ako to join the conversation.';
+      return;
     }
+    if (_canPostComment) {
+      // Full posting rights — normal form + placeholder.
+      form.style.display   = '';
+      locked.style.display = 'none';
+      if (input) {
+        input.placeholder = 'Say something nice about this page…';
+        input.disabled    = false;
+      }
+      if (submit) submit.disabled = false;
+      return;
+    }
+    // Logged in but no contribution yet → leave the form visible
+    // with a custom placeholder explaining what to do. Submit
+    // disabled so accidental posts don't fail server-side.
+    form.style.display   = '';
+    locked.style.display = 'none';
+    if (input) {
+      input.placeholder = 'Add content to your favourite animal first — then you can leave comments here.';
+      input.disabled    = true;
+    }
+    if (submit) submit.disabled = true;
   }
 
   async function loadAndRenderComments(animalId) {

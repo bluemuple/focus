@@ -484,18 +484,22 @@
     const a = all.find(x => x.id === id); return a ? a.name : id;
   }
 
-  // ---- Heart-change confirmation modal ---------------------------
+  // ---- Heart-change / unheart confirmation modal -----------------
   const hmBackdrop = document.getElementById('hmBackdrop');
+  const hmTitle    = document.getElementById('hmTitle');
   const hmMsg      = document.getElementById('hmMsg');
   const hmConfirm  = document.getElementById('hmConfirm');
   const hmCancel   = document.getElementById('hmCancel');
   const hmStage    = document.getElementById('hmConfirmStage');
   const hmPw       = document.getElementById('hmPw');
   const hmErr      = document.getElementById('hmErr');
-  let   pendingNewAnimal = null;   // animal_id to switch to
+  let   pendingMode = null;        // 'change' | 'unheart' | null
+  let   pendingNewAnimal = null;   // animal_id to switch to (change mode)
 
   function openHeartChangeModal(oldAnimalId, newAnimalId) {
+    pendingMode = 'change';
     pendingNewAnimal = newAnimalId;
+    hmTitle.textContent = 'Change your favourite?';
     hmMsg.textContent = 'You already know all about ' + animalNameById(oldAnimalId)
       + '. Sure you want to switch to ' + animalNameById(newAnimalId) + '?';
     hmStage.style.display = 'none';
@@ -503,8 +507,20 @@
     hmConfirm.textContent = 'Confirm';
     hmBackdrop.classList.add('open');
   }
+  function openUnheartModal(animalId) {
+    pendingMode = 'unheart';
+    pendingNewAnimal = animalId;  // re-purpose: the animal to unheart
+    hmTitle.textContent = 'Remove your heart?';
+    hmMsg.textContent = 'Are you sure you want to remove your heart from '
+      + animalNameById(animalId) + '?';
+    hmStage.style.display = 'none';
+    hmPw.value = ''; hmErr.textContent = ''; hmPw.classList.remove('bad');
+    hmConfirm.textContent = 'Confirm';
+    hmBackdrop.classList.add('open');
+  }
   function closeHeartModal() {
     hmBackdrop.classList.remove('open');
+    pendingMode = null;
     pendingNewAnimal = null;
   }
   hmCancel.addEventListener('click', closeHeartModal);
@@ -513,7 +529,7 @@
     // Two-stage: first click reveals password input, second submits.
     if (hmStage.style.display === 'none') {
       hmStage.style.display = '';
-      hmConfirm.textContent = 'Switch heart';
+      hmConfirm.textContent = pendingMode === 'unheart' ? 'Remove heart' : 'Switch heart';
       setTimeout(() => hmPw.focus(), 50);
       return;
     }
@@ -524,10 +540,24 @@
       return;
     }
     hmErr.textContent = '';
-    await commitHeart(pendingNewAnimal);
+    if (pendingMode === 'unheart')   await commitUnheart();
+    else if (pendingMode === 'change') await commitHeart(pendingNewAnimal);
     closeHeartModal();
   });
   hmPw.addEventListener('keydown', (e) => { if (e.key === 'Enter') hmConfirm.click(); });
+
+  async function commitUnheart() {
+    const me = currentUser();
+    if (!me || !me.id) return;
+    try {
+      await window.WCDB.animalHearts.clearHeart(me.id);
+      await loadHearts();
+      applyHeartsToDom();
+      if (showHeartedOnly) render(searchInput.value);
+    } catch (e) {
+      alert('Could not remove heart: ' + (e.message || e));
+    }
+  }
 
   async function commitHeart(animalId) {
     const me = currentUser();
@@ -568,9 +598,10 @@
       return;
     }
     if (myHeartId === animalId) {
-      // already hearted — clicking again is a no-op (the requirement
-      // says ONE heart total, can be moved with the password, but
-      // doesn't say it can be unset — leave it alone).
+      // Already hearted this one → clicking again means UNHEART.
+      // Same password gate as the change-modal so kids can't undo
+      // their choice without going to Mr. Charlie first.
+      openUnheartModal(animalId);
       return;
     }
     await commitHeart(animalId);

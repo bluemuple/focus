@@ -331,6 +331,17 @@
       });
       if (!r.ok) throw new Error('WCDB heart-set ' + r.status + ' :: ' + (await r.text()).slice(0, 200));
     },
+    // Removes the user's heart entirely — used by the "unheart"
+    // flow on both index.html and animal-detail.html. After
+    // clearing, the user has no heart anywhere.
+    async clearHeart(userId) {
+      if (!REST) throw new Error('Supabase not configured');
+      const r = await fetch(REST + '/wc_animal_hearts?user_id=eq.' + encodeURIComponent(userId), {
+        method: 'DELETE',
+        headers: headers({ Prefer: 'return=minimal' }),
+      });
+      if (!r.ok) throw new Error('WCDB heart-clear ' + r.status);
+    },
   };
 
   // ---------- animal comments + contributions ----------
