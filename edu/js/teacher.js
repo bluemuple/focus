@@ -118,7 +118,9 @@
       students = []; lessons = []; messages = [];
     } else {
       students = await fetchStudents(currentClass.id);
-      lessons  = await window.WCDB.lessons.listForClass(currentClass.id).catch(() => []);
+      // Teacher dashboard needs to see hidden lessons too so they
+      // can toggle them back on.
+      lessons  = await window.WCDB.lessons.listForClassAll(currentClass.id).catch(() => []);
       messages = lessons.length
         ? await window.WCDB.viz.forLessons(lessons.map(L => L.id)).catch(() => [])
         : [];
@@ -774,11 +776,17 @@
       const todaySent = countGiftsToday(L.id);
       const imgCount = Array.isArray(L.images) ? L.images.length : 0;
       const editing = editingLessonId === L.id;
+      const isHidden = !!L.hidden;
       const row = document.createElement('div');
       row.className = 'wc-list-item' + (editing ? ' wc-editing' : '');
+      if (isHidden) row.style.opacity = '0.55';
       row.innerHTML = `
         <div>
-          <div class="title">${escapeHtml(L.title)}${editing ? ' <span class="wc-muted" style="font-size:13px;">(editing)</span>' : ''}</div>
+          <div class="title">
+            ${escapeHtml(L.title)}
+            ${editing  ? ' <span class="wc-muted" style="font-size:13px;">(editing)</span>' : ''}
+            ${isHidden ? ' <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;margin-left:6px;">Hidden</span>' : ''}
+          </div>
           <div class="meta">
             ${escapeHtml(L.animal_set)} ·
             🎁 ${todaySent} / ${L.gift_limit_per_day} sent today
@@ -789,6 +797,9 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
           <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
+          <button class="wc-btn ghost" data-toggle-hidden="${L.id}" title="${isHidden ? 'Show this lesson to students again' : 'Hide this lesson from students'}">
+            ${isHidden ? '👁 Show' : '🙈 Hide'}
+          </button>
           <button class="wc-btn ghost" data-prewarm="${L.id}" title="Pre-fetch chunk + word-info data so the first student doesn't wait">🔥 Prewarm</button>
           <button class="wc-btn ghost" data-prewarmaudio="${L.id}" title="Generate + cache TTS audio for every sentence — Google's API won't be called again for this lesson">🎵 Audio</button>
           <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}">🗑 Delete</button>
@@ -798,6 +809,27 @@
     });
     list.querySelectorAll('[data-edit]').forEach(b => {
       b.addEventListener('click', () => startEditing(b.dataset.edit));
+    });
+    list.querySelectorAll('[data-toggle-hidden]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.toggleHidden;
+        const L  = lessons.find(x => x.id === id);
+        if (!L) return;
+        const next = !L.hidden;
+        // Optimistic: flip the local row first so the button label
+        // updates instantly even before the PATCH round-trips.
+        L.hidden = next;
+        b.disabled = true;
+        try {
+          await window.WCDB.lessons.update(id, { hidden: next });
+          await refreshAll();
+        } catch (e) {
+          L.hidden = !next;  // rollback
+          alert('Could not change visibility: ' + (e.message || e));
+        } finally {
+          b.disabled = false;
+        }
+      });
     });
     list.querySelectorAll('[data-prewarm]').forEach(b => {
       b.addEventListener('click', () => prewarmLesson(b.dataset.prewarm, b));

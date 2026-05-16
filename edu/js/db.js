@@ -108,11 +108,21 @@
 
   // ---------- lessons ----------
   const lessons = {
+    // Students' view — hidden lessons are filtered out at the DB.
+    // Older rows without a `hidden` column return as if false thanks
+    // to the migration's `default false`.
     async listForClass(classId) {
+      return rGet('/wc_lessons?select=*&class_id=eq.' + encodeURIComponent(classId) + '&hidden=eq.false&order=created_at.desc');
+    },
+    // Teacher view — every lesson in the class, hidden or not, so
+    // the dashboard can show + toggle them.
+    async listForClassAll(classId) {
       return rGet('/wc_lessons?select=*&class_id=eq.' + encodeURIComponent(classId) + '&order=created_at.desc');
     },
+    // All non-hidden lessons (used by guests + teachers on the home
+    // page where they're browsing rather than managing).
     async listAll() {
-      return rGet('/wc_lessons?select=*&order=created_at.desc');
+      return rGet('/wc_lessons?select=*&hidden=eq.false&order=created_at.desc');
     },
     async byId(id) {
       const rows = await rGet('/wc_lessons?select=*&id=eq.' + encodeURIComponent(id) + '&limit=1');
