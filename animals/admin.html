@@ -1211,10 +1211,13 @@
 
   function resetCurrent() {
     if (!activeId) return;
-    if (!confirm("Reset this animal back to its default info? Your edits for this animal will be lost.")) return;
+    if (!confirm("Reset this animal back to its default info? Your edits AND any student inline-edits for this animal will be cleared from the cloud.")) return;
     const overrides = loadOverrides();
     delete overrides[activeId];
     saveOverrides(overrides);
+    // Also wipe the cloud row + broadcast so any open detail tab
+    // sees the reset live (it'll fall back to base ANIMALS data).
+    deleteAnimalCloudCustom(activeId).catch(() => {});
     const id = activeId;
     closeEditor();
     renderList();
@@ -1223,10 +1226,50 @@
   }
 
   function resetAll() {
-    if (!confirm("Reset ALL animals to defaults? This clears every edit you've made.")) return;
+    if (!confirm("Reset ALL animals to defaults? This clears every edit you've made — locally AND in the cloud (including student inline-edits).")) return;
+    const overrides = loadOverrides();
+    const editedIds = Object.keys(overrides);
     saveOverrides({});
+    // Best-effort cloud wipe for every animal that had local edits.
+    // We don't bother iterating the whole ANIMALS list — animals
+    // never edited won't have a cloud row, so the DELETE 0-rows.
+    editedIds.forEach(id => deleteAnimalCloudCustom(id).catch(() => {}));
     renderList();
     toast('All edits cleared ✓');
+  }
+
+  // DELETE the wc_animal_custom row for one animal + broadcast a
+  // "reset" patch so live detail tabs revert immediately. Open
+  // detail page reloads to pick the base ANIMALS data back up.
+  async function deleteAnimalCloudCustom(animalId) {
+    if (!window.WC_SUPABASE) return;
+    const url  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const anon = window.WC_SUPABASE.anon;
+    try {
+      await fetch(url + '/rest/v1/wc_animal_custom?animal_id=eq.' + encodeURIComponent(animalId), {
+        method: 'DELETE',
+        headers: {
+          apikey:        anon,
+          Authorization: 'Bearer ' + anon,
+          Prefer:        'return=minimal',
+        },
+      });
+    } catch (e) { /* non-fatal */ }
+    // Broadcast a marker so any open detail page reloads itself.
+    try {
+      if (!window.supabase) return;
+      if (!window._adminBroadcastClient) {
+        window._adminBroadcastClient = window.supabase.createClient(url, anon);
+      }
+      const ch = window._adminBroadcastClient.channel('animal-' + animalId, {
+        config: { broadcast: { self: false } },
+      });
+      ch.subscribe((status) => {
+        if (status !== 'SUBSCRIBED') return;
+        ch.send({ type: 'broadcast', event: 'animal-reset', payload: { ts: Date.now() } });
+        setTimeout(() => { try { ch.unsubscribe(); } catch (e) {} }, 800);
+      });
+    } catch (e) {}
   }
 
   function exportAll() {

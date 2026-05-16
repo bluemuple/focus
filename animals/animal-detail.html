@@ -680,6 +680,23 @@
     display: flex; align-items: center; gap: 8px;
   }
   .topic-card h3 .info-icon { font-size: 1.4rem; }
+  /* Emoji picker trigger — looks like the icon, but reveals it's
+     clickable in edit mode by adding a soft hover ring. */
+  button.topic-emoji-btn {
+    border: 0; background: transparent;
+    padding: 0; cursor: default;
+    font: inherit;
+    line-height: 1;
+  }
+  body.student-editing button.topic-emoji-btn {
+    cursor: pointer;
+    border-radius: 8px;
+    padding: 2px 4px;
+    transition: background 0.12s ease;
+  }
+  body.student-editing button.topic-emoji-btn:hover {
+    background: rgba(176, 224, 230, 0.35);
+  }
   .topic-items { list-style: none; padding: 0; margin: 0; }
   .topic-items li {
     position: relative;
@@ -1009,6 +1026,10 @@
     });
 
     const cellState = { photos: [], cartoons: [], coloringPages: [] };
+    // Expose the renderer + state to the outer scope so the
+    // student-side photo paste handler can update a cell in place
+    // without forcing a page reload.
+    window.__galleryCellState = cellState;
     let lightboxImg, lightbox;
 
     function setCellImage(cell, src) {
@@ -1017,6 +1038,28 @@
       img.onerror = () => {};
       img.src = src;
     }
+    // Append a new image src to an existing cell's state without
+    // re-rendering. Used after photo paste so the new picture
+    // appears immediately AND becomes navigable via the dots.
+    window.__appendToCellInPlace = function (catKey, src) {
+      const cell = cells[catKey];
+      if (!cell) return;
+      cell.style.display = '';
+      cellState[catKey].push(src);
+      // Show the just-pasted image right away.
+      setCellImage(cell, src);
+      // Rebuild the dot row to include the new entry.
+      const dotRow = cell.querySelector('.thumb-dot');
+      dotRow.innerHTML = '';
+      if (cellState[catKey].length > 1) {
+        cellState[catKey].forEach((_, i) => {
+          const dot = document.createElement('span');
+          if (i === cellState[catKey].length - 1) dot.classList.add('active');
+          dotRow.appendChild(dot);
+        });
+      }
+      if (typeof balanceGallery === 'function') balanceGallery();
+    };
 
     // Add cells-1 / cells-2 / cells-3 modifier to .hero-gallery so
     // the CSS can re-centre the visible cells when one or two of
@@ -1401,6 +1444,16 @@
         beginPhotoPaste(b.dataset.paste, animalId);
       });
     });
+    // Topic emoji picker buttons.
+    document.querySelectorAll('.topic-emoji-btn').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!document.body.classList.contains('student-editing')) return;
+        openEmojiPicker(b, animalId);
+      });
+    });
   }
 
   function beginEditText(el, animalId) {
@@ -1485,12 +1538,17 @@
   // {heading, emoji, items: []}. The whole `customTopics` array is
   // saved as JSONB whenever any topic changes (simpler than
   // per-item diffing for the JSONB column).
+  const TOPIC_EMOJI_OPTIONS = ['📚','🌿','🌊','⛰️','🦴','🐣','🌙','☀️','❄️','🔥','🌳','🐾','🏞️','🎵','💡','❓','🌎','⭐','🍃','🐺'];
+
   function renderTopicCard(topic, animalId) {
     const card = document.createElement('div');
     card.className = 'topic-card';
     const emoji = topic.emoji || '📚';
     card.innerHTML =
-      '<h3><div class="info-icon">' + escapeHTML(emoji) + '</div>' +
+      '<h3>' +
+        '<button type="button" class="topic-emoji-btn info-icon" title="Pick an icon">' +
+          escapeHTML(emoji) +
+        '</button>' +
         '<div class="editable-text topic-heading" data-placeholder="topic name">' +
           escapeHTML(topic.heading || '') + '</div>' +
         '<button type="button" class="topic-delete">Delete topic</button>' +
@@ -1504,6 +1562,51 @@
       '</ul>' +
       '<div class="topic-add-row" tabindex="0">＋ Click to add a row</div>';
     return card;
+  }
+
+  // Show a tiny emoji-picker popover anchored under the given
+  // button. Clicking an option swaps the button text + saves.
+  function openEmojiPicker(btn, animalId) {
+    // Reuse existing popover if open — close it.
+    const existing = document.getElementById('topicEmojiPop');
+    if (existing) { existing.remove(); return; }
+    const pop = document.createElement('div');
+    pop.id = 'topicEmojiPop';
+    pop.style.cssText =
+      'position:absolute; z-index:200; background:white;' +
+      'border:2px solid var(--mint); border-radius:14px;' +
+      'box-shadow:var(--shadow-lg); padding:8px;' +
+      'display:grid; grid-template-columns:repeat(5,1fr); gap:4px;';
+    TOPIC_EMOJI_OPTIONS.forEach(e => {
+      const opt = document.createElement('button');
+      opt.type = 'button';
+      opt.textContent = e;
+      opt.style.cssText =
+        'width:36px; height:36px; font-size:22px; line-height:1;' +
+        'border:0; background:transparent; border-radius:8px; cursor:pointer;';
+      opt.addEventListener('mouseenter', () => opt.style.background = 'rgba(176,224,230,0.3)');
+      opt.addEventListener('mouseleave', () => opt.style.background = 'transparent');
+      opt.addEventListener('click', async () => {
+        btn.textContent = e;
+        pop.remove();
+        await flushTopics(animalId);
+      });
+      pop.appendChild(opt);
+    });
+    const r = btn.getBoundingClientRect();
+    pop.style.left = (window.scrollX + r.left) + 'px';
+    pop.style.top  = (window.scrollY + r.bottom + 4) + 'px';
+    document.body.appendChild(pop);
+    // Click-outside closes the popover.
+    setTimeout(() => {
+      const closer = (ev) => {
+        if (!pop.contains(ev.target) && ev.target !== btn) {
+          pop.remove();
+          document.removeEventListener('mousedown', closer, true);
+        }
+      };
+      document.addEventListener('mousedown', closer, true);
+    }, 0);
   }
 
   function renderAllTopicsFromCloud(topics, animalId) {
@@ -1522,9 +1625,10 @@
     if (!host) return [];
     return Array.from(host.querySelectorAll('.topic-card')).map(card => {
       const heading = (card.querySelector('.topic-heading')?.textContent || '').trim();
+      const emoji   = (card.querySelector('.topic-emoji-btn')?.textContent || '📚').trim() || '📚';
       const items   = Array.from(card.querySelectorAll('.topic-items li .editable-text'))
         .map(el => el.textContent.trim()).filter(Boolean);
-      return { heading, items, emoji: '📚' };
+      return { heading, items, emoji };
     });
   }
 
@@ -1670,19 +1774,9 @@
     const patch = {};
     patch[category] = next; // saveAnimalCustomToCloud maps camelCase → snake_case
     await saveField(animalId, patch);
-    // Render locally: re-run renderCell with all sources merged.
-    refreshCellAfterPhotoAdd(category, next);
-  }
-
-  function refreshCellAfterPhotoAdd(category, customList) {
-    // Combine custom + default for the cell. We don't have the full
-    // default-image list cheaply here — easiest is to reload, but
-    // that loses unsaved state. Instead just append the new image
-    // to the existing cellState array, then re-set the cell's image.
-    if (!window.cellState || !window.renderCell) {
-      // Helpers live inside the renderer's closure; refresh via reload.
-      location.reload();
-      return;
+    // In-place gallery update — no reload needed.
+    if (typeof window.__appendToCellInPlace === 'function') {
+      window.__appendToCellInPlace(category, dataUrl);
     }
   }
 
@@ -1700,6 +1794,13 @@
       if (!p || !p.patch) return;
       applyRemotePatch(p.patch);
       showLiveEditChip(p.who && p.who.name || 'Someone');
+    });
+    // Admin "Reset" sends an animal-reset event — reload so the
+    // page falls back to the base ANIMALS data right away.
+    _editChannel.on('broadcast', { event: 'animal-reset' }, () => {
+      if (!document.querySelector('.inline-textarea')) {
+        setTimeout(() => location.reload(), 200);
+      }
     });
     _editChannel.subscribe();
   }
@@ -1746,15 +1847,30 @@
     if (Array.isArray(patch.customTopics)) {
       renderAllTopicsFromCloud(patch.customTopics, getParam('id'));
     }
-    // Photo updates — reload the page to keep the gallery state
-    // perfectly in sync (the renderer is inside the main closure
-    // and isn't easy to call from out here).
-    if (patch.photos || patch.cartoons || patch.coloringPages) {
-      // Don't reload if the user is currently editing text — they'd
-      // lose their input. Defer until they finish.
-      if (!document.querySelector('.inline-textarea')) {
-        setTimeout(() => location.reload(), 250);
+    // Photo updates — if we can update in place, do that; otherwise
+    // fall back to a reload (defer if the user is mid-edit).
+    const photoCats = ['photos', 'cartoons', 'coloringPages'];
+    let photoChanged = false;
+    photoCats.forEach(cat => {
+      if (!Array.isArray(patch[cat])) return;
+      photoChanged = true;
+      const state = window.__galleryCellState && window.__galleryCellState[cat];
+      // We don't have the full default-image list out here, so we
+      // diff against state and only paint NEW custom images. New
+      // entries are appended in order to keep dot-cycling intact.
+      if (state && typeof window.__appendToCellInPlace === 'function') {
+        patch[cat].forEach(p => {
+          const src = (p && p.src) || '';
+          if (src && state.indexOf(src) === -1) {
+            window.__appendToCellInPlace(cat, src);
+          }
+        });
       }
+    });
+    // If the renderer wasn't ready (e.g. first paint hasn't run),
+    // fall back to a reload as a safety net.
+    if (photoChanged && !window.__galleryCellState && !document.querySelector('.inline-textarea')) {
+      setTimeout(() => location.reload(), 250);
     }
   }
 
