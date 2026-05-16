@@ -2,7 +2,7 @@
 <html lang="en-NZ">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#0f1115">
 <title>The Space</title>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -16,6 +16,10 @@
     color: #fff;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
+    /* iOS Safari ignores user-scalable=no on its own. Combining it
+       with touch-action: manipulation kills the double-tap-to-zoom
+       gesture while keeping single taps instant (no 300ms wait). */
+    touch-action: manipulation;
   }
   body { display: flex; }
 
@@ -1088,6 +1092,31 @@
     padding: 16px;
   }
   .tag-wheel-overlay.show { display: flex; }
+  /* Cancel/close button on the wheel modal — only the host gets to
+     click it (others see "Waiting for host…" instead). Hidden by
+     default; .show class flips it on. */
+  .tag-wheel-close {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    font-size: 28px;
+    line-height: 1;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    transition: background 0.15s;
+  }
+  .tag-wheel-close:hover  { background: rgba(255, 255, 255, 0.2); }
+  .tag-wheel-close:active { background: rgba(255, 255, 255, 0.08); }
+  .tag-wheel-close.show   { display: flex; }
   .tag-wheel-title {
     color: #fff;
     font-size: 20px;
@@ -1272,6 +1301,57 @@
     }
   }
 
+  /* Wallet chip — shows the live WordCatch coin balance. Sits in
+     the sidebar (desktop) and the mobile top-bar info column. The
+     chip briefly flashes when the balance changes. */
+  .wallet-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(245, 158, 11, 0.15);
+    color: #fde68a;
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 700;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    transition: transform 0.15s ease, background 0.2s ease;
+  }
+  .wallet-chip.flash {
+    animation: walletFlash 0.55s ease;
+  }
+  @keyframes walletFlash {
+    0%   { transform: scale(1);    background: rgba(245, 158, 11, 0.15); }
+    40%  { transform: scale(1.18); background: rgba(245, 158, 11, 0.45); }
+    100% { transform: scale(1);    background: rgba(245, 158, 11, 0.15); }
+  }
+  #sidebarWallet {
+    margin: 0 14px 12px;
+  }
+  .mt-wallet {
+    margin-left: 6px;
+    font-size: 11px;
+  }
+  /* Floating +N / −N toast that flies up from the wallet chip when
+     coins move. Fixed-positioned so it doesn't displace anything. */
+  .coin-toast {
+    position: fixed;
+    z-index: 280;
+    font-weight: 900;
+    font-size: 26px;
+    letter-spacing: 0.5px;
+    pointer-events: none;
+    text-shadow: 0 4px 14px rgba(0,0,0,0.7);
+    animation: coinToast 1.6s ease-out forwards;
+  }
+  .coin-toast.plus  { color: #fde68a; }
+  .coin-toast.minus { color: #fca5a5; }
+  @keyframes coinToast {
+    0%   { transform: translate(-50%, 0)    scale(0.6); opacity: 0; }
+    20%  { transform: translate(-50%, -10px) scale(1.1); opacity: 1; }
+    100% { transform: translate(-50%, -80px) scale(1);   opacity: 0; }
+  }
+
   /* "I'm it!" badge above the current tagger's head. */
   .actor-tagger {
     position: absolute;
@@ -1306,6 +1386,8 @@
       <div class="subtitle">virtual classroom</div>
       <a class="back" href="../reading/home.html">← Back to lessons</a>
     </header>
+
+    <div class="wallet-chip" id="sidebarWallet">🪙 <span id="walletAmount">0</span></div>
 
     <div class="panel" id="presencePanel">
       <div class="header">
@@ -1364,6 +1446,7 @@
   <!-- Wheel modal. The conic-gradient disc spins for 4s; labels are
        kept upright via a manual rAF loop. -->
   <div id="tagWheelOverlay" class="tag-wheel-overlay" aria-hidden="true">
+    <button type="button" id="tagWheelClose" class="tag-wheel-close" aria-label="Cancel game">×</button>
     <div class="tag-wheel-title" id="tagWheelTitle">Spin to pick the Tagger</div>
     <div class="tag-wheel-frame">
       <div class="tag-wheel" id="tagWheelDisc">
@@ -1396,7 +1479,7 @@
       <div class="mt-meta">
         <span class="mt-dot" id="mtDot"></span>
         <span id="mtCount">0 / 26</span>
-        <span>· Tap to walk</span>
+        <span class="mt-wallet">· 🪙 <span id="mtWalletAmount">0</span></span>
       </div>
     </div>
   </header>
@@ -1432,7 +1515,7 @@
           <div class="fr-pills" id="frPills"></div>
           <div class="fr-quick">
             <button type="button" class="fr-quick-btn" id="frRandom">🎲 Random</button>
-            <button type="button" class="fr-quick-btn" id="frDefault">↺ Default</button>
+            <button type="button" class="fr-quick-btn" id="frDefault">👤 Original GIF</button>
           </div>
         </div>
         <div class="fr-grid" id="frGrid"></div>
@@ -1475,6 +1558,11 @@
     name:   String(session.real_name),
     gender: session.gender || 'boy',
     avatar: loadSavedAvatar(),
+    // wc_users.money — shared with the WordCatch wallet. Loaded
+    // from the cached session here; refreshed from the server
+    // shortly after page load (alongside the avatar fetch) so a
+    // device-switch shows the current balance.
+    money:  Number(session.money) || 0,
   };
 
   // Load the avatar this user last finished editing. localStorage
@@ -1497,12 +1585,19 @@
   async function fetchAvatarFromDB() {
     try {
       const r = await fetch(SUPABASE_URL +
-        '/rest/v1/wc_users?id=eq.' + encodeURIComponent(ME.id) + '&select=avatar', {
+        '/rest/v1/wc_users?id=eq.' + encodeURIComponent(ME.id) + '&select=avatar,money', {
         headers: { apikey: SUPABASE_ANON, Authorization: 'Bearer ' + SUPABASE_ANON },
       });
       if (!r.ok) return;
       const rows = await r.json();
-      const dbAvatar = rows && rows[0] && rows[0].avatar;
+      const row = rows && rows[0];
+      if (!row) return;
+      // Refresh the wallet from the server — it may have changed
+      // from another tab (WordCatch lessons award coins too).
+      if (typeof row.money === 'number' && row.money !== ME.money) {
+        setMoneyLocal(row.money);
+      }
+      const dbAvatar = row.avatar;
       if (!dbAvatar || typeof dbAvatar !== 'object') return;
       // Skip if identical to what we already have.
       if (JSON.stringify(dbAvatar) === JSON.stringify(ME.avatar || {})) return;
@@ -2526,15 +2621,31 @@
   // idle-freeze setInterval can safely close over it.
 
   // ---- collision against other characters ----------------------
+  //  Blocks a move that *enters* another character's hitbox, but
+  //  if we're already overlapping someone (e.g. two players stacked
+  //  vertically after a teleport, spawn collision, or a broadcast
+  //  race) we let the player keep moving as long as the new
+  //  position is at least as far from that character as the
+  //  current one is. Without this, the player would be welded in
+  //  place until the other moves first.
   function collidesWithRemotes(x, y) {
     const cx = x + CHAR_W / 2, cy = y + CHAR_H / 2;
+    const curCx = me.pos.x + CHAR_W / 2;
+    const curCy = me.pos.y + CHAR_H / 2;
     for (const ra of remotes.values()) {
       const ox = ra.pos.x + CHAR_W / 2;
       const oy = ra.pos.y + CHAR_H / 2;
-      if (Math.abs(cx - ox) < HITBOX * 2 &&
-          Math.abs(cy - oy) < HITBOX * 2) {
-        return true;
-      }
+      const newOverlap = Math.abs(cx - ox)    < HITBOX * 2 &&
+                         Math.abs(cy - oy)    < HITBOX * 2;
+      if (!newOverlap) continue;
+      const curOverlap = Math.abs(curCx - ox) < HITBOX * 2 &&
+                         Math.abs(curCy - oy) < HITBOX * 2;
+      if (!curOverlap) return true; // walking *into* another body — block
+      // Already overlapping → only block if the move would push us
+      // even further into them. Squared distance is fine for a >=.
+      const curD2 = (curCx - ox) * (curCx - ox) + (curCy - oy) * (curCy - oy);
+      const newD2 = (cx    - ox) * (cx    - ox) + (cy    - oy) * (cy    - oy);
+      if (newD2 < curD2) return true;
     }
     return false;
   }
@@ -2574,6 +2685,18 @@
   function isFormTarget(el) {
     return el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'BUTTON');
   }
+
+  // iOS Safari treats two taps within ~300ms as a zoom gesture even
+  // when user-scalable=no is set. Swallow `gesturestart` (pinch /
+  // double-tap) and reject the second tap if it lands within the
+  // double-tap window — both gestures get the page-wide block.
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', function (e) {
+    const now = Date.now();
+    if (now - lastTouchEnd < 320) e.preventDefault();
+    lastTouchEnd = now;
+  }, { passive: false });
 
   window.addEventListener('keydown', function (e) {
     if (isFormTarget(e.target)) return;
@@ -2988,6 +3111,7 @@
   const tagStartBtn     = document.getElementById('tagStartBtn');
   const tagEndBtn       = document.getElementById('tagEndBtn');
   const tagWheelOverlay = document.getElementById('tagWheelOverlay');
+  const tagWheelClose   = document.getElementById('tagWheelClose');
   const tagWheelDisc    = document.getElementById('tagWheelDisc');
   const tagWheelLabels  = document.getElementById('tagWheelLabels');
   const tagSpinBtn      = document.getElementById('tagSpinBtn');
@@ -2996,6 +3120,79 @@
   const tagCountdown    = document.getElementById('tagCountdown');
   const tagCountdownNum = document.getElementById('tagCountdownNum');
   const tagAttackBtn    = document.getElementById('tagAttackBtn');
+  const walletAmountEl  = document.getElementById('walletAmount');
+  const mtWalletAmount  = document.getElementById('mtWalletAmount');
+  const sidebarWallet   = document.getElementById('sidebarWallet');
+
+  // ---- wallet (wc_users.money) -------------------------------
+  function renderMoney() {
+    if (walletAmountEl) walletAmountEl.textContent = String(ME.money);
+    if (mtWalletAmount) mtWalletAmount.textContent = String(ME.money);
+  }
+  renderMoney();
+
+  // Updates the local cached balance everywhere it surfaces — the
+  // sidebar / mobile-topbar chip and the WordCatch session cache,
+  // so navigating back to the reading app reads the fresh value.
+  function setMoneyLocal(next) {
+    ME.money = Math.max(0, Math.floor(Number(next) || 0));
+    renderMoney();
+    try {
+      const raw = localStorage.getItem('wc.session.v1');
+      if (raw) {
+        const u = JSON.parse(raw);
+        u.money = ME.money;
+        localStorage.setItem('wc.session.v1', JSON.stringify(u));
+      }
+    } catch {}
+  }
+
+  // Persist the new balance to wc_users.money. Fire-and-forget; if
+  // it fails the next page-load fetchAvatarFromDB() reconciles us
+  // back to the server's source of truth.
+  async function patchMoneyToDB(amount) {
+    try {
+      await fetch(SUPABASE_URL + '/rest/v1/wc_users?id=eq.' + encodeURIComponent(ME.id), {
+        method: 'PATCH',
+        headers: {
+          apikey:         SUPABASE_ANON,
+          Authorization:  'Bearer ' + SUPABASE_ANON,
+          'Content-Type': 'application/json',
+          Prefer:         'return=minimal',
+        },
+        body: JSON.stringify({ money: amount }),
+      });
+    } catch (e) { console.warn('patchMoneyToDB failed', e); }
+  }
+
+  function flashWallet() {
+    if (!sidebarWallet) return;
+    sidebarWallet.classList.remove('flash');
+    void sidebarWallet.offsetWidth;
+    sidebarWallet.classList.add('flash');
+  }
+
+  // Floating +N / −N toast near the player's character so it's
+  // visible regardless of which screen size you're on.
+  function showCoinToast(delta) {
+    const rect = me.root.getBoundingClientRect();
+    const el = document.createElement('div');
+    el.className = 'coin-toast ' + (delta >= 0 ? 'plus' : 'minus');
+    el.textContent = (delta >= 0 ? '+' : '−') + '🪙' + Math.abs(delta);
+    el.style.left = (rect.left + rect.width / 2) + 'px';
+    el.style.top  = (rect.top - 10) + 'px';
+    document.body.appendChild(el);
+    setTimeout(function () { el.remove(); }, 1700);
+  }
+
+  function bumpMoney(delta) {
+    if (!delta) return;
+    const next = Math.max(0, ME.money + delta);
+    setMoneyLocal(next);
+    flashWallet();
+    showCoinToast(delta);
+    patchMoneyToDB(ME.money);
+  }
 
   const WHEEL_COLORS = [
     '#fda4af', '#86efac', '#fde047', '#93c5fd',
@@ -3172,6 +3369,7 @@
     tagSpinBtn.disabled    = !iAmHost;
     tagSpinBtn.textContent = iAmHost ? 'Spin the Wheel' : 'Waiting for host…';
     tagEndBtn.classList.toggle('show', iAmHost);
+    tagWheelClose.classList.toggle('show', iAmHost);
     // Labels rely on getBoundingClientRect of the now-visible disc;
     // re-run the placement so width === 0 isn't returned.
     placeWheelLabels();
@@ -3269,6 +3467,14 @@
   function applyTagTagged(p) {
     if (tag.phase !== 'play') return;
     if (!p || !p.newTagger) return;
+    // Coin transfer — the catcher (the previous Tagger) takes 10
+    // coins from the freshly-caught player. Each client only
+    // touches their own wc_users row so there's no cross-user
+    // write; everyone else just updates the tagger state.
+    const iCaught    = tag.taggerTabId === TAB_ID && p.newTagger !== TAB_ID;
+    const iWasCaught = p.newTagger     === TAB_ID && tag.taggerTabId !== TAB_ID;
+    if (iCaught)    bumpMoney(+10);
+    if (iWasCaught) bumpMoney(-10);
     // Re-run the 7-second countdown so the freshly-caught player
     // (and everyone else) gets a grace window to scatter before
     // the new Tagger can chase. startTagCountdown sets the badge
@@ -3352,10 +3558,11 @@
   });
 
   // --- button wiring ------------------------------------------
-  tagStartBtn .addEventListener('click', hostStartTagGame);
-  tagSpinBtn  .addEventListener('click', hostSpinWheel);
-  tagEndBtn   .addEventListener('click', hostEndTagGame);
-  tagAttackBtn.addEventListener('click', attemptTag);
+  tagStartBtn  .addEventListener('click', hostStartTagGame);
+  tagSpinBtn   .addEventListener('click', hostSpinWheel);
+  tagEndBtn    .addEventListener('click', hostEndTagGame);
+  tagWheelClose.addEventListener('click', hostEndTagGame);
+  tagAttackBtn .addEventListener('click', attemptTag);
 
   channel.subscribe(async function (status) {
     if (status === 'SUBSCRIBED') {
