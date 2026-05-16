@@ -109,7 +109,12 @@
 
   function requireStudent(redirect) {
     const u = session();
-    if (!u || u.role !== 'student') {
+    // Teachers and students both pass this gate now: teachers
+    // routinely open student-facing pages (lessons, profile, …)
+    // to preview what the class will see. The home page already
+    // surfaces a Settings tile that takes them back to the
+    // dashboard, so a teacher reading a lesson is intentional.
+    if (!u || (u.role !== 'student' && u.role !== 'teacher')) {
       window.location.href = redirect || './index.html';
       return null;
     }
