@@ -19,8 +19,8 @@
 //    .session()          → cached user row or null
 //    .login(name, code)  → validates, caches, returns user row
 //    .logout()           → wipes cache
-//    .requireStudent(redirect)  → redirects to /reading/ if no session
-//    .requireTeacher(redirect)  → redirects to /reading/ if not a teacher
+//    .requireStudent(redirect)  → redirects to /edu/ if no session
+//    .requireTeacher(redirect)  → redirects to /edu/ if not a teacher
 // =============================================================
 
 (() => {

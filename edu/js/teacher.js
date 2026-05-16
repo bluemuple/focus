@@ -715,7 +715,7 @@
       return `
         <div class="card">
           <div>
-            <div class="brand">Word<span>Catch</span></div>
+            <div class="brand">Bright<span>ly</span></div>
             <div class="greet"><span class="emoji">${genderEmoji}</span>Kia ora, <strong>${escapeHtml(s.real_name)}</strong>!</div>
           </div>
           <div>
