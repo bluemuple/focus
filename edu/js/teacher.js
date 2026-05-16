@@ -795,14 +795,21 @@
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
-          <button class="wc-btn ghost" data-edit="${L.id}">✏️ Edit</button>
-          <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1" class="wc-btn ghost" target="_blank" rel="noopener">Preview</a>
-          <button class="wc-btn ghost" data-toggle-hidden="${L.id}" title="${isHidden ? 'Show this lesson to students again' : 'Hide this lesson from students'}">
+          <button class="wc-btn ghost" data-edit="${L.id}"
+                  title="Open this lesson in the edit form below">✏️ Edit</button>
+          <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1"
+             class="wc-btn ghost" target="_blank" rel="noopener"
+             title="Open the lesson in a new tab, as a student would see it">Preview</a>
+          <button class="wc-btn ghost" data-toggle-hidden="${L.id}"
+                  title="${isHidden ? 'Show this lesson to students again' : 'Hide this lesson from students'}">
             ${isHidden ? '👁 Show' : '🙈 Hide'}
           </button>
-          <button class="wc-btn ghost" data-prewarm="${L.id}" title="Pre-fetch chunk + word-info data so the first student doesn't wait">🔥 Prewarm</button>
-          <button class="wc-btn ghost" data-prewarmaudio="${L.id}" title="Generate + cache TTS audio for every sentence — Google's API won't be called again for this lesson">🎵 Audio</button>
-          <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}">🗑 Delete</button>
+          <button class="wc-btn ghost icon-only" data-prewarm="${L.id}"
+                  title="Prewarm: pre-fetch sentence chunks + word-info data so the first student doesn't wait">🔥</button>
+          <button class="wc-btn ghost icon-only" data-prewarmaudio="${L.id}"
+                  title="Audio: generate &amp; cache TTS audio for every sentence (Google's API won't be hit again for this lesson)">🎵</button>
+          <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}"
+                  title="Permanently delete this lesson — cannot be undone">🗑 Delete</button>
         </div>
       `;
       list.appendChild(row);

@@ -73,20 +73,24 @@
       .replace(/<[^>]+>/g, ' ')
       // Markdown page-break (---) on its own line.
       .replace(/^---+\s*$/gm, ' ')
-      // Stray markdown heading marks (#, ##, ### …) at start of line
-      // or after whitespace. Triggered when the body bypassed the
-      // markdown→HTML conversion (e.g. unusual hash patterns) and
-      // the raw `#` would otherwise be read aloud as "hash".
-      .replace(/(?:^|\s)#+/g, ' ')
+      // Stray markdown heading marks — strip EVERY `#` regardless of
+      // position. The old "(^|\\s)#+" pattern missed mid-word hashes
+      // like `Tag#1`, which Google TTS would announce as "Tag hash one"
+      // and inject long pauses around (making the rest of the sentence
+      // sound like it's being read word-by-word). Stripping all `#`
+      // chars lets the surrounding text flow normally.
+      .replace(/#+/g, ' ')
       // Stray bold/underline wrappers — leftover ** or __ pairs that
       // weren't stripped upstream. Keep the inner text.
       .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
       .replace(/__([\s\S]*?)__/g,     '$1')
-      // Square brackets / round parens / curly braces — Web Speech on
-      // some platforms says "opening parenthesis" aloud. Strip them,
-      // keeping the text inside. Also handle Unicode full-width
-      // parens that Korean keyboards sometimes emit.
-      .replace(/[\[\](){}（）]/g, ' ')
+      // Bracket families — Web Speech on macOS/Windows announces them
+      // as "opening parenthesis" etc., and Google TTS occasionally
+      // pauses long enough that they sound spelled-out. Strip every
+      // common ASCII + CJK bracket type, keeping the inner text.
+      //   ASCII : [ ] ( ) { } < >
+      //   CJK   : （）「」『』〔〕【】〈〉《》〖〗
+      .replace(/[\[\](){}<>（）「」『』〔〕【】〈〉《》〖〗]/g, ' ')
       // Collapse all whitespace runs.
       .replace(/\s+/g, ' ')
       .trim();
