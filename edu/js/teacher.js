@@ -1942,14 +1942,20 @@
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
       { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
     ];
-    // Buttons that show in the student-home header. Toggled here,
-    // applied by home.html on next page load.
+    // Compact home-page toggles — short labels, 2 rows. Each tick
+    // removes one button from the student home. Saved into the
+    // same hide_features JSONB column the longer toggles above use.
     const NAV_TOGGLES = [
-      { key: 'hideTheSpace', label: 'Hide the "The Space" button on the student home page', tip: 'Students won\'t see or be able to enter the virtual classroom.' },
-      { key: 'hideMyPets',   label: 'Hide the "My Pets" button on the student home page',   tip: 'Hides the profile / pet collection link.' },
-      { key: 'hideMaths',    label: 'Hide the "Maths" button on the student home page',     tip: 'Hides the link into the maths-game app.' },
-      { key: 'hidePhonics',  label: 'Hide the "Phonics" button on the student home page',   tip: 'Hides the link into the phonics activity.' },
-      { key: 'hideAnimals',  label: 'Hide the "Animals" button on the student home page',   tip: 'Hides the link into the animal encyclopedia.' },
+      // Row 1 — Reading + Maths bars
+      { key: 'hideReading',     label: 'Reading' },
+      { key: 'hideMathsGame',   label: 'Maths Game' },
+      { key: 'hideSubtraction', label: 'Subtraction' },
+      { key: 'hideFraction',    label: 'Fraction' },
+      // Row 2 — other app tiles
+      { key: 'hideMyPets',      label: 'My Pets' },
+      { key: 'hideTheSpace',    label: 'The Space' },
+      { key: 'hidePhonics',     label: 'Phonics' },
+      { key: 'hideAnimals',     label: 'Animals' },
     ];
 
     // Per-level encounter probabilities. Start from whatever is saved
@@ -2001,17 +2007,16 @@
         `).join('')}
       </div>
 
-      <h3 style="margin: 28px 0 6px;">🏠 Student home — navigation buttons</h3>
-      <p class="wc-muted" style="margin: 0 0 12px;">
-        Tick to remove a button from the top-right of the student
-        home page. Takes effect the next time the student opens
-        WordCatch (or refreshes the page).
+      <h3 style="margin: 28px 0 6px;">🏠 Student home — buttons</h3>
+      <p class="wc-muted" style="margin: 0 0 10px;">
+        Tick to hide that button on the student home page.
+        Takes effect next time the student opens / refreshes Ako.
       </p>
-      <div class="wc-toggles">
+      <div class="wc-nav-toggle-grid">
         ${NAV_TOGGLES.map(t => `
-          <label class="wc-toggle">
+          <label class="wc-nav-toggle">
             <input type="checkbox" data-flag="${t.key}" ${flags[t.key] ? 'checked' : ''} />
-            <span><strong>${t.label}</strong><br><small class="wc-muted">${t.tip}</small></span>
+            <span>${t.label}</span>
           </label>
         `).join('')}
       </div>
