@@ -3,20 +3,20 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Brightly — Login</title>
+  <title>Ako — Login</title>
   <link rel="stylesheet" href="./css/styles.css">
 </head>
 <body>
   <div class="wc-shell">
     <header class="wc-header">
-      <div class="wc-logo">Bright<span class="catch">ly</span></div>
+      <div class="wc-logo">A<span class="catch">ko</span></div>
     </header>
 
     <!-- ============================================================
          STEP 1 — landing: pick gender directly (entry point)
          ============================================================ -->
     <section id="step-gender" class="wc-card wc-wizard">
-      <h2 class="wc-step-title">Welcome to Brightly! 🦁</h2>
+      <h2 class="wc-step-title">Welcome to Ako! 🦁</h2>
       <p class="wc-step-hint">Tap your picture to sign in.</p>
       <div class="wc-gender-grid">
         <button class="wc-btn" data-gender="girl">
@@ -24,9 +24,6 @@
         </button>
         <button class="wc-btn" data-gender="boy">
           <span class="emoji">👦</span>Boy
-        </button>
-        <button class="wc-btn" data-gender="other">
-          <span class="emoji">🙂</span>Other
         </button>
       </div>
     </section>
@@ -77,10 +74,13 @@
       <div class="wc-center"><span class="wc-back" data-back="step-gender">← Back</span></div>
     </section>
 
-    <!-- Small unobtrusive teacher link at the page footer — students
-         won't accidentally tap it, but teachers always have a way in. -->
+    <!-- Small unobtrusive links at the page footer. Guest goes
+         straight into the apps with no login (no cloud writes);
+         Teacher opens the name + 4-digit code form. Stacked so
+         each one sits on its own line. -->
     <footer id="teacher-footer" class="wc-teacher-footer">
-      <a href="#" id="teacherLink">Teacher login →</a>
+      <div><a href="#" id="guestLink">Guest login →</a></div>
+      <div style="margin-top:6px;"><a href="#" id="teacherLink">Teacher login →</a></div>
     </footer>
   </div>
 
@@ -110,7 +110,10 @@
         console.warn('[WC] Found a corrupted session, wiping.', existing);
         window.WCAuth.logout();
       } else {
-        window.location.href = existing.role === 'teacher' ? './teacher.html' : './home.html';
+        // Teachers land on the student home now too — they just
+        // get an extra "Settings" tile at the end that opens the
+        // dashboard. Students go to the same home page.
+        window.location.href = './home.html';
         return;
       }
     }
@@ -128,6 +131,30 @@
     $('teacherLink').addEventListener('click', e => {
       e.preventDefault();
       show('step-teacher');
+    });
+
+    // Footer "Guest login →" link → mints a local guest session
+    // (no cloud row, no writes that persist) and sends them to the
+    // student home. Read-only access to lessons, animals, phonics,
+    // The Space, and Maths is preserved. The guest's class_id is
+    // null so home.html falls back to the "all lessons" listing.
+    $('guestLink').addEventListener('click', e => {
+      e.preventDefault();
+      const uuid = (window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : 'g' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const guest = {
+        id:         'guest-' + uuid,
+        real_name:  'Guest',
+        gender:     'other',
+        role:       'student',
+        is_guest:   true,
+        money:      0,
+        class_id:   null,
+        login_code: null,
+      };
+      localStorage.setItem('wc.session.v1', JSON.stringify(guest));
+      window.location.href = './home.html';
     });
     // back links
     document.querySelectorAll('[data-back]').forEach(b => {
@@ -225,7 +252,9 @@
         }
         localStorage.setItem('wc.session.v1', JSON.stringify(user));
         window.WCDB.users.touchSeen(user.id).catch(() => {});
-        window.location.href = './teacher.html';
+        // Same home page as students; the Settings tile (only
+        // visible to teachers) gives a way into the dashboard.
+        window.location.href = './home.html';
       } catch (e) {
         errEl.textContent = e.message || 'Could not sign in.';
         errEl.classList.remove('wc-hidden');

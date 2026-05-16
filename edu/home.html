@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Brightly — Home</title>
+  <title>Ako — Home</title>
   <link rel="stylesheet" href="./css/styles.css">
   <style>
     /* Home-page layout: slim header, then a big tile grid for the
@@ -37,11 +37,12 @@
     .app-tile:active { transform: translateY(2px);  box-shadow: 0 3px 0 rgba(0,0,0,0.18); }
     .app-tile .ico { font-size: 44px; line-height: 1; }
     .app-tile .sub { font-size: 12px; font-weight: 600; color: var(--ink-soft, #6c6c75); }
-    .app-tile.pets    { background: #fce7f3; }
-    .app-tile.space   { background: #ddd6fe; }
-    .app-tile.maths   { background: #fed7aa; }
-    .app-tile.phonics { background: #bae6fd; }
-    .app-tile.animals { background: #bbf7d0; }
+    .app-tile.pets     { background: #fce7f3; }
+    .app-tile.space    { background: #ddd6fe; }
+    .app-tile.maths    { background: #fed7aa; }
+    .app-tile.phonics  { background: #bae6fd; }
+    .app-tile.animals  { background: #bbf7d0; }
+    .app-tile.settings { background: #e5e7eb; }
 
     /* Slim top-right user chip — identity only. */
     #userChip { gap: 12px; }
@@ -51,7 +52,7 @@
 <body>
   <div class="wc-shell">
     <header class="wc-header">
-      <div class="wc-logo" onclick="location.href='./home.html'">Bright<span class="catch">ly</span></div>
+      <div class="wc-logo" onclick="location.href='./home.html'">A<span class="catch">ko</span></div>
       <div class="wc-user-chip" id="userChip">
         <span id="userName">…</span>
         <span class="coin" title="Coins">🪙 <span id="userMoney">0</span></span>
@@ -69,6 +70,8 @@
       <a class="app-tile maths"   href="../maths/student.html"   id="navMaths"><span class="ico">➗</span>Maths</a>
       <a class="app-tile phonics" href="../phonics/index.html"   id="navPhonics"><span class="ico">🔤</span>Phonics</a>
       <a class="app-tile animals" href="../animals/index.html"   id="navAnimals"><span class="ico">🦁</span>Animals</a>
+      <!-- Last tile, teacher-only — JS unhides it for role==='teacher'. -->
+      <a class="app-tile settings" href="./teacher.html" id="navSettings" style="display:none;"><span class="ico">⚙️</span>Settings</a>
     </div>
 
     <h1 style="margin: 8px 0 18px; font-size: 28px;">Reading</h1>
@@ -92,11 +95,21 @@
   <script src="./js/auth.js"></script>
   <script>
   (async () => {
-    const me = window.WCAuth.requireStudent('./index.html');
-    if (!me) return;
+    // Accept students AND teachers on this page — teachers see
+    // the same tile picker plus an extra Settings tile that
+    // jumps to the dashboard. Anyone without a session goes back
+    // to the login screen.
+    const me = window.WCAuth.session();
+    if (!me || (me.role !== 'student' && me.role !== 'teacher')) {
+      window.location.href = './index.html';
+      return;
+    }
 
     document.getElementById('userName').textContent = me.real_name;
     document.getElementById('userMoney').textContent = me.money || 0;
+    if (me.role === 'teacher') {
+      document.getElementById('navSettings').style.display = '';
+    }
     document.getElementById('logoutBtn').addEventListener('click', e => {
       e.preventDefault();
       window.WCAuth.logout();
@@ -121,7 +134,12 @@
     const list = document.getElementById('lessonList');
     list.innerHTML = '';
 
-    if (!me.class_id) {
+    // Guests and teachers see every lesson regardless of class
+    // (teachers for preview, guests because they have no class).
+    // Only a signed-in student with no class triggers the "ask
+    // your teacher" placeholder.
+    const seeAllLessons = me.is_guest || me.role === 'teacher';
+    if (!me.class_id && !seeAllLessons) {
       document.getElementById('empty').classList.remove('wc-hidden');
       document.getElementById('empty').querySelector('p').textContent =
         'You’re not in a class yet. Ask your teacher.';
@@ -130,7 +148,18 @@
 
     let lessons = [];
     try {
-      lessons = await window.WCDB.lessons.listForClass(me.class_id);
+      if (seeAllLessons) {
+        lessons = await window.WCDB.lessons.listAll
+          ? await window.WCDB.lessons.listAll()
+          : await fetch(window.WC_SUPABASE.url + '/rest/v1/wc_lessons?select=*&order=created_at.desc', {
+              headers: {
+                apikey:        window.WC_SUPABASE.anon,
+                Authorization: 'Bearer ' + window.WC_SUPABASE.anon,
+              },
+            }).then(r => r.ok ? r.json() : []);
+      } else {
+        lessons = await window.WCDB.lessons.listForClass(me.class_id);
+      }
     } catch (e) {
       console.error(e);
     }

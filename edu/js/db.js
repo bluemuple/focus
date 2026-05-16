@@ -111,6 +111,9 @@
     async listForClass(classId) {
       return rGet('/wc_lessons?select=*&class_id=eq.' + encodeURIComponent(classId) + '&order=created_at.desc');
     },
+    async listAll() {
+      return rGet('/wc_lessons?select=*&order=created_at.desc');
+    },
     async byId(id) {
       const rows = await rGet('/wc_lessons?select=*&id=eq.' + encodeURIComponent(id) + '&limit=1');
       return rows && rows[0] || null;
