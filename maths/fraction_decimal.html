@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Fraction and Decimal</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    margin: 0; padding: 0;
+    background: #f5f5f8; color: #222;
+    display: flex; flex-direction: column;
+    min-height: 100vh;
+  }
+  .header {
+    background: #7a1f4f; color: white;
+    padding: 10px 24px;
+    font-size: 20px; font-weight: 700;
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .header .back-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(255,255,255,0.15);
+    color: #fff; text-decoration: none;
+    border: 1.5px solid rgba(255,255,255,0.45);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: 13px; font-weight: 700;
+    transition: background 0.15s;
+  }
+  .header .back-btn:hover { background: rgba(255,255,255,0.28); }
+  .header .header-title { flex: 1; }
+  .hint {
+    text-align: center;
+    color: #777;
+    font-size: 12px;
+    padding: 4px 24px 6px;
+    flex: 0 0 auto;
+  }
+
+  /* Three fraction columns */
+  .container {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 14px;
+    padding: 4px 18px 10px;
+    max-width: 1280px;
+    width: 100%;
+    margin: 0 auto;
+    flex: 0 0 auto;
+  }
+  @media (max-width: 900px) { .container { grid-template-columns: 1fr; } }
+  .section {
+    background: white;
+    border-radius: 12px;
+    padding: 12px 12px 10px;
+    text-align: center;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.07);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .section h2 {
+    font-size: 16px; font-weight: 600; margin: 0 0 8px 0; color: #333;
+  }
+
+  /* Diagrams – uniform area so the 3 columns line up */
+  .diagram {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 180px;
+    margin-bottom: 6px;
+  }
+  .diagram.hidden { visibility: hidden; }
+
+  /* FIXED-SIZE rectangle table — same outer footprint regardless of denominator.
+     Cells distribute via 1fr inside the fixed box, so 1/2 and 6/12 visibly match. */
+  .table {
+    width: 220px;
+    height: 140px;
+    display: grid;
+    background: white;
+    border-right:  1.5px solid #2b2b2b;
+    border-bottom: 1.5px solid #2b2b2b;
+    overflow: hidden;
+  }
+  .cell {
+    background: white;
+    transition: background-color 0.45s ease;
+    border-top:  1.5px solid #2b2b2b;
+    border-left: 1.5px solid #2b2b2b;
+    min-width: 0; min-height: 0;
+  }
+
+  #pizza-svg { width: 170px; height: 170px; max-width: 100%; }
+  .slice { transition: fill 0.55s ease; }
+  .pepperoni { transition: opacity 0.35s ease; }
+
+  /* Draggable pika handle */
+  .pika-handle { cursor: grab; }
+  .pika-handle:hover image { filter: drop-shadow(0 2px 4px rgba(0,0,0,0.25)); }
+  .pika-handle.dragging { cursor: grabbing; transition: none !important; }
+
+  /* Pokemon markers floating above the number line at each 0.1 step */
+  .pokemon-marker {
+    transform-box: fill-box;
+    transform-origin: center;
+    transition: transform 0.3s cubic-bezier(0.34,1.4,0.64,1), opacity 0.25s ease;
+    opacity: 0.55;
+    cursor: pointer;
+    /* multiply lets white screenshot backgrounds blend into the white page,
+       removing the visible square frame around each pokemon */
+    mix-blend-mode: multiply;
+  }
+  .pokemon-marker:hover { opacity: 0.95; transform: scale(1.08); }
+  .pokemon-marker.active {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+
+  /* Fraction display */
+  .display {
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 70px; justify-content: center; margin-bottom: 2px;
+  }
+  .display.hidden { visibility: hidden; }
+  .display input, .decimal-display input {
+    width: 62px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 700;
+    border: 2px dashed #b8b8b8;
+    border-radius: 6px;
+    background: white;
+    padding: 2px 4px;
+    outline: none;
+    font-family: inherit;
+    color: #1a1a1a;
+    -moz-appearance: textfield;
+  }
+  .display input::-webkit-outer-spin-button,
+  .display input::-webkit-inner-spin-button,
+  .decimal-display input::-webkit-outer-spin-button,
+  .decimal-display input::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+  }
+  .display input:focus, .decimal-display input:focus {
+    border-color: #7a1f4f; border-style: solid;
+  }
+  .frac-line { width: 60px; height: 2px; background: #1a1a1a; margin: 3px 0; }
+  .denom-static { font-size: 22px; font-weight: 700; width: 60px; text-align: center; padding: 2px 4px; color: #1a1a1a; }
+
+  /* Buttons */
+  .buttons {
+    margin-top: 6px;
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .btn {
+    padding: 5px 10px;
+    border: 1.5px solid #d0d0d0;
+    border-radius: 7px;
+    background: white;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    color: #444;
+    transition: all 0.15s ease;
+    min-width: 92px;
+  }
+  .btn:hover { border-color: #888; background: #f7f7f7; }
+  .btn.active { background: #7a1f4f; color: white; border-color: #7a1f4f; }
+
+  /* Decimal section (bottom) */
+  .decimal-section {
+    background: white;
+    margin: 0 auto 14px;
+    max-width: 1280px;
+    width: calc(100% - 36px);
+    border-radius: 12px;
+    padding: 10px 24px 12px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.07);
+    text-align: center;
+    flex: 0 0 auto;
+  }
+  .decimal-section h2 {
+    font-size: 16px; font-weight: 600; margin: 0 0 2px 0; color: #333;
+  }
+  .number-line-wrap {
+    width: 100%;
+    max-width: 940px;
+    margin: 0 auto;
+  }
+  .number-line-wrap.hidden { visibility: hidden; }
+  .number-line-row {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+  }
+  .number-line-row > svg { flex: 1 1 auto; min-width: 0; }
+  #number-line-svg { width: 100%; height: auto; display: block; }
+  .step-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    border: 1.5px solid #d0d0d0;
+    border-radius: 50%;
+    background: white;
+    cursor: pointer;
+    font-size: 16px;
+    font-weight: 700;
+    color: #555;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    font-family: inherit;
+    line-height: 1;
+    padding: 0;
+    user-select: none;
+  }
+  .step-btn:hover { border-color: #7a1f4f; color: #7a1f4f; background: #faf2f7; }
+  .step-btn:active { transform: scale(0.94); background: #f0e0ea; }
+  .decimal-display {
+    display: flex; flex-direction: row;
+    align-items: center; justify-content: center;
+    min-height: 40px; margin-top: 2px;
+  }
+  .decimal-display.hidden { visibility: hidden; }
+  /* Hero-sized decimal display at the top of the Decimal area */
+  .decimal-section .decimal-display {
+    min-height: 96px;
+    margin: 6px 0 16px;
+  }
+  .decimal-section .decimal-display input {
+    width: 200px;
+    font-size: 64px;
+    font-weight: 800;
+    padding: 4px 14px;
+    border-width: 3px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <a class="back-btn" href="student.html" title="Back to the achievement page">← Menu</a>
+  <span class="header-title">Fraction and Decimal</span>
+</div>
+<div class="hint">Change any fraction and the others become exact equivalents — denominators are adjusted automatically when needed. Drag Pikachu along the line to slide the decimal.</div>
+
+<!-- Three columns -->
+<div class="container">
+  <!-- Fraction -->
+  <div class="section" id="section-fraction">
+    <h2>Fraction</h2>
+    <div class="diagram" id="diagram-fraction">
+      <div class="table" id="fraction-table"></div>
+    </div>
+    <div class="display" id="display-fraction">
+      <input type="number" id="numerator" value="1" min="0" max="20" />
+      <div class="frac-line"></div>
+      <input type="number" id="denominator" value="2" min="1" max="20" />
+    </div>
+    <div class="buttons">
+      <button class="btn" id="hide-diagram-fraction">Hide Diagram</button>
+      <button class="btn" id="hide-number-fraction">Hide Number</button>
+    </div>
+  </div>
+
+  <!-- Equivalent Fraction -->
+  <div class="section" id="section-equivalent">
+    <h2>Equivalent Fraction</h2>
+    <div class="diagram" id="diagram-equivalent">
+      <div class="table" id="equivalent-table"></div>
+    </div>
+    <div class="display" id="display-equivalent">
+      <input type="number" id="eq-numerator" value="1" min="0" max="20" />
+      <div class="frac-line"></div>
+      <input type="number" id="eq-denominator" value="2" min="1" max="20" />
+    </div>
+    <div class="buttons">
+      <button class="btn" id="hide-diagram-equivalent">Hide Diagram</button>
+      <button class="btn" id="hide-number-equivalent">Hide Number</button>
+    </div>
+  </div>
+
+  <!-- Pizza Fraction (independent) -->
+  <div class="section" id="section-pizza">
+    <h2>Pizza Fraction</h2>
+    <div class="diagram" id="diagram-pizza">
+      <svg id="pizza-svg" viewBox="0 0 260 260"></svg>
+    </div>
+    <div class="display" id="display-pizza">
+      <input type="number" id="pizza-num" value="1" min="0" max="20" />
+      <div class="frac-line"></div>
+      <input type="number" id="pizza-denom" value="2" min="1" max="20" />
+    </div>
+    <div class="buttons">
+      <button class="btn" id="hide-diagram-pizza">Hide Diagram</button>
+      <button class="btn" id="hide-number-pizza">Hide Number</button>
+    </div>
+  </div>
+</div>
+
+<!-- Decimal section (bottom) -->
+<div class="decimal-section">
+  <h2>Decimal</h2>
+  <div class="decimal-display" id="display-decimal">
+    <input type="number" id="decimal" value="0.5" step="0.1" min="0" max="1" />
+  </div>
+  <div class="number-line-wrap" id="number-line-wrap">
+    <div class="number-line-row">
+      <button class="step-btn" id="dec-step-left" type="button" aria-label="Decrease by 0.1" title="−0.1">◀</button>
+      <svg id="number-line-svg" viewBox="0 0 1000 180" preserveAspectRatio="xMidYMid meet"></svg>
+      <button class="step-btn" id="dec-step-right" type="button" aria-label="Increase by 0.1" title="+0.1">▶</button>
+    </div>
+  </div>
+  <div class="buttons">
+    <button class="btn" id="hide-diagram-decimal">Hide Diagram</button>
+    <button class="btn" id="hide-number-decimal">Hide Number</button>
+  </div>
+</div>
+
+<script>
+  /* ===== Colors ===== */
+  const FRACTION_COLOR    = '#2E8B57'; // green
+  const DECIMAL_COLOR     = '#1E88E5'; // blue (number-line dot)
+  const PIZZA_FILL_COLOR  = '#d24c3d'; // pepperoni-tomato red
+  const PIZZA_EMPTY_COLOR = '#fee084'; // cheese
+  const CRUST_COLOR       = '#c47a3a';
+  const CRUST_OUTLINE     = '#8b5a2b';
+  const PEPPERONI_COLOR   = '#8a1f1f';
+
+  let linkedUpdating = false;
+
+  function gcd(a, b) { a = Math.abs(a); b = Math.abs(b); return b ? gcd(b, a % b) : a; }
+
+  /* ===== Year-4 denominator ranges =====
+     When a fraction is the source, the OTHER fractions must show an exact equivalent.
+     If their current denominator can't, we pick a new denominator within these ranges,
+     preferring values close to the current one, and always different from the source's denom. */
+  const Y4_MIN_DEN          = 2;
+  const Y4_MAX_DEN_RECT     = 20;   // fraction / equivalent rectangle (tables)
+  const Y4_MAX_DEN_PIZZA    = 12;   // pizza (visually clean slices)
+  const Y4_FALLBACK_MAX     = 36;   // last-resort widening (e.g. for 1/12)
+
+  function findExactEquivalent(srcNum, srcDen, currentTargetDen, opts) {
+    opts = opts || {};
+    const min          = opts.min          != null ? opts.min          : Y4_MIN_DEN;
+    const max          = opts.max          != null ? opts.max          : Y4_MAX_DEN_RECT;
+    const fallbackMax  = opts.fallbackMax  != null ? opts.fallbackMax  : Y4_FALLBACK_MAX;
+
+    // 0/anything: any denom works; keep current if reasonable & different from src
+    if (srcNum === 0) {
+      if (currentTargetDen >= min && currentTargetDen !== srcDen) {
+        return { num: 0, den: currentTargetDen };
+      }
+      for (let d = min; d <= max; d++) if (d !== srcDen) return { num: 0, den: d };
+      return { num: 0, den: min };
+    }
+
+    // 1. Try to keep currentTargetDen if it already produces an exact equivalent
+    if (currentTargetDen >= min && currentTargetDen <= max &&
+        (srcNum * currentTargetDen) % srcDen === 0) {
+      return {
+        num: (srcNum * currentTargetDen) / srcDen,
+        den: currentTargetDen
+      };
+    }
+
+    // 2. Otherwise: pick a different denom that DOES produce an exact equivalent.
+    //    Valid denoms = multiples of simpDen, excluding srcDen, within [min, max].
+    const g = gcd(srcNum, srcDen) || 1;
+    const simpDen = srcDen / g;
+
+    function collect(upper) {
+      const out = [];
+      for (let k = 1; k * simpDen <= upper; k++) {
+        const d = k * simpDen;
+        if (d >= min && d !== srcDen) out.push(d);
+      }
+      return out;
+    }
+
+    let candidates = collect(max);
+    if (candidates.length === 0) candidates = collect(fallbackMax);
+
+    if (candidates.length === 0) {
+      // No way to give an exact equivalent at all in range; double the source denom
+      return { num: srcNum * 2, den: srcDen * 2 };
+    }
+
+    // Pick the candidate closest to currentTargetDen (stable tie-break: prefer smaller)
+    candidates.sort((a, b) => {
+      const da = Math.abs(a - currentTargetDen);
+      const db = Math.abs(b - currentTargetDen);
+      if (da !== db) return da - db;
+      return a - b;
+    });
+    const bestDen = candidates[0];
+    return {
+      num: (srcNum * bestDen) / srcDen,
+      den: bestDen
+    };
+  }
+
+  /* Layout matching: when one rectangle is the source, the other rectangle should be
+     divided in a similar way — keep the same row count when possible.
+     e.g. Fraction 2/8 = 4×2  →  Equivalent 1/4 becomes 2×2 (not 1×4). */
+  function getMatchingLayout(targetDenom, sourceCols, sourceRows) {
+    // Only adapt when source is a true grid (both dimensions > 1)
+    if (sourceCols > 1 && sourceRows > 1 && targetDenom % sourceRows === 0) {
+      const cols = targetDenom / sourceRows;
+      // Avoid silly extremes (e.g. 14×2 for huge denominators with small source rows)
+      if (cols >= 1 && cols <= 24) {
+        return { cols, rows: sourceRows };
+      }
+    }
+    // Source is a single row? Keep target as a single row too if it fits.
+    if (sourceCols > 1 && sourceRows === 1 && targetDenom <= 14) {
+      return { cols: targetDenom, rows: 1 };
+    }
+    return getRectangleLayout(targetDenom);
+  }
+
+  /* Unified default rectangle layout: returns { cols, rows }.
+     The table itself is a FIXED 220×140px box (set in CSS), and cells use 1fr.
+     This way Fraction and Equivalent rectangles always share the same outer footprint —
+     1/2 and 6/12 have identical outer dimensions. */
+  function getRectangleLayout(denom) {
+    let cols;
+    if      (denom <= 5)   cols = 1;
+    else if (denom === 6)  cols = 3;
+    else if (denom === 7)  cols = 7;
+    else if (denom === 8)  cols = 4;
+    else if (denom === 9)  cols = 3;
+    else if (denom === 10) cols = 5;
+    else if (denom === 11) cols = 11;
+    else if (denom === 12) cols = 4;
+    else if (denom === 14) cols = 7;
+    else if (denom === 15) cols = 5;
+    else if (denom === 16) cols = 4;
+    else if (denom === 18) cols = 6;
+    else if (denom === 20) cols = 5;
+    else if (denom === 21) cols = 7;
+    else if (denom === 24) cols = 6;
+    else if (denom === 25) cols = 5;
+    else if (denom === 27) cols = 9;
+    else if (denom === 28) cols = 7;
+    else if (denom === 30) cols = 6;
+    else if (denom === 32) cols = 8;
+    else if (denom === 36) cols = 6;
+    else cols = Math.max(1, Math.ceil(Math.sqrt(denom)));
+
+    const rows = Math.ceil(denom / cols);
+    return { cols, rows };
+  }
+
+  const xmlns  = 'http://www.w3.org/2000/svg';
+  const xlinkns = 'http://www.w3.org/1999/xlink';
+
+  /* ===== Sound system — single click sound ===== */
+  let lastSoundTime = 0;
+  function playRandomSound() {
+    const now = performance.now();
+    if (now - lastSoundTime < 160) return;          // throttle so fast typing/drag isn't a wall of noise
+    lastSoundTime = now;
+    const audio = new Audio('sounds/click.mp3');
+    audio.volume = 0.55;
+    audio.play().catch(() => {});                    // browsers may block until first user gesture; ignore
+  }
+
+  /* ===== Rectangle table =====
+     Table is fixed 220×140 via CSS; cells size themselves with `1fr`. */
+  function fillTable(table, total, filled, color, cols, rows) {
+    table.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+    table.style.gridTemplateRows    = `repeat(${rows}, 1fr)`;
+
+    const rebuilt = table.children.length !== total;
+    if (rebuilt) {
+      table.innerHTML = '';
+      for (let i = 0; i < total; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'cell';
+        cell.style.backgroundColor = 'white';
+        table.appendChild(cell);
+      }
+    }
+    const cells = table.children;
+    const apply = () => {
+      for (let i = 0; i < cells.length; i++) {
+        const cell = cells[i];
+        cell.style.transitionDelay = (i * 0.05) + 's';
+        cell.style.backgroundColor = (i < filled) ? color : 'white';
+      }
+    };
+    if (rebuilt) requestAnimationFrame(() => requestAnimationFrame(apply));
+    else apply();
+  }
+
+  /* ===== Number line + draggable pika + pokemon markers ===== */
+  const NL = { x0: 30, x1: 970, y: 95 };
+
+  // 10 pokemon files mapped to decimal values 0.1 → 1.0
+  const POKEMON_FILES = [
+    '1.png', '2.png', '3.png', '4.png', '5.png',
+    '6.png', '7.png', '8.png', '9.png', '10.png'
+  ];
+  const POKEMON_NAMES = [
+    'Squirtle', 'Bulbasaur', 'Charmander', 'Eevee', 'Gengar',
+    'Snorlax', 'Skitty', 'Trapinch', 'Magikarp', 'Ditto'
+  ];
+
+  function setDecimalValue(value) {
+    const decEl = document.getElementById('decimal');
+    let s = value.toFixed(1).replace(/\.?0+$/, '');
+    decEl.value = s === '' ? '0' : s;
+    playRandomSound();
+    updateLinked('decimal');
+  }
+
+  function buildNumberLine() {
+    const svg = document.getElementById('number-line-svg');
+    svg.innerHTML = '';
+    const { x0, x1, y } = NL;
+
+    // Main line
+    const line = document.createElementNS(xmlns, 'line');
+    line.setAttribute('x1', x0); line.setAttribute('y1', y);
+    line.setAttribute('x2', x1); line.setAttribute('y2', y);
+    line.setAttribute('stroke', '#1a1a1a'); line.setAttribute('stroke-width', '3');
+    svg.appendChild(line);
+
+    // End caps
+    for (const x of [x0, x1]) {
+      const cap = document.createElementNS(xmlns, 'line');
+      cap.setAttribute('x1', x); cap.setAttribute('y1', y - 14);
+      cap.setAttribute('x2', x); cap.setAttribute('y2', y + 14);
+      cap.setAttribute('stroke', '#1a1a1a'); cap.setAttribute('stroke-width', '3');
+      svg.appendChild(cap);
+    }
+
+    // Ticks + labels
+    for (let i = 0; i <= 10; i++) {
+      const x = x0 + (i / 10) * (x1 - x0);
+      const major = i % 2 === 0;
+      const tick = document.createElementNS(xmlns, 'line');
+      tick.setAttribute('x1', x); tick.setAttribute('y1', major ? y - 10 : y - 7);
+      tick.setAttribute('x2', x); tick.setAttribute('y2', major ? y + 10 : y + 7);
+      tick.setAttribute('stroke', '#1a1a1a');
+      tick.setAttribute('stroke-width', major ? '2.5' : '2');
+      svg.appendChild(tick);
+
+      if (major) {
+        const label = document.createElementNS(xmlns, 'text');
+        // Number labels now sit ABOVE the line (swapped with pokemon markers)
+        label.setAttribute('x', x); label.setAttribute('y', y - 30);
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('font-size', '20');
+        label.setAttribute('font-family', 'Helvetica Neue, Arial, sans-serif');
+        label.setAttribute('font-weight', (i === 0 || i === 10) ? '700' : '500');
+        label.setAttribute('fill', (i === 0 || i === 10) ? '#1a1a1a' : '#777');
+        label.textContent = (i / 10).toString();
+        svg.appendChild(label);
+      }
+    }
+
+    // Pokemon markers now BELOW each 0.1 tick (swapped with the number labels).
+    // Click any pokemon to jump pika to that value.
+    const pokemonSize = 40;
+    const pokemonY = y + 28;  // below the line, just under Pika's feet
+    for (let i = 0; i < 10; i++) {
+      const v = (i + 1) / 10;                      // 0.1, 0.2, …, 1.0
+      const cx = x0 + v * (x1 - x0);
+      const img = document.createElementNS(xmlns, 'image');
+      img.setAttribute('class', 'pokemon-marker');
+      img.dataset.value = v.toFixed(1);
+      img.dataset.name = POKEMON_NAMES[i];
+      const href = 'pokemon/' + encodeURIComponent(POKEMON_FILES[i]);
+      img.setAttribute('href', href);
+      img.setAttributeNS(xlinkns, 'xlink:href', href);
+      img.setAttribute('x', cx - pokemonSize / 2);
+      img.setAttribute('y', pokemonY);
+      img.setAttribute('width',  pokemonSize);
+      img.setAttribute('height', pokemonSize);
+      // Native SVG tooltip
+      const title = document.createElementNS(xmlns, 'title');
+      title.textContent = POKEMON_NAMES[i] + ' — ' + v.toFixed(1);
+      img.appendChild(title);
+      img.addEventListener('click', () => setDecimalValue(v));
+      svg.appendChild(img);
+    }
+
+    // Pika handle (draggable image marker)
+    const pikaSize = 56;
+    const pikaG = document.createElementNS(xmlns, 'g');
+    pikaG.setAttribute('class', 'value-dot pika-handle');
+    pikaG.style.transition = 'transform 0.45s cubic-bezier(0.65, 0, 0.35, 1)';
+
+    const pikaImg = document.createElementNS(xmlns, 'image');
+    pikaImg.setAttribute('href', 'pika.webp');
+    pikaImg.setAttributeNS(xlinkns, 'xlink:href', 'pika.webp');
+    pikaImg.setAttribute('x', -pikaSize / 2);
+    pikaImg.setAttribute('y', -pikaSize / 2 - 2);     // slight lift so feet are near the line
+    pikaImg.setAttribute('width',  pikaSize);
+    pikaImg.setAttribute('height', pikaSize);
+    pikaImg.style.pointerEvents = 'none';             // events fire on parent <g>
+    pikaG.appendChild(pikaImg);
+
+    pikaG.setAttribute('transform', `translate(${x0 + 0.5 * (x1 - x0)}, ${y})`);
+    svg.appendChild(pikaG);
+
+    setupPikaDrag(pikaG, svg);
+  }
+
+  function updateNumberLine(value) {
+    const svg = document.getElementById('number-line-svg');
+    const pikaG = svg.querySelector('.value-dot');
+    if (!pikaG) return;
+    const { x0, x1, y } = NL;
+    pikaG.setAttribute('transform', `translate(${x0 + value * (x1 - x0)}, ${y})`);
+
+    // Highlight the pokemon at this value (within 0.05 tolerance for drag snapping)
+    svg.querySelectorAll('.pokemon-marker').forEach(img => {
+      const v = parseFloat(img.dataset.value);
+      img.classList.toggle('active', Math.abs(v - value) < 0.05);
+    });
+  }
+
+  function setupPikaDrag(pikaG, svg) {
+    let dragging = false;
+    let lastDragSound = 0;
+
+    function applyValue(clientX) {
+      const rect = svg.getBoundingClientRect();
+      const localX = clientX - rect.left;
+      // SVG viewBox is 0..1000 wide; map screen → svg coords
+      const svgX = (localX / rect.width) * 1000;
+      const t = (svgX - NL.x0) / (NL.x1 - NL.x0);
+      let value = Math.max(0, Math.min(1, t));
+
+      // Snap to nearest 0.1 (Year-4 slider step)
+      value = Math.round(value * 10) / 10;
+
+      const decEl = document.getElementById('decimal');
+      const prev = decEl.value;
+      let s = value.toFixed(1).replace(/\.?0+$/, '');
+      decEl.value = s === '' ? '0' : s;
+      // Avoid re-firing work if value didn't actually change between drag samples
+      if (decEl.value === prev) return;
+
+      // Throttle sound a bit more during continuous drag
+      const now = performance.now();
+      if (now - lastDragSound > 200) {
+        lastDragSound = now;
+        playRandomSound();
+      }
+      updateLinked('decimal');
+    }
+
+    function start(e) {
+      dragging = true;
+      pikaG.classList.add('dragging');
+      const cx = e.touches ? e.touches[0].clientX : e.clientX;
+      applyValue(cx);
+      e.preventDefault();
+    }
+    function move(e) {
+      if (!dragging) return;
+      const cx = e.touches ? e.touches[0].clientX : e.clientX;
+      applyValue(cx);
+      e.preventDefault();
+    }
+    function end() {
+      if (!dragging) return;
+      dragging = false;
+      pikaG.classList.remove('dragging');
+    }
+
+    pikaG.addEventListener('mousedown',  start);
+    pikaG.addEventListener('touchstart', start, { passive: false });
+    document.addEventListener('mousemove',  move);
+    document.addEventListener('touchmove',  move, { passive: false });
+    document.addEventListener('mouseup',   end);
+    document.addEventListener('touchend',  end);
+    document.addEventListener('touchcancel', end);
+  }
+
+  /* ===== Pizza ===== */
+  function polarToCartesian(cx, cy, r, angleDeg) {
+    const rad = (angleDeg - 90) * Math.PI / 180;
+    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+  }
+
+  // Fixed topping positions: a = angle in degrees (0 = top, clockwise), d = distance from center as fraction of rInner
+  const TOPPINGS = [
+    // Pepperoni
+    { type: 'pepperoni', a:  12, d: 0.32, r: 11 },
+    { type: 'pepperoni', a:  48, d: 0.58, r: 12 },
+    { type: 'pepperoni', a:  82, d: 0.38, r: 10 },
+    { type: 'pepperoni', a: 122, d: 0.62, r: 11 },
+    { type: 'pepperoni', a: 168, d: 0.42, r: 12 },
+    { type: 'pepperoni', a: 205, d: 0.62, r: 10 },
+    { type: 'pepperoni', a: 248, d: 0.36, r: 12 },
+    { type: 'pepperoni', a: 285, d: 0.58, r: 11 },
+    { type: 'pepperoni', a: 325, d: 0.68, r: 10 },
+    { type: 'pepperoni', a: 350, d: 0.28, r: 11 },
+    // Black olives
+    { type: 'olive', a:  28, d: 0.70 },
+    { type: 'olive', a:  68, d: 0.18 },
+    { type: 'olive', a: 102, d: 0.68 },
+    { type: 'olive', a: 150, d: 0.25 },
+    { type: 'olive', a: 195, d: 0.78 },
+    { type: 'olive', a: 232, d: 0.62 },
+    { type: 'olive', a: 270, d: 0.22 },
+    { type: 'olive', a: 308, d: 0.42 },
+    { type: 'olive', a: 340, d: 0.50 },
+    // Mushrooms
+    { type: 'mushroom', a:   0, d: 0.55 },
+    { type: 'mushroom', a:  62, d: 0.22 },
+    { type: 'mushroom', a: 142, d: 0.55 },
+    { type: 'mushroom', a: 182, d: 0.30 },
+    { type: 'mushroom', a: 222, d: 0.40 },
+    { type: 'mushroom', a: 298, d: 0.72 },
+    { type: 'mushroom', a: 332, d: 0.22 }
+  ];
+
+  function drawToppings(svg, cx, cy, rInner) {
+    TOPPINGS.forEach(t => {
+      const pos = polarToCartesian(cx, cy, t.d * rInner, t.a);
+      const x = pos.x, y = pos.y;
+
+      if (t.type === 'pepperoni') {
+        const c = document.createElementNS(xmlns, 'circle');
+        c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', t.r || 10);
+        c.setAttribute('fill', '#c64438');
+        c.setAttribute('stroke', '#7a1a1a'); c.setAttribute('stroke-width', '0.9');
+        svg.appendChild(c);
+        // Two small darker spots for texture
+        const s1 = document.createElementNS(xmlns, 'circle');
+        s1.setAttribute('cx', x - (t.r||10) * 0.3); s1.setAttribute('cy', y - (t.r||10) * 0.15);
+        s1.setAttribute('r', 1.5); s1.setAttribute('fill', '#7a1a1a');
+        svg.appendChild(s1);
+        const s2 = document.createElementNS(xmlns, 'circle');
+        s2.setAttribute('cx', x + (t.r||10) * 0.25); s2.setAttribute('cy', y + (t.r||10) * 0.25);
+        s2.setAttribute('r', 1.2); s2.setAttribute('fill', '#7a1a1a');
+        svg.appendChild(s2);
+      } else if (t.type === 'olive') {
+        const c = document.createElementNS(xmlns, 'circle');
+        c.setAttribute('cx', x); c.setAttribute('cy', y); c.setAttribute('r', 4.5);
+        c.setAttribute('fill', '#1f1521');
+        svg.appendChild(c);
+        // Olive hole (ring effect)
+        const hole = document.createElementNS(xmlns, 'circle');
+        hole.setAttribute('cx', x); hole.setAttribute('cy', y); hole.setAttribute('r', 1.5);
+        hole.setAttribute('fill', '#8a6a3a');
+        svg.appendChild(hole);
+      } else if (t.type === 'mushroom') {
+        // Cap: half-rounded shape
+        const cap = document.createElementNS(xmlns, 'path');
+        const r = 7;
+        cap.setAttribute('d', `M ${x - r} ${y + 1.5} A ${r} ${r * 0.95} 0 0 1 ${x + r} ${y + 1.5} Z`);
+        cap.setAttribute('fill', '#dac8a8');
+        cap.setAttribute('stroke', '#8a6f50'); cap.setAttribute('stroke-width', '0.6');
+        svg.appendChild(cap);
+        // Stem
+        const stem = document.createElementNS(xmlns, 'rect');
+        stem.setAttribute('x', x - 2); stem.setAttribute('y', y + 1.5);
+        stem.setAttribute('width', 4); stem.setAttribute('height', 4.5);
+        stem.setAttribute('fill', '#efe3c8');
+        stem.setAttribute('stroke', '#8a6f50'); stem.setAttribute('stroke-width', '0.5');
+        svg.appendChild(stem);
+      }
+    });
+  }
+
+  function buildSliceOverlays(svg, denom, cx, cy, rInner) {
+    svg.querySelectorAll('.slice-overlay, .divider').forEach(el => el.remove());
+
+    if (denom === 1) {
+      const overlay = document.createElementNS(xmlns, 'circle');
+      overlay.setAttribute('class', 'slice-overlay');
+      overlay.setAttribute('cx', cx); overlay.setAttribute('cy', cy);
+      overlay.setAttribute('r', rInner);
+      overlay.setAttribute('fill', 'white');
+      overlay.style.opacity = '0.7';
+      overlay.style.transition = 'opacity 0.55s ease';
+      svg.appendChild(overlay);
+      return;
+    }
+
+    // Slice overlays (one per slice). Opacity 0 = revealed, 0.7 = washed out.
+    for (let i = 0; i < denom; i++) {
+      const startA = (i / denom) * 360;
+      const endA   = ((i + 1) / denom) * 360;
+      const start = polarToCartesian(cx, cy, rInner, startA);
+      const end   = polarToCartesian(cx, cy, rInner, endA);
+      const largeArc = (endA - startA) > 180 ? 1 : 0;
+      const d = `M ${cx} ${cy} L ${start.x} ${start.y} A ${rInner} ${rInner} 0 ${largeArc} 1 ${end.x} ${end.y} Z`;
+
+      const overlay = document.createElementNS(xmlns, 'path');
+      overlay.setAttribute('class', 'slice-overlay');
+      overlay.setAttribute('d', d);
+      overlay.setAttribute('fill', 'white');
+      overlay.style.opacity = '0.7';
+      overlay.style.transition = 'opacity 0.55s ease';
+      overlay.style.transitionDelay = (i * 0.09) + 's';
+      svg.appendChild(overlay);
+    }
+
+    // White divider lines from center to crust edge
+    const dividerLen = rInner + 6;
+    for (let i = 0; i < denom; i++) {
+      const a = (i / denom) * 360;
+      const end = polarToCartesian(cx, cy, dividerLen, a);
+      const divider = document.createElementNS(xmlns, 'line');
+      divider.setAttribute('class', 'divider');
+      divider.setAttribute('x1', cx); divider.setAttribute('y1', cy);
+      divider.setAttribute('x2', end.x); divider.setAttribute('y2', end.y);
+      divider.setAttribute('stroke', 'white');
+      divider.setAttribute('stroke-width', '5');
+      divider.setAttribute('stroke-linecap', 'round');
+      svg.appendChild(divider);
+    }
+  }
+
+  function drawPizza(num, denom) {
+    const svg = document.getElementById('pizza-svg');
+    const cx = 130, cy = 130, rOuter = 122, rInner = 108;
+
+    // First-time build of crust + cheese + toppings (drawn ONCE, beneath overlays)
+    if (svg.dataset.built !== 'true') {
+      svg.innerHTML = '';
+
+      // Crust ring
+      const crust = document.createElementNS(xmlns, 'circle');
+      crust.setAttribute('cx', cx); crust.setAttribute('cy', cy);
+      crust.setAttribute('r', rOuter);
+      crust.setAttribute('fill', CRUST_COLOR);
+      crust.setAttribute('stroke', CRUST_OUTLINE);
+      crust.setAttribute('stroke-width', '2.5');
+      svg.appendChild(crust);
+
+      // Cheese base
+      const cheese = document.createElementNS(xmlns, 'circle');
+      cheese.setAttribute('cx', cx); cheese.setAttribute('cy', cy);
+      cheese.setAttribute('r', rInner);
+      cheese.setAttribute('fill', PIZZA_EMPTY_COLOR);
+      svg.appendChild(cheese);
+
+      // Toppings (pepperoni / olives / mushrooms)
+      drawToppings(svg, cx, cy, rInner);
+
+      svg.dataset.built = 'true';
+      svg.dataset.denom = '0';
+    }
+
+    const denomChanged = parseInt(svg.dataset.denom || '0') !== denom;
+    if (denomChanged) {
+      buildSliceOverlays(svg, denom, cx, cy, rInner);
+      svg.dataset.denom = String(denom);
+    }
+
+    // Reveal first `num` slices by fading out their white overlay
+    const applyFills = () => {
+      const overlays = svg.querySelectorAll('.slice-overlay');
+      overlays.forEach((overlay, i) => {
+        overlay.style.transitionDelay = (i * 0.09) + 's';
+        overlay.style.opacity = (i < num) ? '0' : '0.7';
+      });
+    };
+    if (denomChanged) requestAnimationFrame(() => requestAnimationFrame(applyFills));
+    else applyFills();
+  }
+
+  /* ===== Linked updater (Fraction + Equivalent + Decimal + Pizza — all four sync) =====
+     Two modes:
+     - FRACTION source (any num/denom input): other fractions become EXACT equivalents.
+       If the target's current denom can't represent the value exactly, findExactEquivalent
+       picks a different (Year-4-friendly) denom that can.
+     - DECIMAL source (typing decimal or dragging Pikachu): each fraction just rounds to
+       its current denominator (no denom changes; approximation is fine on the slider). */
+  function clampInt(v, lo, hi) { return Math.min(Math.max(v, lo), hi); }
+
+  function updateLinked(source) {
+    if (linkedUpdating) return;
+    linkedUpdating = true;
+
+    const numEl    = document.getElementById('numerator');
+    const denEl    = document.getElementById('denominator');
+    const eqNumEl  = document.getElementById('eq-numerator');
+    const eqDenEl  = document.getElementById('eq-denominator');
+    const decEl    = document.getElementById('decimal');
+    const pNumEl   = document.getElementById('pizza-num');
+    const pDenEl   = document.getElementById('pizza-denom');
+
+    let num   = parseInt(numEl.value);
+    let den   = parseInt(denEl.value);
+    let eqNum = parseInt(eqNumEl.value);
+    let eqDen = parseInt(eqDenEl.value);
+    let dec   = parseFloat(decEl.value);
+    let pNum  = parseInt(pNumEl.value);
+    let pDen  = parseInt(pDenEl.value);
+
+    if (isNaN(num)) num = 0;
+    if (isNaN(den)   || den   < 1) den   = 1;
+    if (isNaN(eqNum)) eqNum = 0;
+    if (isNaN(eqDen) || eqDen < 1) eqDen = 1;
+    if (isNaN(dec)) dec = 0;
+    if (isNaN(pNum)) pNum = 0;
+    if (isNaN(pDen)  || pDen  < 1) pDen  = 1;
+
+    num   = clampInt(num,   0, 30);
+    den   = clampInt(den,   1, 30);
+    eqNum = clampInt(eqNum, 0, 36);
+    eqDen = clampInt(eqDen, 1, 36);
+    pNum  = clampInt(pNum,  0, 24);
+    pDen  = clampInt(pDen,  1, 24);
+    if (num   > den)   num   = den;
+    if (eqNum > eqDen) eqNum = eqDen;
+    if (pNum  > pDen)  pNum  = pDen;
+    if (dec < 0) dec = 0;
+    if (dec > 1) dec = 1;
+
+    // Identify source mode
+    const isFractionSource =
+      source === 'fraction-num' || source === 'fraction-denom' ||
+      source === 'eq-num'       || source === 'eq-denom' ||
+      source === 'pizza-num'    || source === 'pizza-denom' ||
+      source === 'init';
+
+    // Source num/den
+    let srcNum, srcDen, value;
+    if      (source === 'fraction-num' || source === 'fraction-denom' || source === 'init') { srcNum = num;   srcDen = den; }
+    else if (source === 'eq-num'       || source === 'eq-denom')                              { srcNum = eqNum; srcDen = eqDen; }
+    else if (source === 'pizza-num'    || source === 'pizza-denom')                           { srcNum = pNum;  srcDen = pDen; }
+
+    if (isFractionSource) {
+      value = srcNum / srcDen;
+      if (value > 1) value = 1;
+      if (value < 0) value = 0;
+
+      // Update every non-source fraction to be an EXACT equivalent of (srcNum/srcDen)
+      if (source !== 'fraction-num' && source !== 'fraction-denom') {
+        const r = findExactEquivalent(srcNum, srcDen, den, { max: Y4_MAX_DEN_RECT });
+        num = r.num; den = r.den;
+      }
+      if (source !== 'eq-num' && source !== 'eq-denom') {
+        const r = findExactEquivalent(srcNum, srcDen, eqDen, { max: Y4_MAX_DEN_RECT });
+        eqNum = r.num; eqDen = r.den;
+      }
+      if (source !== 'pizza-num' && source !== 'pizza-denom') {
+        const r = findExactEquivalent(srcNum, srcDen, pDen, { max: Y4_MAX_DEN_PIZZA });
+        pNum = r.num; pDen = r.den;
+      }
+      dec = Math.round(value * 100) / 100;
+    } else {
+      // Decimal source: just round each fraction to its current denominator (no denom change)
+      value = dec;
+      num   = Math.round(value * den);
+      eqNum = Math.round(value * eqDen);
+      pNum  = Math.round(value * pDen);
+    }
+
+    if (num   > den)   num   = den;
+    if (eqNum > eqDen) eqNum = eqDen;
+    if (pNum  > pDen)  pNum  = pDen;
+
+    // Reflect computed values back into the non-source inputs
+    if (source !== 'fraction-num')   numEl.value   = num;
+    if (source !== 'fraction-denom') denEl.value   = den;
+    if (source !== 'eq-num')         eqNumEl.value = eqNum;
+    if (source !== 'eq-denom')       eqDenEl.value = eqDen;
+    if (source !== 'pizza-num')      pNumEl.value  = pNum;
+    if (source !== 'pizza-denom')    pDenEl.value  = pDen;
+    if (source !== 'decimal') {
+      let s = dec.toFixed(2).replace(/\.?0+$/, '');
+      decEl.value = s === '' ? '0' : s;
+    }
+
+    // Layouts: source uses its natural layout; the OTHER rectangle mirrors
+    // the source's row count when possible, so 4×2 → 2×2 instead of 1×4.
+    let fL, eqL;
+    if (source === 'fraction-num' || source === 'fraction-denom' || source === 'init') {
+      fL  = getRectangleLayout(den);
+      eqL = getMatchingLayout(eqDen, fL.cols, fL.rows);
+    } else if (source === 'eq-num' || source === 'eq-denom') {
+      eqL = getRectangleLayout(eqDen);
+      fL  = getMatchingLayout(den, eqL.cols, eqL.rows);
+    } else {
+      // pizza / decimal source — match the rectangles to each other when possible
+      const baseL = getRectangleLayout(den);
+      fL  = baseL;
+      eqL = getMatchingLayout(eqDen, baseL.cols, baseL.rows);
+    }
+
+    fillTable(document.getElementById('fraction-table'),   den,   num,   FRACTION_COLOR, fL.cols,  fL.rows);
+    fillTable(document.getElementById('equivalent-table'), eqDen, eqNum, FRACTION_COLOR, eqL.cols, eqL.rows);
+    updateNumberLine(value);
+    drawPizza(pNum, pDen);
+
+    linkedUpdating = false;
+  }
+
+  /* ===== Hide toggle ===== */
+  function setupToggle(btnId, target, cls, label) {
+    const btn = document.getElementById(btnId);
+    btn.addEventListener('click', () => {
+      target.classList.toggle(cls);
+      btn.classList.toggle('active');
+      const isHidden = target.classList.contains(cls);
+      btn.textContent = (isHidden ? 'Show ' : 'Hide ') + label;
+    });
+  }
+
+  /* ===== Wire-up ===== */
+  function wireInput(id, source) {
+    document.getElementById(id).addEventListener('input', () => {
+      playRandomSound();
+      updateLinked(source);
+    });
+  }
+  wireInput('numerator',      'fraction-num');
+  wireInput('denominator',    'fraction-denom');
+  wireInput('eq-numerator',   'eq-num');
+  wireInput('eq-denominator', 'eq-denom');
+  wireInput('decimal',        'decimal');
+  wireInput('pizza-num',      'pizza-num');
+  wireInput('pizza-denom',    'pizza-denom');
+
+  /* ===== Decimal step buttons (◀ / ▶ to nudge by 0.1) ===== */
+  function stepDecimal(delta) {
+    const decEl = document.getElementById('decimal');
+    let v = parseFloat(decEl.value);
+    if (isNaN(v)) v = 0;
+    // Snap current to 0.1, then step
+    v = Math.round(v * 10) / 10;
+    v = Math.max(0, Math.min(1, v + delta));
+    v = Math.round(v * 10) / 10;       // re-snap after add (handles float drift)
+
+    let s = v.toFixed(1).replace(/\.?0+$/, '');
+    decEl.value = s === '' ? '0' : s;
+
+    playRandomSound();
+    updateLinked('decimal');
+  }
+  document.getElementById('dec-step-left') .addEventListener('click', () => stepDecimal(-0.1));
+  document.getElementById('dec-step-right').addEventListener('click', () => stepDecimal( 0.1));
+
+  // Keyboard ←/→ on the decimal input also steps by 0.1
+  document.getElementById('decimal').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); stepDecimal(-0.1); }
+    if (e.key === 'ArrowRight') { e.preventDefault(); stepDecimal( 0.1); }
+  });
+
+  setupToggle('hide-diagram-decimal',    document.getElementById('number-line-wrap'),  'hidden', 'Diagram');
+  setupToggle('hide-number-decimal',     document.getElementById('display-decimal'),    'hidden', 'Number');
+  setupToggle('hide-diagram-fraction',   document.getElementById('diagram-fraction'),   'hidden', 'Diagram');
+  setupToggle('hide-number-fraction',    document.getElementById('display-fraction'),   'hidden', 'Number');
+  setupToggle('hide-diagram-equivalent', document.getElementById('diagram-equivalent'), 'hidden', 'Diagram');
+  setupToggle('hide-number-equivalent',  document.getElementById('display-equivalent'), 'hidden', 'Number');
+  setupToggle('hide-diagram-pizza',      document.getElementById('diagram-pizza'),      'hidden', 'Diagram');
+  setupToggle('hide-number-pizza',       document.getElementById('display-pizza'),      'hidden', 'Number');
+
+  /* ===== Initial render ===== */
+  buildNumberLine();
+
+  /* ===== URL-param preload =====
+     fraction_decimal.html?num=3&den=10           → loads 3/10  (decimal auto-fills)
+     fraction_decimal.html?dec=0.5                → loads 0.5
+     fraction_decimal.html?num=1&den=2&eqDen=10   → 1/2 with equivalent box pre-set to ?/10
+     fraction_decimal.html?pizzaNum=1&pizzaDen=3  → pizza pre-set */
+  (function preloadFromUrl(){
+    const p = new URLSearchParams(location.search);
+    let source = 'init';
+    const numEl   = document.getElementById('numerator');
+    const denEl   = document.getElementById('denominator');
+    const eqNumEl = document.getElementById('eq-numerator');
+    const eqDenEl = document.getElementById('eq-denominator');
+    const decEl   = document.getElementById('decimal');
+    const pNumEl  = document.getElementById('pizza-num');
+    const pDenEl  = document.getElementById('pizza-denom');
+    if (p.has('num'))      { numEl.value   = p.get('num'); source = 'fraction-num'; }
+    if (p.has('den'))      { denEl.value   = p.get('den'); source = 'fraction-denom'; }
+    if (p.has('eqNum'))    { eqNumEl.value = p.get('eqNum'); source = 'eq-num'; }
+    if (p.has('eqDen'))    { eqDenEl.value = p.get('eqDen'); source = 'eq-denom'; }
+    if (p.has('dec'))      { decEl.value   = p.get('dec'); source = 'decimal'; }
+    if (p.has('pizzaNum')) { pNumEl.value  = p.get('pizzaNum'); source = 'pizza-num'; }
+    if (p.has('pizzaDen')) { pDenEl.value  = p.get('pizzaDen'); source = 'pizza-denom'; }
+    updateLinked(source);
+  })();
+</script>
+</body>
+</html>

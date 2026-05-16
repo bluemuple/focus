@@ -1915,6 +1915,9 @@
     const NAV_TOGGLES = [
       { key: 'hideTheSpace', label: 'Hide the "The Space" button on the student home page', tip: 'Students won\'t see or be able to enter the virtual classroom.' },
       { key: 'hideMyPets',   label: 'Hide the "My Pets" button on the student home page',   tip: 'Hides the profile / pet collection link.' },
+      { key: 'hideMaths',    label: 'Hide the "Maths" button on the student home page',     tip: 'Hides the link into the maths-game app.' },
+      { key: 'hidePhonics',  label: 'Hide the "Phonics" button on the student home page',   tip: 'Hides the link into the phonics activity.' },
+      { key: 'hideAnimals',  label: 'Hide the "Animals" button on the student home page',   tip: 'Hides the link into the animal encyclopedia.' },
     ];
 
     // Per-level encounter probabilities. Start from whatever is saved
