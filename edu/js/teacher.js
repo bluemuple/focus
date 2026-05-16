@@ -780,10 +780,16 @@
       const row = document.createElement('div');
       row.className = 'wc-list-item' + (editing ? ' wc-editing' : '');
       if (isHidden) row.style.opacity = '0.55';
+      // Title is the preview link — clicking it opens the lesson in
+      // a new tab as a student would see it. Avoids a separate
+      // Preview button, which was crowding the action row.
+      const previewHref = './lesson.html?id=' + encodeURIComponent(L.id) + '&preview=1';
       row.innerHTML = `
         <div>
           <div class="title">
-            ${escapeHtml(L.title)}
+            <a href="${previewHref}" target="_blank" rel="noopener"
+               title="Open this lesson in a new tab, as a student would see it"
+               style="color:inherit; text-decoration:none; border-bottom:1px dashed currentColor;">${escapeHtml(L.title)}</a>
             ${editing  ? ' <span class="wc-muted" style="font-size:13px;">(editing)</span>' : ''}
             ${isHidden ? ' <span style="font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:999px;margin-left:6px;">Hidden</span>' : ''}
           </div>
@@ -797,9 +803,6 @@
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
           <button class="wc-btn ghost" data-edit="${L.id}"
                   title="Open this lesson in the edit form below">✏️ Edit</button>
-          <a href="./lesson.html?id=${encodeURIComponent(L.id)}&preview=1"
-             class="wc-btn ghost" target="_blank" rel="noopener"
-             title="Open the lesson in a new tab, as a student would see it">Preview</a>
           <button class="wc-btn ghost" data-toggle-hidden="${L.id}"
                   title="${isHidden ? 'Show this lesson to students again' : 'Hide this lesson from students'}">
             ${isHidden ? '👁 Show' : '🙈 Hide'}

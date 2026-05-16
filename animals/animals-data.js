@@ -1244,13 +1244,25 @@ function withSuggestion(base, override) {
   return merged;
 }
 
+// Teacher-added custom animals — stored separately in localStorage
+// so they don't collide with the base ANIMALS array. Persisted by
+// the admin page's "＋ Add animal" button.
+const ADDED_KEY = 'animals_custom_added_v1';
+function loadAddedAnimals() {
+  try { return JSON.parse(localStorage.getItem(ADDED_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+
 function getMergedAnimals() {
   const overrides = loadOverrides();
-  return ANIMALS.map(a => withSuggestion(a, overrides[a.id]));
+  const baseList  = ANIMALS.map(a => withSuggestion(a, overrides[a.id]));
+  const added     = loadAddedAnimals().map(a => withSuggestion(a, overrides[a.id]));
+  return baseList.concat(added);
 }
 
 function getMergedAnimal(id) {
-  const base = ANIMALS.find(a => a.id === id);
+  let base = ANIMALS.find(a => a.id === id);
+  if (!base) base = loadAddedAnimals().find(a => a.id === id);
   if (!base) return null;
   return withSuggestion(base, loadOverrides()[id]);
 }

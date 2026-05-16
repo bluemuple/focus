@@ -225,7 +225,71 @@
     font-weight: 600;
     position: relative;
     z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
   }
+  /* Heart button — sits next to the animal name. Big tap target,
+     muted when empty, red + bigger when the current user has
+     hearted this one. Number after is the count of voters. */
+  .heart-btn {
+    background: transparent;
+    border: none;
+    padding: 2px 4px;
+    border-radius: 999px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.95rem;
+    line-height: 1;
+    color: var(--muted);
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    transition: transform 0.1s ease, color 0.15s ease;
+  }
+  .heart-btn:hover  { color: var(--primary-dark); transform: scale(1.12); }
+  .heart-btn:active { transform: scale(0.95); }
+  .heart-btn.mine   { color: var(--primary-dark); font-weight: 800; }
+  .heart-btn.mine .heart-icon { filter: none; }
+  .heart-icon { font-size: 1rem; }
+
+  /* Heart-change confirmation modal */
+  .heart-modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 24px;
+  }
+  .heart-modal-backdrop.open { display: flex; }
+  .heart-modal {
+    background: white;
+    border-radius: 22px;
+    padding: 26px 24px 22px;
+    max-width: 420px; width: 100%;
+    box-shadow: 0 30px 80px rgba(0,0,0,0.35);
+  }
+  .heart-modal h3   { margin: 0 0 10px; color: var(--text); font-size: 1.2rem; }
+  .heart-modal p    { margin: 0 0 8px; color: var(--text); line-height: 1.45; }
+  .heart-modal .hm-muted { color: var(--muted); font-size: 0.9rem; }
+  .heart-modal-actions {
+    display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px;
+  }
+  .heart-modal-actions button {
+    border: 0; border-radius: 999px; padding: 10px 18px;
+    font: inherit; font-weight: 700; cursor: pointer;
+  }
+  .hm-cancel  { background: #f3f4f6; color: var(--text); }
+  .hm-confirm { background: var(--primary-dark); color: white; }
+  .hm-pw      {
+    width: 100%; margin-top: 10px;
+    padding: 10px 14px; border-radius: 12px;
+    border: 2px solid var(--bg2); font: inherit; font-size: 1rem;
+  }
+  .hm-pw.bad  { border-color: var(--primary-dark); }
+  .hm-error   { color: var(--primary-dark); font-size: 0.85rem; margin-top: 6px; min-height: 18px; }
 
   .empty-state {
     text-align: center;
@@ -276,11 +340,143 @@
     <footer>Made by <span id="charlieLink" tabindex="0" role="button" title="Teacher login">Mr. Charlie</span> with 💖 for curious learners</footer>
   </div>
 
+  <!-- Heart-change confirmation modal — surfaces when a logged-in
+       user clicks a NEW animal's heart while already having an old
+       one. Mr. Charlie's password (2316) is required to switch. -->
+  <div class="heart-modal-backdrop" id="hmBackdrop" aria-hidden="true">
+    <div class="heart-modal" role="dialog" aria-labelledby="hmTitle">
+      <h3 id="hmTitle">Change your favourite?</h3>
+      <p id="hmMsg">Loading…</p>
+      <p class="hm-muted">Go talk to Mr. Charlie before you switch.</p>
+      <div id="hmConfirmStage" style="display:none;">
+        <input id="hmPw" class="hm-pw" type="password" inputmode="numeric" pattern="\d*" maxlength="4" placeholder="Mr. Charlie's password" autocomplete="off">
+        <div class="hm-error" id="hmErr"></div>
+      </div>
+      <div class="heart-modal-actions">
+        <button class="hm-cancel"  id="hmCancel"  type="button">Cancel</button>
+        <button class="hm-confirm" id="hmConfirm" type="button">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+<script src="../edu/js/supabase-config.js"></script>
+<script src="../edu/js/db.js"></script>
 <script src="animals-data.js"></script>
 <script>
   const root = document.getElementById('categoriesRoot');
   const searchInput = document.getElementById('searchInput');
   const all = getMergedAnimals();
+
+  // ---- Hearts ----------------------------------------------------
+  // Live state: counts per animal id, and the current user's heart.
+  let heartCounts = new Map();   // animal_id → number
+  let myHeartId   = null;        // animal_id (or null)
+  function currentUser() {
+    try { return JSON.parse(localStorage.getItem('wc.session.v1') || 'null'); }
+    catch (e) { return null; }
+  }
+  async function loadHearts() {
+    if (!window.WCDB || !window.WCDB.animalHearts) return;
+    try {
+      const rows = await window.WCDB.animalHearts.listAll();
+      heartCounts = new Map();
+      rows.forEach(r => {
+        heartCounts.set(r.animal_id, (heartCounts.get(r.animal_id) || 0) + 1);
+      });
+      const me = currentUser();
+      myHeartId = me ? (rows.find(r => r.user_id === me.id) || {}).animal_id || null : null;
+    } catch (e) { console.warn('[hearts] load failed', e); }
+  }
+  function applyHeartsToDom() {
+    document.querySelectorAll('.heart-btn').forEach(btn => {
+      const aid = btn.dataset.animalId;
+      const count = heartCounts.get(aid) || 0;
+      btn.querySelector('.heart-count').textContent = count > 0 ? count : '';
+      btn.classList.toggle('mine', myHeartId === aid);
+      btn.querySelector('.heart-icon').textContent = myHeartId === aid ? '❤️' : '🤍';
+    });
+  }
+  function animalNameById(id) {
+    const a = all.find(x => x.id === id); return a ? a.name : id;
+  }
+
+  // ---- Heart-change confirmation modal ---------------------------
+  const hmBackdrop = document.getElementById('hmBackdrop');
+  const hmMsg      = document.getElementById('hmMsg');
+  const hmConfirm  = document.getElementById('hmConfirm');
+  const hmCancel   = document.getElementById('hmCancel');
+  const hmStage    = document.getElementById('hmConfirmStage');
+  const hmPw       = document.getElementById('hmPw');
+  const hmErr      = document.getElementById('hmErr');
+  let   pendingNewAnimal = null;   // animal_id to switch to
+
+  function openHeartChangeModal(oldAnimalId, newAnimalId) {
+    pendingNewAnimal = newAnimalId;
+    hmMsg.textContent = 'You already know all about ' + animalNameById(oldAnimalId)
+      + '. Sure you want to switch to ' + animalNameById(newAnimalId) + '?';
+    hmStage.style.display = 'none';
+    hmPw.value = ''; hmErr.textContent = ''; hmPw.classList.remove('bad');
+    hmConfirm.textContent = 'Confirm';
+    hmBackdrop.classList.add('open');
+  }
+  function closeHeartModal() {
+    hmBackdrop.classList.remove('open');
+    pendingNewAnimal = null;
+  }
+  hmCancel.addEventListener('click', closeHeartModal);
+  hmBackdrop.addEventListener('click', (e) => { if (e.target === hmBackdrop) closeHeartModal(); });
+  hmConfirm.addEventListener('click', async () => {
+    // Two-stage: first click reveals password input, second submits.
+    if (hmStage.style.display === 'none') {
+      hmStage.style.display = '';
+      hmConfirm.textContent = 'Switch heart';
+      setTimeout(() => hmPw.focus(), 50);
+      return;
+    }
+    const pw = hmPw.value.trim();
+    if (pw !== '2316') {
+      hmErr.textContent = 'Wrong password. Ask Mr. Charlie.';
+      hmPw.classList.add('bad');
+      return;
+    }
+    hmErr.textContent = '';
+    await commitHeart(pendingNewAnimal);
+    closeHeartModal();
+  });
+  hmPw.addEventListener('keydown', (e) => { if (e.key === 'Enter') hmConfirm.click(); });
+
+  async function commitHeart(animalId) {
+    const me = currentUser();
+    if (!me || !me.id) return;
+    try {
+      await window.WCDB.animalHearts.setHeart(me.id, animalId);
+      await loadHearts();
+      applyHeartsToDom();
+    } catch (e) {
+      alert('Could not update heart: ' + (e.message || e));
+    }
+  }
+
+  async function onHeartClick(e, animalId) {
+    e.preventDefault();
+    e.stopPropagation();
+    const me = currentUser();
+    if (!me || !me.id) {
+      alert('Sign in on Ako first to vote for an animal.');
+      return;
+    }
+    if (myHeartId && myHeartId !== animalId) {
+      openHeartChangeModal(myHeartId, animalId);
+      return;
+    }
+    if (myHeartId === animalId) {
+      // already hearted — clicking again is a no-op (the requirement
+      // says ONE heart total, can be moved with the password, but
+      // doesn't say it can be unset — leave it alone).
+      return;
+    }
+    await commitHeart(animalId);
+  }
 
   function render(filter = "") {
     const q = filter.trim().toLowerCase();
@@ -316,9 +512,19 @@
             <img alt="${a.name}">
             <div class="animal-emoji">${a.emoji}</div>
           </div>
-          <div class="animal-name">${a.name}</div>
+          <div class="animal-name">
+            <span>${a.name}</span>
+            <button class="heart-btn" type="button" data-animal-id="${a.id}"
+                    title="Heart this animal — one heart per person">
+              <span class="heart-icon">🤍</span><span class="heart-count"></span>
+            </button>
+          </div>
         `;
         grid.appendChild(card);
+        // Heart button click — stop the card's navigation, run our
+        // own handler.
+        const heartBtn = card.querySelector('.heart-btn');
+        heartBtn.addEventListener('click', (e) => onHeartClick(e, a.id));
 
         // Lazy-load the photo when the card scrolls into view.
         const photoEl = card.querySelector('.animal-photo');
@@ -356,6 +562,9 @@
 
   searchInput.addEventListener('input', e => render(e.target.value));
   render();
+  // Fetch hearts after the initial paint so the counts arrive when
+  // they arrive — the page is usable instantly either way.
+  loadHearts().then(applyHeartsToDom);
 
   // Teacher login: a Ako teacher session (set via
   // ../edu/index.html) is the only gate. If you're already a

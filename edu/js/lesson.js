@@ -339,6 +339,94 @@
   // flat sentence list that TTS reads aloud.
   const IMG_MARKER_PARSE_RE = /\[\[IMG:(\d+)\]\]/g;
   const IMG_MARKER_STRIP_RE = /(?:\[+\s*IMG\s*:\s*\d+\s*\]+|\bIMG\s*:\s*\d+\b)/gi;
+
+  // ----------------------------------------------------------------
+  //  Abbreviation-safe sentence splitter
+  //
+  //  The naive sentence regex (`[^.!?]+[.!?]+["'’)\]]*`) treats EVERY
+  //  `.` as a sentence terminator, so "Mr. Smith said hi." becomes
+  //  two sentences ("Mr." + "Smith said hi.") and TTS reads each
+  //  fragment with an audible pause. We avoid that by replacing the
+  //  `.` inside known abbreviations with a private-use placeholder
+  //  before the regex runs, then mapping the matched indices back
+  //  onto the ORIGINAL text so the spoken / rendered sentence keeps
+  //  its real characters.
+  //
+  //  Covered patterns:
+  //    • Personal/military titles  Mr. Mrs. Dr. Prof. Capt. Sgt. …
+  //    • Saints / streets / address  St. Ave. Blvd. Mt. Rd. …
+  //    • Companies                Inc. Ltd. Co. Corp. Plc. …
+  //    • Reference / measurement  No. Vol. Ed. Ch. Fig. vs. etc. …
+  //    • Months & days            Jan. Feb. Mon. Tue. …
+  //    • Latin / time embedded    e.g.  i.e.  a.m.  p.m.  Ph.D.  N.B.
+  //    • All-caps initialisms     U.S.  U.K.  U.S.A.  D.C.  L.A.  E.U.
+  //    • Decimal numbers          3.14  0.5  99.9
+  // ----------------------------------------------------------------
+  const SENT_DOT_PLACEHOLDER = '';
+  const SINGLE_DOT_ABBRS = [
+    // titles
+    'Mr','Mrs','Ms','Mx','Dr','Prof','Sr','Jr','Rev','Hon',
+    'Capt','Lt','Gen','Sgt','Maj','Col','Cpl','Pvt','Adm','Cdr',
+    // saints / addresses / geography
+    'St','Ste','Ave','Blvd','Rd','Hwy','Rte','Mt','Mtn','Pk',
+    // companies
+    'Inc','Ltd','Co','Corp','Plc',
+    // reference / measurement
+    'No','Vol','Ed','Ch','Sec','Fig','Ref','pp','vs','etc','cf','approx','min','max','est',
+    // months
+    'Jan','Feb','Mar','Apr','Jun','Jul','Aug','Sep','Sept','Oct','Nov','Dec',
+    // days
+    'Mon','Tue','Tues','Wed','Thu','Thur','Thurs','Fri','Sat','Sun',
+  ];
+  const SINGLE_DOT_ABBR_RE = new RegExp(
+    '\\b(' + SINGLE_DOT_ABBRS.join('|') + ')\\.', 'g'
+  );
+  const EMBEDDED_DOT_ABBR_RE = /\b(?:e\.g|i\.e|a\.m|p\.m|A\.M|P\.M|Ph\.D|N\.B)\./g;
+  const INITIALISM_RE = /\b(?:[A-Z]\.){2,}/g;
+  const DECIMAL_RE = /(\d)\.(\d)/g;
+
+  function maskAbbreviationsForSentenceSplit(text) {
+    if (!text) return '';
+    let s = text;
+    // 1) Embedded-dot Latin/time abbreviations first — replace ALL
+    //    their dots so the trailing one doesn't accidentally also
+    //    match the initialism regex below.
+    s = s.replace(EMBEDDED_DOT_ABBR_RE, m => m.replace(/\./g, SENT_DOT_PLACEHOLDER));
+    // 2) Multi-letter capital initialisms — every dot becomes safe.
+    s = s.replace(INITIALISM_RE, m => m.replace(/\./g, SENT_DOT_PLACEHOLDER));
+    // 3) Single-dot titles / addresses / months / etc.
+    s = s.replace(SINGLE_DOT_ABBR_RE, (m, word) => word + SENT_DOT_PLACEHOLDER);
+    // 4) Decimal numbers — a period between digits is never a
+    //    sentence end (3.14, 0.5, 99.9).
+    s = s.replace(DECIMAL_RE, (m, a, b) => a + SENT_DOT_PLACEHOLDER + b);
+    return s;
+  }
+
+  // Walks `text` and emits sentence boundaries that respect
+  // abbreviations. Returns [{ text, start, end }, …]. Trailing
+  // fragments without sentence-final punctuation surface as the
+  // last entry so single-word headings still get a sentence span.
+  const SENTENCE_BOUNDARY_RE = /[^.!?]+[.!?]+["'’)\]]*/g;
+  function splitSentencesSafe(text) {
+    if (!text) return [];
+    const masked = maskAbbreviationsForSentenceSplit(text);
+    const out = [];
+    const re = new RegExp(SENTENCE_BOUNDARY_RE.source, 'g');
+    let m, lastEnd = 0;
+    while ((m = re.exec(masked)) !== null) {
+      const start = m.index;
+      const end   = m.index + m[0].length;
+      out.push({ text: text.slice(start, end), start, end });
+      lastEnd = end;
+    }
+    if (lastEnd < text.length) {
+      const tail = text.slice(lastEnd);
+      if (tail.trim()) {
+        out.push({ text: tail, start: lastEnd, end: text.length });
+      }
+    }
+    return out;
+  }
   function extractImageMarkers(body) {
     const re = new RegExp(IMG_MARKER_PARSE_RE.source, 'g');
     const parts = [];
@@ -669,16 +757,9 @@
           // trim() guard below.
           const text = (n.textContent || '').replace(IMG_MARKER_STRIP_RE, ' ');
           if (!text || !text.trim()) continue;
-          const re = /[^.!?]+[.!?]+["'’)\]]*/g;
-          let m, lastEnd = 0;
-          while ((m = re.exec(text)) !== null) {
-            flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
-            lastEnd = m.index + m[0].length;
-          }
-          if (lastEnd < text.length) {
-            const tail = text.slice(lastEnd);
-            if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
-          }
+          splitSentencesSafe(text).forEach(s => {
+            flat.push({ kind: 'sent', text: s.text, words: extractWordTokens(s.text) });
+          });
         }
         return { kind: 'html', html: segHtml, sentences: flat };
       });
@@ -693,19 +774,18 @@
         out.push({ kind: 'img', idx: seg.idx });
         return;
       }
-      const re = /[^.!?]+[.!?]+["'’)\]]*/g;
-      let lastEnd = 0; let m;
-      while ((m = re.exec(seg.text)) !== null) {
-        if (m.index > lastEnd) {
-          out.push({ kind: 'gap', text: seg.text.slice(lastEnd, m.index) });
+      const sents = splitSentencesSafe(seg.text);
+      let prevEnd = 0;
+      sents.forEach(s => {
+        if (s.start > prevEnd) {
+          out.push({ kind: 'gap', text: seg.text.slice(prevEnd, s.start) });
         }
-        out.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
-        lastEnd = m.index + m[0].length;
-      }
-      if (lastEnd < seg.text.length) {
-        const tail = seg.text.slice(lastEnd);
-        if (tail.trim()) out.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
-        else if (tail)   out.push({ kind: 'gap',  text: tail });
+        out.push({ kind: 'sent', text: s.text, words: extractWordTokens(s.text) });
+        prevEnd = s.end;
+      });
+      if (prevEnd < seg.text.length) {
+        const tail = seg.text.slice(prevEnd);
+        if (tail) out.push({ kind: 'gap', text: tail });
       }
     });
     return out;
@@ -915,28 +995,22 @@
 
   function appendSentencesFromText(frag, text, sentIdxStart) {
     let sentIdx = sentIdxStart;
-    const sentRe = /[^.!?]+[.!?]+["'’)\]]*/g;
-    let lastEnd = 0;
-    let m;
-    while ((m = sentRe.exec(text)) !== null) {
-      if (m.index > lastEnd) {
-        // glue between sentences — preserve as plain text so HTML
+    const sents = splitSentencesSafe(text);
+    let prevEnd = 0;
+    sents.forEach(s => {
+      if (s.start > prevEnd) {
+        // Glue between sentences — preserve as plain text so HTML
         // formatting (italic etc.) renders correctly around it.
-        frag.appendChild(document.createTextNode(text.slice(lastEnd, m.index)));
+        frag.appendChild(document.createTextNode(text.slice(prevEnd, s.start)));
       }
-      const sentText = m[0];
-      const sentObj = { kind: 'sent', text: sentText, words: extractWordTokens(sentText) };
+      const sentObj = { kind: 'sent', text: s.text, words: extractWordTokens(s.text) };
       frag.appendChild(makeSentenceWrap(sentObj, sentIdx));
       sentIdx++;
-      lastEnd = m.index + m[0].length;
-    }
-    if (lastEnd < text.length) {
-      const tail = text.slice(lastEnd);
-      if (tail.trim()) {
-        const sentObj = { kind: 'sent', text: tail, words: extractWordTokens(tail) };
-        frag.appendChild(makeSentenceWrap(sentObj, sentIdx));
-        sentIdx++;
-      } else {
+      prevEnd = s.end;
+    });
+    if (prevEnd < text.length) {
+      const tail = text.slice(prevEnd);
+      if (tail) {
         frag.appendChild(document.createTextNode(tail));
       }
     }

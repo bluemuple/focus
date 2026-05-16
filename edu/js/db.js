@@ -301,5 +301,37 @@
     },
   };
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights };
+  // ---------- animal hearts ----------
+  //  Single-vote-per-user "heart" on an animal. user_id is PK in
+  //  wc_animal_hearts, so the upsert silently replaces an existing
+  //  vote (after the change-confirm popup the UI shows).
+  const animalHearts = {
+    async listAll() {
+      // Joined with the user row so we get the real_name in one hop.
+      return rGet('/wc_animal_hearts?select=user_id,animal_id,updated_at,user:wc_users(real_name)&order=updated_at.desc');
+    },
+    async forUser(userId) {
+      if (!userId) return null;
+      const rows = await rGet('/wc_animal_hearts?user_id=eq.'
+        + encodeURIComponent(userId) + '&select=animal_id&limit=1');
+      return rows && rows[0] && rows[0].animal_id || null;
+    },
+    async setHeart(userId, animalId) {
+      if (!REST) throw new Error('Supabase not configured');
+      const r = await fetch(REST + '/wc_animal_hearts?on_conflict=user_id', {
+        method: 'POST',
+        headers: headers({
+          Prefer: 'return=minimal,resolution=merge-duplicates',
+        }),
+        body: JSON.stringify({
+          user_id:    userId,
+          animal_id:  animalId,
+          updated_at: new Date().toISOString(),
+        }),
+      });
+      if (!r.ok) throw new Error('WCDB heart-set ' + r.status + ' :: ' + (await r.text()).slice(0, 200));
+    },
+  };
+
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts };
 })();
