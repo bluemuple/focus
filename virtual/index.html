@@ -223,8 +223,8 @@
   }
   #stage {
     position: relative;
-    width: 1448px;
-    height: 1086px;
+    width: 5792px;
+    height: 4344px;
     background-image: url('images/classroom.png');
     background-size: 100% 100%;
     background-repeat: no-repeat;
@@ -251,14 +251,14 @@
     position: absolute;
     top: 0;
     left: 0;
-    width: 1448px;
-    height: 1086px;
+    width: 5792px;
+    height: 4344px;
     background-size: 100% 100%;
     background-repeat: no-repeat;
     pointer-events: none;
     /* Sits above every actor. Actors get y-based z-index up to
-       STAGE_H (1086) so the overlay must be higher than that. */
-    z-index: 2000;
+       STAGE_H + CHAR_H (~4412) so the overlay must be higher. */
+    z-index: 5000;
   }
   #stageOverlay { background-image: url('images/classroom-overlay.png'); }
 
@@ -1159,8 +1159,11 @@
   mtName.textContent = ME.name;
 
   // ---- stage dims ---------------------------------------------
-  const STAGE_W = 1448;
-  const STAGE_H = 1086;
+  // World is rendered 4× the native classroom.png (1448×1086 →
+  // 5792×4344) so the playable map dwarfs the viewport and the
+  // camera scrolls in the way a typical 2D top-down RPG does.
+  const STAGE_W = 5792;
+  const STAGE_H = 4344;
   // Character base sprites (boy/girl) are 46×68 native and render
   // at that exact size — no stretching, crisp pixel art. Wearables
   // remain at their larger 50/100 px canvases and overflow the
@@ -1169,8 +1172,9 @@
   const CHAR_W  = 46;
   const CHAR_H  = 68;
   const SPEED   = 8;
-  // Target on-screen character height on phones, in CSS pixels.
-  const MOBILE_CHAR_PX = 100;
+  // Target on-screen character height in CSS pixels — applied to
+  // both desktop and mobile now that the camera follows on both.
+  const TARGET_CHAR_PX = 100;
 
   // Each gender has its own folder of sprites — direction is the
   // file's name, extension picks the state:
@@ -1235,9 +1239,12 @@
 
   // ---- map collision mask --------------------------------------
   //
-  //  images/classroom-mask.png is an OPTIONAL same-sized overlay
-  //  (1448 × 1086) where any opaque pixel marks a blocked tile
-  //  (desk, wall, etc.) and fully transparent pixels are walkable.
+  //  images/classroom-mask.png is an OPTIONAL overlay where any
+  //  opaque pixel marks a blocked tile (desk, wall, etc.) and
+  //  fully transparent pixels are walkable. The source file is
+  //  usually 1448×1086 (matching the un-scaled classroom.png) —
+  //  it gets stretched to the 5792×4344 stage canvas on load,
+  //  so collision boundaries follow the visible map at 4×.
   //  We rasterise it once into an ImageData buffer and sample the
   //  alpha channel at the character's feet for each candidate
   //  step. If the file is missing, isBlockedByMap() just returns
@@ -1273,12 +1280,15 @@
 
   // ---- camera / fit -------------------------------------------
   //
-  //  Desktop  → fit the whole stage inside #world (no follow).
-  //  Mobile   → camera follows the local player. Scale is
-  //             max(charScale, fillScale) so the character is at
-  //             least MOBILE_CHAR_PX tall AND the map fills the
-  //             viewport on both axes (whichever is bigger wins,
-  //             so neither black bars nor undersized chars appear).
+  //  Unified third-person camera for both desktop and mobile:
+  //  the local player is the focus, the world scrolls under
+  //  them. Scale = max(charScale, fillScale) so the character
+  //  is always at least TARGET_CHAR_PX tall AND the map fills
+  //  the viewport on both axes — neither shrinks the player
+  //  nor exposes black bars. panOffset (drag-pan) and chrome
+  //  insets (topbar / FAB on mobile only) shift the camera
+  //  centre; the clamp keeps the map edges flush with the
+  //  viewport edges.
   let lastTx = NaN, lastTy = NaN, lastScale = NaN;
   // Drag-pan state — declared up here (rather than alongside the
   // touch handlers further down) because fitOrFollow() below reads
@@ -1295,49 +1305,32 @@
   function fitOrFollow() {
     const vw = world.clientWidth;
     const vh = world.clientHeight;
-    let tx, ty, scale;
+    const isM = isMobile();
 
-    if (isMobile()) {
-      const charScale = MOBILE_CHAR_PX / CHAR_H;
-      const fillScale = Math.max(vw / STAGE_W, vh / STAGE_H);
-      scale = Math.max(charScale, fillScale);
+    const charScale = TARGET_CHAR_PX / CHAR_H;
+    const fillScale = Math.max(vw / STAGE_W, vh / STAGE_H);
+    const scale = Math.max(charScale, fillScale);
 
-      const charCx = (me.pos.x + CHAR_W / 2) * scale;
-      const charCy = (me.pos.y + CHAR_H / 2) * scale;
+    const charCx = (me.pos.x + CHAR_W / 2) * scale;
+    const charCy = (me.pos.y + CHAR_H / 2) * scale;
 
-      // Aim the camera at the centre of the visible playable area
-      // (between the topbar and the FAB) rather than the raw
-      // viewport centre — keeps the player from being hidden
-      // behind the chrome.
-      const TOPBAR_H = 70;
-      const FAB_H    = 110;
-      const playCx = vw / 2;
-      const playCy = (TOPBAR_H + (vh - FAB_H)) / 2;
+    // Mobile has a topbar (top) and FAB (bottom) over the world;
+    // pull the camera centre into the visible play area so the
+    // player isn't tucked under either bar. Desktop has no
+    // chrome overlap, so the raw viewport centre is fine.
+    const topInset    = isM ?  70 : 0;
+    const bottomInset = isM ? 110 : 0;
+    const playCx = vw / 2;
+    const playCy = (topInset + (vh - bottomInset)) / 2;
 
-      // panOffset lets a finger-drag temporarily slide the camera
-      // away from the player; clamping below still keeps the map
-      // edges flush with the viewport.
-      tx = playCx - charCx + panOffset.x;
-      ty = playCy - charCy + panOffset.y;
+    let tx = playCx - charCx + panOffset.x;
+    let ty = playCy - charCy + panOffset.y;
 
-      const sw = STAGE_W * scale, sh = STAGE_H * scale;
-      if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
-      else         tx = (vw - sw) / 2;
-      if (sh > vh) ty = Math.min(0, Math.max(vh - sh, ty));
-      else         ty = (vh - sh) / 2;
-    } else {
-      const buf = 40;
-      scale = Math.min((vw - buf) / STAGE_W, (vh - buf) / STAGE_H, 1);
-      const sw = STAGE_W * scale, sh = STAGE_H * scale;
-      tx = (vw - sw) / 2 + panOffset.x;
-      ty = (vh - sh) / 2 + panOffset.y;
-      // Match the mobile clamp so a touchscreen desktop / tablet
-      // drag also can't push the map past the viewport edges.
-      if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
-      else         tx = (vw - sw) / 2;
-      if (sh > vh) ty = Math.min(0, Math.max(vh - sh, ty));
-      else         ty = (vh - sh) / 2;
-    }
+    const sw = STAGE_W * scale, sh = STAGE_H * scale;
+    if (sw > vw) tx = Math.min(0, Math.max(vw - sw, tx));
+    else         tx = (vw - sw) / 2;
+    if (sh > vh) ty = Math.min(0, Math.max(vh - sh, ty));
+    else         ty = (vh - sh) / 2;
 
     tx = Math.round(tx);
     ty = Math.round(ty);
