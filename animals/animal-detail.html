@@ -557,18 +557,6 @@
     background: white;
     color: var(--text);
   }
-  /* Lead Wikipedia photo at the very top of the panel — second
-     image from /page/media-list (different from the gallery one). */
-  .wiki-top-photo {
-    width: 100%;
-    aspect-ratio: 16 / 10;
-    border-radius: 12px;
-    overflow: hidden;
-    background: linear-gradient(135deg, #FFF6E6, #FFE5D1);
-    margin: 0 0 14px;
-    box-shadow: 0 4px 14px rgba(202, 122, 122, 0.16);
-  }
-  .wiki-top-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .wiki-body img { max-width: 100%; height: auto; border-radius: 10px; margin: 0 0 12px; }
   .wiki-body h4  { margin: 0 0 8px; font-size: 1.05rem; color: var(--primary-dark); }
   .wiki-body p   { margin: 0 0 12px; line-height: 1.55; font-size: 0.95rem; }
@@ -1481,28 +1469,19 @@
       body.textContent = 'Reading Wikipedia and writing an easy-read summary…';
       try {
         if (!FN_URL) throw new Error('no edge function url');
-        // Run the GPT digest fetch + the secondary photo fetch in
-        // parallel — the digest is the slow part, photo finishes
-        // independently and both render together when ready.
-        // Prefer the Google Image 2nd-result lookup; fall back to
-        // a different photo from Wikipedia's media list if Google
-        // isn't configured yet.
-        const [r, photoSrc] = await Promise.all([
-          fetch(FN_URL, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey:         ANON,
-              Authorization:  'Bearer ' + ANON,
-            },
-            body: JSON.stringify({
-              animal_id:   animal.id,
-              animal_name: animal.name,
-              wiki_title:  wikiKey,
-            }),
+        const r = await fetch(FN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey:         ANON,
+            Authorization:  'Bearer ' + ANON,
+          },
+          body: JSON.stringify({
+            animal_id:   animal.id,
+            animal_name: animal.name,
+            wiki_title:  wikiKey,
           }),
-          fetchTopPanelPhoto(animal, wikiTitleSlug),
-        ]);
+        });
         if (!r.ok) throw new Error('http ' + r.status);
         const j = await r.json();
         if (!j.html) throw new Error('no html');
@@ -1510,11 +1489,8 @@
           + '" target="_blank" rel="noopener">Read more on Wikipedia →</a>';
         const stamp = j.cached ? '<div class="wiki-stamp">Cached summary</div>'
                                : '<div class="wiki-stamp">Freshly generated</div>';
-        const topPhoto = photoSrc
-          ? '<div class="wiki-top-photo"><img src="' + escapeAttr(photoSrc) + '" alt="' + escapeAttr(animal.name) + '" loading="lazy"></div>'
-          : '';
         body.classList.remove('loading');
-        body.innerHTML = topPhoto + j.html + '<div class="wiki-readmore-wrap">' + more + '</div>' + stamp;
+        body.innerHTML = j.html + '<div class="wiki-readmore-wrap">' + more + '</div>' + stamp;
       } catch (e) {
         body.classList.remove('loading');
         body.classList.add('error');
@@ -1523,81 +1499,6 @@
           '<a class="wiki-readmore" href="' + fullArticleUrl +
           '" target="_blank" rel="noopener">Open Wikipedia →</a>';
       }
-    }
-    function escapeAttr(s) {
-      return String(s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-    }
-
-    // Primary path — ask the wc-animal-image-2nd edge function for
-    // the second Google Image search result (cached server-side
-    // after the first call). If Google isn't configured, the
-    // function returns image_url:null and we fall back to a
-    // second Wikipedia photo so the panel still has imagery.
-    async function fetchTopPanelPhoto(animal, titleSlug) {
-      const fnUrl = SB_URL ? SB_URL.replace(/\/+$/, '') + '/functions/v1/wc-animal-image-2nd' : '';
-      if (fnUrl) {
-        try {
-          const r = await fetch(fnUrl, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey:         ANON,
-              Authorization:  'Bearer ' + ANON,
-            },
-            body: JSON.stringify({
-              animal_id:   animal.id,
-              animal_name: animal.name,
-            }),
-          });
-          if (r.ok) {
-            const j = await r.json();
-            if (j && j.image_url) return j.image_url;
-          }
-        } catch (e) { /* fall through to Wikipedia */ }
-      }
-      return fetchSecondWikipediaPhoto(titleSlug);
-    }
-
-    // Pull /page/media-list to find the SECOND article photo (the
-    // first is normally the lead, which already lives in the
-    // gallery's Photo cell — showing it again would be redundant).
-    // Returns a usable image URL or null. Quietly returns null on
-    // any error so the wiki panel still loads the GPT digest.
-    async function fetchSecondWikipediaPhoto(titleSlug) {
-      try {
-        // Lead image src (what the gallery used) so we can skip it.
-        let leadSrc = '';
-        const photoCell = document.querySelector('#heroGallery .gallery-cell[data-cat="photos"] img');
-        if (photoCell && photoCell.src) leadSrc = photoCell.src;
-
-        const url = 'https://en.wikipedia.org/api/rest_v1/page/media-list/' + encodeURIComponent(titleSlug);
-        const r = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (!r.ok) return null;
-        const j = await r.json();
-        const items = Array.isArray(j.items) ? j.items : [];
-        // Pick the first item that's an image (svg / video / audio
-        // filtered out), preferring originals, and that's not the
-        // gallery's lead photo.
-        const candidates = items
-          .filter(it => (it.type === 'image' || !it.type) && it.srcset && it.srcset.length)
-          .map(it => {
-            // srcset has multiple resolutions — pick the largest.
-            const best = it.srcset.reduce((a, b) =>
-              (parseFloat(b.scale || '1') > parseFloat(a.scale || '1')) ? b : a, it.srcset[0]);
-            let src = best.src || '';
-            if (src.startsWith('//')) src = 'https:' + src;
-            return src;
-          })
-          .filter(Boolean);
-        if (!candidates.length) return null;
-        const leadFile = leadSrc.split('/').pop().split('?')[0].toLowerCase();
-        // Skip any candidate whose filename matches the lead photo's filename.
-        for (const src of candidates) {
-          const file = src.split('/').pop().split('?')[0].toLowerCase();
-          if (file && file !== leadFile) return src;
-        }
-        return null;
-      } catch (e) { return null; }
     }
 
     function open() {
