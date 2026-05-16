@@ -309,12 +309,13 @@
         b.style.background = '#fff';
         b.style.color = '#374151';
       }
-      b.addEventListener('click', function (ev) {
+      b.addEventListener('click', function () {
         toggleCat(cat);
-        // Let go of focus so the next arrow-key press isn't
-        // mistaken for "tab to next button" by the browser —
-        // keeps single-click → ↑↓←→ a totally fluid flow.
-        if (ev.currentTarget && ev.currentTarget.blur) ev.currentTarget.blur();
+        // Pull focus onto the 🎯 button so the next ↑ ↓ ← →
+        // press is captured by the dedicated keydown listener
+        // below (and not by the browser's page-scroll default).
+        const keyBtn = document.getElementById('fitKeyFocus');
+        if (keyBtn) keyBtn.focus();
       });
       row.appendChild(b);
     });
@@ -745,23 +746,11 @@
     setTimeout(function () { msg.textContent = ''; }, 6000);
     btn.disabled = false;
 
-    // Arrow keys nudge EVERY editSet member 1 px in the chosen
-    // direction. Only fires when the Fitting Room tab is visible,
-    // something is in edit mode, and the user isn't typing into
-    // a form control.
-    window.addEventListener('keydown', function (e) {
-      const tab = document.getElementById('tab-fitting');
-      if (!tab || tab.classList.contains('wc-hidden')) return;
-      if (!editSet.size) return;
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-      let dx = 0, dy = 0;
-      if (e.key === 'ArrowLeft')  dx = -1;
-      if (e.key === 'ArrowRight') dx =  1;
-      if (e.key === 'ArrowUp')    dy = -1;
-      if (e.key === 'ArrowDown')  dy =  1;
-      if (!dx && !dy) return;
-      e.preventDefault();
+    // Helper: apply a 1-px nudge to every category in editSet,
+    // persist, and re-render. Shared between the two key
+    // listeners below so behaviour stays identical.
+    function nudgeBy(dx, dy) {
+      if (!editSet.size) return false;
       for (const cat of editSet) {
         const off = offsets[cat] || (offsets[cat] = { x: 0, y: 0 });
         off.x += dx;
@@ -770,6 +759,43 @@
       saveOffsets();
       renderOffsetDisplay();
       renderPreview();
+      return true;
+    }
+    function arrowDelta(e) {
+      if (e.key === 'ArrowLeft')  return [-1,  0];
+      if (e.key === 'ArrowRight') return [ 1,  0];
+      if (e.key === 'ArrowUp')    return [ 0, -1];
+      if (e.key === 'ArrowDown')  return [ 0,  1];
+      return null;
+    }
+
+    // PRIMARY: the 🎯 square button in the grey panel. Clicking
+    // it pulls focus here, then ↑ ↓ ← → fire keydown ON THIS
+    // ELEMENT before any page-level scroll handler. preventDefault
+    // stops the page from scrolling, stopPropagation keeps the
+    // fallback window listener (below) from also firing.
+    document.getElementById('fitKeyFocus').addEventListener('keydown', function (e) {
+      const d = arrowDelta(e);
+      if (!d) return;
+      e.preventDefault();
+      e.stopPropagation();
+      nudgeBy(d[0], d[1]);
+    });
+
+    // FALLBACK: window-level listener for browsers/environments
+    // where the dedicated button isn't focused. Skipped while a
+    // form control has focus (so typing in the size/layer inputs
+    // works) and while the Fitting Room tab is hidden.
+    window.addEventListener('keydown', function (e) {
+      const tab = document.getElementById('tab-fitting');
+      if (!tab || tab.classList.contains('wc-hidden')) return;
+      if (!editSet.size) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      const d = arrowDelta(e);
+      if (!d) return;
+      e.preventDefault();
+      nudgeBy(d[0], d[1]);
     });
   }
 
