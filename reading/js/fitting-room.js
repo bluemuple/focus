@@ -143,6 +143,7 @@
   let lastClicked = null;
   const wearImgs = {}; // cat → img element, for in-place drag updates
   let activeBase = 'boy';
+  let hideBase   = false; // "🙈 Hide base in preview" checkbox state
   let sampleItem = loadSample();
 
   function focusCat() {
@@ -281,34 +282,53 @@
     }
   }
 
-  // Remove the silhouette outline algorithmically: any black
-  // pixel whose 4-neighbour grid contains transparency is part
-  // of the outline (the only thing touching the now-transparent
-  // background). Interior black detail (eyes, dark hair, dark
-  // shirts) stays because its neighbours are other colours.
+  // Remove the silhouette outline. Wearable PNGs use #222034
+  // (RGB 34/32/52) — dark navy, not pure black — so the threshold
+  // is per-channel ≤ 60 (catches #222034, #32343b, #272936 but
+  // not the lighter shading #464952). A pixel qualifies as
+  // outline iff it's "outline-coloured" AND at least one
+  // 4-neighbour is transparent (or a leftover near-grey artifact
+  // the wholesale colourKey didn't catch). Three passes peel
+  // 1-, 2- and 3-px thick outlines.
   function removeOutlinePixels(imgData) {
     const d = imgData.data;
     const w = imgData.width, h = imgData.height;
     const N = w * h;
-    const isBlack = function (idx) {
-      return d[idx] === 0 && d[idx+1] === 0 && d[idx+2] === 0 && d[idx+3] > 0;
+    const isOutline = function (idx) {
+      return d[idx]   <= 60 &&
+             d[idx+1] <= 60 &&
+             d[idx+2] <= 60 &&
+             d[idx+3] > 128;
     };
-    const isTrans = function (idx) { return d[idx+3] < 128; };
+    const isTrans = function (idx) {
+      if (d[idx+3] < 128) return true;
+      const r = d[idx], g = d[idx+1], b = d[idx+2];
+      if (Math.abs(r - 0x91) <= 22 && Math.abs(g - 0x93) <= 22 && Math.abs(b - 0xa6) <= 22) return true;
+      if (Math.abs(r - 0x69) <= 22 && Math.abs(g - 0x6c) <= 22 && Math.abs(b - 0x72) <= 22) return true;
+      return false;
+    };
 
-    const mask = new Uint8Array(N);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        if (!isBlack(i)) continue;
-        const upT    = (y === 0)     || isTrans(i - w * 4);
-        const downT  = (y === h - 1) || isTrans(i + w * 4);
-        const leftT  = (x === 0)     || isTrans(i - 4);
-        const rightT = (x === w - 1) || isTrans(i + 4);
-        if (upT || downT || leftT || rightT) mask[y * w + x] = 1;
+    for (let pass = 0; pass < 3; pass++) {
+      const mask = new Uint8Array(N);
+      let any = false;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (!isOutline(i)) continue;
+          const upT    = (y === 0)     || isTrans(i - w * 4);
+          const downT  = (y === h - 1) || isTrans(i + w * 4);
+          const leftT  = (x === 0)     || isTrans(i - 4);
+          const rightT = (x === w - 1) || isTrans(i + 4);
+          if (upT || downT || leftT || rightT) {
+            mask[y * w + x] = 1;
+            any = true;
+          }
+        }
       }
-    }
-    for (let p = 0; p < N; p++) {
-      if (mask[p]) d[p * 4 + 3] = 0;
+      if (!any) break;
+      for (let p = 0; p < N; p++) {
+        if (mask[p]) d[p * 4 + 3] = 0;
+      }
     }
   }
 
@@ -475,6 +495,7 @@
     if (!preview) return;
     const base = document.getElementById('fitBase');
     base.src = '../virtual/images/characters/' + activeBase + '/down.png';
+    base.style.display = hideBase ? 'none' : '';
 
     Array.from(preview.querySelectorAll('img.fit-wear')).forEach(function (n) { n.remove(); });
     for (const k of Object.keys(wearImgs)) delete wearImgs[k];
@@ -600,6 +621,10 @@
   function bindEvents() {
     document.getElementById('fitBaseSelect').addEventListener('change', function (e) {
       activeBase = e.target.value;
+      renderPreview();
+    });
+    document.getElementById('fitHideBase').addEventListener('change', function (e) {
+      hideBase = !!e.target.checked;
       renderPreview();
     });
     document.getElementById('fitItemSelect').addEventListener('change', function (e) {

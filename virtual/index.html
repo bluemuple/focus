@@ -676,34 +676,6 @@
     justify-content: center;
   }
   .fr-close:hover { background: rgba(0, 0, 0, 0.3); }
-
-  /* Toggle button for the underlying boy/girl base sprite —
-     sits left of the close × so the teacher / student can hide
-     the base while comparing wearables in isolation. Active
-     state (= base hidden) gets a filled indigo background. */
-  .fr-base-toggle {
-    position: absolute;
-    top: 14px;
-    right: 52px;
-    background: rgba(255, 255, 255, 0.08);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #fff;
-    font-family: inherit;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    padding: 4px 12px;
-    border-radius: 999px;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .fr-base-toggle:hover { background: rgba(255, 255, 255, 0.15); }
-  .fr-base-toggle.active {
-    background: #6366f1;
-    border-color: #6366f1;
-  }
   .fr-preview-char {
     /* Same 46×68 base box the avatar occupies on the map. The
        100×100 wearables visually overflow this box; the preview
@@ -1029,7 +1001,6 @@
     <div class="fr-modal" role="dialog" aria-labelledby="frNamePill">
       <div class="fr-preview">
         <div class="fr-name-pill" id="frNamePill">…</div>
-        <button class="fr-base-toggle" id="frBaseToggle" type="button" title="Toggle base character">👁 Base</button>
         <button class="fr-close" id="frClose" type="button" aria-label="Close">×</button>
         <div class="fr-preview-char">
           <div class="fr-canvas" id="frPreviewChar"></div>
@@ -1659,41 +1630,59 @@
 
   // Algorithmic outline removal.
   //
-  // Sweeps the image once and flags every BLACK pixel that has at
-  // least one of its 4-neighbours (up/down/left/right) already
-  // transparent. After the background colour-keys above have run,
-  // a wearable's silhouette outline is the only black that touches
-  // transparency — interior black details (eye dots, dark hair,
-  // dark shirt fills) are bordered by other non-transparent colours
-  // and stay intact. Canvas-edge black is also flagged so outlines
-  // running along the very edge get cleaned.
+  // The wearable PNGs use #222034 (dark navy, RGB 34/32/52) and a
+  // couple of nearby variants for the silhouette outline — not
+  // pure black. We flag every "outline-coloured" pixel (RGB all
+  // ≤ 60) that has at least one of its 4-neighbours transparent
+  // OR a leftover near-grey background pixel (anything that
+  // wasn't caught by the wholesale colourKey above because it
+  // ran for fewer than 5 pixels).
+  //
+  // We repeat the pass up to 3 times, peeling one layer per pass,
+  // so 2- and 3-pixel-thick outlines come off cleanly. Interior
+  // dark detail (eye dots, dark hair fills bordered by other
+  // colours) stays put because none of its neighbours qualify as
+  // "background-ish".
   function removeOutlinePixels(imgData) {
     const d = imgData.data;
     const w = imgData.width, h = imgData.height;
     const N = w * h;
-    const isBlack = function (idx) {
-      return d[idx] === 0 && d[idx + 1] === 0 && d[idx + 2] === 0 && d[idx + 3] > 0;
+    const isOutline = function (idx) {
+      return d[idx]     <= 60 &&
+             d[idx + 1] <= 60 &&
+             d[idx + 2] <= 60 &&
+             d[idx + 3] >  128;
     };
-    const isTrans = function (idx) { return d[idx + 3] < 128; };
+    const isTrans = function (idx) {
+      if (d[idx + 3] < 128) return true;
+      const r = d[idx], g = d[idx + 1], b = d[idx + 2];
+      // residual #9193a6 or #696c72 artifacts
+      if (Math.abs(r - 0x91) <= 22 && Math.abs(g - 0x93) <= 22 && Math.abs(b - 0xa6) <= 22) return true;
+      if (Math.abs(r - 0x69) <= 22 && Math.abs(g - 0x6c) <= 22 && Math.abs(b - 0x72) <= 22) return true;
+      return false;
+    };
 
-    const mask = new Uint8Array(N);
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const i = (y * w + x) * 4;
-        if (!isBlack(i)) continue;
-        // off-canvas neighbours count as transparent → outlines at
-        // the very edge of the PNG get removed too.
-        const upTrans    = (y === 0)     || isTrans(i - w * 4);
-        const downTrans  = (y === h - 1) || isTrans(i + w * 4);
-        const leftTrans  = (x === 0)     || isTrans(i - 4);
-        const rightTrans = (x === w - 1) || isTrans(i + 4);
-        if (upTrans || downTrans || leftTrans || rightTrans) {
-          mask[y * w + x] = 1;
+    for (let pass = 0; pass < 3; pass++) {
+      const mask = new Uint8Array(N);
+      let any = false;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const i = (y * w + x) * 4;
+          if (!isOutline(i)) continue;
+          const upT    = (y === 0)     || isTrans(i - w * 4);
+          const downT  = (y === h - 1) || isTrans(i + w * 4);
+          const leftT  = (x === 0)     || isTrans(i - 4);
+          const rightT = (x === w - 1) || isTrans(i + 4);
+          if (upT || downT || leftT || rightT) {
+            mask[y * w + x] = 1;
+            any = true;
+          }
         }
       }
-    }
-    for (let p = 0; p < N; p++) {
-      if (mask[p]) d[p * 4 + 3] = 0;
+      if (!any) break;
+      for (let p = 0; p < N; p++) {
+        if (mask[p]) d[p * 4 + 3] = 0;
+      }
     }
   }
 
@@ -2605,11 +2594,6 @@
   let frActivePill = 0;
   let frDraft      = {};
   let frPreviewActor = null;
-  // User-toggled "hide the base boy/girl GIF" so wearables can
-  // be inspected in isolation. Only affects the preview inside
-  // the Fitting Room popup — the in-game actor uses the normal
-  // applyAvatarToActor visibility rules.
-  let frHideBase = false;
 
   function openFittingRoom() {
     frDraft = Object.assign({}, ME.avatar || {});
@@ -2621,13 +2605,6 @@
     frOverlay.setAttribute('aria-hidden', 'false');
     frActiveTab = 0;
     frActivePill = 0;
-    // Reset the base-toggle so a re-open always starts visible.
-    frHideBase = false;
-    const baseBtn = document.getElementById('frBaseToggle');
-    if (baseBtn) {
-      baseBtn.classList.remove('active');
-      baseBtn.textContent = '🙈 Hide base';
-    }
     renderFRTabs();
     renderFRPills();
     renderFRGrid();
@@ -2783,26 +2760,12 @@
     }
     frPreviewActor.sprite.src = me.sprites.stop.down;
     applyAvatarToActor(frPreviewActor, frDraft);
-    // User's manual "Hide base" override — wins over the auto
-    // hide-when-wearable-present logic so they can also blank
-    // the base when the avatar has no wearables yet.
-    if (frHideBase) frPreviewActor.sprite.style.display = 'none';
   }
 
   document.getElementById('fittingRoomBtn').addEventListener('click', openFittingRoom);
   document.getElementById('frClose').addEventListener('click', closeFittingRoom);
   document.getElementById('frBack' ).addEventListener('click', closeFittingRoom);
 
-  // 👁 Base toggle — hides the underlying boy/girl GIF in the
-  // preview area when active. Resets to "show" every time the
-  // popup re-opens so the user always starts from a known state.
-  const frBaseToggleBtn = document.getElementById('frBaseToggle');
-  frBaseToggleBtn.addEventListener('click', function () {
-    frHideBase = !frHideBase;
-    frBaseToggleBtn.classList.toggle('active', frHideBase);
-    frBaseToggleBtn.textContent = frHideBase ? '👁 Show base' : '🙈 Hide base';
-    renderFRPreview();
-  });
 
   // 🎲 Random — pick one item per non-empty category. Skips
   // categories with no manifest entries (e.g. bottom while it's
