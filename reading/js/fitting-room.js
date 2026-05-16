@@ -234,14 +234,11 @@
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0);
           const data = ctx.getImageData(0, 0, c.width, c.height);
-          // Backgrounds + silhouette outline all colour-keyed on
-          // 5+ consecutive pixel runs:
-          //   #9193a6 — lighter grey background
-          //   #696c72 — darker grey background
-          //   #000000 — black outline around shapes
+          // Drop greys first, then algorithmically strip just the
+          // silhouette outline (black pixels next to transparent).
           colourKey(data, 5, 0x91, 0x93, 0xa6);
           colourKey(data, 5, 0x69, 0x6c, 0x72);
-          colourKey(data, 5, 0x00, 0x00, 0x00);
+          removeOutlinePixels(data);
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) { resolve(url); }
@@ -281,6 +278,37 @@
     }
     for (let p = 0; p < w*h; p++) {
       if (mask[p]) d[p*4+3] = 0;
+    }
+  }
+
+  // Remove the silhouette outline algorithmically: any black
+  // pixel whose 4-neighbour grid contains transparency is part
+  // of the outline (the only thing touching the now-transparent
+  // background). Interior black detail (eyes, dark hair, dark
+  // shirts) stays because its neighbours are other colours.
+  function removeOutlinePixels(imgData) {
+    const d = imgData.data;
+    const w = imgData.width, h = imgData.height;
+    const N = w * h;
+    const isBlack = function (idx) {
+      return d[idx] === 0 && d[idx+1] === 0 && d[idx+2] === 0 && d[idx+3] > 0;
+    };
+    const isTrans = function (idx) { return d[idx+3] < 128; };
+
+    const mask = new Uint8Array(N);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (!isBlack(i)) continue;
+        const upT    = (y === 0)     || isTrans(i - w * 4);
+        const downT  = (y === h - 1) || isTrans(i + w * 4);
+        const leftT  = (x === 0)     || isTrans(i - 4);
+        const rightT = (x === w - 1) || isTrans(i + 4);
+        if (upT || downT || leftT || rightT) mask[y * w + x] = 1;
+      }
+    }
+    for (let p = 0; p < N; p++) {
+      if (mask[p]) d[p * 4 + 3] = 0;
     }
   }
 

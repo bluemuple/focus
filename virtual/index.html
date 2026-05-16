@@ -1657,6 +1657,46 @@
     }
   }
 
+  // Algorithmic outline removal.
+  //
+  // Sweeps the image once and flags every BLACK pixel that has at
+  // least one of its 4-neighbours (up/down/left/right) already
+  // transparent. After the background colour-keys above have run,
+  // a wearable's silhouette outline is the only black that touches
+  // transparency — interior black details (eye dots, dark hair,
+  // dark shirt fills) are bordered by other non-transparent colours
+  // and stay intact. Canvas-edge black is also flagged so outlines
+  // running along the very edge get cleaned.
+  function removeOutlinePixels(imgData) {
+    const d = imgData.data;
+    const w = imgData.width, h = imgData.height;
+    const N = w * h;
+    const isBlack = function (idx) {
+      return d[idx] === 0 && d[idx + 1] === 0 && d[idx + 2] === 0 && d[idx + 3] > 0;
+    };
+    const isTrans = function (idx) { return d[idx + 3] < 128; };
+
+    const mask = new Uint8Array(N);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        if (!isBlack(i)) continue;
+        // off-canvas neighbours count as transparent → outlines at
+        // the very edge of the PNG get removed too.
+        const upTrans    = (y === 0)     || isTrans(i - w * 4);
+        const downTrans  = (y === h - 1) || isTrans(i + w * 4);
+        const leftTrans  = (x === 0)     || isTrans(i - 4);
+        const rightTrans = (x === w - 1) || isTrans(i + 4);
+        if (upTrans || downTrans || leftTrans || rightTrans) {
+          mask[y * w + x] = 1;
+        }
+      }
+    }
+    for (let p = 0; p < N; p++) {
+      if (mask[p]) d[p * 4 + 3] = 0;
+    }
+  }
+
   // Two-layer wearable loader:
   //
   //   tryLoadWearable(cat, id, dir)
@@ -1692,16 +1732,14 @@
           const ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0);
           const data = ctx.getImageData(0, 0, c.width, c.height);
-          // Background fills and the silhouette outline are all
-          // colour-keyed on 5+ consecutive pixel runs:
-          //   #9193a6 — lighter grey background
-          //   #696c72 — darker grey background
-          //   #000000 — black outline around shapes
-          // Short isolated pixels of each colour (eye dots, etc.)
-          // stay because they don't form a run of 5.
+          // 1) Drop the two grey background fills (long runs).
           colourKey(data, 5, 0x91, 0x93, 0xa6);
           colourKey(data, 5, 0x69, 0x6c, 0x72);
-          colourKey(data, 5, 0x00, 0x00, 0x00);
+          // 2) After the background is transparent, peel off any
+          //    black pixel that now sits next to transparency —
+          //    that's the silhouette outline. Interior black
+          //    (eyes, hair, dark clothing fill) stays.
+          removeOutlinePixels(data);
           ctx.putImageData(data, 0, 0);
           resolve(c.toDataURL('image/png'));
         } catch (e) {
