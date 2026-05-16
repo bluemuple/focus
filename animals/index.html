@@ -95,6 +95,50 @@
   }
   .admin-link:hover { transform: translateY(-2px); }
 
+  /* Top-left "← Ako" pill — goes back to the Ako home page. */
+  .go-back-link {
+    position: fixed;
+    top: 18px;
+    left: 18px;
+    background: white;
+    color: var(--muted);
+    text-decoration: none;
+    padding: 8px 14px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    box-shadow: var(--shadow);
+    border: 2px solid rgba(0,0,0,0.05);
+    z-index: 10;
+    transition: transform 0.15s ease, color 0.15s ease;
+  }
+  .go-back-link:hover { transform: translateX(-3px); color: var(--primary-dark); }
+
+  /* "Which animals do our class love?" — clickable tagline that
+     toggles a filter showing only animals with at least one heart. */
+  .class-loves {
+    display: inline-block;
+    margin-top: 8px;
+    background: white;
+    color: var(--primary-dark);
+    border: 2px solid var(--primary);
+    padding: 8px 18px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 1rem;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: transform 0.1s ease, background 0.15s ease, color 0.15s ease;
+  }
+  .class-loves:hover  { transform: translateY(-2px); }
+  .class-loves:active { transform: translateY(1px); }
+  .class-loves.active {
+    background: var(--primary);
+    color: white;
+  }
+  .class-loves .cl-hint { margin-left: 6px; opacity: 0.8; font-weight: 600; font-size: 0.85rem; }
+
   .search-bar {
     max-width: 480px;
     margin: 0 auto 36px;
@@ -324,11 +368,17 @@
 </style>
 </head>
 <body>
+  <a class="go-back-link" href="../edu/home.html" title="Back to Ako home">← Ako</a>
   <div class="container">
     <header class="hero">
       <div class="paw-row">🐾 🐾 🐾</div>
       <h1>Animal Friends</h1>
-      <p>Meet 100 amazing animals! Click any one to learn more 💖</p>
+      <!-- Click to filter the list down to animals the class has
+           hearted. Toggles back to "all" on a second click. -->
+      <button type="button" id="classLovesBtn" class="class-loves">
+        Which animals do our class love?
+        <span class="cl-hint">(tap to filter ❤️)</span>
+      </button>
     </header>
 
     <div class="search-bar">
@@ -452,6 +502,9 @@
       await window.WCDB.animalHearts.setHeart(me.id, animalId);
       await loadHearts();
       applyHeartsToDom();
+      // If the "class loves" filter is active, the new vote may
+      // change which animals are visible — re-render the list.
+      if (showHeartedOnly) render(searchInput.value);
     } catch (e) {
       alert('Could not update heart: ' + (e.message || e));
     }
@@ -478,6 +531,11 @@
     await commitHeart(animalId);
   }
 
+  // When true, the list is filtered to only show animals that have
+  // at least one heart from someone in the class. Toggled by the
+  // "Which animals do our class love?" pill in the header.
+  let showHeartedOnly = false;
+
   function render(filter = "") {
     const q = filter.trim().toLowerCase();
     root.innerHTML = "";
@@ -486,7 +544,8 @@
     ANIMAL_CATEGORIES.forEach(cat => {
       const animals = all
         .filter(a => a.category === cat.id)
-        .filter(a => !q || a.name.toLowerCase().includes(q));
+        .filter(a => !q || a.name.toLowerCase().includes(q))
+        .filter(a => !showHeartedOnly || (heartCounts.get(a.id) || 0) > 0);
 
       if (animals.length === 0) return;
       total += animals.length;
@@ -556,15 +615,34 @@
     });
 
     if (total === 0) {
-      root.innerHTML = `<div class="empty-state">No animals match "${filter}" 🥲</div>`;
+      const msg = showHeartedOnly
+        ? 'Nobody has hearted an animal yet. Tap a 🤍 on any animal to be first! 💖'
+        : `No animals match "${filter}" 🥲`;
+      root.innerHTML = `<div class="empty-state">${msg}</div>`;
     }
   }
 
   searchInput.addEventListener('input', e => render(e.target.value));
   render();
+
+  // "Which animals do our class love?" pill — toggles the filter.
+  const classLovesBtn = document.getElementById('classLovesBtn');
+  classLovesBtn.addEventListener('click', () => {
+    showHeartedOnly = !showHeartedOnly;
+    classLovesBtn.classList.toggle('active', showHeartedOnly);
+    classLovesBtn.querySelector('.cl-hint').textContent =
+      showHeartedOnly ? '(tap to show all)' : '(tap to filter ❤️)';
+    render(searchInput.value);
+  });
+
   // Fetch hearts after the initial paint so the counts arrive when
-  // they arrive — the page is usable instantly either way.
-  loadHearts().then(applyHeartsToDom);
+  // they arrive — the page is usable instantly either way. Re-run
+  // render afterwards so the "Which animals do our class love?"
+  // filter has data the first time it's toggled.
+  loadHearts().then(() => {
+    applyHeartsToDom();
+    if (showHeartedOnly) render(searchInput.value);
+  });
 
   // Teacher login: a Ako teacher session (set via
   // ../edu/index.html) is the only gate. If you're already a

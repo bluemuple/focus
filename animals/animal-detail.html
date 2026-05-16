@@ -119,7 +119,13 @@
     max-width: 720px;
     position: relative;
     z-index: 1;
+    justify-content: center;
   }
+  /* Centred layouts when cartoon/coloring cells are hidden — keeps
+     the photo cell sized similarly instead of stretching across the
+     whole row. */
+  .hero-gallery.cells-1 { grid-template-columns: minmax(0, 240px); }
+  .hero-gallery.cells-2 { grid-template-columns: repeat(2, minmax(0, 240px)); max-width: 540px; }
   .gallery-cell {
     background: white;
     border-radius: 20px;
@@ -564,10 +570,124 @@
   }
   .edit-student-fab.shown { display: inline-flex; }
   .edit-student-fab:hover { background: #2cb67d; color: white; }
+  .edit-student-fab.active {
+    background: #2cb67d; color: white;
+  }
   /* Teacher fab shifts left when student fab is also visible. */
   body.has-student-fab .edit-fab.shown {
     right: 158px; /* roughly width of the student fab + gap */
   }
+
+  /* ===== Student inline-edit affordances ===== */
+  /* Active only when <body class="student-editing">. The editable
+     fields get a hover highlight + dashed border so the student can
+     see what's tap-able. Click switches the value to a textarea /
+     input; Enter or blur commits the change to the cloud. */
+  body.student-editing .editable-text {
+    border: 1.5px dashed transparent;
+    border-radius: 8px;
+    padding: 6px 8px;
+    margin: -6px -8px;
+    cursor: text;
+    transition: background 0.12s ease, border-color 0.12s ease;
+  }
+  body.student-editing .editable-text:hover {
+    background: rgba(176, 224, 230, 0.25);
+    border-color: var(--mint);
+  }
+  body.student-editing .editable-text:empty::before {
+    content: 'Click to add ' attr(data-placeholder);
+    color: var(--muted);
+    font-style: italic;
+  }
+  .inline-textarea {
+    width: 100%;
+    min-height: 80px;
+    border: 2px solid var(--mint);
+    border-radius: 10px;
+    padding: 8px 10px;
+    font-family: inherit;
+    font-size: inherit;
+    background: white;
+    resize: vertical;
+  }
+  .inline-input {
+    width: 100%;
+    border: 2px solid var(--mint);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font: inherit;
+    background: white;
+  }
+  .save-spinner {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-left: 6px;
+    vertical-align: middle;
+    animation: savingPulse 0.9s ease-in-out infinite;
+  }
+  @keyframes savingPulse {
+    0%, 100% { transform: scale(0.6); opacity: 0.5; }
+    50%      { transform: scale(1);   opacity: 1; }
+  }
+
+  /* Fun Facts editing — each row gets a small "remove" button and
+     an "add fact" placeholder row at the bottom. */
+  body.student-editing .facts-list { list-style: none; padding-left: 0; }
+  body.student-editing .facts-list li {
+    display: flex; gap: 8px; align-items: flex-start;
+    margin: 0 0 10px;
+    padding: 8px 12px;
+    background: rgba(176, 224, 230, 0.15);
+    border-radius: 10px;
+  }
+  body.student-editing .facts-list li > .editable-text { flex: 1; margin: 0; padding: 4px 6px; }
+  body.student-editing .fact-remove {
+    border: 0; background: transparent;
+    color: var(--primary-dark); cursor: pointer;
+    font-size: 18px; line-height: 1; padding: 4px;
+  }
+  body.student-editing .fact-remove:hover { color: var(--text); }
+  body.student-editing .fact-add-row {
+    display: flex; gap: 8px; align-items: center;
+    background: rgba(255, 209, 102, 0.18);
+    border: 1.5px dashed var(--accent);
+    border-radius: 10px;
+    padding: 10px 12px;
+    cursor: text;
+    color: var(--muted);
+    font-style: italic;
+    margin-top: 4px;
+  }
+  body.student-editing .fact-add-row:hover { background: rgba(255, 209, 102, 0.32); }
+
+  /* Live-edit indicator at top: tiny chip showing who's editing
+     when another user is also on the page. */
+  .live-edit-chip {
+    position: fixed;
+    top: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: white;
+    border: 2px solid var(--mint);
+    color: var(--text);
+    padding: 6px 14px;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    box-shadow: var(--shadow);
+    z-index: 60;
+    display: none;
+  }
+  .live-edit-chip.shown { display: inline-flex; align-items: center; gap: 6px; }
+  .live-edit-chip .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #2cb67d;
+    animation: livePulse 1.4s ease-in-out infinite;
+  }
+  @keyframes livePulse { 0%,100%{opacity:.4} 50%{opacity:1} }
 
   /* Edit button (teacher only) */
   .edit-fab {
@@ -611,6 +731,7 @@
 <body>
   <button id="editFab"        class="edit-fab"         title="Edit this animal's pictures (teacher only)">✏️ Edit</button>
   <button id="editStudentFab" class="edit-student-fab" title="You hearted this animal — you can edit its page">📝 Edit</button>
+  <div id="liveEditChip" class="live-edit-chip"><span class="dot"></span><span id="liveEditMsg">Someone is editing…</span></div>
   <div class="container">
     <a class="back-link" href="index.html">← Back to all animals</a>
     <!-- The wiki shell wraps the floating Wiki button + the original
@@ -636,6 +757,9 @@
 <script src="../edu/js/supabase-config.js"></script>
 <script src="../edu/js/db.js"></script>
 <script src="animals-data.js"></script>
+<!-- Supabase JS SDK — used by the Realtime channel that syncs edits
+     between students/teachers on the same animal page. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
   function getParam(name) {
     const params = new URLSearchParams(window.location.search);
@@ -700,7 +824,9 @@
             <span>Habitat</span>
           </div>
           <div class="collapsible-body">
-            <div class="info-body">${escapeHTML(animal.habitat || '')}</div>
+            <div class="info-body">
+              <div class="editable-text" data-field="habitat" data-placeholder="where it lives">${escapeHTML(animal.habitat || '')}</div>
+            </div>
           </div>
         </div>
         <div class="info-card diet collapsible">
@@ -709,20 +835,22 @@
             <span>Diet</span>
           </div>
           <div class="collapsible-body">
-            <div class="info-body">${escapeHTML(animal.diet || '')}</div>
+            <div class="info-body">
+              <div class="editable-text" data-field="diet" data-placeholder="what it eats">${escapeHTML(animal.diet || '')}</div>
+            </div>
           </div>
         </div>
       </div>
 
-      ${facts.length ? `
-      <div class="facts-card collapsible">
+      <div class="facts-card collapsible${facts.length ? '' : ' facts-empty'}" id="factsCard"${facts.length ? '' : ' style="display:none;"'}>
         <h2 class="collapsible-header" role="button" tabindex="0"><div class="info-icon">💡</div>Fun Facts</h2>
         <div class="collapsible-body">
-          <ul class="facts-list">
-            ${facts.map(f => `<li>${escapeHTML(f)}</li>`).join('')}
+          <ul class="facts-list" id="factsList" data-field="funFacts">
+            ${facts.map((f, i) => `<li data-idx="${i}"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div><button type="button" class="fact-remove" title="Remove this fact">✕</button></li>`).join('')}
           </ul>
+          <div class="fact-add-row" id="factAddRow" tabindex="0">＋ Click to add a fun fact</div>
         </div>
-      </div>` : ''}
+      </div>
 
       ${ytId ? `
       <div class="video-card collapsible">
@@ -766,19 +894,44 @@
       img.src = src;
     }
 
+    // Add cells-1 / cells-2 / cells-3 modifier to .hero-gallery so
+    // the CSS can re-centre the visible cells when one or two of
+    // the three categories are missing.
+    function balanceGallery() {
+      const gallery = document.getElementById('heroGallery');
+      if (!gallery) return;
+      gallery.classList.remove('cells-1', 'cells-2', 'cells-3');
+      const visible = Array.from(gallery.querySelectorAll('.gallery-cell'))
+        .filter(c => c.style.display !== 'none').length;
+      gallery.classList.add('cells-' + Math.max(1, visible));
+    }
+
     function renderCell(catKey, items) {
       const cell = cells[catKey];
       if (!cell) return;
-      const empty = cell.querySelector('.cell-empty');
-      const bg = cell.querySelector('.cell-bg');
       const dotRow = cell.querySelector('.thumb-dot');
       dotRow.innerHTML = '';
 
+      // No image for this category? Hide the cell entirely (cartoon
+      // and coloring drop out when empty so the photo cell is left
+      // centred). The photo cell never drops out — it falls back to
+      // the emoji-on-cream background instead.
       if (!items.length) {
         cell.classList.remove('has-image');
-        if (empty) empty.textContent = catKey === 'photos' ? '' : 'no image yet';
+        if (catKey === 'photos') {
+          const empty = cell.querySelector('.cell-empty');
+          if (empty) empty.textContent = '';
+        } else {
+          cell.style.display = 'none';
+        }
+        // Re-balance the grid so the visible cells stay centred.
+        balanceGallery();
         return;
       }
+
+      // Items exist — make sure the cell is visible (in case a prior
+      // empty render hid it).
+      cell.style.display = '';
 
       // Display: prefer larger Wikipedia thumbnail for crispness.
       const display = src => src.startsWith('data:') ? src : upscaleWikiThumb(src, 480);
@@ -792,6 +945,7 @@
           dotRow.appendChild(dot);
         });
       }
+      balanceGallery();
     }
 
     function cycleCell(cell, catKey) {
@@ -867,12 +1021,39 @@
     }).catch(() => {});
 
     // Show the Edit button only when the Ako teacher session
-    // is active. (Teachers sign in via ../edu/index.html.)
+    // is active. Click pops up admin.html?open=<id> in a centred
+    // window — the editor opens straight onto this animal. When
+    // the popup closes we refresh this page so the new photos /
+    // habitat / etc. surface immediately.
     const editFab = document.getElementById('editFab');
     if (isAkoTeacher()) {
       editFab.classList.add('shown');
       editFab.addEventListener('click', () => {
-        window.location = `admin.html?open=${encodeURIComponent(animal.id)}`;
+        const w = Math.min(window.innerWidth - 40, 1100);
+        const h = Math.min(window.innerHeight - 40, 900);
+        const left = Math.max(0, (screen.width  - w) / 2);
+        const top  = Math.max(0, (screen.height - h) / 2);
+        const popup = window.open(
+          'admin.html?open=' + encodeURIComponent(animal.id),
+          'akoAnimalEdit',
+          `popup=yes,width=${w},height=${h},left=${left},top=${top}`
+        );
+        if (!popup) {
+          // Popup blocker — fall back to a same-tab nav. The user
+          // can always click ← Back to all animals to return.
+          window.location = 'admin.html?open=' + encodeURIComponent(animal.id);
+          return;
+        }
+        // Watch the popup; when it closes, reload this page so
+        // any saved edits surface immediately. Polling every 700ms
+        // is cheap and dodges the cross-origin events the popup
+        // could otherwise fire.
+        const watcher = setInterval(() => {
+          if (popup.closed) {
+            clearInterval(watcher);
+            location.reload();
+          }
+        }, 700);
       });
     }
 
@@ -995,16 +1176,227 @@
       if (mine && mine.animal_id === animalId) {
         studentFab.classList.add('shown');
         document.body.classList.add('has-student-fab');
-        studentFab.addEventListener('click', () => {
-          // Phase 1: link to the teacher admin in a friendly way
-          // so the student can request changes. Phase 2 (next
-          // session) will replace this with the in-page inline
-          // editor + realtime sync.
-          alert('Student edit mode is coming soon! For now, please ask Mr. Charlie to update this page.');
-        });
+        studentFab.addEventListener('click', () => toggleStudentEditMode());
       }
     }
   }
+
+  // ============================================================
+  //  Student inline-edit mode + Realtime sync
+  // ============================================================
+  let _editorMe = null;          // session row of the editor (student or teacher)
+  let _editChannel = null;       // Supabase Realtime channel
+  let _liveTimer = null;
+
+  function toggleStudentEditMode() {
+    const fab = document.getElementById('editStudentFab');
+    const on  = !document.body.classList.contains('student-editing');
+    document.body.classList.toggle('student-editing', on);
+    fab.classList.toggle('active', on);
+    fab.textContent = on ? '📝 Editing — tap to finish' : '📝 Edit';
+    if (on) {
+      _editorMe = currentSession();
+      wireInlineEditors();
+      ensureRealtime();
+    }
+  }
+
+  function wireInlineEditors() {
+    const animalId = getParam('id');
+    if (!animalId) return;
+    // Habitat + Diet text + Fun-Facts rows — generic editable spans.
+    document.querySelectorAll('.editable-text').forEach(el => {
+      if (el._wired) return;
+      el._wired = true;
+      el.addEventListener('click', () => beginEditText(el, animalId));
+    });
+    // Add-a-fun-fact placeholder row.
+    const addRow = document.getElementById('factAddRow');
+    if (addRow && !addRow._wired) {
+      addRow._wired = true;
+      addRow.addEventListener('click', () => addFunFactRow(animalId));
+      addRow.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addFunFactRow(animalId); }
+      });
+    }
+    // Remove-a-fact buttons.
+    document.querySelectorAll('.fact-remove').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const li = b.closest('li');
+        if (!li) return;
+        li.remove();
+        flushFunFacts(animalId);
+      });
+    });
+  }
+
+  function beginEditText(el, animalId) {
+    if (!document.body.classList.contains('student-editing')) return;
+    if (el._editing) return;
+    el._editing = true;
+    const original = el.textContent.trim();
+    const ta = document.createElement('textarea');
+    ta.className = 'inline-textarea';
+    ta.value = original;
+    el.replaceWith(ta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    let committed = false;
+    async function commit() {
+      if (committed) return;
+      committed = true;
+      const v = ta.value.trim();
+      el.textContent = v;
+      ta.replaceWith(el);
+      el._editing = false;
+      if (v === original) return;  // nothing changed
+      const field = el.dataset.field;
+      if (field === 'habitat' || field === 'diet') {
+        await saveField(animalId, { [field]: v });
+      } else {
+        // Inside a Fun Facts <li> — collect all rows and save the full array.
+        await flushFunFacts(animalId);
+      }
+    }
+    function cancel() {
+      committed = true;
+      ta.replaceWith(el);
+      el._editing = false;
+    }
+    ta.addEventListener('blur', commit);
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ta.blur(); }
+      if (e.key === 'Escape')                { e.preventDefault(); cancel(); }
+    });
+  }
+
+  function addFunFactRow(animalId) {
+    if (!document.body.classList.contains('student-editing')) return;
+    // Make sure the facts-card is visible (it can be hidden when the
+    // animal originally had no facts).
+    const card = document.getElementById('factsCard');
+    if (card) card.style.display = '';
+    const list = document.getElementById('factsList');
+    if (!list) return;
+    const li = document.createElement('li');
+    li.innerHTML = '<div class="editable-text" data-placeholder="a fun fact"></div>'
+                 + '<button type="button" class="fact-remove" title="Remove this fact">✕</button>';
+    list.appendChild(li);
+    wireInlineEditors();
+    beginEditText(li.querySelector('.editable-text'), animalId);
+  }
+
+  async function flushFunFacts(animalId) {
+    const list = document.getElementById('factsList');
+    if (!list) return;
+    const facts = Array.from(list.querySelectorAll('li .editable-text'))
+      .map(el => el.textContent.trim())
+      .filter(t => t);
+    await saveField(animalId, { funFacts: facts });
+    // If everything's gone, hide the card again.
+    const card = document.getElementById('factsCard');
+    if (card && !facts.length) card.style.display = 'none';
+  }
+
+  async function saveField(animalId, patch) {
+    try {
+      await saveAnimalCustomToCloud(animalId, patch, _editorMe || currentSession());
+      broadcastEdit(animalId, patch);
+    } catch (e) {
+      alert('Could not save: ' + (e.message || e));
+    }
+  }
+
+  // ---- Realtime ------------------------------------------------
+  function ensureRealtime() {
+    if (_editChannel) return;
+    const animalId = getParam('id');
+    if (!animalId || !window.supabase || !window.WC_SUPABASE) return;
+    const client = window.supabase.createClient(window.WC_SUPABASE.url, window.WC_SUPABASE.anon);
+    _editChannel = client.channel('animal-' + animalId, {
+      config: { broadcast: { self: false } },
+    });
+    _editChannel.on('broadcast', { event: 'animal-edit' }, (msg) => {
+      const p = msg && msg.payload;
+      if (!p || !p.patch) return;
+      applyRemotePatch(p.patch);
+      showLiveEditChip(p.who && p.who.name || 'Someone');
+    });
+    _editChannel.subscribe();
+  }
+
+  function broadcastEdit(animalId, patch) {
+    ensureRealtime();
+    if (!_editChannel) return;
+    try {
+      _editChannel.send({
+        type: 'broadcast',
+        event: 'animal-edit',
+        payload: {
+          patch,
+          who: _editorMe ? { id: _editorMe.id, name: _editorMe.real_name } : null,
+          ts:  Date.now(),
+        },
+      });
+    } catch (e) {}
+  }
+
+  function applyRemotePatch(patch) {
+    // Don't clobber a field while the user is actively editing it.
+    document.querySelectorAll('.editable-text').forEach(el => {
+      const f = el.dataset.field;
+      if (!f || el._editing) return;
+      if (f in patch && typeof patch[f] === 'string') {
+        el.textContent = patch[f];
+      }
+    });
+    if (Array.isArray(patch.funFacts)) {
+      const list = document.getElementById('factsList');
+      const card = document.getElementById('factsCard');
+      // If any fact row in this tab is actively being edited, skip
+      // the remote re-render so we don't trash the local input.
+      const anyEditing = list && list.querySelector('.inline-textarea');
+      if (list && !anyEditing) {
+        list.innerHTML = patch.funFacts.map((f, i) =>
+          `<li data-idx="${i}"><div class="editable-text" data-placeholder="a fun fact">${escapeHTML(f)}</div><button type="button" class="fact-remove" title="Remove this fact">✕</button></li>`
+        ).join('');
+        if (card) card.style.display = patch.funFacts.length ? '' : 'none';
+        wireInlineEditors();
+      }
+    }
+  }
+
+  function showLiveEditChip(name) {
+    const chip = document.getElementById('liveEditChip');
+    const msg  = document.getElementById('liveEditMsg');
+    if (!chip || !msg) return;
+    msg.textContent = name + ' is editing this page';
+    chip.classList.add('shown');
+    if (_liveTimer) clearTimeout(_liveTimer);
+    _liveTimer = setTimeout(() => chip.classList.remove('shown'), 3000);
+  }
+
+  // ---- Initial cloud fetch + listen even when not editing -------
+  // Everyone (read-only viewers too) listens for Realtime edits so a
+  // page that's been open for a while picks up new edits live.
+  (async function loadCloudCustomThenSubscribe() {
+    const animalId = getParam('id');
+    if (!animalId) return;
+    try {
+      const cloud = await fetchAnimalCustomFromCloud(animalId);
+      if (cloud) {
+        const patch = {};
+        if (cloud.habitat !== null && cloud.habitat !== undefined) patch.habitat = cloud.habitat;
+        if (cloud.diet    !== null && cloud.diet    !== undefined) patch.diet    = cloud.diet;
+        if (Array.isArray(cloud.fun_facts)) patch.funFacts = cloud.fun_facts;
+        applyRemotePatch(patch);
+      }
+    } catch (e) {}
+    ensureRealtime();
+  })();
 
   // True when the active Ako session belongs to a teacher.
   // The session is shared across the whole focus/* family of apps

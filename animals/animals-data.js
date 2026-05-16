@@ -1267,6 +1267,85 @@ function getMergedAnimal(id) {
   return withSuggestion(base, loadOverrides()[id]);
 }
 
+// ---------- cloud (wc_animal_custom) ----------
+// Pulls + pushes per-animal overrides through the Supabase REST
+// endpoint. Used by the animal-detail.html inline editor and (next
+// turn) by the admin save path so both writers share one source of
+// truth. Reads merge on top of getMergedAnimal() so the page still
+// shows the base data if the cloud is empty / offline.
+function _cloudUrl() {
+  const cfg = window.WC_SUPABASE || {};
+  return cfg.url ? cfg.url.replace(/\/+$/, '') : '';
+}
+function _cloudHeaders(extra) {
+  const cfg = window.WC_SUPABASE || {};
+  return Object.assign({
+    apikey:        cfg.anon || '',
+    Authorization: 'Bearer ' + (cfg.anon || ''),
+    'Content-Type': 'application/json',
+  }, extra || {});
+}
+
+async function fetchAnimalCustomFromCloud(animalId) {
+  const url = _cloudUrl();
+  if (!url) return null;
+  try {
+    const r = await fetch(url + '/rest/v1/wc_animal_custom?animal_id=eq.'
+      + encodeURIComponent(animalId) + '&select=*&limit=1', {
+      headers: _cloudHeaders(),
+    });
+    if (!r.ok) return null;
+    const rows = await r.json();
+    return rows && rows[0] || null;
+  } catch (e) { return null; }
+}
+
+// Merge a cloud row onto a base animal — only override fields that
+// are non-empty in the cloud row.
+function applyCloudCustomToAnimal(base, custom) {
+  if (!base || !custom) return base;
+  const out = Object.assign({}, base);
+  if (custom.habitat !== null && custom.habitat !== undefined && custom.habitat !== '') out.habitat = custom.habitat;
+  if (custom.diet    !== null && custom.diet    !== undefined && custom.diet    !== '') out.diet    = custom.diet;
+  if (Array.isArray(custom.fun_facts) && custom.fun_facts.length) out.funFacts = custom.fun_facts;
+  if (Array.isArray(custom.custom_topics) && custom.custom_topics.length) out.customTopics = custom.custom_topics;
+  if (Array.isArray(custom.photos) && custom.photos.length)         out.photos = custom.photos;
+  if (Array.isArray(custom.cartoons) && custom.cartoons.length)     out.cartoons = custom.cartoons;
+  if (Array.isArray(custom.coloring_pages) && custom.coloring_pages.length) out.coloringPages = custom.coloring_pages;
+  if (custom.youtube_id)          out.youtubeId         = custom.youtube_id;
+  if (custom.approved_youtube_id) out.approvedYoutubeId = custom.approved_youtube_id;
+  return out;
+}
+
+// UPSERT one or more fields on the wc_animal_custom row for this
+// animal. Caller passes camelCase fields, we map to snake_case.
+async function saveAnimalCustomToCloud(animalId, patch, who) {
+  const url = _cloudUrl();
+  if (!url) throw new Error('Supabase not configured');
+  const body = { animal_id: animalId, updated_at: new Date().toISOString() };
+  if ('habitat'         in patch) body.habitat         = patch.habitat;
+  if ('diet'            in patch) body.diet            = patch.diet;
+  if ('funFacts'        in patch) body.fun_facts       = patch.funFacts;
+  if ('customTopics'    in patch) body.custom_topics   = patch.customTopics;
+  if ('photos'          in patch) body.photos          = patch.photos;
+  if ('cartoons'        in patch) body.cartoons        = patch.cartoons;
+  if ('coloringPages'   in patch) body.coloring_pages  = patch.coloringPages;
+  if ('youtubeId'       in patch) body.youtube_id      = patch.youtubeId;
+  if ('approvedYoutubeId' in patch) body.approved_youtube_id = patch.approvedYoutubeId;
+  if (who) {
+    if (who.id)   body.updated_by_id   = who.id;
+    if (who.name) body.updated_by_name = who.name;
+  }
+  const r = await fetch(url + '/rest/v1/wc_animal_custom?on_conflict=animal_id', {
+    method: 'POST',
+    headers: _cloudHeaders({
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    }),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error('cloud-save ' + r.status + ' :: ' + (await r.text()).slice(0, 200));
+}
+
 function getCategoryById(id) {
   return ANIMAL_CATEGORIES.find(c => c.id === id);
 }
