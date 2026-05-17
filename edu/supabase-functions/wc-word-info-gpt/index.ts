@@ -99,10 +99,11 @@ Deno.serve(async (req) => {
     if (!word) return json({ error: "word required" }, 400);
 
     // Cache key: lowercased word + sentence hash + SCHEMA VERSION.
-    // The `v2:` prefix invalidates pre-UFLI entries that stored IPA
-    // in the (now-renamed) `ipa` field. Bumping the version forces a
-    // fresh GPT call so the sidebar gets UFLI Foundations notation.
-    const ck = "v2:" + word.toLowerCase() + ":" + (sentence ? await senseHash(sentence) : "_");
+    // `v3:` invalidates v2 entries that lacked say_it / word_family /
+    // similar / opposite / use_it fields — the new sidebar layout
+    // needs all of them present, so we want a fresh GPT call once per
+    // (word, sentence) tuple even if the v2 cache had a hit.
+    const ck = "v3:" + word.toLowerCase() + ":" + (sentence ? await senseHash(sentence) : "_");
     const cached = await readCache(ck);
     if (cached) return json({ ...cached, cached: true });
 
@@ -197,6 +198,41 @@ Deno.serve(async (req) => {
       "- examples: 2 short, fresh sentences a Year-3 student could read.",
       "  Each entry { en: string, note: string }. `note` may be empty.",
       "",
+      "ADDITIONAL FIELDS for the new sidebar (always include):",
+      "",
+      "- say_it (array of EXACTLY 3 strings): progressively richer ways",
+      "  to use the word so the student can practice aloud.",
+      "  [0] just the word in the form most natural to say (often the lemma),",
+      "  [1] a 2-4 word phrase including the word,",
+      "  [2] a full short sentence using the word.",
+      "  Example for `scared`:",
+      "  [\"scared\", \"scared of\", \"I am scared of spiders.\"]",
+      "  Example for `consult`:",
+      "  [\"consult\", \"consult a map\", \"I consult my notes before a test.\"]",
+      "",
+      "- word_family (array of 2-5 strings): closely-related forms a",
+      "  Year-3 student would recognise (the verb, the past, the -ing,",
+      "  the noun, the adjective). Lowercase. Include the lemma itself.",
+      "  Example for `scared` → [\"scare\", \"scared\", \"scary\"]",
+      "  Example for `consult` → [\"consult\", \"consulted\", \"consulting\"]",
+      "  If no meaningful family exists, return JUST [lemma].",
+      "",
+      "- similar (array of 1-3 strings): plain single-word synonyms a",
+      "  Year-3 reader would already know. Lowercase. Empty array if",
+      "  there's no kid-friendly synonym.",
+      "  Example for `scared` → [\"afraid\", \"frightened\"]",
+      "",
+      "- opposite (array of 0-2 strings): single-word antonyms.",
+      "  Lowercase. Empty array if no clean antonym exists.",
+      "  Example for `scared` → [\"brave\"]",
+      "  Example for `consult` → []   (no good antonym for Year-3)",
+      "",
+      "- use_it (string): one sentence frame the student can fill in",
+      "  to USE the word about themselves. Always end the blank with",
+      "  the literal text `____` (four underscores). 6-10 words total.",
+      "  Example for `scared` → \"I feel scared when ____.\"",
+      "  Example for `consult` → \"I consult ____ when I need help.\"",
+      "",
       "Use NZ spelling: colour, favourite, mum, lolly, rubbish bin, etc.",
     ].join("\n");
 
@@ -240,6 +276,11 @@ Deno.serve(async (req) => {
     parsed.definition    = String(parsed.definition || "");
     parsed.collocations  = Array.isArray(parsed.collocations) ? parsed.collocations.slice(0, 4) : [];
     parsed.examples      = Array.isArray(parsed.examples)     ? parsed.examples.slice(0, 3)     : [];
+    parsed.say_it        = Array.isArray(parsed.say_it)       ? parsed.say_it.slice(0, 3).map(String)      : [];
+    parsed.word_family   = Array.isArray(parsed.word_family)  ? parsed.word_family.slice(0, 5).map(String) : [];
+    parsed.similar       = Array.isArray(parsed.similar)      ? parsed.similar.slice(0, 3).map(String)     : [];
+    parsed.opposite      = Array.isArray(parsed.opposite)     ? parsed.opposite.slice(0, 2).map(String)    : [];
+    parsed.use_it        = String(parsed.use_it || "");
     delete parsed.ipa;   // legacy key, replaced by `pronunciation`
 
     writeCache(ck, parsed);

@@ -208,13 +208,28 @@
       const list = lessonIds.map(encodeURIComponent).join(',');
       return rGet('/wc_visualization_messages?select=*&lesson_id=in.(' + list + ')&order=sent_at.desc');
     },
-    async respondWithGift(messageId, animalSet, animalIndex, response) {
-      return rPatch('/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), {
+    // Send a reply with optional sticker, text, AND/OR coin gift.
+    // Any of (animalSet+animalIndex), response, or money can be null/0;
+    // the caller validates at least one of the three is present.
+    // Money credits flow on the student side: the sidebar's pollViz
+    // picks the reply up and bumps wc_users.money there. Doing the
+    // credit client-side keeps the optimistic in-page counter and the
+    // persisted row in lockstep without a server-side trigger.
+    async respondWithGift(messageId, animalSet, animalIndex, response, money) {
+      const patch = {
         gift_animal_set:   animalSet,
         gift_animal_index: animalIndex,
         teacher_response:  response || null,
         responded_at:      new Date().toISOString(),
-      });
+      };
+      // Only write gift_money when the caller actually opted in — older
+      // databases without the column would 400 on the column name
+      // otherwise. Run the supabase-add-viz-money.sql migration first
+      // to use this feature.
+      if (Number.isFinite(money) && money > 0) {
+        patch.gift_money = Math.max(0, Math.floor(money));
+      }
+      return rPatch('/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), patch);
     },
   };
 

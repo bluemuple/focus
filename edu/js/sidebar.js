@@ -187,6 +187,48 @@
     const flags = (lessonRef && lessonRef.classFlags) || {};
     const msgDisabled = !!lessonRef.isPreview || !!flags.hideVisualizationSidebar;
 
+    // Lemma the GPT returned (e.g. "scare" when the student tapped
+    // "scared"). Used to bold any matching-prefix word in every bullet
+    // and to colour the inflection suffix sky-blue — matches the
+    // student's mental model of "where does this word come from?".
+    const lemma = (info?.lemma || w.lower || w.word || '').toLowerCase();
+
+    // Build the new bullets only when GPT returned content. Each
+    // bullet runs through `lemmaHl` so lemma matches and inflected
+    // forms appear bold + sky-blue inline.
+    function bulletList() {
+      const exampleEn = (info.examples && info.examples[0] && info.examples[0].en) || '';
+      const sayIt     = Array.isArray(info.say_it)      ? info.say_it      : [];
+      const family    = Array.isArray(info.word_family) ? info.word_family : [];
+      const similar   = Array.isArray(info.similar)     ? info.similar     : [];
+      const opposite  = Array.isArray(info.opposite)    ? info.opposite    : [];
+      const rows = [];
+      rows.push(bulletRow('Meaning',     lemmaHl(info.definition, lemma)));
+      if (exampleEn)        rows.push(bulletRow('Example',     lemmaHl(exampleEn, lemma)));
+      if (sayIt.length)     rows.push(bulletRow('Say it',      sayIt   .map(s => lemmaHl(s, lemma)).join(' <span class="wc-bullet-sep">/</span> ')));
+      if (family.length)    rows.push(bulletRow('Word family', family  .map(s => lemmaHl(s, lemma)).join(' <span class="wc-bullet-sep">/</span> ')));
+      if (similar.length)   rows.push(bulletRow('Similar',     similar .map(s => lemmaHl(s, lemma)).join(', ')));
+      if (opposite.length)  rows.push(bulletRow('Opposite',    opposite.map(s => lemmaHl(s, lemma)).join(', ')));
+      return `<ul class="wc-word-bullets">${rows.join('')}</ul>`;
+    }
+    function bulletRow(label, valueHtml) {
+      return `<li><span class="wc-bullet-label">${escapeHtml(label)}:</span> ${valueHtml}</li>`;
+    }
+
+    // "Use it" frame from GPT (e.g. "I feel scared when ____.") or a
+    // safe fallback if GPT skipped it.
+    const useFrame = (info && info.use_it && info.use_it.trim())
+      ? info.use_it.trim()
+      : `Use ${info?.lemma || w.word || w.lower || 'this word'} in a sentence: ____.`;
+    // We pre-fill the textarea with the frame up to (and including the
+    // space before) "____" so the student only types the missing piece.
+    // If the frame doesn't contain "____" we just leave the textarea
+    // empty and rely on the visible prompt instead.
+    const blankIdx = useFrame.indexOf('____');
+    const prefilled = blankIdx >= 0
+      ? useFrame.slice(0, blankIdx).replace(/\s*$/, ' ')
+      : '';
+
     wrap.innerHTML = `
       <div class="wc-word-card">
         <div class="wc-word-head">
@@ -201,46 +243,31 @@
           ? `<div class="wc-word-loading">Looking it up…</div>`
           : info
             ? `
-              <div class="wc-word-def">${escapeHtml(info.definition)}</div>
-              ${findWordNote(w.lower)
-                ? `<div class="wc-word-teacher-note">
-                    <div class="wc-word-teacher-note-label">📝 From your teacher</div>
-                    <div class="wc-word-teacher-note-body">${escapeHtml(findWordNote(w.lower))}</div>
-                  </div>`
-                : ''}
-              ${findWordImage(w.lower)
-                ? `<div class="wc-word-image-wrap">
-                    <img class="wc-word-image" src="${findWordImage(w.lower)}" alt="${escapeHtml(w.lower)}" />
-                  </div>`
-                : ''}
-              ${info.collocations && info.collocations.length ? `
-                <div class="wc-word-collo-title">Often used with:</div>
-                <ul class="wc-word-collo">
-                  ${info.collocations.map(c => `
-                    <li>
-                      <strong>${escapeHtml(c.phrase)}</strong>
-                      ${c.gloss ? ` — <span class="wc-muted">${escapeHtml(c.gloss)}</span>` : ''}
-                    </li>
-                  `).join('')}
-                </ul>
-              ` : ''}
+              <!-- Definition kept as the headline meaning row above the
+                   bulletted breakdown — the bullets repeat it as
+                   "Meaning:" for visual parity with Example / Say it /
+                   etc. so each row reads the same shape. -->
+              <div class="wc-word-def">${lemmaHl(info.definition, lemma)}</div>
+              ${bulletList()}
             `
             : `<div class="wc-muted">Couldn't fetch info. Try tapping again!</div>`
         }
 
-        <!-- Small message-to-teacher box, pinned to this word.
-             Always rendered so the teacher can see it in preview
-             mode + the student sees it on every word click. The
-             send button is disabled in preview / when the class
-             flag hides the visualisation sidebar; in those modes
-             the form is purely visual. -->
-        <div class="wc-word-msg" id="wcWordMsg">
-          <div class="wc-word-msg-title">💌 Ask your teacher about “${escapeHtml(w.word || w.lower || '')}”</div>
+        <!-- "Use it" practice form — the student writes the frame
+             sentence with their own ending, and the teacher can reply
+             with coins / a sticker / a note (see teacher dashboard).
+             Disabled in preview / when the class hid the sidebar — we
+             still render so previewing teachers see the layout. -->
+        <div class="wc-word-msg wc-use-it" id="wcWordMsg">
+          <div class="wc-use-it-title">💌 Use it: <span class="wc-use-it-frame">${lemmaHl(useFrame, lemma)}</span></div>
           <textarea id="wcWordMsgInput"
                     class="wc-word-msg-input"
                     rows="2"
-                    placeholder="Type a question…"
-                    ${msgDisabled ? 'disabled' : ''}></textarea>
+                    placeholder="${escapeHtml(useFrame)}"
+                    ${msgDisabled ? 'disabled' : ''}>${escapeHtml(prefilled)}</textarea>
+          <div class="wc-use-it-hint">
+            Write “${escapeHtml(useFrame)}” to get money 🪙
+          </div>
           <button id="wcWordMsgSend" class="wc-word-msg-send" type="button"
                   ${msgDisabled ? 'disabled title="Disabled in preview"' : ''}>
             Send 📨
@@ -319,9 +346,16 @@
 
     host.innerHTML = mine.slice(0, 3).map(m => {
       const replied = !!(m.responded_at || m.teacher_response
-                         || m.gift_animal_set != null);
+                         || m.gift_animal_set != null
+                         || (m.gift_money && m.gift_money > 0));
       const stickerSrc = (m.gift_animal_set != null && m.gift_animal_index != null)
         ? window.WCAssets.spriteFor(m.gift_animal_set, m.gift_animal_index, false)
+        : '';
+      // Money gift chip — visible alongside the sticker / text reply
+      // whenever the teacher attached coins to the response.
+      const money = (m.gift_money && m.gift_money > 0) ? m.gift_money : 0;
+      const moneyChip = money
+        ? `<span class="wc-msg-money">🪙 +${money}</span>`
         : '';
       return `
         <div class="wc-msg-row">
@@ -329,6 +363,7 @@
           ${replied ? `
             <div class="wc-msg-reply">
               ${stickerSrc ? `<img class="wc-msg-sticker" src="${stickerSrc}" alt=""/>` : ''}
+              ${moneyChip}
               ${m.teacher_response ? `<div class="wc-msg-text">${escapeHtml(m.teacher_response)}</div>` : ''}
             </div>
           ` : `<div class="wc-msg-waiting">Waiting for your teacher…</div>`}
@@ -501,17 +536,52 @@
           (L.me.encounter_level || 1));
       } catch {}
     }
+    // Money gift — credit the student's coin balance + update the
+    // header counter, mirroring encounter.js bumpCoins so the
+    // optimistic UI and persisted row stay in sync.
+    if (msg.gift_money && msg.gift_money > 0) {
+      try { await creditMoneyGift(L, msg.gift_money); } catch {}
+    }
+  }
+
+  // Add `delta` coins to the current user's wc_users.money, update
+  // the bottom-bar 🪙 counter optimistically, and refresh the cached
+  // session so other tabs (profile / home) see the new balance on
+  // their next render. Failure is logged but not surfaced — the
+  // coins are still on the message row, so a refresh recovers them
+  // (idempotent: we use seen-ids to never double-credit).
+  async function creditMoneyGift(L, delta) {
+    const before = L.me.money || 0;
+    const after  = Math.max(0, before + delta);
+    L.me.money = after;
+    const el = document.getElementById('userMoney');
+    if (el) el.textContent = String(after);
+    try {
+      await window.WCDB.users.update(L.me.id, { money: after });
+      const raw = localStorage.getItem('wc.session.v1');
+      if (raw) {
+        const u = JSON.parse(raw); u.money = after;
+        localStorage.setItem('wc.session.v1', JSON.stringify(u));
+      }
+    } catch (e) {
+      console.warn('money gift credit failed', e);
+    }
   }
   function showToast(L, msg) {
     const t = document.createElement('div');
     t.className = 'wc-toast';
     const hasSticker = (msg.gift_animal_set != null && msg.gift_animal_index != null);
+    const hasMoney   = (msg.gift_money && msg.gift_money > 0);
     const sprite = hasSticker
       ? `<img src="${window.WCAssets.spriteFor(msg.gift_animal_set, msg.gift_animal_index, false)}" alt=""/>`
-      : '💌';
-    const headline = hasSticker
-      ? 'Your teacher sent a sticker!'
-      : 'Your teacher replied!';
+      : hasMoney ? '🪙' : '💌';
+    // Headline prefers money > sticker > generic reply so the student
+    // sees the most exciting word first.
+    const headline = hasMoney
+      ? `Your teacher sent you 🪙 ${msg.gift_money}!`
+      : hasSticker
+        ? 'Your teacher sent a sticker!'
+        : 'Your teacher replied!';
     const wordHint = msg.word ? ` (about <em>${escapeHtml(msg.word)}</em>)` : '';
     t.innerHTML = `
       <div class="wc-toast-sprite">${sprite.startsWith('<img') ? sprite : `<span>${sprite}</span>`}</div>
@@ -570,5 +640,51 @@
     // Otherwise (went/go, was/be) just show the plain word.
     if (i < 2 || i >= d.length) return escapeHtml(d);
     return escapeHtml(d.slice(0, i)) + `<span class="wc-hl-infl">${escapeHtml(d.slice(i))}</span>`;
+  }
+
+  // Walk `text`, find every alphabetic run, and:
+  //   - exact lemma match     → bold        (<strong>scare</strong>)
+  //   - inflected lemma form  → bold + sky  (<strong>scar</strong><sky>ed</sky>)
+  //   - everything else       → plain (escaped) text
+  //
+  // "Inflected" = shares a prefix of length ≥ 0.7 * lemma.length AND
+  // ≥ 3 letters with the lemma. The 0.7 threshold tolerates short
+  // suffix swaps (scare → scary) while rejecting unrelated lookalikes
+  // (e.g. "scar" ≠ "scare"). Punctuation and non-letter characters
+  // pass through unchanged. Used by every bullet so the reader's eye
+  // can spot the headword inside Meaning / Example / Word family /
+  // Similar / Opposite at a glance.
+  function lemmaHl(text, lemma) {
+    const ll = String(lemma || '').toLowerCase();
+    if (!text) return '';
+    if (!ll) return escapeHtml(String(text));
+    const re = /([A-Za-z]+)|([^A-Za-z]+)/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(String(text))) !== null) {
+      if (m[1]) {
+        const word = m[1];
+        const lo   = word.toLowerCase();
+        if (lo === ll) {
+          out.push(`<strong>${escapeHtml(word)}</strong>`);
+        } else {
+          let i = 0;
+          while (i < Math.min(lo.length, ll.length) && lo[i] === ll[i]) i++;
+          const minShared = Math.max(3, Math.floor(ll.length * 0.7));
+          if (i >= minShared && i <= lo.length) {
+            const base = escapeHtml(word.slice(0, i));
+            const tail = escapeHtml(word.slice(i));
+            out.push(tail
+              ? `<strong>${base}</strong><span class="wc-hl-infl">${tail}</span>`
+              : `<strong>${base}</strong>`);
+          } else {
+            out.push(escapeHtml(word));
+          }
+        }
+      } else {
+        out.push(escapeHtml(m[2]));
+      }
+    }
+    return out.join('');
   }
 })();
