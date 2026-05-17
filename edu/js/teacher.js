@@ -1225,38 +1225,62 @@
     return canvas.toDataURL('image/jpeg', quality);
   }
 
-  // Small modal asks: "Where should this image sit?" with 4 corner
-  // buttons. Resolves with 'tl' | 'tr' | 'bl' | 'br'.
-  function pickCorner(onPick) {
-    let host = document.getElementById('cornerPickerHost');
-    if (!host) {
-      host = document.createElement('div');
-      host.id = 'cornerPickerHost';
-      host.className = 'wc-popup-backdrop';
-      host.innerHTML = `
-        <div class="wc-popup" style="max-width: 360px;">
-          <button class="wc-popup-close" aria-label="Close">×</button>
-          <h3 style="margin: 0 0 12px;">Where should this image sit?</h3>
-          <div class="wc-corner-grid">
-            <button data-corner="tl"><span>↖</span> Top-left</button>
-            <button data-corner="tr"><span>↗</span> Top-right</button>
-            <button data-corner="bl"><span>↙</span> Bottom-left</button>
-            <button data-corner="br"><span>↘</span> Bottom-right</button>
-          </div>
+  // Modal: "Where should this image sit?". 5 options (4 corners +
+  // center). `current` highlights the active choice so editing an
+  // existing image shows where it sits right now. The teacher must
+  // click Confirm to apply — that way an accidental misclick on a
+  // corner doesn't immediately re-position the picture.
+  function pickCorner(onPick, current) {
+    // Wipe any previous instance so we always start with a fresh
+    // modal (state from a prior call doesn't leak).
+    const old = document.getElementById('cornerPickerHost');
+    if (old) old.remove();
+
+    const host = document.createElement('div');
+    host.id = 'cornerPickerHost';
+    host.className = 'wc-popup-backdrop';
+    host.innerHTML = `
+      <div class="wc-popup" style="max-width: 380px;">
+        <button class="wc-popup-close" aria-label="Close">×</button>
+        <h3 style="margin: 0 0 12px;">Where should this image sit?</h3>
+        <div class="wc-corner-grid">
+          <button data-corner="tl"><span>↖</span> Top-left</button>
+          <button data-corner="tr"><span>↗</span> Top-right</button>
+          <button data-corner="bl"><span>↙</span> Bottom-left</button>
+          <button data-corner="br"><span>↘</span> Bottom-right</button>
+          <button data-corner="cc"><span>＋</span> Center (centred on its own line)</button>
         </div>
-      `;
-      document.body.appendChild(host);
-      host.addEventListener('click', e => { if (e.target === host) host.remove(); });
-      host.querySelector('.wc-popup-close').addEventListener('click', () => host.remove());
-    } else {
-      host.style.display = 'flex';
+        <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
+          <button class="wc-btn ghost"  id="cpCancel"  type="button">Cancel</button>
+          <button class="wc-btn"        id="cpConfirm" type="button" disabled>Confirm</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(host);
+
+    let picked = current || null;
+    const confirmBtn = host.querySelector('#cpConfirm');
+    const buttons    = host.querySelectorAll('[data-corner]');
+    function highlight() {
+      buttons.forEach(b => b.classList.toggle('selected', b.dataset.corner === picked));
+      confirmBtn.disabled = !picked;
     }
-    host.querySelectorAll('[data-corner]').forEach(b => {
-      b.onclick = () => {
-        const c = b.dataset.corner;
-        host.remove();
-        onPick(c);
-      };
+    highlight();
+
+    buttons.forEach(b => {
+      b.addEventListener('click', () => {
+        picked = b.dataset.corner;
+        highlight();
+      });
+    });
+    const cancel = () => host.remove();
+    host.querySelector('.wc-popup-close').addEventListener('click', cancel);
+    host.querySelector('#cpCancel').addEventListener('click', cancel);
+    host.addEventListener('click', e => { if (e.target === host) cancel(); });
+    confirmBtn.addEventListener('click', () => {
+      if (!picked) return;
+      host.remove();
+      onPick(picked);
     });
   }
 
@@ -1301,9 +1325,10 @@
             <span class="wc-muted">${cornerLabel(im.corner)} · ${pct}%</span>
           </div>
           <div class="wc-img-chip-actions">
-            <button data-size="-" data-i="${i}" class="wc-btn ghost" title="Shrink 5%">−</button>
-            <button data-size="+" data-i="${i}" class="wc-btn ghost" title="Grow 5%">+</button>
-            <button data-rm="${i}" class="wc-btn ghost">Remove</button>
+            <button data-size="-"   data-i="${i}" class="wc-btn ghost" title="Shrink 5%">−</button>
+            <button data-size="+"   data-i="${i}" class="wc-btn ghost" title="Grow 5%">+</button>
+            <button data-corner-edit="${i}" class="wc-btn ghost" title="Change where this image sits">📍 Position</button>
+            <button data-rm="${i}"  class="wc-btn ghost">Remove</button>
           </div>
         </div>
       `;
@@ -1316,6 +1341,17 @@
         const i = parseInt(b.dataset.i, 10);
         const dir = b.dataset.size === '+' ? 1 : -1;
         adjustImageSize(i, dir);
+      });
+    });
+    wrap.querySelectorAll('[data-corner-edit]').forEach(b => {
+      b.addEventListener('click', () => {
+        const i = parseInt(b.dataset.cornerEdit, 10);
+        const im = lessonImages[i];
+        if (!im) return;
+        pickCorner((corner) => {
+          im.corner = corner;
+          renderImagesPreview();
+        }, im.corner);
       });
     });
   }
@@ -1332,7 +1368,13 @@
     renderImagesPreview();
   }
   function cornerLabel(c) {
-    return ({ tl: 'top-left', tr: 'top-right', bl: 'bottom-left', br: 'bottom-right' })[c] || c;
+    return ({
+      tl: 'top-left',
+      tr: 'top-right',
+      bl: 'bottom-left',
+      br: 'bottom-right',
+      cc: 'centre',
+    })[c] || c;
   }
   function removeImage(idx) {
     // Drop from array, then re-index the markers in the body. The

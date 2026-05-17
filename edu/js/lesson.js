@@ -741,26 +741,51 @@
         const tmp = document.createElement('div');
         tmp.innerHTML = segHtml;
         const flat = [];
-        const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
-        let n;
-        while ((n = walker.nextNode())) {
-          // Strip image markers FIRST so the flat sentence list stays
-          // in sync with what the renderer produces. The renderer
-          // replaces `[[IMG:N]]` with an <img> (no sentence span) so a
-          // marker counted here would create an off-by-one between
-          // flat[i] and the DOM's `[data-idx="i"]` — exactly the gap
-          // that hid the TTS underline on the sentence right after an
-          // image. We use the LENIENT strip regex so malformed
-          // markers ([IMG:0], stray IMG:0, etc.) also get scrubbed
-          // before they reach the TTS layer. Marker-only paragraphs
-          // (text becomes empty after stripping) drop out via the
-          // trim() guard below.
-          const text = (n.textContent || '').replace(IMG_MARKER_STRIP_RE, ' ');
-          if (!text || !text.trim()) continue;
+        // Walk TOP-LEVEL block children (every <p>, <h1>..<h6>,
+        // <div>, <li>, <blockquote>) rather than individual text
+        // nodes. We use the block's full textContent — which
+        // automatically concatenates across <br>, <b>, <u>,
+        // <span> etc. — so sentence boundaries are detected on
+        // the whole paragraph, not on each inline fragment.
+        // This is what fixes the "word-by-word TTS after a #
+        // heading" bug: the heading is its own block (one short
+        // sentence), and the prose paragraph beneath it is
+        // another block (one fluent sentence) — instead of the
+        // old behaviour where each text node fragmented further.
+        function visitBlock(node) {
+          if (!node) return;
+          // Element node?
+          if (node.nodeType === 1) {
+            const tag = node.tagName;
+            // Recursive container — descend.
+            if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
+              Array.from(node.childNodes).forEach(visitBlock);
+              return;
+            }
+            // Leaf block whose textContent we treat as one chunk.
+            const blockTags = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|TD|TH)$/;
+            if (blockTags.test(tag)) {
+              pushSentencesFromText(node.textContent || '');
+              return;
+            }
+            // Anything else (e.g. an <img> at top level, an <hr>)
+            // doesn't contribute speech text — skip.
+            return;
+          }
+          // Top-level text node (rare — would only happen if the
+          // segment HTML has bare text outside any block).
+          if (node.nodeType === 3) {
+            pushSentencesFromText(node.textContent || '');
+          }
+        }
+        function pushSentencesFromText(raw) {
+          const text = (raw || '').replace(IMG_MARKER_STRIP_RE, ' ');
+          if (!text || !text.trim()) return;
           splitSentencesSafe(text).forEach(s => {
             flat.push({ kind: 'sent', text: s.text, words: extractWordTokens(s.text) });
           });
         }
+        Array.from(tmp.childNodes).forEach(visitBlock);
         return { kind: 'html', html: segHtml, sentences: flat };
       });
     }
@@ -941,29 +966,66 @@
     return img;
   }
 
-  // HTML body tokenisation. Walks all text nodes inside `rootEl`,
-  // replaces each with a fragment of .wc-sentence spans (containing
-  // .w word spans). Image markers `[[IMG:N]]` in the text become
-  // floating <img> elements inside the sentence flow. Global sentence
-  // index increments across all text nodes so 1문장씩 nav still works.
+  // HTML body tokenisation. For every block-level element inside
+  // `rootEl` (`<p>`, `<h1>`–`<h6>`, `<li>`, `<blockquote>`, table
+  // cells, etc.) we replace its children with a fragment of
+  // `.wc-sentence` spans built from the block's full textContent.
+  //
+  // Why per-block instead of per-text-node? Inline tags like
+  // `<b>`, `<u>`, `<span>`, and `<br>` split a paragraph into
+  // multiple text nodes. The old per-text-node walker treated
+  // every fragment as its own "sentence", which made the TTS
+  // read short paragraphs word-by-word with long pauses between
+  // each fragment. Per-block tokenisation runs sentence detection
+  // on the joined string, so a sentence spans across bold / br
+  // boundaries and reads naturally.
+  //
+  // Trade-off: inline `<b>` / `<u>` formatting inside the block
+  // is lost in the rendered DOM. Lesson bodies are overwhelmingly
+  // prose, so this is acceptable; teachers who want inline
+  // emphasis can wrap whole sentences in bold instead.
   function tokenizeTextNodesInPlace(rootEl, startIdx) {
-    const walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT, null, false);
-    const textNodes = [];
-    let n;
-    while ((n = walker.nextNode())) textNodes.push(n);
-
     let globalSentIdx = startIdx || 0;
-    textNodes.forEach(tn => {
-      // Skip text nodes inside img / script / style — defensive, the
-      // walker shouldn't surface these anyway.
-      const parent = tn.parentNode;
-      if (!parent || parent.nodeName === 'SCRIPT' || parent.nodeName === 'STYLE') return;
-      const text = tn.textContent;
+    const BLOCK_TAGS = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|TD|TH)$/;
+
+    function processBlock(el) {
+      const text = el.textContent || '';
       if (!text || !text.trim()) return;
       const frag = buildSentenceFragment(text, globalSentIdx);
       globalSentIdx = frag.nextIdx;
-      parent.replaceChild(frag.frag, tn);
-    });
+      // Replace ALL children with the sentence-wrapped fragment.
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.appendChild(frag.frag);
+    }
+
+    function visit(node) {
+      if (!node) return;
+      if (node.nodeType === 1) {
+        const tag = node.tagName;
+        if (BLOCK_TAGS.test(tag)) {
+          processBlock(node);
+          return;
+        }
+        // Container — descend into its children. (DIV, SECTION,
+        // ARTICLE wrap things like .wc-title-block.)
+        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
+          Array.from(node.childNodes).forEach(visit);
+          return;
+        }
+        // Otherwise — leaf (img, hr, etc.) — leave alone.
+        return;
+      }
+      if (node.nodeType === 3 && node.textContent && node.textContent.trim()) {
+        // Bare text node at the top level — wrap in a synthetic
+        // <p> so the sentence span has a place to live.
+        const wrap = document.createElement('p');
+        node.parentNode.insertBefore(wrap, node);
+        wrap.appendChild(node);
+        processBlock(wrap);
+      }
+    }
+
+    Array.from(rootEl.childNodes).forEach(visit);
   }
 
   function buildSentenceFragment(text, sentIdxStart) {
