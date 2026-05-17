@@ -1471,6 +1471,20 @@
   // pages skip too — they're sentence/word objects that we'd have to
   // re-tokenise to split. For now those rely on the 6-sentence cap.
   function repaginateOverflow() {
+    // Measurement-based splitting was over-eager — a single
+    // multi-paragraph page would balloon into three or four pages
+    // because each block measured taller than the visible card.
+    // The page body now scrolls (CSS `overflow-y: auto`), so any
+    // overflow stays accessible without splitting. Pagination is
+    // driven purely by the teacher's explicit `---` markers and
+    // the soft sentence cap in `autoSplitHtmlByCount`.
+    // Re-enable selective splitting later if real complaints
+    // surface; for now this matches the user's intent ("1페이지에
+    // 나오게 해줘") and the earlier "no half-cut sentences" report
+    // (since nothing gets clipped any more).
+    return;
+
+    /* eslint-disable no-unreachable */
     if (singleMode) return;
     const bodyEl = $('lessonBody');
     if (!bodyEl) return;
@@ -1570,6 +1584,7 @@
     renderBody();
     refreshPageCounter();
     refreshNavBoundary();
+    /* eslint-enable no-unreachable */
   }
 
   // Re-extract sentences from a slice of segment HTML — used by
