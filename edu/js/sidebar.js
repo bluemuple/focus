@@ -259,6 +259,17 @@
                    "Meaning:" for visual parity with Example / Say it /
                    etc. so each row reads the same shape. -->
               <div class="wc-word-def">${lemmaHl(info.definition, lemma)}</div>
+              ${findWordImage(w.lower) ? `
+                <!-- Teacher-uploaded image for this word — shown
+                     right below the meaning so the student
+                     associates the picture with the definition
+                     immediately. Only rendered when there's a
+                     matching word_images entry. -->
+                <div class="wc-word-image-wrap">
+                  <img class="wc-word-image" src="${findWordImage(w.lower)}"
+                       alt="${escapeHtml(w.lower)}" />
+                </div>
+              ` : ''}
               ${bulletList()}
             `
             : `<div class="wc-muted">Couldn't fetch info. Try tapping again!</div>`
@@ -468,6 +479,12 @@
         refreshGhost();
         setStatus('Wonderful sentence! Your teacher will see it soon. ✨', 'ok');
         renderWordMessages(w.lower);
+        // Notify the lesson body so the blue "messaged" pip appears
+        // on every visible occurrence of this word immediately —
+        // before any re-render. (lesson.js listens for this event.)
+        window.dispatchEvent(new CustomEvent('wc:word-message-sent', {
+          detail: { word: w.lower },
+        }));
         // Restore the default "Write to get money 💰" prompt after a
         // few seconds — long enough for the student to read the
         // praise, short enough that the hint comes back for the

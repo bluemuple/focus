@@ -78,6 +78,14 @@
   // (empty object) so a brand-new class behaves like everything's on.
   let classFlags = {};
 
+  // Lowercased words the CURRENT STUDENT has already sent a "Use it"
+  // message to the teacher about, within THIS lesson. Populated at
+  // init from wc_visualization_messages; appended live whenever the
+  // sidebar fires `wc:word-message-sent` after a successful Send.
+  // Drives the blue notification dot in the lesson body — same
+  // visual treatment as has-word-image / has-word-note.
+  const messagedWords = new Set();
+
   // Expose state to sidebar.js etc. — read-only contract.
   window.WCLesson = {
     me,
@@ -222,6 +230,20 @@
         const rows = await window.WCDB.wordStates.forUser(me.id);
         rows.forEach(r => wordLevels.set(r.word, r.level));
       } catch (e) { console.warn('wordStates load:', e); }
+      // Also pull the student's "Use it" messages so words they've
+      // already messaged the teacher about get a blue pip in the
+      // body — same idea as the green (image) / orange (note) pips
+      // but driven by the student's own outbound activity. We
+      // filter to THIS lesson so unrelated messages from other
+      // lessons don't pollute the dot map.
+      try {
+        const msgs = await window.WCDB.viz.forStudent(me.id);
+        (msgs || []).forEach(m => {
+          if (m.lesson_id === lesson.id && m.word) {
+            messagedWords.add(String(m.word).toLowerCase());
+          }
+        });
+      } catch (e) { console.warn('viz messages load:', e); }
     }
 
     sentences = tokeniseBody(lesson.body);
@@ -865,6 +887,11 @@
   function renderBody() {
     const root = $('lessonBody');
     root.innerHTML = '';
+    // Wipe any chunk-key state — the DOM that owned those classes
+    // just disappeared, so the next paintChunkUnderline must start
+    // fresh (otherwise it could skip the rise animation thinking
+    // the underline is already painted on the new DOM).
+    currentChunkKey = null;
 
     if (singleMode) {
       const flat = sentenceList();
@@ -1192,6 +1219,11 @@
       // When both classes are present the orange dot sits just
       // left of the green dot (handled in CSS).
       if (hasWordNote(tok.lower))  sp.classList.add('has-word-note');
+      // Blue pip — student has already messaged the teacher about
+      // THIS word via the sidebar "Use it" form. Lets the student
+      // see at a glance which words they've already used so the
+      // page reads like a record of their own effort.
+      if (hasWordMsg(tok.lower)) attachMsgPip(sp);
       sp.addEventListener('click', () => onWordClick(sp, tok.lower, tok.text));
       wrap.appendChild(sp);
       wIdx++;
@@ -1212,6 +1244,35 @@
     const want = String(lower || '').toLowerCase();
     return list.some(wn => (wn.word || '').toLowerCase() === want && wn.note);
   }
+  function hasWordMsg(lower) {
+    return messagedWords.has(String(lower || '').toLowerCase());
+  }
+  // Idempotent: adds the .has-word-msg class AND injects the inner
+  // <span class="wc-word-msg-dot"> the CSS targets. The dot is an
+  // actual child (not a pseudo-element) because ::before / ::after
+  // are already taken by the image (green) and note (orange) pips.
+  function attachMsgPip(sp) {
+    if (!sp || sp.classList.contains('has-word-msg')) return;
+    sp.classList.add('has-word-msg');
+    if (!sp.querySelector(':scope > .wc-word-msg-dot')) {
+      const dot = document.createElement('span');
+      dot.className = 'wc-word-msg-dot';
+      dot.setAttribute('aria-hidden', 'true');
+      sp.appendChild(dot);
+    }
+  }
+
+  // Sidebar dispatches this after a successful "Use it" Send. We
+  // remember the word + tag every visible span for it RIGHT NOW so
+  // the dot appears without waiting for the next render.
+  window.addEventListener('wc:word-message-sent', (e) => {
+    const w = String((e && e.detail && e.detail.word) || '').toLowerCase();
+    if (!w) return;
+    messagedWords.add(w);
+    document.querySelectorAll('#lessonBody .w').forEach(sp => {
+      if (sp.dataset && sp.dataset.word === w) attachMsgPip(sp);
+    });
+  });
 
   // Flat list of all sentences across the lesson (page-blind). For
   // HTML bodies with page-break markers, sentences are pre-extracted
@@ -1348,16 +1409,22 @@
   function clearWordFocus() {
     focusedSentIdx = null;
     focusedWordIdx = null;
-    document.querySelectorAll('.w.focused, .w.focused-chunk')
-      .forEach(el => el.classList.remove('focused', 'focused-chunk'));
+    document.querySelectorAll('.w.focused')
+      .forEach(el => el.classList.remove('focused'));
+    clearChunkUnderline();    // also resets currentChunkKey
     // Tell the sidebar to revert to its empty state.
     window.dispatchEvent(new CustomEvent('wc:word-deselected'));
   }
 
   function applyFocus() {
-    // Clear previous focus markers across the whole body.
-    document.querySelectorAll('.w.focused, .w.focused-chunk')
-      .forEach(el => el.classList.remove('focused', 'focused-chunk'));
+    // Clear ONLY the .focused class (the amber word-ring). The
+    // chunk underline (.focused-chunk) is managed by
+    // paintChunkUnderline so it can stay in place when the new
+    // focus is on a DIFFERENT word inside the SAME chunk — that
+    // way the "underline rises" animation only plays on a chunk
+    // CHANGE, not on every word-step within the same phrase.
+    document.querySelectorAll('.w.focused')
+      .forEach(el => el.classList.remove('focused'));
 
     if (focusedSentIdx == null) return;
     const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
@@ -1382,33 +1449,56 @@
     }));
 
     // Chunk highlight + chunk TTS — fire async, bail if focus moved.
+    // Snapshot `lastFocusSource` HERE (before any await) so a later
+    // applyFocus from slideRender/scroll/etc. can't mutate the global
+    // and turn this click's TTS into a dedupe-eligible "nav".
     const seenSent = focusedSentIdx, seenWord = focusedWordIdx;
+    const seenSource = lastFocusSource;
     window.WCChunks.fetch(sentText).then(chunks => {
       if (focusedSentIdx !== seenSent || focusedWordIdx !== seenWord) return;
       const chunk = window.WCChunks.findChunkAt(chunks, focusedWordIdx);
-      // Paint the chunk underline if we found one.
+      // Paint the chunk underline if we found one. If no chunk
+      // matched (rare — empty GPT response, out-of-range index),
+      // clear any stale underline so it doesn't visually drift
+      // away from the focused word.
       if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
+      else       clearChunkUnderline();
 
       // Chunk-tap TTS. When "Play chunk" is on (chunk-muted = false),
       // read the chunk aloud once. If chunks aren't available (network
       // blip / GPT failure / very short sentence), fall back to reading
       // the whole sentence — the teacher's intent was "play the audio
       // for what I tapped", and silence isn't useful.
-      if (chunkMuted || isPreview) return;
+      //
+      // (Preview mode plays too — teachers previewing a lesson need to
+      // hear what the student will hear. Earlier we gated this on
+      // isPreview, which left preview tabs silent.)
+      if (chunkMuted) return;
       const speakText = (chunk && chunk.text) ? chunk.text : sentText;
-      if (!speakText) return;
+      if (!speakText) {
+        console.warn('[chunk-tts] no speakable text — chunks empty AND sentText empty');
+        return;
+      }
       const speakKey  = chunk
         ? `${seenSent}::${chunk.indices[0]}-${chunk.indices[1]}`
         : `${seenSent}::sent`;
-      // Dedupe only for keyboard/arrow navigation — a deliberate tap
-      // means the student wants to hear it, even on the same chunk.
-      if (lastFocusSource !== 'click' && speakKey === lastPlayedChunkKey) return;
+      // Dedupe only when the focus moved via KEYBOARD ARROW navigation
+      // ('nav') and we're still inside the same chunk — keeps the
+      // audio from re-firing on every word-step within one phrase.
+      // A deliberate tap ('click') always speaks, even on the same
+      // chunk. We read the SNAPSHOT taken before the fetch, NOT the
+      // live global, so a slideRender that re-runs applyFocus during
+      // the in-flight chunk fetch can't reclassify a real click into
+      // a dedupe-eligible "nav" and silence it.
+      if (seenSource !== 'click' && speakKey === lastPlayedChunkKey) return;
       lastPlayedChunkKey = speakKey;
       if (window.WCTTS) {
         // Stop any in-flight playback so rapid clicks don't pile up.
         try { window.WCTTS.stop(); } catch {}
         window.WCTTS.speak(speakText).catch(e =>
           console.warn('[chunk-tts] failed', e && e.message));
+      } else {
+        console.warn('[chunk-tts] WCTTS not loaded');
       }
     }).catch(e => console.warn('[chunk-tts] chunks fetch failed', e && e.message));
   }
@@ -1416,7 +1506,29 @@
   // Walk children in order and tag every .w span (word OR glue) whose
   // word-index falls inside [from..to] — gives a continuous underline
   // across spaces/punctuation, the 또박또박 visual.
+  //
+  // Animation rule: the "rise from below" animation should play only
+  // when the chunk CHANGES. Re-focusing a different word inside the
+  // SAME chunk should leave the underline exactly as is (no class
+  // mutation = no animation restart). We track the currently-painted
+  // chunk key on the module scope; if it matches the request, we
+  // bail early. If it differs, we wipe the previous .focused-chunk
+  // classes (could be on another sentence) and paint fresh.
+  let currentChunkKey = null;
+  function chunkKeyFor(sentEl, from, to) {
+    return `${sentEl.dataset.idx || ''}::${from}-${to}`;
+  }
+  function clearChunkUnderline() {
+    document.querySelectorAll('.focused-chunk')
+      .forEach(c => c.classList.remove('focused-chunk'));
+    currentChunkKey = null;
+  }
   function paintChunkUnderline(sentEl, from, to) {
+    const newKey = chunkKeyFor(sentEl, from, to);
+    if (newKey === currentChunkKey) return;   // same chunk → no anim, no DOM change
+    clearChunkUnderline();
+    currentChunkKey = newKey;
+
     let inChunk = false;
     [...sentEl.children].forEach(child => {
       if (!child.classList || !child.classList.contains('w')) return;
@@ -2127,7 +2239,12 @@
     // reads the flag fresh on every level-up event so this button
     // takes effect immediately without a page reload.
     const HIDE_ENC_KEY = 'wc.hideEncounters.v1';
-    let hideEncounters = localStorage.getItem(HIDE_ENC_KEY) === '1';
+    // Default = HIDDEN (Animals off). A blank localStorage means the
+    // student has never expressed a preference, so we err on the side
+    // of "no distractions while reading". Only an explicit '0'
+    // (the user clicking the 🐾 / Animals on toggle) flips encounters
+    // back on for this device.
+    let hideEncounters = localStorage.getItem(HIDE_ENC_KEY) !== '0';
     function applyHideEncounters() {
       const btn = $('btnHideEncounters');
       const ico = $('btnHideEncountersIco');

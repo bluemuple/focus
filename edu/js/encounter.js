@@ -38,6 +38,12 @@
   // Catches keep the cooldown short so the reward loop stays snappy.
   const COOLDOWN_AFTER_CATCH_MS = 30 * 1000;   // 30s
   const COOLDOWN_AFTER_FAIL_MS  = 90 * 1000;   // 90s
+  // 'Skipped' = student dismissed the encounter with the ✕ button to
+  // keep reading. We still apply a cooldown so the next word they
+  // mark doesn't immediately re-pop another animal — that'd defeat
+  // the purpose of the dismiss. 60s ≈ catch cooldown × 2 reads as
+  // "I'm reading right now, leave me alone for a bit."
+  const COOLDOWN_AFTER_SKIP_MS  = 60 * 1000;   // 60s
   // Per-level probabilities now live in window.WCLevels.probability(lvl).
   // Lv 1 starts at 20% and scales up to 65% at Lv 10 — beginners get
   // breathing room, advanced readers get the challenge they're
@@ -113,7 +119,11 @@
     // head-tools row. We read it fresh on every event so flipping
     // the button takes effect on the very next word the student
     // marks (no need to reload the page).
-    if (localStorage.getItem('wc.hideEncounters.v1') === '1') return;
+    //
+    // Default = HIDDEN. Blank localStorage (never-toggled) reads as
+    // "encounters off" — only an explicit '0' (user clicked 🐾 to
+    // turn Animals back on) allows the encounter to fire.
+    if (localStorage.getItem('wc.hideEncounters.v1') !== '0') return;
 
     const now = Date.now();
 
@@ -336,6 +346,11 @@
       // immediately seeing another animal feels punishing. Give the
       // student 90 seconds to read freely and recover.
       cooldownUntil = Date.now() + COOLDOWN_AFTER_FAIL_MS;
+    } else if (outcome === 'skipped') {
+      // Student tapped ✕ — no pet, no coins, no ceiling change. Just
+      // pause the encounter system for a minute so the next marked
+      // word doesn't immediately re-pop another animal.
+      cooldownUntil = Date.now() + COOLDOWN_AFTER_SKIP_MS;
     }
     // either way, sidebar progress panel should refresh — it reads
     // the live counter (already reset) and encounter_level.

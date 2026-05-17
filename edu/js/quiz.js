@@ -27,6 +27,12 @@
     host.className = 'wc-encounter-backdrop wc-hidden';
     host.innerHTML = `
       <div class="wc-encounter" role="dialog" aria-modal="true">
+        <!-- Dismiss button — top-right corner. Lets the student keep
+             reading without taking the quiz. Resolves the encounter
+             promise with 'skipped' so encounter.js applies a short
+             cooldown (no animal caught, no ceiling change). -->
+        <button class="wc-enc-close" id="wcEncClose" type="button"
+                aria-label="Close — keep reading" title="Close — keep reading">✕</button>
         <div class="wc-enc-stage">
           <img class="wc-enc-sprite" src="" alt="" />
           <div class="wc-enc-burst wc-hidden">✨</div>
@@ -43,6 +49,15 @@
       </div>
     `;
     document.body.appendChild(host);
+    // Wire the dismiss once, on first ensureHost call. Click closes
+    // the modal and resolves with 'skipped'.
+    const closeBtn = host.querySelector('#wcEncClose');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        hide();
+        finishWith('skipped');
+      });
+    }
     return host;
   }
 
