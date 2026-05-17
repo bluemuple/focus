@@ -389,7 +389,18 @@
     });
 
     btn.textContent = '✓ Prewarmed';
-    setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 2500);
+    // Remember the body hash so the lesson list can show a ✓ chip
+    // next to 🔥 on the next render. The hash invalidates the mark
+    // automatically the moment the teacher edits the body (different
+    // hash → no ✓), so a stale mark can't mislead.
+    try {
+      localStorage.setItem('wc.prewarm.text.' + lessonId, bodyHash(L.body));
+    } catch {}
+    setTimeout(() => {
+      btn.textContent = origLabel;
+      btn.dataset.busy = '';
+      renderLessons();   // surface the new ✓ chip
+    }, 2500);
   }
 
   // ----------------------------------------------------------------
@@ -442,7 +453,130 @@
     });
 
     btn.textContent = '✓ Audio ready';
-    setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 2500);
+    try {
+      localStorage.setItem('wc.prewarm.audio.' + lessonId, bodyHash(L.body));
+    } catch {}
+    setTimeout(() => {
+      btn.textContent = origLabel;
+      btn.dataset.busy = '';
+      renderLessons();   // surface the new ✓ chip
+    }, 2500);
+  }
+
+  // ----------------------------------------------------------------
+  //  CHUNK-AUDIO PREWARM — populate wc_tts_cache with every CHUNK's
+  //  TTS clip. The sentence-level 🎵 prewarm doesn't help here:
+  //  chunk-on-tap audio (the speak that fires when a student clicks
+  //  a word with "Play chunk" enabled) passes the CHUNK text — e.g.
+  //  "scared of" — not the full sentence, so the cache key is
+  //  different. Without this prewarm, every first-tap on a word is
+  //  a Google TTS round-trip.
+  //
+  //  Two passes:
+  //    1. Fan out chunk-gpt for every sentence to discover the chunk
+  //       boundaries (chunk-gpt's own cache makes re-runs free after
+  //       the first 🔥 prewarm). Collect a dedup'd set of chunk
+  //       texts across the whole lesson.
+  //    2. Fan out wc-tts-google for each unique chunk text, batch
+  //       size 2 to respect Google TTS rate limits.
+  // ----------------------------------------------------------------
+  async function prewarmChunkAudio(lessonId, btn) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    if (btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    const origLabel = btn.textContent;
+
+    const sentences = extractPrewarmSentences(L.body || '');
+    if (!sentences.length) {
+      btn.textContent = '∅ Empty';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
+    }
+
+    const URL  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const ANON = window.WC_SUPABASE.anon;
+    const headers = {
+      'Content-Type': 'application/json',
+      apikey: ANON,
+      Authorization: 'Bearer ' + ANON,
+    };
+
+    // ── Pass 1: gather unique chunk texts.
+    btn.textContent = '🎶 Reading chunks…';
+    const chunkTexts = new Set();
+    await runInBatches(sentences, 5, async (sentence) => {
+      try {
+        const r = await fetch(URL + '/functions/v1/chunk-gpt', {
+          method: 'POST', headers,
+          body: JSON.stringify({ sentence }),
+        });
+        if (!r.ok) return;
+        const j = await r.json();
+        const chunks = Array.isArray(j.chunks) ? j.chunks : [];
+        chunks.forEach(c => {
+          const t = String(c && c.text || '').trim();
+          if (t) chunkTexts.add(t);
+        });
+      } catch {}
+    });
+
+    const chunkList = [...chunkTexts];
+    if (!chunkList.length) {
+      btn.textContent = '∅ No chunks';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
+    }
+
+    // ── Pass 2: TTS each chunk so wc_tts_cache covers it.
+    let done = 0;
+    const updateLabel = () => { btn.textContent = `🎶 ${done}/${chunkList.length}`; };
+    updateLabel();
+    await runInBatches(chunkList, 2, async (text) => {
+      try {
+        await fetch(URL + '/functions/v1/wc-tts-google', {
+          method: 'POST', headers,
+          body: JSON.stringify({
+            text,
+            voice: 'en-AU-Neural2-A',
+            rate:  1.0,
+          }),
+        });
+      } catch {}
+      done++; updateLabel();
+    });
+
+    btn.textContent = '✓ Chunks ready';
+    try {
+      localStorage.setItem('wc.prewarm.chunkaudio.' + lessonId, bodyHash(L.body));
+    } catch {}
+    setTimeout(() => {
+      btn.textContent = origLabel;
+      btn.dataset.busy = '';
+      renderLessons();
+    }, 2500);
+  }
+
+  // Cache-status helpers — used by renderLessons() to draw the ✓
+  // pip next to the 🔥 / 🎵 buttons whenever the lesson's CURRENT
+  // body matches the body that was prewarmed. Hash is a fast djb2
+  // variant — overkill collision-wise for a few-thousand-char body,
+  // and short enough not to bloat localStorage.
+  function bodyHash(body) {
+    let h = 5381;
+    const s = String(body || '');
+    for (let i = 0; i < s.length; i++) {
+      h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    }
+    return h.toString(36);
+  }
+  function isPrewarmCached(lessonId, body, kind /* 'text' | 'audio' */) {
+    try {
+      const stored = localStorage.getItem('wc.prewarm.' + kind + '.' + lessonId);
+      return !!stored && stored === bodyHash(body);
+    } catch {
+      return false;
+    }
   }
 
   // Pull a unique list of sentences out of the lesson body. Mirrors
@@ -834,10 +968,15 @@
                   title="${isHidden ? 'Show this lesson to students again' : 'Hide this lesson from students'}">
             ${isHidden ? '👁 Show' : '🙈 Hide'}
           </button>
-          <button class="wc-btn ghost icon-only" data-prewarm="${L.id}"
-                  title="Prewarm: pre-fetch sentence chunks + word-info data so the first student doesn't wait">🔥</button>
-          <button class="wc-btn ghost icon-only" data-prewarmaudio="${L.id}"
-                  title="Audio: generate &amp; cache TTS audio for every sentence (Google's API won't be hit again for this lesson)">🎵</button>
+          <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'text')  ? ' is-cached' : ''}"
+                  data-prewarm="${L.id}"
+                  title="Prewarm: pre-fetch sentence chunks + word-info data so the first student doesn't wait. ✓ = cached for this body — re-click to refresh after edits.">🔥</button>
+          <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'audio') ? ' is-cached' : ''}"
+                  data-prewarmaudio="${L.id}"
+                  title="Sentence audio: cache TTS for every full sentence (used by ▶ Play and the auto-advance reader). ✓ = cached for this body.">🎵</button>
+          <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'chunkaudio') ? ' is-cached' : ''}"
+                  data-prewarmchunkaudio="${L.id}"
+                  title="Chunk audio: cache TTS for each chunk (the short clip that plays when a student taps a word with Play chunk on). Different cache key than 🎵 — needed separately. ✓ = cached for this body.">🎶</button>
           <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}"
                   title="Permanently delete this lesson — cannot be undone">🗑 Delete</button>
         </div>
@@ -873,6 +1012,9 @@
     });
     list.querySelectorAll('[data-prewarmaudio]').forEach(b => {
       b.addEventListener('click', () => prewarmAudio(b.dataset.prewarmaudio, b));
+    });
+    list.querySelectorAll('[data-prewarmchunkaudio]').forEach(b => {
+      b.addEventListener('click', () => prewarmChunkAudio(b.dataset.prewarmchunkaudio, b));
     });
     list.querySelectorAll('[data-delete-row]').forEach(b => {
       b.addEventListener('click', async () => {
