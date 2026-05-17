@@ -281,6 +281,12 @@
                       class="wc-word-msg-input wc-use-it-input"
                       rows="2"
                       ${msgDisabled ? 'disabled' : ''}></textarea>
+            <!-- Encouragement speech bubble: pops next to the cursor
+                 the moment the student has correctly typed the frame
+                 prefix (e.g. exactly "I feel scared when"). Vanishes
+                 as soon as they continue typing or backspace below
+                 the prefix length. -->
+            <div class="wc-use-it-bubble" id="wcWordMsgBubble" aria-hidden="true">Great! Keep writing.</div>
           </div>
           <div class="wc-use-it-hint">
             Write to get money💰
@@ -332,7 +338,11 @@
     // the start of the textarea, hide the corresponding leading chars
     // of the ghost so the grey shrinks letter-by-letter. Mismatched
     // text leaves the FULL ghost visible (so the student can see
-    // exactly where they diverged from the frame).
+    // exactly where they diverged from the frame). Also drives the
+    // encouragement bubble: shown the moment the student lands on
+    // EXACTLY the frame prefix, hidden the moment they go beyond it
+    // or backspace below it.
+    const bubble = $('wcWordMsgBubble');
     function refreshGhost() {
       if (!ghost) return;
       const typed = input.value;
@@ -358,6 +368,20 @@
       // 8px = the .wc-use-it-input padding-left (matches the textarea
       // padding so column 0 of the ghost == column 0 of the textarea).
       ghost.style.paddingLeft = (8 + offsetPx) + 'px';
+
+      // Encouragement bubble — show ONLY the moment the student has
+      // typed exactly the frame prefix (no extra chars yet). Position
+      // the bubble's left edge a few px past where the last typed
+      // char ends, so the speech-tail arrow points back to "when".
+      if (bubble) {
+        const justCompleted = matched === fp.length && typed.length === fp.length && fp.length > 0;
+        bubble.classList.toggle('show', justCompleted);
+        if (justCompleted) {
+          // 8px = textarea padding-left. +10px = gap for the
+          // speech-bubble arrow so it doesn't touch the last char.
+          bubble.style.left = (8 + offsetPx + 10) + 'px';
+        }
+      }
     }
     input.addEventListener('input', refreshGhost);
     refreshGhost();   // initial paint
