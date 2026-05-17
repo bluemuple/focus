@@ -1005,6 +1005,20 @@
     const BLOCK_TAGS = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|TD|TH)$/;
 
     function processBlock(el) {
+      // Already tokenised? Leave the block alone so any floated
+      // <img class="wc-lesson-img"> inside it is preserved.
+      // textContent on a second pass would lose the image entirely
+      // (image elements don't contribute text), so re-running
+      // buildSentenceFragment on that empty-of-marker text would
+      // strip the image from the DOM. Just advance the global
+      // sentence counter by the count of existing .wc-sentence
+      // spans so subsequent blocks pick up the right starting
+      // index for their data-idx.
+      const existing = el.querySelectorAll('.wc-sentence');
+      if (existing.length) {
+        globalSentIdx += existing.length;
+        return;
+      }
       const text = el.textContent || '';
       if (!text || !text.trim()) return;
       const frag = buildSentenceFragment(text, globalSentIdx);
