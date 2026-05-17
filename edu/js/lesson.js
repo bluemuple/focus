@@ -1427,8 +1427,8 @@
     switch (e.key) {
       case 'ArrowLeft':  e.preventDefault(); navWord(-1);  return;
       case 'ArrowRight': e.preventDefault(); navWord(+1);  return;
-      case 'ArrowUp':    e.preventDefault(); navChunk(-1); return;
-      case 'ArrowDown':  e.preventDefault(); navChunk(+1); return;
+      case 'ArrowUp':    e.preventDefault(); navVertical(-1); return;
+      case 'ArrowDown':  e.preventDefault(); navVertical(+1); return;
       // ','  → previous page,  '.' → next page (또박또박 convention).
       case ',':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx - 1); return;
       case '.':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx + 1); return;
@@ -1522,6 +1522,97 @@
     const adjIdx = focusedSentIdx + dir;
     const adjEl = document.querySelector(`.wc-sentence[data-idx="${adjIdx}"]`);
     if (adjEl) focusWord(adjIdx, 0);
+  }
+
+  // Pixel-based vertical word navigation. ↑/↓ should pick the word
+  // VISUALLY ABOVE / BELOW the currently focused one — exactly what
+  // the eye expects — regardless of which sentence it belongs to.
+  // The word below might be the next sentence (or even two sentences
+  // later) but the cursor jumps where the reader is looking. Because
+  // we measure live getBoundingClientRect() values, changing font
+  // size / line height re-flows the text and the next ↓ press picks
+  // the newly-below word automatically.
+  function navVertical(dir) {
+    // No word focused yet → land on the first word of the current page,
+    // matching navWord's default-focus behaviour.
+    if (focusedSentIdx == null) {
+      const first = document.querySelector('.wc-sentence .w[data-w-idx="0"]');
+      if (first) {
+        const sentEl = first.closest('.wc-sentence');
+        focusWord(parseInt(sentEl.dataset.idx, 10), 0);
+      }
+      return;
+    }
+    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+    if (!sentEl) return;
+    const wordEl = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx}"]`);
+    if (!wordEl) return;
+
+    const curRect = wordEl.getBoundingClientRect();
+    const curCx   = curRect.left + curRect.width / 2;
+
+    // Filter to words on a DIFFERENT visual line in the right direction.
+    // "Different line" = the candidate's vertical span doesn't overlap
+    // the current word's span (1 px slack). This lets wrapped lines of
+    // a long sentence count individually instead of being treated as one.
+    const allWords = Array.from(document.querySelectorAll('#lessonBody .w:not(.punct)'));
+    const candidates = [];
+    for (const w of allWords) {
+      if (w === wordEl) continue;
+      const r = w.getBoundingClientRect();
+      if (dir > 0) {
+        if (r.top < curRect.bottom - 1) continue;     // same line or above
+      } else {
+        if (r.bottom > curRect.top + 1) continue;     // same line or below
+      }
+      candidates.push({ w, r });
+    }
+
+    if (candidates.length) {
+      // Pick the NEAREST line in the chosen direction (smallest gap
+      // between current word's edge and candidate's edge). Then among
+      // candidates on that same nearest line, pick the one whose centre
+      // X is closest to the current centre X — i.e. directly above/below.
+      const gap = (c) => dir > 0
+        ? c.r.top    - curRect.bottom
+        : curRect.top - c.r.bottom;
+      candidates.sort((a, b) => gap(a) - gap(b));
+      const nearestGap = gap(candidates[0]);
+      // Line tolerance — words on the same line can sit ±a few px due
+      // to descenders / superscripts. Use half the current word's
+      // height (~half a typical line-height) as the band.
+      const lineTol = Math.max(4, curRect.height * 0.5);
+      const sameLine = candidates.filter(c => gap(c) - nearestGap <= lineTol);
+      sameLine.sort((a, b) => {
+        const ax = a.r.left + a.r.width / 2;
+        const bx = b.r.left + b.r.width / 2;
+        return Math.abs(ax - curCx) - Math.abs(bx - curCx);
+      });
+      const picked = sameLine[0].w;
+      const newSentEl = picked.closest('.wc-sentence');
+      if (!newSentEl) return;
+      const newSentIdx = parseInt(newSentEl.dataset.idx, 10);
+      const newWordIdx = parseInt(picked.dataset.wIdx, 10);
+      if (Number.isNaN(newSentIdx) || Number.isNaN(newWordIdx)) return;
+      focusWord(newSentIdx, newWordIdx);
+      return;
+    }
+
+    // No word above/below on this page — flip page and land on the
+    // boundary word, mirroring what navWord does at sentence/page edges.
+    if (dir > 0 && pageIdx < pages.length - 1) {
+      goPage(pageIdx + 1);
+      setTimeout(() => focusWord(globalStartOfPage(pageIdx), 0), 220);
+    } else if (dir < 0 && pageIdx > 0) {
+      goPage(pageIdx - 1);
+      setTimeout(() => {
+        const newSents = document.querySelectorAll('.wc-sentence');
+        const last = newSents[newSents.length - 1];
+        if (!last) return;
+        const words = last.querySelectorAll('.w:not(.punct)');
+        focusWord(parseInt(last.dataset.idx, 10), words.length - 1);
+      }, 220);
+    }
   }
 
   // Measurement-based pagination — walks every page, renders its HTML
