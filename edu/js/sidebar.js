@@ -202,8 +202,10 @@
       const family    = Array.isArray(info.word_family) ? info.word_family : [];
       const similar   = Array.isArray(info.similar)     ? info.similar     : [];
       const opposite  = Array.isArray(info.opposite)    ? info.opposite    : [];
+      // No "Meaning" row — the definition is shown as the .wc-word-def
+      // block directly above the bullet list, so repeating it here was
+      // just visual noise.
       const rows = [];
-      rows.push(bulletRow('Meaning',     lemmaHl(info.definition, lemma)));
       if (exampleEn)        rows.push(bulletRow('Example',     lemmaHl(exampleEn, lemma)));
       if (sayIt.length)     rows.push(bulletRow('Say it',      sayIt   .map(s => lemmaHl(s, lemma)).join(' <span class="wc-bullet-sep">/</span> ')));
       if (family.length)    rows.push(bulletRow('Word family', family  .map(s => lemmaHl(s, lemma)).join(' <span class="wc-bullet-sep">/</span> ')));
@@ -220,14 +222,23 @@
     const useFrame = (info && info.use_it && info.use_it.trim())
       ? info.use_it.trim()
       : `Use ${info?.lemma || w.word || w.lower || 'this word'} in a sentence: ____.`;
-    // We pre-fill the textarea with the frame up to (and including the
-    // space before) "____" so the student only types the missing piece.
-    // If the frame doesn't contain "____" we just leave the textarea
-    // empty and rely on the visible prompt instead.
+    // The "frame prefix" is the part the student MUST type — everything
+    // up to (and not including) the blank. We trim the trailing space
+    // for the comparison, but the ghost overlay adds a single visible
+    // space so the cursor sits in a natural starting position.
+    //
+    //   "I feel scared when ____."   → framePrefix = "I feel scared when"
+    //   "I consult ____ when help."  → framePrefix = "I consult"
+    //                                  (validation only checks the prefix;
+    //                                   anything beyond it is the answer)
     const blankIdx = useFrame.indexOf('____');
-    const prefilled = blankIdx >= 0
-      ? useFrame.slice(0, blankIdx).replace(/\s*$/, ' ')
-      : '';
+    const framePrefix = blankIdx >= 0
+      ? useFrame.slice(0, blankIdx).replace(/\s+$/, '').trim()
+      : useFrame.replace(/[.!?]+\s*$/, '').trim();
+    const ghostText = framePrefix + ' ';
+    // Stash on the wrap so wireWordMessageForm can read it without
+    // re-parsing the frame text from a dataset attribute.
+    wrap.dataset.framePrefix = framePrefix;
 
     wrap.innerHTML = `
       <div class="wc-word-card">
@@ -256,17 +267,23 @@
         <!-- "Use it" practice form — the student writes the frame
              sentence with their own ending, and the teacher can reply
              with coins / a sticker / a note (see teacher dashboard).
-             Disabled in preview / when the class hid the sidebar — we
-             still render so previewing teachers see the layout. -->
+             The ghost overlay shows the required frame prefix in
+             light grey; as the student types matching chars, the
+             black textarea text visually covers the grey so it looks
+             like the prefix "turned black". Disabled in preview /
+             when the class hid the sidebar — we still render so
+             previewing teachers see the layout. -->
         <div class="wc-word-msg wc-use-it" id="wcWordMsg">
           <div class="wc-use-it-title">💌 Use it: <span class="wc-use-it-frame">${lemmaHl(useFrame, lemma)}</span></div>
-          <textarea id="wcWordMsgInput"
-                    class="wc-word-msg-input"
-                    rows="2"
-                    placeholder="${escapeHtml(useFrame)}"
-                    ${msgDisabled ? 'disabled' : ''}>${escapeHtml(prefilled)}</textarea>
+          <div class="wc-use-it-input-wrap">
+            <div class="wc-use-it-ghost" id="wcWordMsgGhost" aria-hidden="true">${escapeHtml(ghostText)}</div>
+            <textarea id="wcWordMsgInput"
+                      class="wc-word-msg-input wc-use-it-input"
+                      rows="2"
+                      ${msgDisabled ? 'disabled' : ''}></textarea>
+          </div>
           <div class="wc-use-it-hint">
-            Write “${escapeHtml(useFrame)}” to get money 🪙
+            Write to get money💰
           </div>
           <button id="wcWordMsgSend" class="wc-word-msg-send" type="button"
                   ${msgDisabled ? 'disabled title="Disabled in preview"' : ''}>
@@ -302,35 +319,123 @@
     const input  = $('wcWordMsgInput');
     const send   = $('wcWordMsgSend');
     const status = $('wcWordMsgStatus');
+    const ghost  = $('wcWordMsgGhost');
     if (!input || !send || !status) return;
 
+    // The required frame prefix is stashed on the card wrap by render
+    // — we read it here so the validator can compare typed text to it
+    // without re-parsing the GPT frame string.
+    const wrap = document.getElementById('sideWord');
+    const framePrefix = (wrap && wrap.dataset.framePrefix) || '';
+
+    // Live ghost fade — as the student types matching characters at
+    // the start of the textarea, hide the corresponding leading chars
+    // of the ghost so the grey shrinks letter-by-letter. Mismatched
+    // text leaves the FULL ghost visible (so the student can see
+    // exactly where they diverged from the frame).
+    function refreshGhost() {
+      if (!ghost) return;
+      const typed = input.value;
+      const fp    = framePrefix;
+      const fpLow = fp.toLowerCase();
+      const tyLow = typed.toLowerCase();
+      // How many leading chars of the frame prefix has the student
+      // correctly typed? Stop at the first mismatch.
+      let matched = 0;
+      while (matched < fp.length && matched < typed.length
+             && fpLow[matched] === tyLow[matched]) matched++;
+      // Ghost = the un-typed remainder of the prefix, with a single
+      // trailing space so the cursor sits comfortably after the last
+      // grey char. If everything is matched, ghost is empty.
+      const remaining = fp.slice(matched);
+      ghost.textContent = remaining + (remaining ? ' ' : '');
+      // Push the ghost to the right by the matched-text width so the
+      // remaining grey chars line up visually with where the student
+      // would type next. We compute the offset with a hidden span
+      // measure so it stays accurate across font-size changes.
+      ghost.style.paddingLeft = '';   // reset for measurement
+      const offsetPx = measureTextWidth(input, typed.slice(0, matched));
+      // 8px = the .wc-use-it-input padding-left (matches the textarea
+      // padding so column 0 of the ghost == column 0 of the textarea).
+      ghost.style.paddingLeft = (8 + offsetPx) + 'px';
+    }
+    input.addEventListener('input', refreshGhost);
+    refreshGhost();   // initial paint
+
     send.addEventListener('click', async () => {
-      const text = input.value.trim();
+      const raw  = input.value;
+      const text = raw.trim();
+
+      // ── Validation: explicit, friendly, in the order a Year-3
+      // student is likeliest to hit them.
       if (!text) {
-        status.textContent = 'Write something first!';
-        status.className = 'wc-word-msg-status err';
-        return;
+        return setStatus(`Write a sentence that starts with "${framePrefix}".`, 'err');
       }
+      const fpLow = framePrefix.toLowerCase();
+      const txLow = text.toLowerCase();
+      // 1) Frame prefix missing or mis-typed at the start.
+      if (!txLow.startsWith(fpLow)) {
+        return setStatus(`Write a sentence that includes "${framePrefix}".`, 'err');
+      }
+      // 2) Frame prefix typed but no answer after it.
+      const after = text.slice(framePrefix.length).trim();
+      const afterStripped = after.replace(/[.!?]+\s*$/, '').trim();
+      if (!afterStripped) {
+        const lastWord = framePrefix.split(/\s+/).pop() || 'that';
+        return setStatus(`Now finish the sentence! What comes after "${lastWord}"?`, 'err');
+      }
+      // 3) No full stop at the end.
+      if (!/[.!?]\s*$/.test(text)) {
+        return setStatus('Almost! Add a full stop (.) at the end.', 'err');
+      }
+
+      // All checks passed — send it.
       send.disabled = true;
-      status.textContent = 'Sending…';
-      status.className = 'wc-word-msg-status';
+      setStatus('Sending… ✨', 'ok');
       try {
         await window.WCDB.viz.send(lessonRef.me.id, lessonRef.lesson.id,
           w.lower, text);
         input.value = '';
-        status.textContent = 'Sent! Keep reading. ✓';
-        status.className = 'wc-word-msg-status ok';
+        refreshGhost();
+        setStatus('Wonderful sentence! Your teacher will see it soon. ✨', 'ok');
         renderWordMessages(w.lower);
-        setTimeout(() => { status.textContent = ''; }, 4000);
+        setTimeout(() => { status.textContent = ''; status.className = 'wc-word-msg-status'; }, 6000);
       } catch (e) {
-        status.textContent = 'Could not send. Try again.';
-        status.className = 'wc-word-msg-status err';
+        setStatus('Could not send. Try again.', 'err');
       } finally {
         send.disabled = false;
       }
     });
 
+    function setStatus(msg, kind) {
+      status.textContent = msg;
+      status.className = 'wc-word-msg-status' + (kind ? ' ' + kind : '');
+    }
+
     renderWordMessages(w.lower);
+  }
+
+  // Measure how wide a string would render in the given input/textarea
+  // by drawing it into a hidden span that inherits the input's font.
+  // Used by refreshGhost so the grey remainder slides right as the
+  // student types — keeping the alignment pixel-tight even across
+  // font-size / dyslexic-font changes.
+  let _measureSpan = null;
+  function measureTextWidth(srcEl, text) {
+    if (!_measureSpan) {
+      _measureSpan = document.createElement('span');
+      _measureSpan.style.position   = 'absolute';
+      _measureSpan.style.visibility = 'hidden';
+      _measureSpan.style.whiteSpace = 'pre';
+      _measureSpan.style.top  = '-9999px';
+      _measureSpan.style.left = '-9999px';
+      document.body.appendChild(_measureSpan);
+    }
+    const cs = getComputedStyle(srcEl);
+    _measureSpan.style.font       = cs.font;
+    _measureSpan.style.letterSpacing = cs.letterSpacing;
+    _measureSpan.textContent = text || '';
+    return _measureSpan.getBoundingClientRect().width;
   }
 
   // Fetch all the student's messages and render only those tied to
@@ -643,17 +748,16 @@
   }
 
   // Walk `text`, find every alphabetic run, and:
-  //   - exact lemma match     → bold        (<strong>scare</strong>)
-  //   - inflected lemma form  → bold + sky  (<strong>scar</strong><sky>ed</sky>)
+  //   - exact lemma match     → bold the whole word
+  //   - inflected lemma form  → bold the whole word (incl. the suffix)
   //   - everything else       → plain (escaped) text
   //
   // "Inflected" = shares a prefix of length ≥ 0.7 * lemma.length AND
   // ≥ 3 letters with the lemma. The 0.7 threshold tolerates short
   // suffix swaps (scare → scary) while rejecting unrelated lookalikes
-  // (e.g. "scar" ≠ "scare"). Punctuation and non-letter characters
-  // pass through unchanged. Used by every bullet so the reader's eye
-  // can spot the headword inside Meaning / Example / Word family /
-  // Similar / Opposite at a glance.
+  // (e.g. "scar" ≠ "scare"). Suffix and base both render in the
+  // normal text colour — earlier revisions tinted the suffix sky-blue
+  // but that made the bullet text feel busy.
   function lemmaHl(text, lemma) {
     const ll = String(lemma || '').toLowerCase();
     if (!text) return '';
@@ -672,11 +776,7 @@
           while (i < Math.min(lo.length, ll.length) && lo[i] === ll[i]) i++;
           const minShared = Math.max(3, Math.floor(ll.length * 0.7));
           if (i >= minShared && i <= lo.length) {
-            const base = escapeHtml(word.slice(0, i));
-            const tail = escapeHtml(word.slice(i));
-            out.push(tail
-              ? `<strong>${base}</strong><span class="wc-hl-infl">${tail}</span>`
-              : `<strong>${base}</strong>`);
+            out.push(`<strong>${escapeHtml(word)}</strong>`);
           } else {
             out.push(escapeHtml(word));
           }
