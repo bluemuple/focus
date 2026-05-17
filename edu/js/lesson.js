@@ -1205,9 +1205,21 @@
   // HTML bodies with page-break markers, sentences are pre-extracted
   // into each html part — concat them all to get the global list.
   function sentenceList() {
-    if (sentences.length && sentences.every(p => p.kind === 'html')) {
+    // Read from `pages` (the up-to-date split structure), NOT
+    // from the `sentences` array. repaginateOverflow mutates
+    // sentences[0].sentences to just the FITTED portion of page 0
+    // and stashes the overflow in newly-created page parts that
+    // are only present in `pages`. Aggregating from pages gives
+    // us the full ordered sentence stream → TTS starts at the
+    // right place per page, single-mode nav can walk past the
+    // first page, etc.
+    const allHtml = pages.length && pages.every(parts =>
+      parts.length === 1 && parts[0].kind === 'html');
+    if (allHtml) {
       const out = [];
-      sentences.forEach(p => { (p.sentences || []).forEach(s => out.push(s)); });
+      pages.forEach(parts => {
+        (parts[0].sentences || []).forEach(s => out.push(s));
+      });
       return out;
     }
     return sentences.filter(p => p.kind === 'sent');
@@ -1531,7 +1543,15 @@
   //    페이지에 붙도록 해."
   function repaginateFromScratch() {
     if (!lesson || lesson.body == null) return;
-    const rememberedPage  = pageIdx;
+    const bodyEl = $('lessonBody');
+    // Hide instantly (no transition) while we re-tokenise and
+    // re-measure. Without this the user sees a brief flash of the
+    // pre-paginated full body just before `repaginateOverflow`
+    // trims it back down — "글자크기 변경 버튼이나 행간 변경
+    // 버튼 누르면 일시적으로 그 아래 글이 보였다가 빠르게 사라져".
+    if (bodyEl) bodyEl.classList.add('wc-reflowing');
+
+    const rememberedPage   = pageIdx;
     const rememberedSingle = singleIdx;
     sentences = tokeniseBody(lesson.body);
     pages     = paginate(sentences, lesson.body);
@@ -1541,8 +1561,16 @@
     refreshPageCounter();
     refreshNavBoundary();
     // Wait one frame so the new font/line-height has been painted
-    // before we measure overflow.
-    requestAnimationFrame(() => repaginateOverflow());
+    // before we measure overflow, then reveal the body again.
+    requestAnimationFrame(() => {
+      repaginateOverflow();
+      // A second frame guarantees the post-split layout has been
+      // committed before we drop the .wc-reflowing class — no
+      // intermediate state ever paints.
+      requestAnimationFrame(() => {
+        if (bodyEl) bodyEl.classList.remove('wc-reflowing');
+      });
+    });
   }
 
   function repaginateOverflow() {
