@@ -165,7 +165,34 @@
     if (name === 'lessons')  renderLessons();
     if (name === 'insights') renderInsights();
     if (name === 'messages') renderMessages();
+    if (name === 'animals')  renderAnimalsTab();
     if (name === 'settings') renderSettings();
+  }
+
+  // ============================================================
+  //  TAB — ANIMALS (embeds /animals/admin.html via iframe)
+  // ============================================================
+  let _animalsFrameLoaded = false;
+  function renderAnimalsTab() {
+    const frame = $('animalsFrame');
+    if (frame && !_animalsFrameLoaded) {
+      frame.src = '../animals/admin.html';
+      _animalsFrameLoaded = true;
+    }
+    const prewarm = $('animalsPrewarmBtn');
+    if (prewarm && !prewarm._wired) {
+      prewarm._wired = true;
+      prewarm.addEventListener('click', () => {
+        // Re-point the embedded iframe to admin.html with a hash
+        // marker the embedded page reads on load to auto-trigger
+        // Prewarm. If the iframe is already loaded, nudge it via
+        // src reset so the handler runs again.
+        if (frame) {
+          frame.src = '../animals/admin.html#prewarm';
+          _animalsFrameLoaded = true;
+        }
+      });
+    }
   }
 
   // ============================================================
