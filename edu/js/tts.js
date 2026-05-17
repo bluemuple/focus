@@ -84,6 +84,21 @@
       // weren't stripped upstream. Keep the inner text.
       .replace(/\*\*([\s\S]*?)\*\*/g, '$1')
       .replace(/__([\s\S]*?)__/g,     '$1')
+      // Bullet glyphs the renderer added (`•` for `<ul><li>`
+      // markers) and ANY remaining `*` characters (bullet markers
+      // the teacher may have left in mid-line, or a literal
+      // asterisk in prose). Google TTS reads `*` as "star" /
+      // "asterisk" — that's never what we want here.
+      .replace(/[•*]/g, ' ')
+      // Em-dash (—), en-dash (–), figure dash (‒), horizontal bar
+      // (―). TTS reads these as "dash" or pauses awkwardly. Strip.
+      .replace(/[—–‒―]/g, ' ')
+      // Standalone hyphen-minus — only when it sits alone between
+      // whitespace (i.e. used as a separator) OR at line start
+      // (a `- bullet` line that didn't get caught upstream). Leaves
+      // intra-word hyphens like "co-op" or "well-known" alone so
+      // those words still sound right.
+      .replace(/(^|\s)-+(?=\s|$)/g, '$1')
       // Bracket families — Web Speech on macOS/Windows announces them
       // as "opening parenthesis" etc., and Google TTS occasionally
       // pauses long enough that they sound spelled-out. Strip every

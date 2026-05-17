@@ -547,38 +547,48 @@
     s = s.replace(/\{color:([^}]+)\}([\s\S]+?)\{\/color\}/g,
       (_m, col, inner) => `<span style="color:${col}">${inner}</span>`);
 
-    // Walk line-by-line to wrap prose in <p>. Each blank line OR
-    // block-level tag flushes the current paragraph. Adjacent non-
-    // blank lines within a paragraph used to be joined with <br>,
-    // but that surfaced each hard line wrap as its own text node,
-    // and the sentence tokenizer would then treat short lines like
-    // "By John Smith" as one-word "sentences" — which the TTS read
-    // out with audible pauses between them, sounding word-by-word.
-    // Joining with a space makes the paragraph one flowing string,
-    // so sentence detection spans the whole paragraph and TTS reads
-    // it naturally. Visual line wraps are now driven by word-wrap
-    // on the container; teachers use a blank line to force a new
-    // paragraph.
-    const lines  = s.split('\n');
-    const out    = [];
-    let   buffer = [];
-    const flush  = () => {
-      if (!buffer.length) return;
-      const joined = buffer.join(' ');
-      if (joined.trim()) out.push('<p>' + joined + '</p>');
-      buffer = [];
-    };
-    for (const line of lines) {
-      const t = line.trim();
-      if (!t) { flush(); continue; }
-      if (/^<(h[1-3]|hr|p|div)/i.test(t)) {
-        flush();
-        out.push(t);
-      } else {
-        buffer.push(t);
+    // Walk line-by-line and wrap EACH non-blank line in its own
+    // block. A single Enter in the editor becomes a real
+    // paragraph break in the rendered lesson, and consecutive
+    // bullet lines (`* item` / `- item`) collapse into one
+    // <ul>…</ul> so the rendered page shows • dots instead of
+    // the raw asterisk.
+    const lines = s.split(/\r?\n/);
+    // Stage 1: classify every line into {p|li|html|null(blank)}.
+    const items = lines.map(raw => {
+      const t = raw.trim();
+      if (!t) return null;
+      // Bullet line: `* item` or `- item` (asterisk/hyphen + at
+      // least one space + content). Em-dash, en-dash, etc. don't
+      // match — only the plain ASCII hyphen-minus is treated as a
+      // bullet marker, so prose like "Mt — climb it" stays prose.
+      const bullet = t.match(/^[*\-]\s+(.+)$/);
+      if (bullet) return { type: 'li', text: bullet[1] };
+      // Already-block HTML (teacher pasted raw markup) — pass through.
+      if (/^<(h[1-6]|hr|p|div|ul|ol|li|blockquote)/i.test(t)) {
+        return { type: 'html', text: t };
       }
+      return { type: 'p', text: t };
+    });
+    // Stage 2: emit, collapsing runs of consecutive <li> into one <ul>.
+    const out = [];
+    let i = 0;
+    while (i < items.length) {
+      const it = items[i];
+      if (!it) { i++; continue; }
+      if (it.type === 'li') {
+        const buf = [];
+        while (i < items.length && items[i] && items[i].type === 'li') {
+          buf.push('<li>' + items[i].text + '</li>');
+          i++;
+        }
+        out.push('<ul>' + buf.join('') + '</ul>');
+        continue;
+      }
+      if (it.type === 'html') { out.push(it.text); i++; continue; }
+      out.push('<p>' + it.text + '</p>');
+      i++;
     }
-    flush();
     return out.join('\n');
   }
 
@@ -705,11 +715,14 @@
   }
 
   function tokeniseBody(body) {
-    // Markdown body? Convert to HTML first so the existing HTML path
-    // handles it. Plain text without any markdown markers skips this
-    // hop and stays on the legacy plain-text path with its own
-    // pagination + image marker handling.
-    if (looksLikeMarkdown(body)) {
+    // Markdown body? Or plain text with intentional line breaks?
+    // Either way we run markdownToHtml — it wraps every non-blank
+    // line in its own <p> so a single Enter in the editor becomes
+    // a real paragraph break in the rendered lesson. HTML bodies
+    // (those the teacher authored via a rich-text toolbar with
+    // explicit <p>/<h1>/…) skip this hop so their existing markup
+    // isn't disturbed.
+    if (!isHtmlBody(body) && body) {
       body = markdownToHtml(body);
     }
     // If the lesson opts into "headings start new page", inject a
@@ -757,8 +770,11 @@
           // Element node?
           if (node.nodeType === 1) {
             const tag = node.tagName;
-            // Recursive container — descend.
-            if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
+            // Recursive container — descend so its child blocks
+            // (e.g. <li> inside <ul>) are treated as their own
+            // speech chunks.
+            if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE'
+                || tag === 'UL' || tag === 'OL') {
               Array.from(node.childNodes).forEach(visitBlock);
               return;
             }
@@ -1007,8 +1023,10 @@
           return;
         }
         // Container — descend into its children. (DIV, SECTION,
-        // ARTICLE wrap things like .wc-title-block.)
-        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE') {
+        // ARTICLE wrap things like .wc-title-block; UL/OL contain
+        // their <li> blocks.)
+        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE'
+            || tag === 'UL' || tag === 'OL') {
           Array.from(node.childNodes).forEach(visit);
           return;
         }
@@ -1476,15 +1494,25 @@
       tokenizeTextNodesInPlace(bodyEl, globalStartOfPage(p));
 
       const cardH = bodyEl.clientHeight;
-      if (bodyEl.scrollHeight <= cardH + 2) { p++; continue; }
+      // Treat the bottom padding (and a tiny extra safety margin)
+      // as off-limits. Without this, a sentence whose top fits but
+      // whose bottom dips into the padding gets visually clipped —
+      // student sees just the top half of the last line. The user
+      // explicitly reported this ("마지막 문장이 밑에 여백에 가려").
+      const cs            = getComputedStyle(bodyEl);
+      const paddingBottom = parseFloat(cs.paddingBottom) || 0;
+      const safety        = Math.max(12, paddingBottom);
+      const visibleH      = Math.max(0, cardH - safety);
+
+      if (bodyEl.scrollHeight <= visibleH + 2) { p++; continue; }
 
       // Walk top-level children and find the first one whose bottom
-      // edge sits past the visible area.
+      // edge sits past the safe visible area.
       const children = Array.from(bodyEl.children);
       let cutoff = -1;
       for (let i = 0; i < children.length; i++) {
         const c = children[i];
-        if (c.offsetTop + c.offsetHeight > cardH) { cutoff = i; break; }
+        if (c.offsetTop + c.offsetHeight > visibleH) { cutoff = i; break; }
       }
       // Heading-orphan rule (print typography 101): a heading must
       // not be left alone at the bottom of a page. If the last
@@ -1711,6 +1739,40 @@
     $('btnFontPlus').addEventListener('click', () => {
       fontSize = Math.min(40, fontSize + 2);
       applyFontSize();
+    });
+
+    // Line-spacing controls (↕−/↕+). Stored in localStorage so the
+    // student's chosen breathing-room follows them across lessons,
+    // exactly like font-size. Range clamps prevent the lines from
+    // collapsing on top of each other or stretching off the page.
+    const LH_KEY  = 'wc.lineHeight.v1';
+    const LH_MIN  = 1.4;
+    const LH_MAX  = 3.6;
+    const LH_STEP = 0.2;
+    const LH_BASE = 2.4;
+    let lineHeight = parseFloat(localStorage.getItem(LH_KEY));
+    if (!Number.isFinite(lineHeight) || lineHeight < LH_MIN || lineHeight > LH_MAX) {
+      lineHeight = LH_BASE;
+    }
+    function applyLineHeight() {
+      document.documentElement.style.setProperty('--wc-body-lh', lineHeight.toFixed(2));
+      try { localStorage.setItem(LH_KEY, String(lineHeight)); } catch {}
+      // Line-spacing change also moves text up/down — re-paginate so
+      // any sentence newly pushed past the bottom edge moves to the
+      // next page automatically.
+      requestAnimationFrame(() => {
+        repaginateOverflow();
+        if (singleMode) fitSingleSentenceToCard();
+      });
+    }
+    applyLineHeight();
+    $('btnLhMinus').addEventListener('click', () => {
+      lineHeight = Math.max(LH_MIN, +(lineHeight - LH_STEP).toFixed(2));
+      applyLineHeight();
+    });
+    $('btnLhPlus').addEventListener('click', () => {
+      lineHeight = Math.min(LH_MAX, +(lineHeight + LH_STEP).toFixed(2));
+      applyLineHeight();
     });
 
     let readBetter = localStorage.getItem(READ_KEY) === '1';
