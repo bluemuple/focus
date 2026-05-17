@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Home</title>
-  <link rel="stylesheet" href="./css/styles.css">
+  <link rel="stylesheet" href="./css/styles.css?v=smm1-btns-1">
   <style>
     /* Layout — top bar, then Reading section, then Maths section
        (Maths Game / Subtraction quiz row / Fraction Friend), then
@@ -101,18 +101,31 @@
     <section id="mathsSection">
       <h1 class="section-h">Maths</h1>
       <div class="wc-list">
-        <!-- Subtraction Mental Methods 1 — Practice + two motivators -->
+        <!-- Subtraction Mental Methods 1 — three action buttons:
+             [Back to Basic] [Practice] [Race]
+             The right-hand two are dimmed until the student unlocks
+             them by completing the diagnosis test (BTB stage 4+)
+             and earning a Practice cumulative score (≥ 80). Clicking
+             a dim button shows a popup explaining what's needed. -->
         <div id="navSubtraction" class="wc-list-item">
           <div>
             <div class="title">Subtraction Mental Methods 1</div>
-            <div class="meta">Practise mental subtraction · then race</div>
+            <div class="meta">Diagnose · practise · race</div>
           </div>
           <div class="row-actions">
-            <a class="wc-btn"       href="../maths/student.html?quiz=sub-mental-1&amp;mode=practice">Practice</a>
-            <a class="wc-btn ghost" href="../maths/student.html?quiz=sub-mental-1&amp;mode=yesterday"
-               title="Beat your own score from yesterday">Beat Yesterday</a>
-            <a class="wc-btn ghost" href="../maths/student.html?quiz=sub-mental-1&amp;mode=class"
-               title="Race the rest of the class">Class Race</a>
+            <a class="wc-btn btb-orange two-line"
+               href="./back-to-basic.html"
+               id="navBTB">
+              <span>Back to</span><span>Basic</span>
+            </a>
+            <a class="wc-btn dim"
+               href="./practice.html"
+               id="navPractice"
+               data-unlock-key="practice">Practice</a>
+            <a class="wc-btn dim"
+               href="./race.html"
+               id="navRace"
+               data-unlock-key="race">Race</a>
           </div>
         </div>
 
@@ -125,18 +138,6 @@
           <button class="wc-btn">Open</button>
         </a>
 
-        <!-- Back to Basic — a six-stage diagnosis test that walks
-             the student through every sub-skill needed for "7 − 3"
-             (recognise symbols → understand take-away → hold the
-             quantity → strategy → working memory → final answer). -->
-        <a id="navBackToBasic" class="wc-list-item" href="./back-to-basic.html"
-           style="color:inherit; text-decoration:none;">
-          <div>
-            <div class="title">Back to Basic</div>
-            <div class="meta">Six-stage subtraction diagnosis · 5 quizzes per stage</div>
-          </div>
-          <button class="wc-btn">Open</button>
-        </a>
       </div>
     </section>
 
@@ -198,6 +199,50 @@
     // If every maths item is hidden, hide the Maths section header too.
     if (flags.hideSubtraction && flags.hideFraction) {
       document.getElementById('mathsSection').style.display = 'none';
+    }
+
+    // ===== Subtraction Mental Methods 1 — gate Practice + Race =====
+    // Pulls the student's latest progress to decide whether the
+    // Practice / Race buttons are bright (unlocked) or dim (need to
+    // pass the gate first). A dim button is still clickable but
+    // shows a friendly popup that explains the unlock condition
+    // instead of taking the student into the activity.
+    if (!flags.hideSubtraction && me.role === 'student') {
+      try {
+        const fresh = (window.WCDB.users.byId)
+          ? await window.WCDB.users.byId(me.id)
+          : null;
+        const bs  = (fresh && fresh.basic_stage  && typeof fresh.basic_stage  === 'object') ? fresh.basic_stage  : (me.basic_stage  || {});
+        const ps  = (fresh && fresh.practice_state && typeof fresh.practice_state === 'object') ? fresh.practice_state : (me.practice_state || {});
+        // Practice unlocks once Back to Basic is fully COMPLETED
+        // (all 5 stages passed — including any remediation loops).
+        const completedBTB = (bs.completed === true);
+        // Race unlocks once cumulative Practice score reaches 80.
+        const cumulativeOK = (ps.cumulative || 0) >= 80;
+        const practiceBtn = document.getElementById('navPractice');
+        const raceBtn     = document.getElementById('navRace');
+        if (completedBTB) practiceBtn.classList.remove('dim');
+        if (cumulativeOK) raceBtn.classList.remove('dim');
+        // Click handler for any dim button → popup
+        document.querySelectorAll('.row-actions .wc-btn.dim').forEach(btn => {
+          btn.addEventListener('click', (e) => {
+            if (!btn.classList.contains('dim')) return;
+            e.preventDefault();
+            const key = btn.dataset.unlockKey;
+            let msg = '';
+            if (key === 'practice') {
+              msg = 'Finish all 5 stages of Back to Basic (including any extra practice) first to unlock Practice.';
+            } else if (key === 'race') {
+              if (!completedBTB) {
+                msg = 'First finish all 5 stages of Back to Basic, then earn 80+ Practice points to unlock Race.';
+              } else {
+                msg = 'Earn 80+ Practice points to unlock Race.\n(Cumulative score so far: ' + (ps.cumulative || 0) + ')';
+              }
+            }
+            alert(msg);
+          });
+        });
+      } catch (e) { console.warn('SMM1 gate check failed', e); }
     }
 
     // ===== Reading lessons (only if Reading section is showing) =====

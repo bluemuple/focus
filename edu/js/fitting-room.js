@@ -494,7 +494,11 @@
     const preview = document.getElementById('fitPreview');
     if (!preview) return;
     const base = document.getElementById('fitBase');
-    base.src = '../virtual/images/characters/' + activeBase + '/down.png';
+    // Use the ANIMATED `down.gif` (legs walking in place) instead
+    // of the static down.png — gives the teacher a feel for how
+    // the character will look in motion in the actual virtual
+    // room. File picked by gender via the Boy / Girl select.
+    base.src = '../virtual/images/characters/' + activeBase + '/down.gif';
     base.style.display = hideBase ? 'none' : '';
 
     Array.from(preview.querySelectorAll('img.fit-wear')).forEach(function (n) { n.remove(); });
@@ -618,6 +622,22 @@
     });
   }
 
+  // Lock toggle — flips the `fit-locked` body class which the CSS
+  // uses to dim and click-disable every element control. State
+  // persists per-device in localStorage so a quick refresh keeps
+  // the "view only" mode on.
+  var FIT_LOCK_KEY = 'fitting_lock_elements.v1';
+  function isFitLocked() {
+    try { return localStorage.getItem(FIT_LOCK_KEY) === '1'; }
+    catch (e) { return false; }
+  }
+  function applyFitLockUi() {
+    var on = isFitLocked();
+    document.body.classList.toggle('fit-locked', on);
+    var cb = document.getElementById('fitLockElements');
+    if (cb) cb.checked = on;
+  }
+
   function bindEvents() {
     document.getElementById('fitBaseSelect').addEventListener('change', function (e) {
       activeBase = e.target.value;
@@ -627,6 +647,15 @@
       hideBase = !!e.target.checked;
       renderPreview();
     });
+    var lockCb = document.getElementById('fitLockElements');
+    if (lockCb) {
+      lockCb.addEventListener('change', function (e) {
+        try { localStorage.setItem(FIT_LOCK_KEY, e.target.checked ? '1' : '0'); } catch (er) {}
+        applyFitLockUi();
+      });
+    }
+    // Initial state — sync the checkbox + body class on first paint.
+    applyFitLockUi();
     document.getElementById('fitItemSelect').addEventListener('change', function (e) {
       const v = e.target.value;
       if (!v) return;

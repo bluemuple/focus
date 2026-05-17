@@ -514,6 +514,11 @@
       <div class="actions">
         <button id="addAnimalBtn"     class="btn approve" title="Add a brand-new animal to the list">＋ Add animal</button>
         <button id="prewarmWikiBtn"   class="btn ghost"   title="Generate + cache the GPT wiki summary for every animal. Skips ones already cached.">🔥 Prewarm Wiki</button>
+        <!-- Bulk-approve every animal's suggested YouTube video in
+             one click. Walks every animal that has a suggestedYoutubeId
+             (or a youtube_id field) but no approvedYoutubeId yet and
+             copies the suggestion into the approved slot. -->
+        <button id="approveAllYtBtn"  class="btn approve" title="Copy every suggested YouTube ID into the approved slot — students can watch them all immediately.">▶ Approve all YouTube</button>
         <a class="btn ghost" href="index.html">👁 View site</a>
         <button id="exportBtn" class="btn ghost">⬇ Export</button>
         <button id="importBtn" class="btn ghost">⬆ Import</button>
@@ -1478,6 +1483,65 @@
     suggestionCard.classList.remove('shown');
     suggestionIframe.src = "";
     toast('Suggestion dismissed. Paste your own URL or use the YouTube search.');
+  });
+
+  // ---------- ▶ Approve all YouTube (bulk) ----------
+  // Walks every merged animal. If it has a suggestedYoutubeId but
+  // no approved youtubeId yet, copy the suggestion into the
+  // overrides AND mirror to the cloud row so students see it
+  // immediately. Skips animals that already have an approved ID
+  // (don't overwrite something the teacher explicitly chose).
+  document.getElementById('approveAllYtBtn').addEventListener('click', async () => {
+    const all = getMergedAnimals();
+    const candidates = all.filter(a => a.suggestedYoutubeId && !a.youtubeId);
+    if (!candidates.length) {
+      alert('Nothing to do — every animal with a suggested video is already approved (or has no suggestion).');
+      return;
+    }
+    if (!confirm(
+      'Approve the suggested YouTube video for '
+      + candidates.length + ' animal'
+      + (candidates.length === 1 ? '' : 's')
+      + '?\nStudents will be able to watch them right away.'
+    )) return;
+
+    const btn = document.getElementById('approveAllYtBtn');
+    btn.disabled = true;
+    const origLabel = btn.textContent;
+
+    const overrides = loadOverrides();
+    let ok = 0, fail = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      const a = candidates[i];
+      btn.textContent = `▶ Approving ${i + 1}/${candidates.length}…`;
+      try {
+        // Update the override JSON so localStorage + future loads
+        // see the approval.
+        overrides[a.id] = Object.assign({}, overrides[a.id] || {}, {
+          youtubeId: a.suggestedYoutubeId,
+        });
+        // Mirror to cloud immediately (same fields the per-animal
+        // Save button would push).
+        await pushAdminSaveToCloud(a.id, {
+          habitat:       a.habitat       || '',
+          diet:          a.diet          || '',
+          funFacts:      a.funFacts      || [],
+          youtubeId:     a.suggestedYoutubeId,
+          photos:        a.photos        || [],
+          cartoons:      a.cartoons      || [],
+          coloringPages: a.coloringPages || [],
+        });
+        ok++;
+      } catch (e) {
+        fail++;
+        console.warn('approve-all failed for', a.id, e);
+      }
+    }
+    try { saveOverrides(overrides); } catch {}
+    btn.disabled = false;
+    btn.textContent = origLabel;
+    renderList();
+    toast(`✓ Approved ${ok} video${ok === 1 ? '' : 's'}` + (fail ? ` (${fail} failed)` : ''));
   });
 
   searchInput.addEventListener('input', renderList);

@@ -186,8 +186,41 @@
     'Quantity',
     'Strategy',
     'Memory',
-    'Answer',
   ];
+  // Each stage cell shows BOTH the initial-test score and the
+  // remediation-test score (if attempted). Helps the teacher see
+  // whether the student walked straight through or needed extra
+  // practice to clear a stage.
+  function btbCellHtml(r) {
+    // r = { initial: {correct,total,passed}, remediation: {correct,total,passed} }
+    if (!r || (!r.initial && !r.remediation)) {
+      return `<td style="padding:6px; text-align:center; color:#cbd5e1;">—</td>`;
+    }
+    const parts = [];
+    if (r.initial && r.initial.total) {
+      const passed = r.initial.passed;
+      const bg = passed ? '#dcfce7' : '#fef3c7';
+      const fg = passed ? '#15803d' : '#b45309';
+      parts.push(`<span style="display:inline-block; background:${bg}; color:${fg};
+                               padding:2px 7px; border-radius:6px; font-weight:700; font-size:12px;">
+                    ${r.initial.correct}/${r.initial.total}${passed ? ' ✓' : ''}
+                  </span>`);
+    }
+    if (r.remediation && r.remediation.total) {
+      const passed = r.remediation.passed;
+      const bg = passed ? '#dbeafe' : '#fef3c7';
+      const fg = passed ? '#1d4ed8' : '#b45309';
+      parts.push(`<span title="Remediation score" style="display:inline-block; background:${bg}; color:${fg};
+                               padding:2px 7px; border-radius:6px; font-weight:700; font-size:12px; margin-top:3px;">
+                    R ${r.remediation.correct}/${r.remediation.total}${passed ? ' ✓' : ''}
+                  </span>`);
+    }
+    return `<td style="padding:6px; text-align:center; line-height:1.4;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+                ${parts.join('')}
+              </div>
+            </td>`;
+  }
   async function renderMathsInsights() {
     const wrap = $('mathsInsightsBody');
     if (!wrap) return;
@@ -205,7 +238,12 @@
       wrap.innerHTML = '<p class="wc-muted">No students in this class yet.</p>';
       return;
     }
-    const head = `
+    // The table is wrapped in a "collapsible" container — click
+    // the title row to fold the table away. Saves the open/closed
+    // state in localStorage so teachers don't have to re-collapse.
+    const collapsedKey = 'wc.tbl.btb.collapsed';
+    const startCollapsed = localStorage.getItem(collapsedKey) === '1';
+    const tableHtml = `
       <table style="width:100%; border-collapse: collapse; font-size:14px;">
         <thead>
           <tr style="text-align:left; border-bottom:2px solid #e5e7eb;">
@@ -217,42 +255,60 @@
             <th style="padding:8px 6px;">Status</th>
           </tr>
         </thead>
-        <tbody>`;
-    const body = rows.map(s => {
-      const bs = (s.basic_stage && typeof s.basic_stage === 'object') ? s.basic_stage : {};
-      const cur = bs.currentStage || 1;
-      const results = bs.results || {};
-      const done = !!bs.completed;
-      const cellHtml = BTB_STAGE_NAMES.map((_, i) => {
-        const sid = String(i + 1);
-        const r = results[sid];
-        if (!r || !r.total) {
-          return `<td style="padding:6px; text-align:center; color:#cbd5e1;">—</td>`;
+        <tbody>
+        ${rows.map(s => {
+          const bs = (s.basic_stage && typeof s.basic_stage === 'object') ? s.basic_stage : {};
+          const cur = bs.currentStage || 1;
+          const results = bs.results || {};
+          const done = !!bs.completed;
+          const cellHtml = BTB_STAGE_NAMES.map((_, i) => btbCellHtml(results[String(i + 1)])).join('');
+          const status = done
+            ? '<span style="color:#15803d; font-weight:700;">All done 🏆</span>'
+            : `<span style="color:#6b7280;">Stage ${cur}</span>`;
+          return `
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:8px 6px; font-weight:600;">${escapeHtml(s.real_name || '—')}</td>
+              <td style="padding:8px 6px;">Stage ${cur}</td>
+              ${cellHtml}
+              <td style="padding:8px 6px;">${status}</td>
+            </tr>`;
+        }).join('')}
+        </tbody>
+      </table>
+      <p class="wc-muted" style="font-size:12px; margin-top:10px;">
+        Green chip = initial test passed. Blue "R" chip = remediation
+        practice passed. Amber = needs more practice.
+      </p>`;
+    wrap.innerHTML = `
+      <div class="wc-collapse" data-key="${collapsedKey}">
+        <button type="button" class="wc-collapse-toggle" aria-expanded="${startCollapsed ? 'false' : 'true'}">
+          <span class="wc-collapse-caret">${startCollapsed ? '▶' : '▼'}</span>
+          <span>Back to Basic — student progress</span>
+        </button>
+        <div class="wc-collapse-body" ${startCollapsed ? 'hidden' : ''}>
+          ${tableHtml}
+        </div>
+      </div>`;
+    // Wire the collapse click.
+    const toggle = wrap.querySelector('.wc-collapse-toggle');
+    const body   = wrap.querySelector('.wc-collapse-body');
+    const caret  = wrap.querySelector('.wc-collapse-caret');
+    if (toggle && body) {
+      toggle.addEventListener('click', () => {
+        const isHidden = body.hasAttribute('hidden');
+        if (isHidden) {
+          body.removeAttribute('hidden');
+          toggle.setAttribute('aria-expanded', 'true');
+          if (caret) caret.textContent = '▼';
+          try { localStorage.removeItem(collapsedKey); } catch {}
+        } else {
+          body.setAttribute('hidden', '');
+          toggle.setAttribute('aria-expanded', 'false');
+          if (caret) caret.textContent = '▶';
+          try { localStorage.setItem(collapsedKey, '1'); } catch {}
         }
-        const pct = r.correct / r.total;
-        const passed = (r.correct === 2 && r.total === 2) || (r.correct >= 3 && r.total >= 3);
-        // Colour: green if passed, amber otherwise.
-        const bg = passed ? '#dcfce7' : '#fef3c7';
-        const fg = passed ? '#15803d' : '#b45309';
-        return `<td style="padding:6px; text-align:center;">
-                  <span style="display:inline-block; background:${bg}; color:${fg};
-                               padding:2px 8px; border-radius:6px; font-weight:700;">
-                    ${r.correct}/${r.total}${passed ? ' ✓' : ''}
-                  </span>
-                </td>`;
-      }).join('');
-      const status = done
-        ? '<span style="color:#15803d; font-weight:700;">All done 🏆</span>'
-        : `<span style="color:#6b7280;">Stage ${cur}</span>`;
-      return `
-        <tr style="border-bottom:1px solid #f1f5f9;">
-          <td style="padding:8px 6px; font-weight:600;">${escapeHtml(s.real_name || '—')}</td>
-          <td style="padding:8px 6px;">Stage ${cur}</td>
-          ${cellHtml}
-          <td style="padding:8px 6px;">${status}</td>
-        </tr>`;
-    }).join('');
-    wrap.innerHTML = head + body + '</tbody></table>';
+      });
+    }
   }
 
   // ============================================================
