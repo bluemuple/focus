@@ -281,15 +281,19 @@
     const bar   = document.getElementById('lbPageCount');
     const pageText = `${pageIdx + 1} / ${Math.max(1, pages.length)}`;
     let barText = pageText;
-    if (counterMode === 'sentence') {
+    // Single-sentence mode ALWAYS shows the sentence counter — the
+    // student is literally walking through sentences one at a time,
+    // so a page count would be meaningless. counterMode='sentence'
+    // (set by ›/‹ arrows) also forces this branch in page mode.
+    if (counterMode === 'sentence' || singleMode) {
       const flat = sentenceList();
       // "Current sentence" = the sentence the focused word lives in,
       // falling back to single-mode index, falling back to the first
       // sentence of the current page so the counter always has a
       // sensible value.
       let curIdx = 0;
-      if (focusedSentIdx != null) curIdx = focusedSentIdx;
-      else if (singleMode)        curIdx = singleIdx;
+      if (singleMode)             curIdx = singleIdx;
+      else if (focusedSentIdx != null) curIdx = focusedSentIdx;
       else                        curIdx = globalStartOfPage(pageIdx);
       barText = `${curIdx + 1} / ${Math.max(1, flat.length)}`;
     }
@@ -1005,18 +1009,26 @@
     const BLOCK_TAGS = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|TD|TH)$/;
 
     function processBlock(el) {
-      // Already tokenised? Leave the block alone so any floated
-      // <img class="wc-lesson-img"> inside it is preserved.
-      // textContent on a second pass would lose the image entirely
-      // (image elements don't contribute text), so re-running
-      // buildSentenceFragment on that empty-of-marker text would
-      // strip the image from the DOM. Just advance the global
-      // sentence counter by the count of existing .wc-sentence
-      // spans so subsequent blocks pick up the right starting
-      // index for their data-idx.
+      // Already tokenised? Leave the block's STRUCTURE alone so any
+      // floated <img class="wc-lesson-img"> inside it is preserved
+      // (re-running buildSentenceFragment on textContent would strip
+      // the image — image elements don't contribute text). BUT we
+      // still need to (a) advance the global sentence counter, and
+      // (b) re-attach click handlers to the existing .w spans, since
+      // those got serialized through innerHTML/outerHTML by the
+      // pagination pipeline and lost their JS listeners. Without (b)
+      // the words LOOK clickable (have data-w-idx, focus styles) but
+      // tapping them is a no-op — the visible "click does nothing"
+      // bug that surfaced after repaginate.
       const existing = el.querySelectorAll('.wc-sentence');
       if (existing.length) {
         globalSentIdx += existing.length;
+        existing.forEach(sentEl => {
+          sentEl.querySelectorAll('.w:not(.punct)').forEach(sp => {
+            sp.addEventListener('click', () =>
+              onWordClick(sp, sp.dataset.word || '', sp.textContent || ''));
+          });
+        });
         return;
       }
       // Block has inline emphasis (`<b>`, `<u>`, `<em>`, `<strong>`,
@@ -1999,6 +2011,11 @@
         singleIdx = lastSelectedSentenceIdx || pageStart;
       }
       refreshSingleMode();
+      // Flash the bottom counter — refreshPageCounter has just swapped
+      // its text between "page 3/17" and "sentence 12/84"; the glow
+      // matches the cue students get when they tap ‹/› vs ‹‹/›› in
+      // page mode, signalling the counter just changed meaning.
+      flashCounter();
     });
 
     // ── Reading-comfort controls: font size +/- and "Read Better"

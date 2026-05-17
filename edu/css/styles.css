@@ -1609,8 +1609,23 @@ body.wc-lesson-layout .wc-side-section {
 .wc-use-it-hint {
   font-size: 12px;
   color: #b03452;
-  margin: 4px 0 0;
+  /* Negative top margin pulls the hint up against the input area —
+     the parent .wc-word-msg has gap:6px between flex children, so a
+     -6px top would collapse the gap entirely. -4px leaves a hairline. */
+  margin: -4px 0 0;
   line-height: 1.4;
+  font-weight: 600;
+  min-height: 1.4em;   /* reserve the line so layout doesn't jump when text swaps */
+}
+/* When setStatus() puts a validation / send-status message into the
+   same element, swap the colour but keep the slot in place. */
+.wc-use-it-hint.wc-hint-err {
+  color: #c4423a;
+  font-weight: 700;
+}
+.wc-use-it-hint.wc-hint-ok {
+  color: #1f8c4d;
+  font-weight: 700;
 }
 
 /* Ghost-overlay textarea — the textarea sits on top with a transparent
@@ -1646,46 +1661,73 @@ body.wc-lesson-layout .wc-side-section {
   z-index: 1;
 }
 
-/* Encouragement speech bubble. Pinned to the absolutely-positioned
-   wrap; `left` is set in JS the moment the student finishes typing
-   the frame prefix, so the tail points back at the last char they
-   wrote (typically the right edge of "when"). Vertically centred on
-   the first text line of the 44-px-min textarea. */
+/* Vertical speech bubble — floats ABOVE the textarea pointing down
+   at either the next-word slot (success / green) or the first wrong
+   character (error / pink). Words stack vertically, one per line.
+   `left` is set in JS to the desired arrow-tip X; translateX(-50%)
+   centres the bubble (and the bottom arrow) on that X. */
 .wc-use-it-bubble {
   position: absolute;
-  top: 50%;
-  left: 0;
+  bottom: calc(100% - 8px);   /* arrow tip sits ~2 px below textarea top edge */
+  left: 0;                     /* set in JS */
   background: #2dba4e;
   color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: 14px;
-  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .2px;
+  line-height: 1.1;
+  padding: 5px 8px;
+  border-radius: 10px;
   z-index: 3;
   pointer-events: none;
   visibility: hidden;
   opacity: 0;
-  transform: translateY(-50%) scale(.8);
-  transition: opacity .14s ease, transform .18s ease;
-  box-shadow: 0 1px 4px rgba(0,0,0,.18);
+  /* Combined: centre on `left`, lift slightly, scale-from-tiny pop. */
+  transform: translate(-50%, 4px) scale(.7);
+  transform-origin: 50% 100%;
+  transition: opacity .14s ease, transform .18s cubic-bezier(.34,1.56,.64,1);
+  box-shadow: 0 2px 6px rgba(0,0,0,.18);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  white-space: nowrap;
 }
-.wc-use-it-bubble::before {
-  /* Speech-tail arrow on the LEFT side, pointing back at the cursor. */
+/* Down-pointing arrow at the bottom of the bubble, horizontally
+   centred so it sits above whatever the `left` X targets. */
+.wc-use-it-bubble::after {
   content: '';
   position: absolute;
-  left: -6px;
-  top: 50%;
-  margin-top: -6px;
+  left: 50%;
+  bottom: -6px;
+  margin-left: -6px;
   width: 0; height: 0;
   border: 6px solid transparent;
-  border-right-color: #2dba4e;
-  border-left: 0;
+  border-top-color: inherit;     /* matches bubble background via custom prop fallback */
+  border-bottom: 0;
 }
 .wc-use-it-bubble.show {
   visibility: visible;
   opacity: 1;
-  transform: translateY(-50%) scale(1);
+  transform: translate(-50%, 0) scale(1);
+}
+.wc-use-it-bubble.success {
+  background: #2dba4e;
+}
+.wc-use-it-bubble.success::after {
+  border-top-color: #2dba4e;
+}
+.wc-use-it-bubble.err {
+  background: #ec4899;            /* pink */
+}
+.wc-use-it-bubble.err::after {
+  border-top-color: #ec4899;
+}
+/* Per-word lines inside the bubble — uniform width so the column
+   reads cleanly even when the words have different lengths. */
+.wc-use-it-bubble span {
+  display: block;
+  text-align: center;
 }
 
 /* Money chip — visible in the message thread when a teacher reply

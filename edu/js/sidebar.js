@@ -281,21 +281,30 @@
                       class="wc-word-msg-input wc-use-it-input"
                       rows="2"
                       ${msgDisabled ? 'disabled' : ''}></textarea>
-            <!-- Encouragement speech bubble: pops next to the cursor
-                 the moment the student has correctly typed the frame
-                 prefix (e.g. exactly "I feel scared when"). Vanishes
-                 as soon as they continue typing or backspace below
-                 the prefix length. -->
-            <div class="wc-use-it-bubble" id="wcWordMsgBubble" aria-hidden="true">Great! Keep writing.</div>
+            <!-- Speech bubble — two states wired from refreshGhost():
+                 - .show.success (green): student typed EXACTLY the
+                   frame prefix; bubble floats above the next-word
+                   slot reading "Great! / Keep / writing." (vertical)
+                 - .show.err     (pink) : student mistyped a char
+                   inside the prefix; bubble sits above the mistyped
+                   char reading "Write / it / again." (vertical)
+                 The same element handles both — content/class swap
+                 keeps the DOM small and the position calc identical. -->
+            <div class="wc-use-it-bubble" id="wcWordMsgBubble" aria-hidden="true"></div>
           </div>
-          <div class="wc-use-it-hint">
+          <!-- Dual-role hint line. Default = the "Write to get money 💰"
+               prompt. When the validator sets a status message (e.g.
+               "Add a full stop (.)"), the same line re-renders with
+               the message — the hint is HIDDEN, not stacked below,
+               so the line height of the form never shifts and the
+               eye doesn't have to track to a new spot. -->
+          <div id="wcWordMsgHint" class="wc-use-it-hint">
             Write to get money💰
           </div>
           <button id="wcWordMsgSend" class="wc-word-msg-send" type="button"
                   ${msgDisabled ? 'disabled title="Disabled in preview"' : ''}>
             Send 📨
           </button>
-          <div id="wcWordMsgStatus" class="wc-word-msg-status"></div>
           <div id="wcWordMsgThread" class="wc-word-msg-thread"></div>
         </div>
       </div>
@@ -321,12 +330,19 @@
   //  We render at most the 3 most recent messages for THIS word
   //  so a chatty student doesn't bury the word card.
   // ============================================================
+  // Default copy for the "Write to get money 💰" hint. setStatus()
+  // swaps the hint element's text + colour with a validation /
+  // sending / success message; this constant restores the prompt
+  // when the message is cleared (typing into the box or after the
+  // success auto-timeout fires).
+  const USE_IT_DEFAULT_HINT = 'Write to get money💰';
+
   async function wireWordMessageForm(w) {
     const input  = $('wcWordMsgInput');
     const send   = $('wcWordMsgSend');
-    const status = $('wcWordMsgStatus');
+    const hint   = $('wcWordMsgHint');   // serves as the status line too
     const ghost  = $('wcWordMsgGhost');
-    if (!input || !send || !status) return;
+    if (!input || !send || !hint) return;
 
     // The required frame prefix is stashed on the card wrap by render
     // — we read it here so the validator can compare typed text to it
@@ -334,26 +350,35 @@
     const wrap = document.getElementById('sideWord');
     const framePrefix = (wrap && wrap.dataset.framePrefix) || '';
 
-    // Live ghost fade — as the student types matching characters at
-    // the start of the textarea, hide the corresponding leading chars
-    // of the ghost so the grey shrinks letter-by-letter. Mismatched
-    // text leaves the FULL ghost visible (so the student can see
-    // exactly where they diverged from the frame). Also drives the
-    // encouragement bubble: shown the moment the student lands on
-    // EXACTLY the frame prefix, hidden the moment they go beyond it
-    // or backspace below it.
+    // Live ghost fade + speech-bubble feedback. Walks the typed text
+    // char-by-char against the frame prefix with STRICT comparison
+    // (case + whitespace matter) so we can distinguish three states:
+    //
+    //   A) typed.length === matched < fp.length
+    //      Student is on the right path but not done yet — no bubble.
+    //   B) typed.length >  matched < fp.length
+    //      Student typed a wrong char inside the prefix — show the
+    //      pink "Write / it / again." bubble directly above that
+    //      first wrong char.
+    //   C) matched === fp.length && typed.length === fp.length
+    //      Student just landed on the full prefix — show the green
+    //      "Great! / Keep / writing." bubble above the slot where
+    //      the NEXT word will go (7 px past the right edge of "when").
+    //   D) typed.length > fp.length && matched === fp.length
+    //      Student is now typing the answer — no bubble (they're past
+    //      the prefix; the ▾ arrow can't usefully point anywhere).
     const bubble = $('wcWordMsgBubble');
     function refreshGhost() {
       if (!ghost) return;
       const typed = input.value;
       const fp    = framePrefix;
-      const fpLow = fp.toLowerCase();
-      const tyLow = typed.toLowerCase();
-      // How many leading chars of the frame prefix has the student
-      // correctly typed? Stop at the first mismatch.
+      // Strict char-by-char match — case AND whitespace count.
+      // "I Feel" mismatches at index 2 (lowercase f), "I  feel"
+      // mismatches at index 2 (extra space), etc.
       let matched = 0;
       while (matched < fp.length && matched < typed.length
-             && fpLow[matched] === tyLow[matched]) matched++;
+             && fp[matched] === typed[matched]) matched++;
+
       // Ghost = the un-typed remainder of the prefix, with a single
       // trailing space so the cursor sits comfortably after the last
       // grey char. If everything is matched, ghost is empty.
@@ -369,21 +394,38 @@
       // padding so column 0 of the ghost == column 0 of the textarea).
       ghost.style.paddingLeft = (8 + offsetPx) + 'px';
 
-      // Encouragement bubble — show ONLY the moment the student has
-      // typed exactly the frame prefix (no extra chars yet). Position
-      // the bubble's left edge a few px past where the last typed
-      // char ends, so the speech-tail arrow points back to "when".
-      if (bubble) {
-        const justCompleted = matched === fp.length && typed.length === fp.length && fp.length > 0;
-        bubble.classList.toggle('show', justCompleted);
-        if (justCompleted) {
-          // 8px = textarea padding-left. +10px = gap for the
-          // speech-bubble arrow so it doesn't touch the last char.
-          bubble.style.left = (8 + offsetPx + 10) + 'px';
-        }
+      if (!bubble) return;
+      const hasMismatchInPrefix = typed.length > matched && matched < fp.length;
+      const justCompleted       = matched === fp.length && typed.length === fp.length && fp.length > 0;
+      if (hasMismatchInPrefix) {
+        // Arrow tip should sit above the FIRST wrong char — its
+        // horizontal centre is at (textarea-pad-left) + (width of
+        // correctly-typed prefix) + (half-width of the wrong char).
+        const wrongChar = typed[matched] || '';
+        const wrongHalf = measureTextWidth(input, wrongChar) / 2;
+        const targetX  = 8 + offsetPx + wrongHalf;
+        bubble.innerHTML = '<span>Write</span><span>it</span><span>again.</span>';
+        bubble.className = 'wc-use-it-bubble show err';
+        bubble.style.left = targetX + 'px';
+      } else if (justCompleted) {
+        // Arrow tip 7 px right of where "when" ends — i.e. above the
+        // empty slot where the next word will appear.
+        const targetX = 8 + offsetPx + 7;
+        bubble.innerHTML = '<span>Great!</span><span>Keep</span><span>writing.</span>';
+        bubble.className = 'wc-use-it-bubble show success';
+        bubble.style.left = targetX + 'px';
+      } else {
+        bubble.className = 'wc-use-it-bubble';
       }
     }
-    input.addEventListener('input', refreshGhost);
+    input.addEventListener('input', () => {
+      refreshGhost();
+      // If a validation error is still showing from a previous Send
+      // press, clear it the moment the student starts typing again
+      // — they're actively fixing the issue, so the line should
+      // revert to the friendly "Write to get money 💰" prompt.
+      if (hint.classList.contains('wc-hint-err')) setStatus('', '');
+    });
     refreshGhost();   // initial paint
 
     send.addEventListener('click', async () => {
@@ -423,7 +465,11 @@
         refreshGhost();
         setStatus('Wonderful sentence! Your teacher will see it soon. ✨', 'ok');
         renderWordMessages(w.lower);
-        setTimeout(() => { status.textContent = ''; status.className = 'wc-word-msg-status'; }, 6000);
+        // Restore the default "Write to get money 💰" prompt after a
+        // few seconds — long enough for the student to read the
+        // praise, short enough that the hint comes back for the
+        // next word.
+        setTimeout(() => setStatus('', ''), 6000);
       } catch (e) {
         setStatus('Could not send. Try again.', 'err');
       } finally {
@@ -431,9 +477,17 @@
       }
     });
 
+    // setStatus drives the SAME element that normally shows the
+    // "Write to get money 💰" prompt — passing an empty msg restores
+    // the prompt; passing a real msg replaces it (with err/ok colour).
     function setStatus(msg, kind) {
-      status.textContent = msg;
-      status.className = 'wc-word-msg-status' + (kind ? ' ' + kind : '');
+      if (msg) {
+        hint.textContent = msg;
+        hint.className   = 'wc-use-it-hint' + (kind ? ' wc-hint-' + kind : '');
+      } else {
+        hint.textContent = USE_IT_DEFAULT_HINT;
+        hint.className   = 'wc-use-it-hint';
+      }
     }
 
     renderWordMessages(w.lower);
