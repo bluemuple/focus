@@ -81,6 +81,16 @@
       const rows = await rGet('/wc_users?select=*&login_code=eq.' + encodeURIComponent(code) + '&limit=1');
       return rows && rows[0] || null;
     },
+    async byId(id) {
+      const rows = await rGet('/wc_users?select=*&id=eq.' + encodeURIComponent(id) + '&limit=1');
+      return rows && rows[0] || null;
+    },
+    // Bulk fetch — used by teacher dashboards reading per-student state.
+    async byIds(ids) {
+      if (!ids || !ids.length) return [];
+      const list = ids.map(encodeURIComponent).join(',');
+      return rGet('/wc_users?select=*&id=in.(' + list + ')');
+    },
     async listStudents(classId, gender) {
       const q = ['role=eq.student', 'select=id,real_name,gender,class_id'];
       if (classId) q.push('class_id=eq.' + encodeURIComponent(classId));

@@ -164,9 +164,95 @@
     if (name === 'students') renderStudents();
     if (name === 'lessons')  renderLessons();
     if (name === 'insights') renderInsights();
+    if (name === 'mathsinsights') renderMathsInsights();
     if (name === 'messages') renderMessages();
     if (name === 'animals')  renderAnimalsTab();
     if (name === 'settings') renderSettings();
+  }
+
+  // ============================================================
+  //  TAB — MATHS INSIGHTS  (Back to Basic per-student progress)
+  //
+  //  Pulls the basic_stage JSONB column for every student in the
+  //  current class and renders a table:
+  //    Name | Current stage | S1 | S2 | S3 | S4 | S5 | S6
+  //  Each Sn cell shows "X/Y" (correct/total) or "✓" if passed,
+  //  blank if not yet attempted. "Completed" badge if they hit the
+  //  end of the test.
+  // ============================================================
+  const BTB_STAGE_NAMES = [
+    'Recognise',
+    'Meaning',
+    'Quantity',
+    'Strategy',
+    'Memory',
+    'Answer',
+  ];
+  async function renderMathsInsights() {
+    const wrap = $('mathsInsightsBody');
+    if (!wrap) return;
+    wrap.innerHTML = '<p class="wc-muted">Loading…</p>';
+    let rows = [];
+    try {
+      const ids = (students || []).map(s => s.id);
+      const fresh = await window.WCDB.users.byIds(ids);
+      rows = (fresh || []).sort((a, b) => (a.real_name || '').localeCompare(b.real_name || ''));
+    } catch (e) {
+      wrap.innerHTML = '<p class="wc-muted">Couldn\'t load — try again.</p>';
+      return;
+    }
+    if (!rows.length) {
+      wrap.innerHTML = '<p class="wc-muted">No students in this class yet.</p>';
+      return;
+    }
+    const head = `
+      <table style="width:100%; border-collapse: collapse; font-size:14px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:2px solid #e5e7eb;">
+            <th style="padding:8px 6px;">Student</th>
+            <th style="padding:8px 6px;">Now on</th>
+            ${BTB_STAGE_NAMES.map((n, i) =>
+              `<th style="padding:8px 6px; text-align:center;">S${i + 1}<br><span style="font-size:11px; color:#6b7280; font-weight:500;">${n}</span></th>`
+            ).join('')}
+            <th style="padding:8px 6px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>`;
+    const body = rows.map(s => {
+      const bs = (s.basic_stage && typeof s.basic_stage === 'object') ? s.basic_stage : {};
+      const cur = bs.currentStage || 1;
+      const results = bs.results || {};
+      const done = !!bs.completed;
+      const cellHtml = BTB_STAGE_NAMES.map((_, i) => {
+        const sid = String(i + 1);
+        const r = results[sid];
+        if (!r || !r.total) {
+          return `<td style="padding:6px; text-align:center; color:#cbd5e1;">—</td>`;
+        }
+        const pct = r.correct / r.total;
+        const passed = (r.correct === 2 && r.total === 2) || (r.correct >= 3 && r.total >= 3);
+        // Colour: green if passed, amber otherwise.
+        const bg = passed ? '#dcfce7' : '#fef3c7';
+        const fg = passed ? '#15803d' : '#b45309';
+        return `<td style="padding:6px; text-align:center;">
+                  <span style="display:inline-block; background:${bg}; color:${fg};
+                               padding:2px 8px; border-radius:6px; font-weight:700;">
+                    ${r.correct}/${r.total}${passed ? ' ✓' : ''}
+                  </span>
+                </td>`;
+      }).join('');
+      const status = done
+        ? '<span style="color:#15803d; font-weight:700;">All done 🏆</span>'
+        : `<span style="color:#6b7280;">Stage ${cur}</span>`;
+      return `
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:8px 6px; font-weight:600;">${escapeHtml(s.real_name || '—')}</td>
+          <td style="padding:8px 6px;">Stage ${cur}</td>
+          ${cellHtml}
+          <td style="padding:8px 6px;">${status}</td>
+        </tr>`;
+    }).join('');
+    wrap.innerHTML = head + body + '</tbody></table>';
   }
 
   // ============================================================
