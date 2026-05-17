@@ -1471,20 +1471,6 @@
   // pages skip too — they're sentence/word objects that we'd have to
   // re-tokenise to split. For now those rely on the 6-sentence cap.
   function repaginateOverflow() {
-    // Measurement-based splitting was over-eager — a single
-    // multi-paragraph page would balloon into three or four pages
-    // because each block measured taller than the visible card.
-    // The page body now scrolls (CSS `overflow-y: auto`), so any
-    // overflow stays accessible without splitting. Pagination is
-    // driven purely by the teacher's explicit `---` markers and
-    // the soft sentence cap in `autoSplitHtmlByCount`.
-    // Re-enable selective splitting later if real complaints
-    // surface; for now this matches the user's intent ("1페이지에
-    // 나오게 해줘") and the earlier "no half-cut sentences" report
-    // (since nothing gets clipped any more).
-    return;
-
-    /* eslint-disable no-unreachable */
     if (singleMode) return;
     const bodyEl = $('lessonBody');
     if (!bodyEl) return;
@@ -1557,10 +1543,68 @@
       // accept the orphan — a page with nothing on it is worse
       // than a heading-only page.
       if (cutoff <= 0) cutoff = originalCutoff;
-      // Edge case: even the first child overflows. Keep it on the
-      // page (better than dropping it entirely) — overflow:hidden
-      // will clip but the user can advance to the next page.
-      if (cutoff <= 0) { p++; continue; }
+      // Edge case: even the first child overflows on its own. Split
+      // that single block at SENTENCE boundaries so the early
+      // sentences stay on this page and the rest move to the next.
+      // Without this branch a long paragraph with no preceding
+      // siblings would be visually clipped.
+      if (cutoff <= 0) {
+        const onlyChild = children[0];
+        const sentSpans = onlyChild ? Array.from(onlyChild.querySelectorAll('.wc-sentence')) : [];
+        if (sentSpans.length >= 2) {
+          // Walk the sentence spans inside the block. We need the
+          // span's bottom edge in *body* coordinates — since the
+          // block sits at the body's top edge that's just
+          // span.offsetTop + span.offsetHeight when the block is
+          // its offsetParent. Use getBoundingClientRect for safety
+          // (works regardless of nested offsetParent chains).
+          const bodyTop = bodyEl.getBoundingClientRect().top;
+          let splitAt = -1;
+          for (let s = 0; s < sentSpans.length; s++) {
+            const r = sentSpans[s].getBoundingClientRect();
+            const bottomRelToBody = r.bottom - bodyTop;
+            if (bottomRelToBody > visibleH) { splitAt = s; break; }
+          }
+          if (splitAt > 0) {
+            // Build a sibling-of-the-block: same tagName, holding the
+            // overflow sentences. Whitespace between spans (text
+            // nodes for spacing) goes with the FOLLOWING sentence so
+            // each new block starts with the sentence text only.
+            const overflowBlock = onlyChild.cloneNode(false);
+            // Move sentence spans + their trailing whitespace nodes.
+            const toMove = [];
+            for (let s = splitAt; s < sentSpans.length; s++) {
+              toMove.push(sentSpans[s]);
+            }
+            // Also move any text/inline nodes that come AFTER the
+            // first moved span (within the same parent) so spaces
+            // between sentences carry over too.
+            const firstMove = toMove[0];
+            let walker = firstMove;
+            const collected = [];
+            while (walker) {
+              collected.push(walker);
+              walker = walker.nextSibling;
+            }
+            collected.forEach(n => overflowBlock.appendChild(n));
+            const fittedHtml   = onlyChild.outerHTML;
+            const overflowHtml = overflowBlock.outerHTML
+              + children.slice(1).map(c => c.outerHTML).join('');
+            parts[0].html      = fittedHtml;
+            parts[0].sentences = extractSentencesFromSegmentHtml(fittedHtml);
+            const newPart = {
+              kind: 'html',
+              html: overflowHtml,
+              sentences: extractSentencesFromSegmentHtml(overflowHtml),
+            };
+            pages.splice(p + 1, 0, [newPart]);
+            continue;
+          }
+        }
+        // Truly nothing splittable (one-sentence block taller than
+        // the page) — accept the clip and move on.
+        p++; continue;
+      }
 
       const fittedHtml   = children.slice(0, cutoff).map(c => c.outerHTML).join('');
       const overflowHtml = children.slice(cutoff).map(c => c.outerHTML).join('');
@@ -1584,7 +1628,6 @@
     renderBody();
     refreshPageCounter();
     refreshNavBoundary();
-    /* eslint-enable no-unreachable */
   }
 
   // Re-extract sentences from a slice of segment HTML — used by
