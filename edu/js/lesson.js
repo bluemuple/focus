@@ -93,6 +93,10 @@
     get lesson() { return lesson; },
     get wordLevels() { return wordLevels; },
     get classFlags() { return classFlags; },
+    // encounter.js polls this to decide whether to fire an animal
+    // encounter. We expose a getter (not the variable) so external
+    // callers see the LIVE value even as the student toggles 🐾.
+    encountersHidden: () => hideEncounters,
     onWordLevelChange(cb) { if (typeof cb === 'function') levelChangeListeners.push(cb); },
     // Mutators sidebar.js calls when the ice-cream picker fires.
     setWordLevel: async function (lower, next, originalWord) {
@@ -2239,12 +2243,18 @@
     // reads the flag fresh on every level-up event so this button
     // takes effect immediately without a page reload.
     const HIDE_ENC_KEY = 'wc.hideEncounters.v1';
-    // Default = HIDDEN (Animals off). A blank localStorage means the
-    // student has never expressed a preference, so we err on the side
-    // of "no distractions while reading". Only an explicit '0'
-    // (the user clicking the 🐾 / Animals on toggle) flips encounters
-    // back on for this device.
-    let hideEncounters = localStorage.getItem(HIDE_ENC_KEY) !== '0';
+    // Initial state — per-lesson default set by the teacher in My
+    // Lessons takes precedence over the per-device localStorage
+    // override (so the teacher's design wins when the student opens
+    // a new lesson). Falls back to the per-device localStorage
+    // value when the column is missing, then finally to the
+    // out-of-the-box HIDDEN default for brand-new sessions.
+    let hideEncounters;
+    if (lesson && typeof lesson.default_animals === 'boolean') {
+      hideEncounters = !lesson.default_animals;
+    } else {
+      hideEncounters = localStorage.getItem(HIDE_ENC_KEY) !== '0';
+    }
     function applyHideEncounters() {
       const btn = $('btnHideEncounters');
       const ico = $('btnHideEncountersIco');
@@ -2276,6 +2286,17 @@
         else            repaginateOverflow();
       }, 120);
     });
+
+    // Per-lesson `default_play_chunk` set by the teacher in My
+    // Lessons (true → Play chunk ON, false → muted). Missing/NULL
+    // falls back to the out-of-the-box default (ON). Replaces the
+    // module-level chunkMuted default before refreshMuteUi runs so
+    // the chip paints correctly on the first frame. The matching
+    // override for hideEncounters lives next to its own declaration
+    // further down — can't touch it here because it's let-scoped
+    // inside wireToolbar and not yet in scope.
+    if (lesson && lesson.default_play_chunk === false) chunkMuted = true;
+    else                                                chunkMuted = false;
 
     // Chunk-mute chip — toggles whether tapping a word triggers a
     // one-shot TTS read of its surrounding chunk. Default = Play

@@ -115,15 +115,20 @@
     if (!word) return;
     if (window.WCEncounter?.busy) return;   // ignore clicks during an active encounter
 
-    // Per-device "quiet reading" toggle — lives in the lesson page
-    // head-tools row. We read it fresh on every event so flipping
-    // the button takes effect on the very next word the student
-    // marks (no need to reload the page).
-    //
-    // Default = HIDDEN. Blank localStorage (never-toggled) reads as
-    // "encounters off" — only an explicit '0' (user clicked 🐾 to
-    // turn Animals back on) allows the encounter to fire.
-    if (localStorage.getItem('wc.hideEncounters.v1') !== '0') return;
+    // "Quiet reading" gate. Reads the LIVE flag from lesson.js
+    // (via the WCLesson.encountersHidden() getter) so flipping the
+    // 🐾 chip takes effect on the very next marked word, and so
+    // the per-lesson default the teacher set in My Lessons is
+    // honoured automatically — lesson.js seeds the flag from
+    // lesson.default_animals at toolbar wire-up time.
+    if (window.WCLesson && typeof window.WCLesson.encountersHidden === 'function') {
+      if (window.WCLesson.encountersHidden()) return;
+    } else if (localStorage.getItem('wc.hideEncounters.v1') !== '0') {
+      // Belt-and-braces fallback for the brief window before
+      // lesson.js installs WCLesson — preserves the old localStorage
+      // gate so a very-early encounter still respects "Animals off".
+      return;
+    }
 
     const now = Date.now();
 

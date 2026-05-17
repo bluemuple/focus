@@ -977,8 +977,18 @@
           <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'chunkaudio') ? ' is-cached' : ''}"
                   data-prewarmchunkaudio="${L.id}"
                   title="Chunk audio: cache TTS for each chunk (the short clip that plays when a student taps a word with Play chunk on). Different cache key than 🎵 — needed separately. ✓ = cached for this body.">🎶</button>
-          <button class="wc-btn ghost wc-btn-danger" data-delete-row="${L.id}"
-                  title="Permanently delete this lesson — cannot be undone">🗑 Delete</button>
+          <!-- Per-lesson default toggles. Each click flips the
+               column on wc_lessons; the lesson page reads these to
+               set the INITIAL state of its 🔊/🐾 chips. Compact
+               icon-only buttons keep the action row from wrapping. -->
+          <button class="wc-btn ghost icon-only wc-mini-toggle${(L.default_play_chunk !== false) ? ' on' : ''}"
+                  data-toggle-chunkdefault="${L.id}"
+                  title="Default for 'Play chunk' chip on student side. Click to flip.">${(L.default_play_chunk !== false) ? '🔊' : '🔇'}</button>
+          <button class="wc-btn ghost icon-only wc-mini-toggle${(L.default_animals === true) ? ' on' : ''}"
+                  data-toggle-animalsdefault="${L.id}"
+                  title="Default for 'Animals' chip on student side. Click to flip.">${(L.default_animals === true) ? '🐾' : '🚫'}</button>
+          <button class="wc-btn ghost wc-btn-danger icon-only" data-delete-row="${L.id}"
+                  title="Permanently delete this lesson — cannot be undone">🗑</button>
         </div>
       `;
       list.appendChild(row);
@@ -1015,6 +1025,45 @@
     });
     list.querySelectorAll('[data-prewarmchunkaudio]').forEach(b => {
       b.addEventListener('click', () => prewarmChunkAudio(b.dataset.prewarmchunkaudio, b));
+    });
+    list.querySelectorAll('[data-toggle-chunkdefault]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.toggleChunkdefault;
+        const L  = lessons.find(x => x.id === id);
+        if (!L) return;
+        // Treat missing/NULL as TRUE (Play chunk ON) so flipping
+        // toggles cleanly: true → false → true → ...
+        const next = !(L.default_play_chunk !== false);
+        b.disabled = true;
+        try {
+          await window.WCDB.lessons.update(id, { default_play_chunk: next });
+          L.default_play_chunk = next;        // optimistic local update
+          renderLessons();
+        } catch (e) {
+          alert('Could not save: ' + (e.message || e));
+        } finally {
+          b.disabled = false;
+        }
+      });
+    });
+    list.querySelectorAll('[data-toggle-animalsdefault]').forEach(b => {
+      b.addEventListener('click', async () => {
+        const id = b.dataset.toggleAnimalsdefault;
+        const L  = lessons.find(x => x.id === id);
+        if (!L) return;
+        // Missing/NULL treated as FALSE (Animals off) — flip toggles.
+        const next = !(L.default_animals === true);
+        b.disabled = true;
+        try {
+          await window.WCDB.lessons.update(id, { default_animals: next });
+          L.default_animals = next;
+          renderLessons();
+        } catch (e) {
+          alert('Could not save: ' + (e.message || e));
+        } finally {
+          b.disabled = false;
+        }
+      });
     });
     list.querySelectorAll('[data-delete-row]').forEach(b => {
       b.addEventListener('click', async () => {
