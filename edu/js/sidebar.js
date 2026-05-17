@@ -408,9 +408,12 @@
         bubble.className = 'wc-use-it-bubble show err';
         bubble.style.left = targetX + 'px';
       } else if (justCompleted) {
-        // Arrow tip 7 px right of where "when" ends — i.e. above the
-        // empty slot where the next word will appear.
-        const targetX = 8 + offsetPx + 7;
+        // Arrow tip 12 px right of where "when" ends — i.e. above
+        // the empty slot where the next word will appear. (Earlier
+        // value was 7 px; bumped by 5 px so the bubble sits visibly
+        // OVER the next-word position rather than the trailing
+        // space immediately after "when".)
+        const targetX = 8 + offsetPx + 12;
         bubble.innerHTML = '<span>Great!</span><span>Keep</span><span>writing.</span>';
         bubble.className = 'wc-use-it-bubble show success';
         bubble.style.left = targetX + 'px';

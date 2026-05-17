@@ -1441,9 +1441,20 @@
       case 'ArrowRight': e.preventDefault(); navWord(+1);  return;
       case 'ArrowUp':    e.preventDefault(); navVertical(-1); return;
       case 'ArrowDown':  e.preventDefault(); navVertical(+1); return;
-      // ','  → previous page,  '.' → next page (또박또박 convention).
-      case ',':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx - 1); return;
-      case '.':          e.preventDefault(); setCounterMode('page'); goPage(pageIdx + 1); return;
+      // ','  → previous,  '.' → next  (또박또박 convention).
+      // In single-sentence mode the unit-of-navigation is one
+      // sentence, not a page — so we route the shortcuts through
+      // goSingle() instead. (Page mode still steps by page.)
+      case ',':
+        e.preventDefault();
+        if (singleMode) { setCounterMode('sentence'); goSingle(singleIdx - 1); }
+        else            { setCounterMode('page');     goPage(pageIdx - 1);     }
+        return;
+      case '.':
+        e.preventDefault();
+        if (singleMode) { setCounterMode('sentence'); goSingle(singleIdx + 1); }
+        else            { setCounterMode('page');     goPage(pageIdx + 1);     }
+        return;
       // Spacebar → play / pause whole-lesson TTS reading. Most
       // natural for a reading app — same as a media player.
       case ' ':          e.preventDefault(); playAllFromCurrent();  return;
@@ -1981,7 +1992,12 @@
     if (!btn) return;
     btn.textContent = playing ? '⏸' : '▶';
     btn.classList.toggle('playing', playing);
-    btn.setAttribute('aria-label', playing ? '일시정지' : '재생');
+    // Match the static English title set in lesson.html (the markup
+    // was previously Korean — we mirror the new "Pause" / "Play"
+    // wording here so screen-readers stay in sync with the button's
+    // visible state.)
+    btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
+    btn.setAttribute('title',      playing ? 'Pause (spacebar)' : 'Play / pause whole-lesson audio (spacebar)');
   }
 
   // ---------- toolbar / bottom-bar wiring ----------
