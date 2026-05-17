@@ -1470,6 +1470,30 @@
   // Idempotent: pages already small enough don't change. Plain-text
   // pages skip too — they're sentence/word objects that we'd have to
   // re-tokenise to split. For now those rely on the 6-sentence cap.
+  // Re-run the full pagination pipeline from the unchanged body
+  // source. Used when the student changes font size / line height —
+  // without this, a previously-split page can never re-merge (the
+  // overflow splitter only adds pages, never removes them). Calling
+  // this after a font shrink lets the next page's content flow back
+  // onto the previous one, matching the user's request:
+  //   "글자를 줄이면 다음 페이지의 글자가 interactive하게 그전
+  //    페이지에 붙도록 해."
+  function repaginateFromScratch() {
+    if (!lesson || lesson.body == null) return;
+    const rememberedPage  = pageIdx;
+    const rememberedSingle = singleIdx;
+    sentences = tokeniseBody(lesson.body);
+    pages     = paginate(sentences, lesson.body);
+    pageIdx   = Math.min(rememberedPage, pages.length - 1);
+    singleIdx = rememberedSingle;
+    renderBody();
+    refreshPageCounter();
+    refreshNavBoundary();
+    // Wait one frame so the new font/line-height has been painted
+    // before we measure overflow.
+    requestAnimationFrame(() => repaginateOverflow());
+  }
+
   function repaginateOverflow() {
     if (singleMode) return;
     const bodyEl = $('lessonBody');
@@ -1638,22 +1662,52 @@
     const tmp = document.createElement('div');
     tmp.innerHTML = html;
     const flat = [];
-    const walker = document.createTreeWalker(tmp, NodeFilter.SHOW_TEXT, null, false);
-    let n;
-    while ((n = walker.nextNode())) {
-      const text = (n.textContent || '').replace(IMG_MARKER_STRIP_RE, ' ');
-      if (!text || !text.trim()) continue;
-      const re = /[^.!?]+[.!?]+["'’)\]]*/g;
-      let m, lastEnd = 0;
-      while ((m = re.exec(text)) !== null) {
-        flat.push({ kind: 'sent', text: m[0], words: extractWordTokens(m[0]) });
-        lastEnd = m.index + m[0].length;
-      }
-      if (lastEnd < text.length) {
-        const tail = text.slice(lastEnd);
-        if (tail.trim()) flat.push({ kind: 'sent', text: tail, words: extractWordTokens(tail) });
-      }
+    const BLOCK_TAGS = /^(P|H[1-6]|LI|BLOCKQUOTE|FIGCAPTION|TD|TH)$/;
+
+    // 1) Fast path — the HTML is the rendered DOM (sentence spans
+    //    already in place). Re-use those directly so we don't
+    //    explode each word into its own "sentence" again.
+    const existingSpans = tmp.querySelectorAll('.wc-sentence');
+    if (existingSpans.length) {
+      existingSpans.forEach(span => {
+        const text = (span.dataset && span.dataset.text)
+          ? span.dataset.text
+          : (span.textContent || '');
+        const clean = text.replace(IMG_MARKER_STRIP_RE, ' ').trim();
+        if (!clean) return;
+        flat.push({ kind: 'sent', text: clean, words: extractWordTokens(clean) });
+      });
+      return flat;
     }
+
+    // 2) Slow path — raw segment HTML (no sentence spans yet).
+    //    Mirrors tokeniseBody's per-block walk so the flat list
+    //    here matches the one the original pagination built.
+    function visit(node) {
+      if (!node) return;
+      if (node.nodeType === 1) {
+        const tag = node.tagName;
+        if (tag === 'DIV' || tag === 'SECTION' || tag === 'ARTICLE'
+            || tag === 'UL' || tag === 'OL') {
+          Array.from(node.childNodes).forEach(visit);
+          return;
+        }
+        if (BLOCK_TAGS.test(tag)) {
+          pushFromText(node.textContent || '');
+          return;
+        }
+        return;
+      }
+      if (node.nodeType === 3) pushFromText(node.textContent || '');
+    }
+    function pushFromText(raw) {
+      const text = (raw || '').replace(IMG_MARKER_STRIP_RE, ' ');
+      if (!text || !text.trim()) return;
+      splitSentencesSafe(text).forEach(s => {
+        flat.push({ kind: 'sent', text: s.text, words: extractWordTokens(s.text) });
+      });
+    }
+    Array.from(tmp.childNodes).forEach(visit);
     return flat;
   }
 
@@ -1781,12 +1835,13 @@
     function applyFontSize() {
       document.documentElement.style.setProperty('--wc-body-font', fontSize + 'px');
       try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch {}
-      // After font changes, page heights shift — repaginate so the
-      // new layout doesn't leave overflow buried. In single mode the
-      // active sentence may need to re-fit at the new base size too.
+      // After font changes, page heights shift — repaginate from
+      // scratch so overflow that previously got split into another
+      // page can FLOW BACK if there's now room. (Plain
+      // repaginateOverflow only splits, never merges.)
       requestAnimationFrame(() => {
-        repaginateOverflow();
-        if (singleMode) fitSingleSentenceToCard();
+        if (singleMode) { fitSingleSentenceToCard(); return; }
+        repaginateFromScratch();
       });
     }
     applyFontSize();
@@ -1815,12 +1870,13 @@
     function applyLineHeight() {
       document.documentElement.style.setProperty('--wc-body-lh', lineHeight.toFixed(2));
       try { localStorage.setItem(LH_KEY, String(lineHeight)); } catch {}
-      // Line-spacing change also moves text up/down — re-paginate so
-      // any sentence newly pushed past the bottom edge moves to the
-      // next page automatically.
+      // Tightening line-spacing means more text now fits per page;
+      // loosening means less fits. Re-build pagination from the
+      // unchanged body source so sentences flow naturally between
+      // pages in either direction.
       requestAnimationFrame(() => {
-        repaginateOverflow();
-        if (singleMode) fitSingleSentenceToCard();
+        if (singleMode) { fitSingleSentenceToCard(); return; }
+        repaginateFromScratch();
       });
     }
     applyLineHeight();
@@ -1839,9 +1895,12 @@
       $('btnReadBetter').classList.toggle('active', readBetter);
       $('btnReadBetter').setAttribute('aria-pressed', readBetter ? 'true' : 'false');
       try { localStorage.setItem(READ_KEY, readBetter ? '1' : '0'); } catch {}
+      // Dyslexic font changes per-character width — rebuild pages
+      // from scratch so they re-fit the new measurements (sentences
+      // flow back to earlier pages if they now fit).
       requestAnimationFrame(() => {
-        repaginateOverflow();
-        if (singleMode) fitSingleSentenceToCard();
+        if (singleMode) { fitSingleSentenceToCard(); return; }
+        repaginateFromScratch();
       });
     }
     applyReadBetter();
