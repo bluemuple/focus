@@ -325,6 +325,17 @@ const ANIMALS = [
       "Their call is louder than a jet engine and can travel hundreds of kilometres underwater."
     ]
   },
+  { id: "anglerfish", name: "Anglerfish", emoji: "🎣", category: "marine",
+    habitat: "Deep, dark parts of the ocean, far below the sunlight.",
+    diet: "Smaller fish and shrimp lured in by the glowing light on their head.",
+    funFacts: [
+      "Anglerfish carry their own fishing rod — a long spine on the head with a glowing tip!",
+      "The light comes from tiny bacteria living inside the tip. This trick is called bioluminescence.",
+      "They live so deep that almost no sunlight reaches them.",
+      "Females are much bigger than males — sometimes 10 times the size.",
+      "Their giant mouth and sharp teeth can grab prey almost as big as themselves."
+    ]
+  },
 
   // ===== WILD MAMMALS (20) =====
   { id: "lion", name: "Lion", emoji: "🦁", category: "mammals",
@@ -1080,6 +1091,7 @@ const ANIMAL_WIKI = {
   crab: "Crab", lobster: "Lobster", stingray: "Stingray",
   clownfish: "Ocellaris clownfish", orca: "Orca", seal: "Harbor seal",
   "manta-ray": "Manta ray", "blue-whale": "Blue whale",
+  "anglerfish": "Anglerfish",
   "meerkat": "Meerkat", "dire-wolf": "Dire wolf",
   // Wild Mammals
   lion: "Lion", tiger: "Tiger", elephant: "Elephant", giraffe: "Giraffe",
@@ -1132,6 +1144,7 @@ const ANIMAL_VIDEO_SUGGESTIONS = {
   crab: "85lFKu_IwCA",       lobster: "jKzjSj1VO3E",    stingray: "nJEKCmi8Hyk",
   clownfish: "vW5RI8xUW7Y",  orca: "4YOvkXNZ16I",       seal: "bxF1L3i1A9Q",
   "manta-ray": "SFVueRCmoeI", "blue-whale": "GSmBYqmz4Y4",
+  "anglerfish": "U4ovwY8XLb8",
   "meerkat": "WxGNTkA20XI", "dire-wolf": "aSqjiJQehek",
 
   // Wild Mammals
@@ -1208,6 +1221,7 @@ const ANIMAL_SEARCH_NAMES = {
   "sea-turtle": "sea turtle",
   "manta-ray": "manta ray",
   "blue-whale": "blue whale",
+  "anglerfish": "anglerfish deep sea",
   "meerkat": "meerkat",
   "dire-wolf": "wolf",
   snake: "snake reptile",
