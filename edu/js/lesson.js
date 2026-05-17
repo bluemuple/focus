@@ -1019,6 +1019,19 @@
         globalSentIdx += existing.length;
         return;
       }
+      // Block has inline emphasis (`<b>`, `<u>`, `<em>`, `<strong>`,
+      // `<i>`, `<span>`) — preserve that markup by walking text
+      // nodes in place rather than replacing the whole block with
+      // a fragment built from plain textContent. (The plain-text
+      // path would strip bold/underline visuals.) Each text node
+      // becomes its own sentence-wrapped span; sentence detection
+      // still happens per-text-node here, which is fine because
+      // inline-emphasised paragraphs are usually short (titles,
+      // bylines, etc.) and rarely cross a sentence boundary.
+      if (el.querySelector('b, strong, u, em, i, span')) {
+        wrapTextNodesInPlace(el);
+        return;
+      }
       const text = el.textContent || '';
       if (!text || !text.trim()) return;
       const frag = buildSentenceFragment(text, globalSentIdx);
@@ -1026,6 +1039,30 @@
       // Replace ALL children with the sentence-wrapped fragment.
       while (el.firstChild) el.removeChild(el.firstChild);
       el.appendChild(frag.frag);
+    }
+
+    // Per-text-node sentence wrapping that keeps the block's
+    // existing DOM structure (and therefore its <b>/<u>/<span>
+    // styling). The block already had children — we walk every
+    // text node beneath it and replace each with a sentence-span
+    // fragment built from THAT text node alone.
+    function wrapTextNodesInPlace(el) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+      const nodes = [];
+      let n;
+      while ((n = walker.nextNode())) {
+        // Skip text nodes inside script/style (defensive).
+        const parent = n.parentNode;
+        if (!parent || parent.nodeName === 'SCRIPT' || parent.nodeName === 'STYLE') continue;
+        nodes.push(n);
+      }
+      nodes.forEach(tn => {
+        const text = tn.textContent;
+        if (!text || !text.trim()) return;
+        const frag = buildSentenceFragment(text, globalSentIdx);
+        globalSentIdx = frag.nextIdx;
+        tn.parentNode.replaceChild(frag.frag, tn);
+      });
     }
 
     function visit(node) {
