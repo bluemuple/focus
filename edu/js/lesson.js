@@ -1899,7 +1899,13 @@
       $('btnSingle').setAttribute('aria-pressed', singleMode ? 'true' : 'false');
       document.body.classList.toggle('wc-single-mode', singleMode);
       if (singleMode) {
-        singleIdx = lastSelectedSentenceIdx || 0;
+        // Default = the FIRST sentence of the page the student is on
+        // (not the global first). If they tapped a word just before
+        // toggling, honour THAT sentence instead. lastSelectedSentenceIdx
+        // is initialised to 0, so a never-tapped state correctly falls
+        // back to the page-start (||-fallback).
+        const pageStart = globalStartOfPage(pageIdx);
+        singleIdx = lastSelectedSentenceIdx || pageStart;
       }
       refreshSingleMode();
     });
@@ -2082,7 +2088,12 @@
     const prev = pageIdx;
     pageIdx = Math.max(0, Math.min(pages.length - 1, next));
     if (pageIdx === prev) return;
-    singleIdx = 0;
+    // In single-mode, flipping pages with ‹‹ / ›› should land the
+    // student on THAT page's first sentence — not reset to the
+    // global first sentence (which is what `singleIdx = 0` did, so
+    // every page-flip in single mode appeared to "stay on the same
+    // sentence" because index 0 is always the lesson's opening line).
+    singleIdx = globalStartOfPage(pageIdx);
     // Update the counter NOW (don't wait for the 180-ms slide).
     refreshPageCounter();
     slideRender(pageIdx > prev ? 'forward' : 'back');
