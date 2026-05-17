@@ -1298,10 +1298,13 @@
   let focusedSentIdx = null;
   let focusedWordIdx = null;
   let lastSelectedSentenceIdx = 0;
-  // Chunk-TTS mute state — true by default (don't auto-play). Toggled
-  // by the 🔇/🔊 chip in the header. Only affects chunk-on-tap audio;
-  // ▶ Listen, sidebar headword 🔊, etc. always play.
-  let chunkMuted = true;
+  // Chunk-TTS mute state. Default = FALSE (Play chunk ON) so the
+  // student hears the chunk as soon as they tap a word — matches
+  // the teacher's expectation that the first interaction with a new
+  // lesson is the "tap-and-listen" loop. Toggled by the 🔇/🔊 chip
+  // in the header. Only affects chunk-on-tap audio; ▶ Listen, sidebar
+  // headword 🔊, etc. always play regardless of this flag.
+  let chunkMuted = false;
   // Tracks which chunk we last played so arrow-key NAVIGATION inside
   // the same chunk doesn't re-fire TTS on every word. An explicit
   // user click bypasses this dedupe (see lastFocusSource below) —
@@ -2158,7 +2161,8 @@
     });
 
     // Chunk-mute chip — toggles whether tapping a word triggers a
-    // one-shot TTS read of its surrounding chunk. Default = muted.
+    // one-shot TTS read of its surrounding chunk. Default = Play
+    // chunk ON (see chunkMuted declaration up top).
     const muteBtn   = $('btnChunkMute');
     const muteIco   = $('btnChunkMuteIco');
     const muteLabel = $('btnChunkMuteLabel');
