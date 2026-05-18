@@ -1,16 +1,25 @@
 // =============================================================
-//  Race — Subtraction Mental Methods 1
+//  Race 2 — Subtraction Mental Methods 2
 //
-//  Levels 1–6 (same difficulty model as Practice).
-//  Before each race the student picks one of THREE speeds:
-//    Beg / Inter / Adv  → time-limit-per-question ranges.
-//  A race is 6 questions. Score =
-//    correctCount × 10  +  timeBonus(avgTimeSec)
+//  Six levels mirroring Practice 2's progression, but typed-input
+//  only (no chip decomposition — race is about speed). Same Speed
+//  picker as Race 1 with the Extreme tier.
 //
-//  Two leaderboards are shown beside the picker and at the end:
-//    • Biggest Improvers — best single-run score − previous best
-//    • Top Scorers       — best single-run score, ever
-//  Top 3 rows highlighted with red outline.
+//    1 — ones − ones (recap)
+//    2 — 2-digit − 1-digit no borrow (e.g. 28 − 2)
+//    3 — subtract-to-ten (26 − 8)
+//    4 — subtract-to-ten harder (54 − 7)
+//    5 — 10s & 1s (35 − 13)
+//    6 — 3-digit (124 − 13, 389 − 57) or extended facts (70 − 50)
+//
+//  Score formula = Race 1's:
+//    correctPts = correct × 10
+//    timeBonus  = max(0, 100 − avgTime × 1.5)
+//    total      = correctPts + timeBonus
+//    (Extreme tier: × 1.5)
+//
+//  Persists race_state under wc_users.smm2_race_state so it
+//  doesn't collide with SMM1's leaderboard.
 // =============================================================
 
 (() => {
@@ -18,34 +27,22 @@
   const me = window.WCAuth && window.WCAuth.session();
   if (!me) { window.location.href = './index.html'; return; }
 
-  // ---- Constants -------------------------------------------------
-  // Per-level time-limit ranges. Picking a speed sets the time limit
-  // PER QUESTION to the upper bound of that range. Extreme is HALF
-  // of Advanced's upper bound (rounded up) — the scariest tier.
   const SPEEDS = {
     1: { beg: [36, 70], int: [10, 35], adv: [1, 9],  ext: [1, 5]  },
     2: { beg: [40, 76], int: [12, 39], adv: [1, 11], ext: [1, 6]  },
-    3: { beg: [44, 82], int: [14, 43], adv: [1, 13], ext: [1, 7]  },
-    4: { beg: [48, 88], int: [16, 47], adv: [1, 15], ext: [1, 8]  },
+    3: { beg: [48, 88], int: [16, 47], adv: [1, 15], ext: [1, 8]  },
+    4: { beg: [52, 94], int: [18, 51], adv: [1, 17], ext: [1, 9]  },
     5: { beg: [52, 94], int: [18, 51], adv: [1, 17], ext: [1, 9]  },
-    6: { beg: [56,100], int: [20, 55], adv: [1, 19], ext: [1, 10] },
+    6: { beg: [60,108], int: [22, 59], adv: [1, 21], ext: [1, 11] },
   };
-  const SPEED_LABELS = {
-    beg: 'Beginner', int: 'Intermediate', adv: 'Advanced', ext: 'Extreme',
-  };
-  // Extreme tier multiplier on the FINAL score (and therefore the
-  // coin payout). Time-bonus already rises naturally with the
-  // shorter per-question limit; this flat ×1.5 on top is the
-  // "courage tax" reward for picking the hardest tier.
+  const SPEED_LABELS = { beg: 'Beginner', int: 'Intermediate', adv: 'Advanced', ext: 'Extreme' };
   const EXTREME_BONUS = 1.5;
   const QUESTIONS_PER_RACE = 6;
 
-  // ---- State -----------------------------------------------------
   let level = 1;
   let raceState = { level: 1, runs: [], best: {}, total: 0 };
   let pickedSpeed = 'int';
 
-  // Per-race ephemerals
   let qIdx = 0;
   let correctCount = 0;
   let timeTotal = 0;
@@ -53,44 +50,71 @@
   let qStartTs = 0;
   let timerInt = null;
   let currentQ = null;
-  // Decided at race START — only the day's FIRST race pays coins.
-  // Subsequent races same day still save the score / leaderboard
-  // entry but the coin payout is 0.
   let coinsEnabledThisRace = false;
   const todayStr = () => new Date().toISOString().slice(0, 10);
 
-  // ---- Boot -------------------------------------------------------
   (async function init() {
     try {
       const fresh = await window.WCDB.users.byId(me.id);
-      const rs = (fresh && fresh.race_state && typeof fresh.race_state === 'object') ? fresh.race_state : {};
+      const rs = (fresh && fresh.smm2_race_state && typeof fresh.smm2_race_state === 'object') ? fresh.smm2_race_state : {};
       raceState = Object.assign(raceState, rs);
       level = Math.max(1, Math.min(6, raceState.level || 1));
-    } catch (e) { console.warn('race_state load failed', e); }
+    } catch (e) { console.warn('smm2 race_state load failed', e); }
     renderPicker();
     renderBoards();
   })();
 
-  // ---- Question generation (same as Practice's no-borrow rules) --
   const rand = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
   function genQuestion(lv) {
-    if (lv <= 2) {
-      const a = rand(2, 9); const b = rand(1, a);
+    if (lv === 1) {
+      const a = rand(4, 9); const b = rand(1, a);
       return { a, b, answer: a - b };
     }
-    if (lv <= 4) {
-      const tens = rand(1, 9); const ones = rand(1, 9); const sub = rand(1, ones);
+    if (lv === 2) {
+      // 2-digit − 1-digit no borrow
+      const tens = rand(1, 9); const ones = rand(2, 9); const sub = rand(1, ones);
       const a = tens * 10 + ones;
       return { a, b: sub, answer: a - sub };
     }
-    // lv 5, 6
-    const aT = rand(2, 9), aO = rand(1, 9);
-    const bT = rand(1, aT), bO = rand(0, aO);
-    const a = aT * 10 + aO; const b = bT * 10 + bO;
-    return { a, b, answer: a - b };
+    if (lv === 3 || lv === 4) {
+      // Subtract-to-ten: a's ones < b ≤ 9, so we cross the ten
+      const min = (lv === 3) ? 13 : 23;
+      const max = (lv === 3) ? 49 : 99;
+      while (true) {
+        const a = rand(min, max);
+        const aOnes = a % 10;
+        if (aOnes >= 1 && aOnes <= 8) {
+          const b = rand(aOnes + 1, 9);
+          return { a, b, answer: a - b };
+        }
+      }
+    }
+    if (lv === 5) {
+      // 10s & 1s no borrow
+      const aT = rand(2, 9), aO = rand(1, 9);
+      const bT = rand(1, Math.max(1, aT - 1));
+      const bO = rand(0, aO);
+      const a = aT * 10 + aO;
+      const b = bT * 10 + bO;
+      return { a, b, answer: a - b };
+    }
+    // lv 6 — 3-digit or extended fact
+    if (Math.random() < 0.5) {
+      const seedA = rand(2, 9);
+      const seedB = rand(1, seedA - 1);
+      const scale = [10, 100][rand(0, 1)];
+      return { a: seedA * scale, b: seedB * scale, answer: (seedA - seedB) * scale };
+    } else {
+      const aH = rand(1, 4);
+      const aT = rand(2, 9), aO = rand(2, 9);
+      const bT = rand(1, Math.max(1, aT));
+      const bO = rand(0, aO);
+      const a = aH * 100 + aT * 10 + aO;
+      const b = bT * 10 + bO;
+      return { a, b, answer: a - b };
+    }
   }
 
-  // ---- Picker (level + speed) ------------------------------------
   function renderPicker() {
     const card = $('card');
     const speeds = SPEEDS[level];
@@ -130,18 +154,14 @@
     document.querySelectorAll('.rc-speed').forEach(b => {
       b.addEventListener('click', () => {
         pickedSpeed = b.dataset.s;
-        limitPerQ = SPEEDS[level][pickedSpeed][1];     // upper bound = time limit
+        limitPerQ = SPEEDS[level][pickedSpeed][1];
         startRace();
       });
     });
   }
 
-  // ---- Race --------------------------------------------------------
   function startRace() {
     qIdx = 0; correctCount = 0; timeTotal = 0;
-    // Lock in the day-1 coin gate at the start of the race so the
-    // summary screen knows whether to display a payout or a
-    // "come back tomorrow" note.
     const lastDate = raceState.lastCoinDate && raceState.lastCoinDate.race;
     coinsEnabledThisRace = (lastDate !== todayStr());
     nextQuestion();
@@ -183,10 +203,7 @@
     const fill = $('tFill'); const lbl = $('tLabel');
     if (fill) fill.style.width = (remain / limitPerQ * 100) + '%';
     if (lbl)  lbl.textContent  = remain.toFixed(1) + 's';
-    if (remain <= 0) {
-      // Time up → record as wrong, advance
-      submitAnswer(/*timedOut*/ true);
-    }
+    if (remain <= 0) submitAnswer(/*timedOut*/ true);
   }
   function submitAnswer(timedOut) {
     if (timerInt) { clearInterval(timerInt); timerInt = null; }
@@ -197,14 +214,10 @@
     nextQuestion();
   }
 
-  // ---- Score + persistence ---------------------------------------
   function calcScore(correct, avgTimeSec, speed) {
     const correctPts = correct * 10;
-    // Time bonus: faster → more. Bounded 0 to ~100.
     const timeBonus  = Math.max(0, Math.round(100 - avgTimeSec * 1.5));
     let total = correctPts + timeBonus;
-    // Extreme tier: 1.5x multiplier on the raw total. Reflects in
-    // both leaderboard score AND coins (coins = total/10).
     if (speed === 'ext') total = Math.round(total * EXTREME_BONUS);
     return { correctPts, timeBonus, total };
   }
@@ -213,8 +226,6 @@
     const { correctPts, timeBonus, total } = calcScore(correctCount, avgTime, pickedSpeed);
     const prevBest = (raceState.best && raceState.best[level]) || 0;
     const gain = Math.max(0, total - prevBest);
-    // Coin payout = score / 10 (rounded) BUT only on the day's
-    // first race. Repeat races still update the leaderboard.
     const rawCoins    = Math.round(total / 10);
     const coinsEarned = coinsEnabledThisRace ? rawCoins : 0;
     if (coinsEnabledThisRace) {
@@ -246,8 +257,6 @@
     });
     renderBoards();
   }
-  // Adds `delta` coins to wc_users.money + refreshes cached session
-  // so the header counter on /home / /lesson updates next view.
   async function bumpCoins(delta) {
     if (!delta || !me.id || String(me.id).startsWith('guest-')) return;
     const before = me.money || 0;
@@ -260,26 +269,21 @@
         const u = JSON.parse(raw); u.money = after;
         localStorage.setItem('wc.session.v1', JSON.stringify(u));
       }
-    } catch (e) { console.warn('race coin bump failed', e); }
+    } catch (e) { console.warn('race2 coin bump failed', e); }
   }
   async function saveRaceState() {
     if (!me.id || String(me.id).startsWith('guest-')) return;
     try {
-      await window.WCDB.users.update(me.id, { race_state: raceState });
+      await window.WCDB.users.update(me.id, { smm2_race_state: raceState });
       const raw = localStorage.getItem('wc.session.v1');
       if (raw) {
-        const u = JSON.parse(raw); u.race_state = raceState;
+        const u = JSON.parse(raw); u.smm2_race_state = raceState;
         localStorage.setItem('wc.session.v1', JSON.stringify(u));
       }
-    } catch (e) { console.warn('race_state save failed', e); }
+    } catch (e) { console.warn('smm2_race_state save failed', e); }
   }
 
   function renderSummary({ correctPts, timeBonus, total, avgTime, gain, coinsEarned, rawCoins, dailyLimitReached }) {
-    // Coin chip varies with the daily-limit state:
-    //   first race of the day  → yellow chip showing payout
-    //   later races same day   → grey chip saying coins already
-    //                            earned (so the student understands
-    //                            why their balance didn't move)
     const coinChip = dailyLimitReached
       ? `<div style="display:inline-block; margin: 6px 0 14px; padding: 8px 18px;
                     background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db;
@@ -318,7 +322,6 @@
     $('againBtn').addEventListener('click', () => renderPicker());
   }
 
-  // ---- Leaderboards ------------------------------------------------
   async function renderBoards() {
     const host = $('boards');
     host.innerHTML = '<div class="rc-board"><p>Loading…</p></div>';
@@ -328,7 +331,6 @@
         classmates = await window.WCDB.users.listStudents(me.class_id);
         const ids = classmates.map(c => c.id);
         const full = await window.WCDB.users.byIds(ids);
-        // Merge basic info with race_state
         const byId = new Map(full.map(u => [u.id, u]));
         classmates = classmates.map(c => Object.assign({}, c, byId.get(c.id) || {}));
       } else {
@@ -339,7 +341,7 @@
       return;
     }
     const rows = classmates.map(u => {
-      const rs = (u.race_state && typeof u.race_state === 'object') ? u.race_state : {};
+      const rs = (u.smm2_race_state && typeof u.smm2_race_state === 'object') ? u.smm2_race_state : {};
       const best = Math.max(0, ...Object.values(rs.best || {0:0}));
       return {
         id: u.id,

@@ -1441,6 +1441,15 @@
     // student-side photo paste handler can update a cell in place
     // without forcing a page reload.
     window.__galleryCellState = cellState;
+    // Tracks which categories have completed their initial paint.
+    // `appendCloudPhotosToGallery` waits on this so it can't push
+    // photos into cellState BEFORE renderCell wipes the array (the
+    // race-condition that was making cloud photos disappear on
+    // refresh). Resolves once renderCell has run for each cat,
+    // even when the cat is empty.
+    window.__cellsRendered = window.__cellsRendered || {
+      photos: false, cartoons: false, coloringPages: false,
+    };
     let lightboxImg, lightbox;
 
     function setCellImage(cell, src) {
@@ -1531,7 +1540,7 @@
 
     function renderCell(catKey, items) {
       const cell = cells[catKey];
-      if (!cell) return;
+      if (!cell) { window.__cellsRendered[catKey] = true; return; }
       const dotRow = cell.querySelector('.thumb-dot');
       dotRow.innerHTML = '';
 
@@ -1549,6 +1558,11 @@
         }
         // Re-balance the grid so the visible cells stay centred.
         balanceGallery();
+        // Even for empty cats, mark "rendered" so the cloud-photo
+        // merger knows it's safe to push entries into cellState
+        // (the cell becomes visible again the moment a cloud entry
+        // lands via __appendToCellInPlace).
+        window.__cellsRendered[catKey] = true;
         return;
       }
 
@@ -1569,6 +1583,10 @@
         });
       }
       balanceGallery();
+      // Signal that this cell's initial paint is complete — the
+      // cloud-photo merger can now safely append without being
+      // wiped by a later cellState reassignment.
+      window.__cellsRendered[catKey] = true;
     }
 
     function cycleCell(cell, catKey) {
@@ -1779,6 +1797,41 @@
   // re-rendering the whole list, which would interrupt anyone in
   // mid-watch on the same page in another tab).
   window.__extraVideoIds = window.__extraVideoIds || [];
+
+  // Mount the PRIMARY (curated/approved) YouTube iframe into the
+  // video card. Used by loadCloudCustomThenSubscribe when the
+  // cloud row supplies a `youtube_id` that wasn't already painted
+  // at first render (e.g. the teacher approved the video from a
+  // different device — the student has no localStorage override
+  // for it, so the initial render emitted an empty video card).
+  // Dedupes against the iframe already in the DOM and against the
+  // extras list. Safe to call multiple times.
+  window.__mountPrimaryVideo = function (videoId, animalName) {
+    const card = document.getElementById('videoCard');
+    if (!card || !videoId) return;
+    const body = card.querySelector('.collapsible-body');
+    if (!body) return;
+    // Already mounted? Bail.
+    if (body.querySelector(`iframe[src*="${videoId}"]`)) return;
+    // Skip if this id is already in the extras list — would double-mount.
+    if ((window.__extraVideoIds || []).indexOf(videoId) >= 0) return;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'video-frame';
+    wrap.dataset.videoId = videoId;
+    wrap.dataset.primary = '1';
+    const iframe = document.createElement('iframe');
+    iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(videoId);
+    iframe.title = (animalName ? (animalName + ' video') : 'video');
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+    iframe.setAttribute('allowfullscreen', '');
+    wrap.appendChild(iframe);
+    // Insert at the TOP so it sits above #extraVideosHost (which
+    // holds the teacher/student-added extras).
+    body.insertBefore(wrap, body.firstChild);
+
+    card.classList.remove('video-card-empty');
+  };
 
   // Append a single video iframe to the host. Used both by the
   // local Add-video button AND by applyRemotePatch when another
@@ -2509,14 +2562,31 @@
   async function appendCustomImage(animalId, category, dataUrl) {
     // Fetch the current cloud row, append, save back. Cheap and
     // avoids us tracking local-only state that could fall out of
-    // sync with other tabs.
+    // sync with other tabs. We also stamp `addedBy` / `addedByName`
+    // on every upload so the delete-permission check can enforce
+    // "only the uploader can delete this picture" (teachers also
+    // get an override — they're a moderator).
+    const who = _editorMe || currentSession() || {};
     const cur = await fetchAnimalCustomFromCloud(animalId);
     const dbField = category === 'coloringPages' ? 'coloring_pages' : category;
     const existing = Array.isArray(cur?.[dbField]) ? cur[dbField] : [];
-    const next = existing.concat([{ src: dataUrl, source: 'custom' }]);
+    const entry = {
+      src: dataUrl, source: 'custom',
+      addedBy:     who.id || null,
+      addedByName: who.real_name || who.name || null,
+    };
+    const next = existing.concat([entry]);
     const patch = {};
     patch[category] = next; // saveAnimalCustomToCloud maps camelCase → snake_case
     await saveField(animalId, patch);
+    // Cache the owner so the delete handler can decide locally
+    // without re-fetching the cloud row.
+    if (window.__galleryCellOwners && window.__galleryCellOwners[category]) {
+      window.__galleryCellOwners[category][dataUrl] = {
+        addedBy:     entry.addedBy,
+        addedByName: entry.addedByName,
+      };
+    }
     // In-place gallery update — no reload needed.
     if (typeof window.__appendToCellInPlace === 'function') {
       window.__appendToCellInPlace(category, dataUrl);
@@ -2524,11 +2594,21 @@
   }
 
   // Delete the image currently visible at activeIdx in the named
-  // gallery cell. Only teacher/student-added pictures live in the
-  // cloud row — the default Wikipedia / Openverse image is fetched
-  // fresh each load and can't be deleted. We detect that case by
-  // checking whether the src is a data: URL (custom uploads are
-  // always pasted as base64 data URLs).
+  // gallery cell. Three-step gate:
+  //
+  //   1. The default Wikipedia / Openverse image is fetched fresh
+  //      each load — there's nothing in the cloud row to remove —
+  //      so we refuse with a friendly note. Detected by "src is
+  //      not a data: URL".
+  //
+  //   2. Custom photos store `addedBy` (the uploader's user id).
+  //      Only the original uploader can delete their own photo.
+  //      Teachers also pass (moderation). Pre-ownership legacy
+  //      photos with no `addedBy` field stay deletable by anyone
+  //      so they don't become un-deletable orphans.
+  //
+  //   3. On success: splice the cloud array, save, drop the
+  //      cell-in-place to update the gallery without a reload.
   async function deleteCustomImage(animalId, category, activeIdx) {
     const state = window.__galleryCellState && window.__galleryCellState[category];
     if (!state || activeIdx < 0 || activeIdx >= state.length) return;
@@ -2556,11 +2636,30 @@
       }
       return;
     }
+
+    // Ownership gate. Pre-ownership legacy entries have no
+    // `addedBy` and stay deletable by anyone signed in.
+    const entry = existing[cloudIdx];
+    const me = currentSession() || {};
+    const isMine    = entry.addedBy && me.id && entry.addedBy === me.id;
+    const isTeacher = me.role === 'teacher';
+    const isLegacy  = !entry.addedBy;
+    if (!isMine && !isTeacher && !isLegacy) {
+      const who = entry.addedByName || 'someone else';
+      alert(`Only ${who} can delete this picture.\nThey uploaded it, so only they can take it down.`);
+      return;
+    }
+
     existing.splice(cloudIdx, 1);
     const patch = {};
     patch[category] = existing;
     await saveField(animalId, patch);
 
+    // Drop the cached owner entry too so re-uploading the same
+    // src starts fresh.
+    if (window.__galleryCellOwners && window.__galleryCellOwners[category]) {
+      delete window.__galleryCellOwners[category][targetSrc];
+    }
     // In-place removal — no reload needed.
     if (typeof window.__removeFromCellInPlace === 'function') {
       window.__removeFromCellInPlace(category, activeIdx);
@@ -2656,7 +2755,17 @@
       if (state && typeof window.__appendToCellInPlace === 'function') {
         patch[cat].forEach(p => {
           const src = (p && p.src) || '';
-          if (src && state.indexOf(src) === -1) {
+          if (!src) return;
+          // Remember the uploader so the delete-permission check
+          // works on photos that arrived via a live broadcast from
+          // another tab, not just our own uploads.
+          if (window.__galleryCellOwners && window.__galleryCellOwners[cat]) {
+            window.__galleryCellOwners[cat][src] = {
+              addedBy:     p.addedBy     || null,
+              addedByName: p.addedByName || null,
+            };
+          }
+          if (state.indexOf(src) === -1) {
             window.__appendToCellInPlace(cat, src);
           }
         });
@@ -2666,6 +2775,16 @@
     // fall back to a reload as a safety net.
     if (photoChanged && !window.__galleryCellState && !document.querySelector('.inline-textarea')) {
       setTimeout(() => location.reload(), 250);
+    }
+    // Primary YouTube video — mount it if the cloud row supplied
+    // one but the initial render didn't paint an iframe (no local
+    // override). Re-runs are safe: __mountPrimaryVideo dedupes
+    // against an already-mounted iframe.
+    if (patch.youtubeId && typeof window.__mountPrimaryVideo === 'function') {
+      const id = (typeof extractYouTubeId === 'function')
+        ? extractYouTubeId(patch.youtubeId)
+        : String(patch.youtubeId).trim();
+      if (id) window.__mountPrimaryVideo(id);
     }
     // Extra YouTube videos — append any IDs we don't already
     // have mounted. Deletion isn't supported yet, so order stays
@@ -3034,6 +3153,13 @@
         if (Array.isArray(cloud.fun_facts))     patch.funFacts     = cloud.fun_facts;
         if (Array.isArray(cloud.custom_topics)) patch.customTopics = cloud.custom_topics;
         if (Array.isArray(cloud.extra_youtube_ids)) patch.extraYoutubeIds = cloud.extra_youtube_ids;
+        // Primary curated/approved video — getMergedAnimal() reads
+        // only localStorage overrides, so a teacher who approved a
+        // video on a different device would leave the student's
+        // page video-less without this. We accept either the new
+        // `youtube_id` field or the legacy `approved_youtube_id`.
+        const cloudYt = cloud.youtube_id || cloud.approved_youtube_id;
+        if (cloudYt) patch.youtubeId = cloudYt;
         applyRemotePatch(patch);
         // Photos: merge custom ones into the gallery cells. The
         // renderer ran first with the base set, then this appends.
@@ -3049,31 +3175,61 @@
     refreshCommentBoxVisibility(animalId);
   })();
 
-  // After the initial cloud fetch, append any custom photos /
-  // cartoons / coloring pages onto the existing cell state. The
-  // renderer's `cells` map is not in our scope here, so we read
-  // the DOM directly and push into a hidden data attribute that
-  // the next click cycles through. Simpler approach: just call
-  // setCellImage on the first custom one if no base image is set.
+  // After the initial cloud fetch, merge every cloud-stored custom
+  // photo / cartoon / coloring page into the gallery's cellState
+  // so the kid can:
+  //   • cycle through them via the dot row (not just the wiki one),
+  //   • delete them with the ✕ button (which reads cellState to
+  //     find the active image).
+  //
+  // We also remember each photo's `addedBy` metadata in a parallel
+  // map keyed by display-src — the delete handler reads this to
+  // enforce the "only the uploader can delete" rule without
+  // round-tripping to the cloud first.
+  //
+  // If cellState hasn't been built yet (renderCell hasn't run —
+  // the image-set Promise is still in flight), retry shortly. The
+  // gallery typically lands within ~100 ms of page load.
+  window.__galleryCellOwners = window.__galleryCellOwners || {
+    photos: {}, cartoons: {}, coloringPages: {},
+  };
   function appendCloudPhotosToGallery(cloud) {
     const map = { photos: 'photos', cartoons: 'cartoons', coloring_pages: 'coloringPages' };
+    const stateMap = window.__galleryCellState;
+    const rendered = window.__cellsRendered || {};
+    // Wait until renderCell has finished for EVERY category that
+    // has cloud images. Pushing into cellState too early gets the
+    // entries wiped by renderCell's `cellState[catKey] = items.map(...)`
+    // assignment — that's what made uploads disappear on refresh.
+    const stillRendering = Object.keys(map).some(dbKey => {
+      const arr = Array.isArray(cloud[dbKey]) ? cloud[dbKey] : [];
+      if (!arr.length) return false;
+      const domKey = map[dbKey];
+      return !rendered[domKey];
+    });
+    if (!stateMap || typeof window.__appendToCellInPlace !== 'function' || stillRendering) {
+      setTimeout(() => appendCloudPhotosToGallery(cloud), 150);
+      return;
+    }
     Object.keys(map).forEach(dbKey => {
       const arr = Array.isArray(cloud[dbKey]) ? cloud[dbKey] : [];
       if (!arr.length) return;
       const domKey = map[dbKey];
-      const cell = document.querySelector(`#heroGallery .gallery-cell[data-cat="${domKey}"]`);
-      if (!cell) return;
-      // Make sure the cell is visible (in case the base render hid
-      // it for being empty).
-      cell.style.display = '';
-      // If no base image had loaded yet, paint the first custom one
-      // so the kid sees something now. If a base IS loaded, leave
-      // it — the next ◀▶ cycle (or page reload) will surface them.
-      const img = cell.querySelector('img');
-      if (img && !cell.classList.contains('has-image')) {
-        img.onload = () => cell.classList.add('has-image');
-        img.src = arr[0].src;
-      }
+      const state  = stateMap[domKey] || [];
+      arr.forEach(p => {
+        const src = p && p.src;
+        if (!src) return;
+        // Cache ownership metadata for the delete-permission check.
+        window.__galleryCellOwners[domKey][src] = {
+          addedBy:     p.addedBy     || null,
+          addedByName: p.addedByName || null,
+        };
+        // Append into cellState only if not already mounted. Same
+        // dedupe rule applyRemotePatch uses for live broadcasts.
+        if (state.indexOf(src) === -1) {
+          window.__appendToCellInPlace(domKey, src);
+        }
+      });
     });
     if (typeof balanceGallery === 'function') balanceGallery();
   }

@@ -273,26 +273,37 @@
     $('nextBtn').disabled = false;
   }
   // Decomp: fills [a, bT, bO, answer] in order with tap/drag.
+  // Each slot remembers which chip's value it currently holds so a
+  // mis-drag can be popped back (chip re-enabled) by tapping the
+  // filled slot. This is the "drag-cancel" behaviour the kid needs
+  // when they aim wrong with their finger on a tablet.
   function wireDecomp(q) {
     const expected = [q.a, q.bT, q.bO, q.answer];
     const slots = document.querySelectorAll('.pr-decomp .slot');
-    let idx = 0;
+    const slotVals = [-1, -1, -1, -1];   // -1 = empty
+
+    function nextEmpty() {
+      for (let i = 0; i < 4; i++) if (slotVals[i] === -1) return i;
+      return -1;
+    }
 
     function fill(val, srcBtn) {
-      if (idx >= 4) return;
-      slots[idx].textContent = val;
-      slots[idx].classList.add('filled');
-      idx++;
+      if (answered) return;
+      const i = nextEmpty();
+      if (i < 0) return;
+      slots[i].textContent = val;
+      slots[i].classList.add('filled');
+      slotVals[i] = val;
       if (srcBtn) srcBtn.disabled = true;
-      if (idx === 4) {
-        // All filled — check
+      if (nextEmpty() === -1) {
+        // All four filled — grade now.
         answered = true;
         let allOk = true;
-        for (let i = 0; i < 4; i++) {
-          if (parseInt(slots[i].textContent, 10) !== expected[i]) {
-            slots[i].style.borderColor = '#ef4444';
-            slots[i].style.background  = '#fee2e2';
-            slots[i].style.color       = '#b91c1c';
+        for (let k = 0; k < 4; k++) {
+          if (slotVals[k] !== expected[k]) {
+            slots[k].style.borderColor = '#ef4444';
+            slots[k].style.background  = '#fee2e2';
+            slots[k].style.color       = '#b91c1c';
             allOk = false;
           }
         }
@@ -300,24 +311,52 @@
         $('nextBtn').disabled = false;
       }
     }
+
+    // Tap a FILLED slot to pop its chip back (mis-drag cancel).
+    // Frozen after the kid has clicked through to the check so the
+    // grade doesn't shift under them.
+    function unfill(i) {
+      if (answered) return;
+      if (slotVals[i] === -1) return;
+      const v = slotVals[i];
+      slots[i].textContent = '?';
+      slots[i].classList.remove('filled');
+      slots[i].style.borderColor = '';
+      slots[i].style.background  = '';
+      slots[i].style.color       = '';
+      slotVals[i] = -1;
+      // Re-enable a chip with the same data-v. Picks the first
+      // disabled match so multiple identical pool values still work.
+      const chip = document.querySelector('.pr-chip[data-v="' + v + '"][disabled]');
+      if (chip) chip.disabled = false;
+    }
+
     document.querySelectorAll('.pr-chip').forEach(btn => {
       btn.addEventListener('click', () => {
         if (answered || btn.disabled) return;
         fill(parseInt(btn.dataset.v, 10), btn);
       });
-      // Drag-and-drop
       btn.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', btn.dataset.v));
     });
-    slots.forEach(slot => {
+    slots.forEach((slot, i) => {
       slot.addEventListener('dragover', e => e.preventDefault());
       slot.addEventListener('drop', e => {
         e.preventDefault();
         if (answered) return;
         const v = parseInt(e.dataTransfer.getData('text/plain'), 10);
         if (!Number.isFinite(v)) return;
-        const btn = document.querySelector(`.pr-chip[data-v="${v}"]:not(:disabled)`);
+        // If this slot is already filled, allow a swap: pop the
+        // old chip back first, then fill with the new one.
+        if (slotVals[i] !== -1) unfill(i);
+        const btn = document.querySelector('.pr-chip[data-v="' + v + '"]:not(:disabled)');
         fill(v, btn);
       });
+      // Tap-to-undo: clicking a filled slot pops its chip back so
+      // the kid can re-aim. Title + cursor hint advertise the
+      // gesture without on-screen instructions.
+      slot.title = 'Tap to take it back';
+      slot.style.cursor = 'pointer';
+      slot.addEventListener('click', () => unfill(i));
     });
   }
 
