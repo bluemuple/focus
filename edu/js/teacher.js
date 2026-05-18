@@ -279,36 +279,231 @@
         Green chip = initial test passed. Blue "R" chip = remediation
         practice passed. Amber = needs more practice.
       </p>`;
+    // Two more tables live in this same tab — Practice progress
+    // and Race rankings. Each is in its own collapsible card so the
+    // teacher can fold away the ones they're not looking at.
+    const practiceHtml = renderPracticeTableHtml(rows);
+    const raceHtml     = renderRaceRankingsHtml(rows);
+
     wrap.innerHTML = `
-      <div class="wc-collapse" data-key="${collapsedKey}">
-        <button type="button" class="wc-collapse-toggle" aria-expanded="${startCollapsed ? 'false' : 'true'}">
-          <span class="wc-collapse-caret">${startCollapsed ? '▶' : '▼'}</span>
-          <span>Back to Basic — student progress</span>
-        </button>
-        <div class="wc-collapse-body" ${startCollapsed ? 'hidden' : ''}>
-          ${tableHtml}
-        </div>
-      </div>`;
-    // Wire the collapse click.
-    const toggle = wrap.querySelector('.wc-collapse-toggle');
-    const body   = wrap.querySelector('.wc-collapse-body');
-    const caret  = wrap.querySelector('.wc-collapse-caret');
-    if (toggle && body) {
+      ${renderCollapsibleSection('wc.tbl.btb.collapsed',
+          'Back to Basic — student progress', tableHtml)}
+      ${renderCollapsibleSection('wc.tbl.practice.collapsed',
+          'Practice — student progress',     practiceHtml)}
+      ${renderCollapsibleSection('wc.tbl.race.collapsed',
+          'Race — class rankings',           raceHtml)}
+    `;
+    // Wire every collapse toggle in the panel (one per card).
+    wrap.querySelectorAll('.wc-collapse').forEach(box => {
+      const key    = box.dataset.key;
+      const toggle = box.querySelector('.wc-collapse-toggle');
+      const body   = box.querySelector('.wc-collapse-body');
+      const caret  = box.querySelector('.wc-collapse-caret');
+      if (!toggle || !body) return;
       toggle.addEventListener('click', () => {
         const isHidden = body.hasAttribute('hidden');
         if (isHidden) {
           body.removeAttribute('hidden');
           toggle.setAttribute('aria-expanded', 'true');
           if (caret) caret.textContent = '▼';
-          try { localStorage.removeItem(collapsedKey); } catch {}
+          try { if (key) localStorage.removeItem(key); } catch {}
         } else {
           body.setAttribute('hidden', '');
           toggle.setAttribute('aria-expanded', 'false');
           if (caret) caret.textContent = '▶';
-          try { localStorage.setItem(collapsedKey, '1'); } catch {}
+          try { if (key) localStorage.setItem(key, '1'); } catch {}
         }
       });
+    });
+  }
+
+  // Shared collapsible-section wrapper used by all three Maths
+  // Insights tables. Remembers its open/closed state in localStorage
+  // under `key`, defaulting to OPEN on first visit.
+  function renderCollapsibleSection(key, title, innerHtml) {
+    const collapsed = (() => {
+      try { return localStorage.getItem(key) === '1'; } catch { return false; }
+    })();
+    return `
+      <div class="wc-collapse" data-key="${key}" style="margin-bottom:14px;">
+        <button type="button" class="wc-collapse-toggle" aria-expanded="${collapsed ? 'false' : 'true'}">
+          <span class="wc-collapse-caret">${collapsed ? '▶' : '▼'}</span>
+          <span>${title}</span>
+        </button>
+        <div class="wc-collapse-body" ${collapsed ? 'hidden' : ''}>
+          ${innerHtml}
+        </div>
+      </div>`;
+  }
+
+  // ============================================================
+  //  PRACTICE — per-student progress
+  //
+  //  Pulls each student's practice_state JSONB column and shows:
+  //    • Current level (1–6) — sets the next-question difficulty
+  //    • Cumulative score    — sum of (correct × 10) across all
+  //      sessions; this is also what gates the Race button (≥80).
+  //    • Last per-level scoreboard (correct / total) — read from
+  //      `scores[level]` so the teacher can see how the last
+  //      mini-session went.
+  //    • Race-unlocked badge (cumulative ≥ 80).
+  // ============================================================
+  function renderPracticeTableHtml(rows) {
+    if (!rows.length) {
+      return '<p class="wc-muted">No students in this class yet.</p>';
     }
+    // Sort by cumulative DESC so the strongest practiser sits at
+    // the top — easiest signal for the teacher to find who's
+    // ready for the Race vs. who needs a nudge.
+    const sorted = rows.slice().sort((a, b) => {
+      const ac = (a.practice_state && a.practice_state.cumulative) || 0;
+      const bc = (b.practice_state && b.practice_state.cumulative) || 0;
+      return bc - ac;
+    });
+    const body = sorted.map(s => {
+      const ps  = (s.practice_state && typeof s.practice_state === 'object') ? s.practice_state : {};
+      const lvl = Math.max(1, Math.min(6, ps.level || 0));
+      const cum = ps.cumulative || 0;
+      const last = ps.scores && ps.scores[String(lvl)];
+      const lastStr = (last && last.total)
+        ? `${last.correct}/${last.total}`
+        : '<span style="color:#cbd5e1;">—</span>';
+      const lvlChip = ps.level
+        ? `<span style="display:inline-block; background:#fef3c7; color:#92400e;
+                        padding:3px 9px; border-radius:999px; font-weight:800; font-size:12px;">
+             L${lvl}
+           </span>`
+        : `<span style="color:#cbd5e1;">—</span>`;
+      const raceReady = cum >= 80;
+      const status = raceReady
+        ? `<span style="color:#15803d; font-weight:700;">Race ready 🏁</span>`
+        : `<span style="color:#6b7280;">${80 - cum} pts to Race</span>`;
+      return `
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:8px 6px; font-weight:600;">${escapeHtml(s.real_name || '—')}</td>
+          <td style="padding:8px 6px; text-align:center;">${lvlChip}</td>
+          <td style="padding:8px 6px; text-align:right; font-weight:700; color:#1f2937;">${cum}</td>
+          <td style="padding:8px 6px; text-align:center;">${lastStr}</td>
+          <td style="padding:8px 6px;">${status}</td>
+        </tr>`;
+    }).join('');
+    return `
+      <table style="width:100%; border-collapse: collapse; font-size:14px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:2px solid #e5e7eb;">
+            <th style="padding:8px 6px;">Student</th>
+            <th style="padding:8px 6px; text-align:center;">Current level</th>
+            <th style="padding:8px 6px; text-align:right;">Cumulative</th>
+            <th style="padding:8px 6px; text-align:center;">Last set</th>
+            <th style="padding:8px 6px;">Status</th>
+          </tr>
+        </thead>
+        <tbody>${body}</tbody>
+      </table>
+      <p class="wc-muted" style="font-size:12px; margin-top:10px;">
+        Levels 1–6 step up automatically after 3 correct in a row
+        (or 4-of-5 in a level). Race unlocks at 80 cumulative pts.
+      </p>`;
+  }
+
+  // ============================================================
+  //  RACE — class rankings
+  //
+  //  Reads every student's race_state and shows a leaderboard:
+  //    Rank · Student · Best score · Level of best run ·
+  //    Last gain · Total races · Avg-time on best run.
+  //  Sorted by best score DESC. Top 3 podium-highlighted.
+  // ============================================================
+  function renderRaceRankingsHtml(rows) {
+    if (!rows.length) {
+      return '<p class="wc-muted">No students in this class yet.</p>';
+    }
+    // Build a flat per-student summary, scanning the runs[] log to
+    // find the BEST single run for the "level of best" + avg-time
+    // columns (race_state.best is keyed by level so we can't pull
+    // the run record out of it directly).
+    const summaries = rows.map(s => {
+      const rs = (s.race_state && typeof s.race_state === 'object') ? s.race_state : {};
+      const runs = Array.isArray(rs.runs) ? rs.runs : [];
+      const bestObj = (rs.best && typeof rs.best === 'object') ? rs.best : {};
+      const bestScore = Math.max(0, ...Object.values(bestObj), 0);
+      // Find the actual best run (for level / avg-time)
+      let bestRun = null;
+      for (const r of runs) {
+        if (!r || typeof r.score !== 'number') continue;
+        if (!bestRun || r.score > bestRun.score) bestRun = r;
+      }
+      return {
+        id:        s.id,
+        name:      s.real_name || '—',
+        bestScore,
+        bestRun,
+        lastGain:  rs.lastGain || 0,
+        runCount:  runs.length,
+      };
+    });
+    // Anyone with no races at all sinks to the bottom (sorted by
+    // name) so the teacher still sees them but they don't clutter
+    // the top of the leaderboard.
+    const ranked = summaries
+      .filter(r => r.bestScore > 0)
+      .sort((a, b) => b.bestScore - a.bestScore);
+    const idle   = summaries
+      .filter(r => r.bestScore === 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!ranked.length && !idle.length) {
+      return '<p class="wc-muted">No students in this class yet.</p>';
+    }
+    const podiumBg = ['#fff7d6', '#f3f4f6', '#fde9d0'];
+    const rankedRows = ranked.map((r, i) => {
+      const bg = (i < 3) ? `background:${podiumBg[i]};` : '';
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : '';
+      const lvl   = r.bestRun ? `L${r.bestRun.level}` : '—';
+      const avg   = r.bestRun ? `${r.bestRun.avgTime.toFixed(1)}s` : '—';
+      const gain  = r.lastGain
+        ? `<span style="color:#15803d; font-weight:700;">+${r.lastGain}</span>`
+        : `<span style="color:#cbd5e1;">—</span>`;
+      return `
+        <tr style="border-bottom:1px solid #f1f5f9; ${bg}">
+          <td style="padding:8px 6px; font-weight:800; text-align:center; width:40px;">${i + 1}${medal ? ' ' + medal : ''}</td>
+          <td style="padding:8px 6px; font-weight:600;">${escapeHtml(r.name)}</td>
+          <td style="padding:8px 6px; text-align:right; font-weight:800; color:#1f2937;">${r.bestScore}</td>
+          <td style="padding:8px 6px; text-align:center;">${lvl}</td>
+          <td style="padding:8px 6px; text-align:center;">${avg}</td>
+          <td style="padding:8px 6px; text-align:right;">${gain}</td>
+          <td style="padding:8px 6px; text-align:right; color:#6b7280;">${r.runCount}</td>
+        </tr>`;
+    }).join('');
+    const idleRows = idle.map(r => `
+      <tr style="border-bottom:1px solid #f1f5f9; color:#9ca3af;">
+        <td style="padding:8px 6px; text-align:center;">—</td>
+        <td style="padding:8px 6px; font-weight:600;">${escapeHtml(r.name)}</td>
+        <td style="padding:8px 6px; text-align:right;">—</td>
+        <td style="padding:8px 6px; text-align:center;">—</td>
+        <td style="padding:8px 6px; text-align:center;">—</td>
+        <td style="padding:8px 6px; text-align:right;">—</td>
+        <td style="padding:8px 6px; text-align:right;">0</td>
+      </tr>`).join('');
+    return `
+      <table style="width:100%; border-collapse: collapse; font-size:14px;">
+        <thead>
+          <tr style="text-align:left; border-bottom:2px solid #e5e7eb;">
+            <th style="padding:8px 6px; text-align:center;">#</th>
+            <th style="padding:8px 6px;">Student</th>
+            <th style="padding:8px 6px; text-align:right;">Best score</th>
+            <th style="padding:8px 6px; text-align:center;">Level</th>
+            <th style="padding:8px 6px; text-align:center;">Avg time</th>
+            <th style="padding:8px 6px; text-align:right;">Last gain</th>
+            <th style="padding:8px 6px; text-align:right;">Races</th>
+          </tr>
+        </thead>
+        <tbody>${rankedRows}${idleRows}</tbody>
+      </table>
+      <p class="wc-muted" style="font-size:12px; margin-top:10px;">
+        Best score = highest single-run score ever. Level / Avg time
+        come from that best run. Last gain = how much the most-recent
+        race beat their previous best by.
+      </p>`;
   }
 
   // ============================================================
