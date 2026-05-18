@@ -3313,11 +3313,6 @@ const defaultState = () => ({
   // activeTimer represents the timer that is currently ticking.
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
   pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work+short-break, resets to 0 after the long break (4 work sessions per cycle)
-  // Lifetime-within-the-day counters used by the "I'm doing" label.
-  // Incremented each time a new work or break phase BEGINS. Reset to 0 by
-  // the 3 AM rollover so each day starts at "work 1" / "break 1".
-  pomodoroWorkCount: 0,
-  pomodoroBreakCount: 0,
   watchLog: [],
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
@@ -3501,8 +3496,6 @@ function migrateState() {
   if (state.sbUserId == null) state.sbUserId = 'me';
   if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
-  if (typeof state.pomodoroWorkCount  !== 'number') state.pomodoroWorkCount  = 0;
-  if (typeof state.pomodoroBreakCount !== 'number') state.pomodoroBreakCount = 0;
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (!Array.isArray(state.events))   state.events   = [];
   if (!Array.isArray(state.versions)) state.versions = [];
@@ -3950,8 +3943,6 @@ async function pushSettingsToCloud() {
       session_state: {
         activeTimer:             state.activeTimer || null,
         pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
-        pomodoroWorkCount:       +state.pomodoroWorkCount  || 0,
-        pomodoroBreakCount:      +state.pomodoroBreakCount || 0,
         timeSegments:            state.timeSegments || [],
         sessionStartMs:          state.sessionStartMs || null,
         lastSnapshotDate:        state.lastSnapshotDate || '',
@@ -4177,8 +4168,6 @@ function applyRemoteSettings(remote) {
     const ss = remote.session_state;
     if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
     if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
-    if (typeof ss.pomodoroWorkCount      === 'number') state.pomodoroWorkCount      = ss.pomodoroWorkCount;
-    if (typeof ss.pomodoroBreakCount     === 'number') state.pomodoroBreakCount     = ss.pomodoroBreakCount;
     if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
     if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
     if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
@@ -6530,10 +6519,8 @@ function startPomodoro(q, i) {
   stopActiveTimer('switch');
   playFx('start');
   const now = Date.now();
-  // New work phase begins — increment the "work N" counter shown next to the
-  // I'm-doing timer. Counters accumulate across cycles and are reset only at
-  // the 3 AM rollover, so the user sees a continuous tally for the day.
-  state.pomodoroWorkCount = (+state.pomodoroWorkCount || 0) + 1;
+  // The "work N" / "break N" label is derived live from watchLog at render
+  // time (see _pomoCountsForToday) — no per-phase counter to maintain here.
   state.activeTimer = {
     type: 'pomodoro',
     q, idx: i,
@@ -6750,13 +6737,6 @@ async function showPomoPhaseConfirm() {
       if (wasLong) state.pomodoroSessionsInCycle = 0;
       else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     }
-    // Bump the daily "work N" / "break N" counter shown next to the timer.
-    // Each NEW phase that begins ticks the matching counter forward by 1.
-    if (nextPhase === 'work') {
-      state.pomodoroWorkCount  = (+state.pomodoroWorkCount  || 0) + 1;
-    } else {
-      state.pomodoroBreakCount = (+state.pomodoroBreakCount || 0) + 1;
-    }
     at2.phase = nextPhase;
     at2.phaseStartedAt = Date.now();
     at2.phaseDurationMs = nextDurMs;
@@ -6779,8 +6759,6 @@ async function showPomoPhaseConfirm() {
     // earned the long break (counter would otherwise grow unbounded).
     state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     if (state.pomodoroSessionsInCycle > 3) state.pomodoroSessionsInCycle = 0;
-    // Skipping the break still kicks off a new work phase → tick "work N" up.
-    state.pomodoroWorkCount = (+state.pomodoroWorkCount || 0) + 1;
     at2.phase = 'work';
     at2.phaseStartedAt = Date.now();
     at2.phaseDurationMs = POMO_WORK_MS;
@@ -7529,6 +7507,34 @@ function updateSleepButtonLabel() {
   btn.title = mustSleep ? 'You should be asleep — end the day' : 'End the day';
 }
 
+/* Count completed pomodoro work / break phases since the 3 AM rollover for
+   "today". The "I'm doing" label adds 1 to the matching count for the
+   currently-running phase (since the in-progress phase hasn't been logged
+   to watchLog yet). Deriving from watchLog this way is more robust than a
+   separately-tracked counter — watchLog is the single source of truth for
+   what actually happened, immune to cross-device sync races.
+   The 3 AM boundary matches getCurrentDayKey()'s rollover rule, so entries
+   from 11 PM yesterday belong to "today" if the user hasn't crossed 3 AM. */
+function _pomoCountsForToday() {
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setHours(3, 0, 0, 0);
+  if (now.getTime() < cutoff.getTime()) cutoff.setDate(cutoff.getDate() - 1);
+  const since = cutoff.getTime();
+  let workN = 0, breakN = 0;
+  const log = state.watchLog;
+  if (Array.isArray(log)) {
+    for (let i = 0; i < log.length; i++) {
+      const e = log[i];
+      if (!e) continue;
+      const t = +e.startedAt || +e.endedAt || 0;
+      if (t < since) continue;
+      if (e.type === 'pomodoro') workN++;
+      else if (e.type === 'pomodoro-break') breakN++;
+    }
+  }
+  return { workN, breakN };
+}
 function renderImDoing() {
   const wrap = document.getElementById('im-doing');
   const nameEl = document.getElementById('im-doing-name');
@@ -7584,10 +7590,13 @@ function renderImDoing() {
     if (t) name = t.text || '(task)';
     const isWork = at.phase === 'work';
     effect = isWork ? 'gain' : 'lose';
-    const n = isWork
-      ? (+state.pomodoroWorkCount  || 0)
-      : (+state.pomodoroBreakCount || 0);
-    phaseLabelText = (isWork ? 'work ' : 'break ') + Math.max(1, n);
+    // Count completed work / break entries logged since today's 3 AM rollover
+    // (which is when the day key advances elsewhere). The label for the
+    // CURRENTLY-RUNNING phase = completed_of_that_type + 1, because the
+    // running phase hasn't been written to watchLog yet.
+    const counts = _pomoCountsForToday();
+    const n = (isWork ? counts.workN : counts.breakN) + 1;
+    phaseLabelText = (isWork ? 'work ' : 'break ') + n;
   } else if (at.type === 'muncher' || at.type === 'multiplier') {
     const list = at.type === 'multiplier' ? state.mana.multiplier : state.mana.muncher;
     const m = list && list[at.manaIdx];
@@ -10110,11 +10119,6 @@ function maybe3amReset() {
   ['q1','q2','q3','q4'].forEach(q => {
     state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
   });
-  // Reset the daily "work N" / "break N" counters so the next pomodoro of
-  // the new day starts at "work 1" / "break 1". (sessionsInCycle is left
-  // alone — long-break cadence is independent of the calendar day.)
-  state.pomodoroWorkCount  = 0;
-  state.pomodoroBreakCount = 0;
   saveState();
   markSettingsChanged(); pushSettingsToCloud();
   if (typeof renderTasks === 'function') renderTasks();

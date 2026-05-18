@@ -474,6 +474,62 @@
     height: 100%;
     border: 0;
   }
+  /* Each video gets its own .video-frame so multiple stack neatly
+     under the primary one. Margin keeps them visually separated. */
+  #extraVideosHost .video-frame { margin-top: 14px; }
+
+  /* "+ Add a video" row, plus the URL paste form that replaces it
+     when the kid clicks Add. Only visible in edit mode (the body
+     gets .student-editing while the pencil overlay is open). */
+  .add-video-row {
+    margin-top: 14px;
+    display: none;          /* shown by .student-editing rule below */
+    flex-direction: column;
+    gap: 8px;
+  }
+  body.student-editing .add-video-row { display: flex; }
+  .add-video-row .add-video-btn {
+    align-self: flex-start;
+    background: transparent;
+    border: 2px dashed var(--accent);
+    color: var(--primary-dark);
+    border-radius: 12px;
+    padding: 10px 18px;
+    font: inherit; font-weight: 700; font-size: 0.92rem;
+    cursor: pointer;
+  }
+  .add-video-row .add-video-btn:hover {
+    background: rgba(255,209,102,0.18);
+  }
+  .add-video-form {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    background: rgba(255,209,102,0.12);
+    border: 1.5px dashed var(--accent);
+    border-radius: 12px;
+    padding: 10px 12px;
+  }
+  .add-video-form input[type="url"] {
+    flex: 1; min-width: 220px;
+    border: 0; background: transparent; outline: none;
+    font: inherit; font-size: 0.95rem;
+  }
+  .add-video-form .ok,
+  .add-video-form .cancel {
+    border: 0; border-radius: 999px;
+    padding: 7px 16px;
+    font: inherit; font-weight: 700; font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .add-video-form .ok     { background: var(--primary-dark); color: #fff; }
+  .add-video-form .cancel { background: transparent; color: var(--muted); }
+  .add-video-form .ok:disabled { opacity: 0.5; cursor: not-allowed; }
+  .add-video-form .err {
+    color: #b91c1c; font-size: 0.82rem; flex: 1 0 100%;
+  }
+  /* Hide the whole Watch & Learn card when it has no videos AND
+     we're not in edit mode — otherwise an animal with no curated
+     YouTube would show a forlorn empty heading to the kid. */
+  body:not(.student-editing) .video-card.video-card-empty { display: none; }
 
   .not-found {
     text-align: center;
@@ -991,16 +1047,58 @@
     white-space: pre-wrap;
     word-wrap: break-word;
   }
-  .comment-row .reply-btn {
+  .comment-row .actions {
+    display: flex; gap: 14px;
+    margin-top: 6px;
+  }
+  .comment-row .reply-btn,
+  .comment-row .edit-btn,
+  .comment-row .del-btn {
     display: inline-block;
     background: transparent; border: 0;
     color: var(--primary-dark);
     font: inherit; font-weight: 700; font-size: 0.78rem;
     cursor: pointer;
-    margin-top: 6px;
     padding: 0;
   }
-  .comment-row .reply-btn:hover { text-decoration: underline; }
+  .comment-row .del-btn  { color: #b91c1c; }
+  .comment-row .edit-btn { color: var(--muted); }
+  .comment-row .reply-btn:hover,
+  .comment-row .edit-btn:hover,
+  .comment-row .del-btn:hover { text-decoration: underline; }
+  .comment-row .meta .edited {
+    font-style: italic;
+    color: var(--muted);
+    font-size: 0.72rem;
+  }
+  /* Inline edit form replaces the body div while editing. */
+  .comment-edit-form {
+    display: flex; flex-direction: column; gap: 8px;
+    margin-top: 4px;
+  }
+  .comment-edit-form textarea {
+    width: 100%;
+    border: 1.5px solid var(--accent);
+    background: #fffdf5;
+    border-radius: 10px;
+    padding: 8px 10px;
+    font: inherit; font-size: 0.95rem;
+    resize: vertical; min-height: 60px; max-height: 220px;
+    outline: none;
+  }
+  .comment-edit-form .row {
+    display: flex; gap: 8px;
+  }
+  .comment-edit-form .save,
+  .comment-edit-form .cancel {
+    border: 0; border-radius: 999px;
+    padding: 6px 14px;
+    font: inherit; font-weight: 700; font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .comment-edit-form .save   { background: var(--primary-dark); color: #fff; }
+  .comment-edit-form .cancel { background: transparent; color: var(--muted); }
+  .comment-edit-form .save:disabled { opacity: 0.55; cursor: not-allowed; }
   .comment-empty {
     text-align: center;
     color: var(--muted);
@@ -1287,19 +1385,38 @@
         💬 Add something to this page (a fun fact, a photo, or a new topic) and a <b>comment box</b> will appear right here for everyone.
       </div>
 
-      ${ytId ? `
-      <div class="video-card collapsible">
+      <!-- Watch & Learn card — always rendered now so the
+           "+ Add a video" button is reachable even on animals
+           that have no curated YouTube yet. Hidden via CSS when
+           it has no videos AND we're not in edit mode. -->
+      <div class="video-card collapsible ${ytId ? '' : 'video-card-empty'}" id="videoCard">
         <h2 class="collapsible-header" role="button" tabindex="0"><div class="info-icon">🎬</div>Watch & Learn</h2>
         <div class="collapsible-body">
+          ${ytId ? `
           <div class="video-frame">
             <iframe
               src="https://www.youtube.com/embed/${encodeURIComponent(ytId)}"
               title="${escapeHTML(animal.name)} video"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               allowfullscreen></iframe>
+          </div>` : ''}
+          <!-- Extra videos (teacher/student-added) get appended here,
+               one .video-frame per video, beneath the primary one. -->
+          <div id="extraVideosHost"></div>
+          <!-- + Add a video / paste-URL form. Visible only in edit
+               mode (CSS gates on body.student-editing). -->
+          <div class="add-video-row" id="addVideoRow">
+            <button type="button" class="add-video-btn" id="addVideoBtn">＋ Add a video</button>
+            <div class="add-video-form" id="addVideoForm" hidden>
+              <input type="url" id="addVideoInput"
+                     placeholder="Paste a YouTube URL (e.g. https://youtu.be/…)">
+              <button type="button" class="ok"     id="addVideoOk">OK</button>
+              <button type="button" class="cancel" id="addVideoCancel">Cancel</button>
+              <div class="err" id="addVideoErr" hidden></div>
+            </div>
           </div>
         </div>
-      </div>` : ''}
+      </div>
     `;
 
     // Wire up collapse/expand on every collapsible header.
@@ -1568,6 +1685,12 @@
     // this animal. The hero/info cards re-flow on the right.
     setupWikiButton(animal);
 
+    // Wire the "+ Add a video" button so paste-a-URL flow works
+    // for kids in edit mode. The extras themselves are mounted
+    // later by loadCloudCustomThenSubscribe (initial paint) and by
+    // applyRemotePatch (live updates from other tabs).
+    setupAddVideo(animal);
+
     // "is loved by ___" line + student Edit button. Both rely on
     // the wc_animal_hearts table; loading is async so the UI just
     // updates whenever the request resolves.
@@ -1648,6 +1771,115 @@
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); }
     });
     close.addEventListener('click', (e) => { e.stopPropagation(); closeIt(); });
+  }
+
+  // ---- Extra videos (multiple YouTube embeds stacked) ------------
+  // Tracks the video-ids currently mounted in #extraVideosHost so
+  // remote patches can append only NEW ones (instead of nuking and
+  // re-rendering the whole list, which would interrupt anyone in
+  // mid-watch on the same page in another tab).
+  window.__extraVideoIds = window.__extraVideoIds || [];
+
+  // Append a single video iframe to the host. Used both by the
+  // local Add-video button AND by applyRemotePatch when another
+  // tab posts a new id.
+  window.__appendVideoInPlace = function (videoId, animalName) {
+    const host = document.getElementById('extraVideosHost');
+    if (!host || !videoId) return;
+    if (window.__extraVideoIds.indexOf(videoId) >= 0) return; // dedupe
+    window.__extraVideoIds.push(videoId);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'video-frame';
+    wrap.dataset.videoId = videoId;
+    const iframe = document.createElement('iframe');
+    iframe.src = 'https://www.youtube.com/embed/' + encodeURIComponent(videoId);
+    iframe.title = (animalName ? (animalName + ' video') : 'video');
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture');
+    iframe.setAttribute('allowfullscreen', '');
+    wrap.appendChild(iframe);
+    host.appendChild(wrap);
+
+    // Now that a video exists, the card is no longer empty.
+    const card = document.getElementById('videoCard');
+    if (card) card.classList.remove('video-card-empty');
+  };
+
+  // Wire the "+ Add a video" button + URL paste form. The button
+  // is always in the DOM; CSS hides the whole row when not in
+  // edit mode. Clicking ＋ reveals the input, clicking OK extracts
+  // the YouTube id, persists to cloud, and mounts the iframe.
+  function setupAddVideo(animal) {
+    const row    = document.getElementById('addVideoRow');
+    const btn    = document.getElementById('addVideoBtn');
+    const form   = document.getElementById('addVideoForm');
+    const input  = document.getElementById('addVideoInput');
+    const okBtn  = document.getElementById('addVideoOk');
+    const cancel = document.getElementById('addVideoCancel');
+    const errEl  = document.getElementById('addVideoErr');
+    if (!row || !btn || !form || !input || !okBtn || !cancel) return;
+
+    function showError(msg) {
+      errEl.textContent = msg;
+      errEl.hidden = false;
+    }
+    function clearError() {
+      errEl.textContent = '';
+      errEl.hidden = true;
+    }
+    function reset() {
+      input.value = '';
+      clearError();
+      form.hidden = true;
+      btn.hidden = false;
+    }
+
+    btn.addEventListener('click', () => {
+      btn.hidden = true;
+      form.hidden = false;
+      clearError();
+      input.focus();
+    });
+    cancel.addEventListener('click', reset);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter')  { e.preventDefault(); okBtn.click(); }
+      if (e.key === 'Escape') { e.preventDefault(); reset(); }
+    });
+
+    okBtn.addEventListener('click', async () => {
+      clearError();
+      const raw = (input.value || '').trim();
+      if (!raw) { showError('Paste a YouTube URL first.'); return; }
+      const id = (typeof extractYouTubeId === 'function')
+        ? extractYouTubeId(raw)
+        : '';
+      if (!id) {
+        showError("Hmm — that doesn't look like a YouTube link. Try copying the address from the YouTube page.");
+        return;
+      }
+      if (window.__extraVideoIds.indexOf(id) >= 0
+          || id === extractYouTubeId(animal.youtubeId || animal.youtubeUrl || '')) {
+        showError('That video is already on this page.');
+        return;
+      }
+      okBtn.disabled = true;
+      try {
+        // Read the current cloud row to get the canonical array,
+        // append, and save back. Mirrors the appendCustomImage
+        // pattern — avoids us tracking local-only state that could
+        // drift from other open tabs.
+        const cur = await fetchAnimalCustomFromCloud(animal.id);
+        const existing = Array.isArray(cur?.extra_youtube_ids) ? cur.extra_youtube_ids.slice() : [];
+        existing.push(id);
+        await saveField(animal.id, { extraYoutubeIds: existing });
+        window.__appendVideoInPlace(id, animal.name);
+        reset();
+      } catch (e) {
+        showError('Could not save: ' + (e.message || e));
+      } finally {
+        okBtn.disabled = false;
+      }
+    });
   }
 
   function currentSession() {
@@ -2040,6 +2272,7 @@
     if (Array.isArray(patch.photos)        && patch.photos.length        > prevArr('photos').length)        return true;
     if (Array.isArray(patch.cartoons)      && patch.cartoons.length      > prevArr('cartoons').length)      return true;
     if (Array.isArray(patch.coloringPages) && patch.coloringPages.length > prevArr('coloring_pages').length) return true;
+    if (Array.isArray(patch.extraYoutubeIds) && patch.extraYoutubeIds.length > prevArr('extra_youtube_ids').length) return true;
     return false;
   }
 
@@ -2434,6 +2667,16 @@
     if (photoChanged && !window.__galleryCellState && !document.querySelector('.inline-textarea')) {
       setTimeout(() => location.reload(), 250);
     }
+    // Extra YouTube videos — append any IDs we don't already
+    // have mounted. Deletion isn't supported yet, so order stays
+    // stable. __appendVideoInPlace dedupes so re-running is safe.
+    if (Array.isArray(patch.extraYoutubeIds)) {
+      patch.extraYoutubeIds.forEach(id => {
+        if (typeof window.__appendVideoInPlace === 'function') {
+          window.__appendVideoInPlace(id);
+        }
+      });
+    }
   }
 
   function showLiveEditChip(name) {
@@ -2572,12 +2815,32 @@
     const li = document.createElement('li');
     li.dataset.id = c.id;
     const stamp = friendlyTime(c.created_at);
+    // Permission gates:
+    //   • Reply  — anyone who can post (signed in + has contributed)
+    //   • Edit   — only the original author
+    //   • Delete — author OR a teacher (moderation)
+    // Teachers can also edit if they want (e.g. clean up typos),
+    // but the more common case is delete-as-moderator, so we leave
+    // edit author-only to avoid teachers accidentally rewording a
+    // student's words.
+    const me      = currentSession();
+    const isMine  = !!(me && me.id && c.author_id && me.id === c.author_id);
+    const isTeach = !!(me && me.role === 'teacher');
+    const editedTag = c.edited_at
+      ? '<span class="edited">(edited)</span>'
+      : '';
+
+    const actions = [];
+    if (_canPostComment) actions.push('<button type="button" class="reply-btn">Reply</button>');
+    if (isMine)          actions.push('<button type="button" class="edit-btn">Edit</button>');
+    if (isMine || isTeach) actions.push('<button type="button" class="del-btn">Delete</button>');
+
     li.innerHTML =
       '<div class="comment-row">' +
         '<div class="meta"><span class="author">' + escapeHTML(c.author_name || 'Anonymous') +
-          '</span><span class="when">' + escapeHTML(stamp) + '</span></div>' +
+          '</span><span class="when">' + escapeHTML(stamp) + '</span>' + editedTag + '</div>' +
         '<div class="body">' + escapeHTML(c.text || '') + '</div>' +
-        (_canPostComment ? '<button type="button" class="reply-btn">Reply</button>' : '') +
+        (actions.length ? ('<div class="actions">' + actions.join('') + '</div>') : '') +
       '</div>';
     if (c.replies && c.replies.length) {
       const ul = document.createElement('ul');
@@ -2586,10 +2849,88 @@
       li.appendChild(ul);
     }
     const replyBtn = li.querySelector('.reply-btn');
-    if (replyBtn) {
-      replyBtn.addEventListener('click', () => showReplyForm(li, c.id));
-    }
+    if (replyBtn) replyBtn.addEventListener('click', () => showReplyForm(li, c.id));
+    const editBtn = li.querySelector('.edit-btn');
+    if (editBtn)  editBtn.addEventListener('click', () => beginEditComment(li, c));
+    const delBtn  = li.querySelector('.del-btn');
+    if (delBtn)   delBtn.addEventListener('click', () => deleteComment(c));
     return li;
+  }
+
+  // ---- Edit a comment in place -----------------------------------
+  // Swap the .body div for a textarea + Save/Cancel buttons. Hide
+  // the actions row while editing so the kid doesn't accidentally
+  // hit Reply / Delete on the comment they're editing.
+  function beginEditComment(li, c) {
+    const row = li.querySelector(':scope > .comment-row');
+    if (!row) return;
+    const body = row.querySelector('.body');
+    if (!body || row._editing) return;
+    row._editing = true;
+
+    const actions = row.querySelector('.actions');
+    if (actions) actions.style.display = 'none';
+
+    const form = document.createElement('div');
+    form.className = 'comment-edit-form';
+    form.innerHTML =
+      '<textarea maxlength="500"></textarea>' +
+      '<div class="row">' +
+        '<button type="button" class="save">Save</button>' +
+        '<button type="button" class="cancel">Cancel</button>' +
+      '</div>';
+    body.style.display = 'none';
+    row.insertBefore(form, body.nextSibling);
+
+    const ta     = form.querySelector('textarea');
+    const saveB  = form.querySelector('.save');
+    const cancel = form.querySelector('.cancel');
+    ta.value = c.text || '';
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+
+    function close() {
+      form.remove();
+      body.style.display = '';
+      if (actions) actions.style.display = '';
+      row._editing = false;
+    }
+    cancel.addEventListener('click', close);
+    saveB.addEventListener('click', async () => {
+      const next = ta.value.trim();
+      if (!next) { ta.focus(); return; }
+      if (next === (c.text || '')) { close(); return; }
+      saveB.disabled = true;
+      try {
+        await window.WCDB.animalComments.update(c.id, next);
+        close();
+        await loadAndRenderComments(getParam('id'));
+        broadcastNewComment(getParam('id'), { id: c.id, edited: true });
+      } catch (e) {
+        alert('Could not save: ' + (e.message || e));
+        saveB.disabled = false;
+      }
+    });
+  }
+
+  // ---- Delete a comment ------------------------------------------
+  // Author + teachers only (button only shows for them, but we
+  // re-check here in case the row was constructed before sign-in
+  // state changed). Any replies become orphans, which the renderer
+  // promotes back to top level so the thread stays readable.
+  async function deleteComment(c) {
+    const me = currentSession();
+    const isMine  = !!(me && me.id && c.author_id && me.id === c.author_id);
+    const isTeach = !!(me && me.role === 'teacher');
+    if (!isMine && !isTeach) return;
+    if (!confirm('Delete this comment? This cannot be undone.')) return;
+    try {
+      await window.WCDB.animalComments.remove(c.id);
+      await loadAndRenderComments(getParam('id'));
+      broadcastNewComment(getParam('id'), { id: c.id, deleted: true });
+    } catch (e) {
+      alert('Could not delete: ' + (e.message || e));
+    }
   }
 
   function friendlyTime(iso) {
@@ -2692,6 +3033,7 @@
         if (cloud.diet    !== null && cloud.diet    !== undefined) patch.diet    = cloud.diet;
         if (Array.isArray(cloud.fun_facts))     patch.funFacts     = cloud.fun_facts;
         if (Array.isArray(cloud.custom_topics)) patch.customTopics = cloud.custom_topics;
+        if (Array.isArray(cloud.extra_youtube_ids)) patch.extraYoutubeIds = cloud.extra_youtube_ids;
         applyRemotePatch(patch);
         // Photos: merge custom ones into the gallery cells. The
         // renderer ran first with the base set, then this appends.

@@ -1328,6 +1328,9 @@ function applyCloudCustomToAnimal(base, custom) {
   if (Array.isArray(custom.coloring_pages) && custom.coloring_pages.length) out.coloringPages = custom.coloring_pages;
   if (custom.youtube_id)          out.youtubeId         = custom.youtube_id;
   if (custom.approved_youtube_id) out.approvedYoutubeId = custom.approved_youtube_id;
+  // Extra teacher/student-added YouTube IDs that should appear UNDER
+  // the primary video. Stored as a JSONB array of bare 11-char IDs.
+  if (Array.isArray(custom.extra_youtube_ids)) out.extraYoutubeIds = custom.extra_youtube_ids;
   return out;
 }
 
@@ -1346,6 +1349,7 @@ async function saveAnimalCustomToCloud(animalId, patch, who) {
   if ('coloringPages'   in patch) body.coloring_pages  = patch.coloringPages;
   if ('youtubeId'       in patch) body.youtube_id      = patch.youtubeId;
   if ('approvedYoutubeId' in patch) body.approved_youtube_id = patch.approvedYoutubeId;
+  if ('extraYoutubeIds' in patch) body.extra_youtube_ids = patch.extraYoutubeIds;
   if (who) {
     if (who.id)   body.updated_by_id   = who.id;
     if (who.name) body.updated_by_name = who.name;

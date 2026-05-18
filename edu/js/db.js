@@ -390,6 +390,23 @@
       }, true);
       return rows && rows[0];
     },
+    // Edit the body of an existing comment. Caller must enforce
+    // permission (author of the row, or a teacher). We also bump
+    // an `edited_at` timestamp so the UI can render "(edited)".
+    async update(commentId, text) {
+      if (!commentId) throw new Error('comment id required');
+      return rPatch('/wc_animal_comments?id=eq.' + encodeURIComponent(commentId), {
+        text:      text,
+        edited_at: new Date().toISOString(),
+      });
+    },
+    // Remove a comment row. Any replies that pointed at it become
+    // orphans — the renderer promotes orphans back to top level so
+    // the thread stays readable.
+    async remove(commentId) {
+      if (!commentId) throw new Error('comment id required');
+      return rDelete('/wc_animal_comments?id=eq.' + encodeURIComponent(commentId));
+    },
   };
 
   const animalContributions = {

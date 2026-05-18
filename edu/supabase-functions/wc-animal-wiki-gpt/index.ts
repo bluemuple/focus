@@ -46,34 +46,45 @@ const SYSTEM_PROMPT = [
   "",
   "Given a Wikipedia article about an animal, you must:",
   "",
-  "  1) Pick EXACTLY 7 sections that children will find interesting.",
-  "     Use these topics in this order, including the LAST one",
-  "     (Threats / Conservation) — it's required so children learn",
-  "     why the animal needs our help:",
-  "       • Appearance / what it looks like",
-  "       • Habitat / where it lives",
-  "       • Family & lifestyle / how it lives day-to-day",
-  "       • Food / what it eats / hunting",
-  "       • Babies / young / how it grows up",
-  "       • Fun behaviour, special skill, or amazing fact",
-  "       • Threats / Conservation  (REQUIRED — what makes life",
-  "         hard for this animal in the wild, and how people are",
-  "         helping. Stay gentle and hopeful — facts not horror.)",
+  "  1) Write EXACTLY 7 sections, in this exact order, with these",
+  "     exact heading titles:",
+  "       1. Physical Features  (REQUIRED — body parts, size, colour,",
+  "          markings. The kids want to know what the animal looks",
+  "          like.)",
+  "       2. Habitat            (where it lives)",
+  "       3. Family & Lifestyle (how it lives day-to-day, group or",
+  "          alone, day or night)",
+  "       4. Food               (what it eats / hunting)",
+  "       5. Babies             (young / how it grows up)",
+  "       6. Fun Fact           (one amazing behaviour or special",
+  "          skill children will love)",
+  "       7. Threats / Conservation  (REQUIRED — what makes life",
+  "          hard for this animal in the wild, and how people are",
+  "          helping. Stay gentle and hopeful — facts not horror.)",
   "",
-  "  2) Each section:",
+  "  2) IMPORTANT — Physical Features and Threats / Conservation are",
+  "     BOTH REQUIRED, every time. If the Wikipedia article we give",
+  "     you is missing one of these topics (e.g. no body description,",
+  "     no IUCN status, no mention of habitat loss), fill the gap",
+  "     from your own general knowledge about this species. Use",
+  "     facts you are confident about; if unsure, speak in general",
+  "     terms (e.g. 'Like many deep-sea fish…') rather than inventing",
+  "     specifics. Never skip either section.",
+  "",
+  "  3) Each section:",
   "       • ≤ 100 words",
   "       • Short sentences, mostly under 10 words",
   "       • NZ English, simple present tense, Year-4 vocabulary",
   "       • Bold any NEW key vocabulary word the first time it",
   "         appears (use <strong>word</strong>).",
   "",
-  "  3) After the 7 sections, list which Wikipedia topics you LEFT",
+  "  4) After the 7 sections, list which Wikipedia topics you LEFT",
   "     OUT and one short reason for each (too technical / not",
   "     interesting for kids / too sad / etc.).",
   "",
   "OUTPUT FORMAT — strict HTML fragment, no <html>/<head>/<body>:",
   "",
-  "  <h4>1. Appearance</h4>",
+  "  <h4>1. Physical Features</h4>",
   "  <p>…</p>",
   "  <h4>2. Habitat</h4>",
   "  <p>…</p>",
@@ -88,6 +99,15 @@ const SYSTEM_PROMPT = [
   "",
   "Return ONLY that HTML fragment — no Markdown fences, no extra text.",
 ].join("\n");
+
+// True when a cached HTML blob still has BOTH required sections.
+// Old caches generated before v2 prompt used "Appearance" instead
+// of "Physical Features" — those get regenerated on next open.
+function cacheLooksFresh(html: string): boolean {
+  if (!html) return false;
+  const h = html.toLowerCase();
+  return h.includes("physical features") && h.includes("threats");
+}
 
 async function fetchWikipediaPlainText(title: string): Promise<{ text: string; resolvedTitle: string }> {
   // 1) Resolve the canonical title (handles redirects, encoding).
@@ -163,7 +183,13 @@ Deno.serve(async (req) => {
 
     if (!force) {
       const cached = await readCache(animal_id);
-      if (cached) return json({
+      // Auto-invalidate stale caches that predate the v2 prompt
+      // (where "Appearance" was renamed to "Physical Features" and
+      // both that + Threats/Conservation became hard requirements).
+      // Without this check, old animals would keep serving the
+      // pre-rename HTML forever and the two required sections
+      // would never appear.
+      if (cached && cacheLooksFresh(cached.content)) return json({
         html:          cached.content,
         generated_at:  cached.generated_at,
         wiki_title:    cached.source_title,
