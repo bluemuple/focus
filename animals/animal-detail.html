@@ -847,17 +847,25 @@
   body.student-editing .add-topic-row { display: block; }
   .add-topic-row:hover { background: rgba(160, 216, 239, 0.2); }
 
-  /* ----- Photo paste overlay (per gallery-cell) ----- */
+  /* ----- Per gallery-cell ➕ ADD + ✕ DELETE buttons -----
+     Both only visible while the page is in edit mode (body has
+     `student-editing`). The ➕ sits TOP-LEFT and runs the paste /
+     file-picker flow to add a new picture (caps at 3 per cell —
+     a beyond-limit click shows a friendly "delete one first"
+     alert). The ✕ sits TOP-RIGHT and removes the CURRENTLY
+     visible picture from the cloud row + cell state.            */
   .photo-edit-fab {
     position: absolute;
-    top: 6px; right: 6px;
+    top: 6px; left: 6px;
     z-index: 4;
     width: 30px; height: 30px;
     border-radius: 50%;
     background: rgba(255,255,255,0.95);
     border: 2px solid var(--mint);
     color: var(--text);
-    font-size: 14px;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1;
     display: none;
     align-items: center; justify-content: center;
     cursor: pointer;
@@ -865,6 +873,30 @@
   }
   body.student-editing .photo-edit-fab { display: inline-flex; }
   .photo-edit-fab:hover { background: var(--mint); color: white; }
+
+  .photo-del-fab {
+    position: absolute;
+    top: 6px; right: 6px;
+    z-index: 4;
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.95);
+    border: 2px solid #ef4444;
+    color: #ef4444;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1;
+    display: none;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+  }
+  /* Delete chip only when we're in edit mode AND the cell already
+     shows an image to delete. */
+  body.student-editing .gallery-cell.has-image .photo-del-fab {
+    display: inline-flex;
+  }
+  .photo-del-fab:hover { background: #ef4444; color: white; }
   .paste-toast {
     position: fixed;
     top: 70px; left: 50%;
@@ -1141,21 +1173,24 @@
             <div class="cell-bg"><div>${animal.emoji}</div></div>
             <img alt="${escapeHTML(animal.name)} photo">
             <div class="thumb-dot"></div>
-            <span class="photo-edit-fab" data-paste="photos" title="Paste an image here">📋</span>
+            <span class="photo-edit-fab" data-paste="photos" title="Add an image (max 3)">＋</span>
+            <span class="photo-del-fab"  data-del="photos"   title="Delete this image">✕</span>
           </button>
           <button type="button" class="gallery-cell" data-cat="cartoons">
             <span class="cell-label">🎨 Cartoon</span>
             <div class="cell-bg"><div>🎨<div class="cell-empty">loading…</div></div></div>
             <img alt="${escapeHTML(animal.name)} cartoon">
             <div class="thumb-dot"></div>
-            <span class="photo-edit-fab" data-paste="cartoons" title="Paste an image here">📋</span>
+            <span class="photo-edit-fab" data-paste="cartoons" title="Add an image (max 3)">＋</span>
+            <span class="photo-del-fab"  data-del="cartoons"   title="Delete this image">✕</span>
           </button>
           <button type="button" class="gallery-cell coloring" data-cat="coloringPages">
             <span class="cell-label">🖍️ Coloring</span>
             <div class="cell-bg coloring-bg"><div>🖍️<div class="cell-empty">loading…</div></div></div>
             <img alt="${escapeHTML(animal.name)} coloring page">
             <div class="thumb-dot"></div>
-            <span class="photo-edit-fab" data-paste="coloringPages" title="Paste an image here">📋</span>
+            <span class="photo-edit-fab" data-paste="coloringPages" title="Add an image (max 3)">＋</span>
+            <span class="photo-del-fab"  data-del="coloringPages"   title="Delete this image">✕</span>
           </button>
         </div>
         <h1 class="hero-name">
@@ -1316,6 +1351,51 @@
           if (i === cellState[catKey].length - 1) dot.classList.add('active');
           dotRow.appendChild(dot);
         });
+      }
+      if (typeof balanceGallery === 'function') balanceGallery();
+    };
+
+    // Remove an image from a cell after the cloud delete succeeds.
+    // Mirrors __appendToCellInPlace so the kid sees the change
+    // immediately without a page reload. The new "active" image is
+    // whichever sits at the same index after the splice (or the last
+    // one if we just deleted the tail). When the cell empties out
+    // entirely it hides itself (except photos, which fall back to
+    // the emoji-on-cream placeholder so the layout stays balanced).
+    window.__removeFromCellInPlace = function (catKey, idx) {
+      const cell = cells[catKey];
+      if (!cell) return;
+      const list = cellState[catKey];
+      if (!list || idx < 0 || idx >= list.length) return;
+      list.splice(idx, 1);
+
+      const dotRow = cell.querySelector('.thumb-dot');
+      dotRow.innerHTML = '';
+
+      if (list.length === 0) {
+        // Nothing left — clear the picture and let the empty-cell
+        // styling take over.
+        const img = cell.querySelector('img');
+        if (img) img.src = '';
+        cell.classList.remove('has-image');
+        if (catKey === 'photos') {
+          const empty = cell.querySelector('.cell-empty');
+          if (empty) empty.textContent = '';
+        } else {
+          cell.style.display = 'none';
+        }
+      } else {
+        // Show the image that has slid into this slot (or the last
+        // image if we just deleted the tail).
+        const newActive = Math.min(idx, list.length - 1);
+        setCellImage(cell, list[newActive]);
+        if (list.length > 1) {
+          list.forEach((_, i) => {
+            const dot = document.createElement('span');
+            if (i === newActive) dot.classList.add('active');
+            dotRow.appendChild(dot);
+          });
+        }
       }
       if (typeof balanceGallery === 'function') balanceGallery();
     };
@@ -1786,13 +1866,52 @@
         flushTopics(animalId);
       });
     });
-    // 📋 Paste-image buttons on each gallery cell.
+    // ➕ Add-image buttons on each gallery cell. Caps each cell at
+    // 3 stored images — if the cap is hit, a friendly alert tells
+    // the student to delete one first instead of silently failing
+    // the paste flow.
     document.querySelectorAll('.photo-edit-fab').forEach(b => {
       if (b._wired) return;
       b._wired = true;
       b.addEventListener('click', (e) => {
-        e.stopPropagation(); // don't trigger cell-click navigation
-        beginPhotoPaste(b.dataset.paste, animalId);
+        e.stopPropagation();
+        const cat  = b.dataset.paste;
+        const list = (typeof cellState === 'object' && cellState && cellState[cat]) || [];
+        if (list.length >= 3) {
+          alert(
+            "This box already has 3 pictures.\n\n" +
+            "Tap the ✕ on a picture to delete one first, " +
+            "then you can add a new one."
+          );
+          return;
+        }
+        beginPhotoPaste(cat, animalId);
+      });
+    });
+    // ✕ Delete-image buttons (top-right of each cell). Only visible
+    // in edit mode + when the cell currently displays an image.
+    // Removes the SHOWN image (whichever the active thumb-dot
+    // points at) from the cloud row, then re-renders the cell.
+    document.querySelectorAll('.photo-del-fab').forEach(b => {
+      if (b._wired) return;
+      b._wired = true;
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const cat  = b.dataset.del;
+        const cell = b.closest('.gallery-cell');
+        if (!cat || !cell) return;
+        const list = (typeof cellState === 'object' && cellState && cellState[cat]) || [];
+        if (!list.length) return;
+        // Find which image is currently visible via the active dot.
+        const dots = Array.from(cell.querySelectorAll('.thumb-dot span'));
+        let activeIdx = dots.findIndex(d => d.classList.contains('active'));
+        if (activeIdx < 0) activeIdx = 0;
+        if (!confirm('Delete this picture?')) return;
+        try {
+          await deleteCustomImage(animalId, cat, activeIdx);
+        } catch (err) {
+          alert("Couldn't delete: " + (err.message || err));
+        }
       });
     });
     // Topic emoji picker buttons.
@@ -2168,6 +2287,50 @@
     // In-place gallery update — no reload needed.
     if (typeof window.__appendToCellInPlace === 'function') {
       window.__appendToCellInPlace(category, dataUrl);
+    }
+  }
+
+  // Delete the image currently visible at activeIdx in the named
+  // gallery cell. Only teacher/student-added pictures live in the
+  // cloud row — the default Wikipedia / Openverse image is fetched
+  // fresh each load and can't be deleted. We detect that case by
+  // checking whether the src is a data: URL (custom uploads are
+  // always pasted as base64 data URLs).
+  async function deleteCustomImage(animalId, category, activeIdx) {
+    const state = window.__galleryCellState && window.__galleryCellState[category];
+    if (!state || activeIdx < 0 || activeIdx >= state.length) return;
+    const targetSrc = state[activeIdx];
+
+    if (!targetSrc || !String(targetSrc).startsWith('data:')) {
+      alert(
+        "This picture comes from the internet — it can't be deleted.\n\n" +
+        "You can only delete pictures that you (or your teacher) added."
+      );
+      return;
+    }
+
+    const cur = await fetchAnimalCustomFromCloud(animalId);
+    const dbField = category === 'coloringPages' ? 'coloring_pages' : category;
+    const existing = Array.isArray(cur?.[dbField]) ? cur[dbField].slice() : [];
+    // Match by src so we hit the correct entry even if the cloud
+    // array order somehow drifted from cellState.
+    const cloudIdx = existing.findIndex(e => e && e.src === targetSrc);
+    if (cloudIdx < 0) {
+      // Cloud doesn't know about this src — most likely a stale
+      // local view. Refresh from the cloud so the kid sees truth.
+      if (typeof window.__removeFromCellInPlace === 'function') {
+        window.__removeFromCellInPlace(category, activeIdx);
+      }
+      return;
+    }
+    existing.splice(cloudIdx, 1);
+    const patch = {};
+    patch[category] = existing;
+    await saveField(animalId, patch);
+
+    // In-place removal — no reload needed.
+    if (typeof window.__removeFromCellInPlace === 'function') {
+      window.__removeFromCellInPlace(category, activeIdx);
     }
   }
 

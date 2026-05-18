@@ -10,10 +10,15 @@
 //        (drag/tap chips to fill X − Yt − Yo = ?)
 //    6 — 2-digit − 2-digit, single answer slot
 //
-//  Adaptive: start at level 3. After every question we record the
-//  result; if the running level score is ≥ 4 / 5 we step UP, ≤ 1 / 5
-//  we step DOWN, else stay. If the student gets 3 WRONG in the
-//  current level we pop a "stop or keep going?" prompt.
+//  Adaptive:
+//    • Start at level 3.
+//    • FAST PATH — 3 correct IN A ROW at the current level bumps
+//      you straight up to the next stage (and shows a 🎉 toast).
+//      A single wrong answer resets the streak.
+//    • SLOW PATH — every 5 questions: ≥ 4 / 5 steps UP, ≤ 1 / 5
+//      steps DOWN. Stays otherwise. (Kept as a safety net for the
+//      kid who is right 4-of-5 but never strings 3 together.)
+//    • 3 WRONG in the current level → "stop or keep going?" prompt.
 //
 //  Cumulative score = sum of (correct × 10) across all sessions,
 //  saved to wc_users.practice_state.cumulative. Used by home.html
@@ -33,6 +38,9 @@
   let levelCorrect = 0;
   let levelTotal   = 0;
   let levelWrong   = 0;
+  // Consecutive correct answers in this level — 3-in-a-row earns
+  // an automatic level-up. Any wrong answer resets it to 0.
+  let levelStreak  = 0;
   let currentQ = null;
   let answered = false;
 
@@ -321,10 +329,28 @@
       ? `✓ Yes! ${q.a} − ${q.b} = <strong>${q.answer}</strong>.`
       : `✗ The right answer is <strong>${q.answer}</strong>.  (${q.a} − ${q.b} = ${q.answer})`;
     levelTotal++;
-    if (isOk) { levelCorrect++; cumulative += 10; }
-    else      { levelWrong++; }
+    if (isOk) { levelCorrect++; cumulative += 10; levelStreak++; }
+    else      { levelWrong++; levelStreak = 0; }
     paintCumulative();
     saveProgress();
+  }
+
+  // Floating "Level up!" celebration. Auto-removes itself after a
+  // short beat so the kid notices the bump without losing the new
+  // question underneath.
+  function showLevelUpToast(newLevel) {
+    const old = document.querySelector('.pr-levelup');
+    if (old) old.remove();
+    const t = document.createElement('div');
+    t.className = 'pr-levelup';
+    t.innerHTML = `🎉 <strong>Level up!</strong> Welcome to Level ${newLevel}`;
+    document.body.appendChild(t);
+    // Trigger the fade-in by adding the class on the next frame.
+    requestAnimationFrame(() => t.classList.add('show'));
+    setTimeout(() => {
+      t.classList.remove('show');
+      setTimeout(() => t.remove(), 400);
+    }, 2200);
   }
 
   function onNext() {
@@ -337,12 +363,28 @@
       // Continue — reset wrong streak counter (but keep tallies)
       levelWrong = 0;
     }
-    // Adaptive rule: every 5 questions in a level, decide a step.
-    if (levelTotal >= 5) {
-      if (levelCorrect >= 4 && level < 6)      { level++; }
-      else if (levelCorrect <= 1 && level > 1) { level--; }
+    // FAST PATH — 3 correct in a row pops the kid up a stage
+    // immediately. Skip the slow every-5 rule for this turn so we
+    // don't double-bump.
+    let leveled = false;
+    if (levelStreak >= 3 && level < 6) {
+      level++;
+      showLevelUpToast(level);
+      leveled = true;
+      // Reset all level tallies — the next stage starts fresh.
+      levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
+      saveProgress();
+    }
+    // SLOW PATH — every 5 questions in a level, decide a step.
+    if (!leveled && levelTotal >= 5) {
+      if (levelCorrect >= 4 && level < 6) {
+        level++;
+        showLevelUpToast(level);
+      } else if (levelCorrect <= 1 && level > 1) {
+        level--;
+      }
       // reset level tallies
-      levelCorrect = 0; levelTotal = 0; levelWrong = 0;
+      levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
       saveProgress();
     }
     nextQuestion();
