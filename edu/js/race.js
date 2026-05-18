@@ -269,13 +269,13 @@
       ? `<div style="display:inline-block; margin: 6px 0 14px; padding: 8px 18px;
                     background:#f3f4f6; color:#6b7280; border:1.5px solid #d1d5db;
                     border-radius: 999px; font-size: 15px; font-weight: 700;">
-           🪙 Daily race coins already earned today (would have been +${rawCoins}).
+           💰 Daily race coins already earned today (would have been +${rawCoins}).
            Come back tomorrow for more!
          </div>`
       : `<div style="display:inline-block; margin: 6px 0 14px; padding: 8px 18px;
                     background:#fff5cc; color:#6b4f00; border:1.5px solid #e8c970;
                     border-radius: 999px; font-size: 20px; font-weight: 800;">
-           🪙 +${coinsEarned} coin${coinsEarned === 1 ? '' : 's'} earned!
+           💰 +${coinsEarned} coin${coinsEarned === 1 ? '' : 's'} earned!
          </div>`;
     $('card').innerHTML = `
       <div class="rc-summary">

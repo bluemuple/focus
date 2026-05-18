@@ -559,7 +559,7 @@
           <div class="meta">
             ${escapeHtml(s.gender || '—')}
             · code <strong style="letter-spacing:3px;font-family:monospace;">${s.login_code || '—'}</strong>
-            · 🪙 ${s.money || 0}
+            · 💰 ${s.money || 0}
             · ⭐ Lv ${s.encounter_level || 1}
             · seen ${seen}
           </div>
@@ -2344,7 +2344,7 @@
             <td>⭐ Lv ${s.encounter_level}</td>
             ${cells}
             <td>${s.pets}</td>
-            <td>🪙 ${s.money}</td>
+            <td>💰 ${s.money}</td>
           </tr>
         `;
       }).join('');
@@ -2434,7 +2434,7 @@
                so the teacher can reward a great "Use it" answer
                without having to remember the keyboard sequence. -->
           <div class="wc-tmsg-money">
-            <span class="wc-muted">🪙 Coins:</span>
+            <span class="wc-muted">💰 Coins:</span>
             <button type="button" class="wc-money-preset" data-money="1">+1</button>
             <button type="button" class="wc-money-preset" data-money="5">+5</button>
             <button type="button" class="wc-money-preset" data-money="10">+10</button>
@@ -2450,7 +2450,7 @@
           <div>
             ${m.teacher_response ? `<div>${escapeHtml(m.teacher_response)}</div>` : ''}
             ${(m.gift_money && m.gift_money > 0)
-              ? `<div class="wc-muted" style="font-size:13px;">🪙 Sent ${m.gift_money} coin${m.gift_money === 1 ? '' : 's'}</div>`
+              ? `<div class="wc-muted" style="font-size:13px;">💰 Sent ${m.gift_money} coin${m.gift_money === 1 ? '' : 's'}</div>`
               : ''}
             <div class="wc-muted" style="font-size:13px;">
               Replied ${new Date(m.responded_at).toLocaleDateString('en-NZ')}

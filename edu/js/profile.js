@@ -67,7 +67,7 @@
       <div class="wc-hero-row">
         <div class="wc-hero-block">
           <div class="wc-hero-label">Coins</div>
-          <div class="wc-hero-val">🪙 ${me.money || 0}</div>
+          <div class="wc-hero-val">💰 ${me.money || 0}</div>
         </div>
         <div class="wc-hero-block">
           <div class="wc-hero-label">Catcher level</div>

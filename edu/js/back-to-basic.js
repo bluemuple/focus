@@ -509,7 +509,7 @@
       state.lastCoinDate.btb = todayStr();
       coinChip = ' <span style="display:inline-block; background:#fff5cc; color:#6b4f00; ' +
                  'border:1px solid #e8c970; padding:2px 8px; border-radius:999px; ' +
-                 'font-weight:800; margin-left:6px;">+2 🪙</span>';
+                 'font-weight:800; margin-left:6px;">+2 💰</span>';
     }
     $('fbTitle').innerHTML = isOk
       ? `Great work! ✓${coinChip}`

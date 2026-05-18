@@ -1366,20 +1366,32 @@
   }
   .im-doing-time:hover { background: rgba(37,99,235,.08); }
   /* Color the elapsed-time by the activity's effect on the user's score:
-     red when the current activity RAISES money or mana (pomodoro, +rate
-     trackers); blue when it LOWERS money or mana (-rate trackers). */
+     red when the current activity RAISES money or mana (pomodoro work, +rate
+     trackers); blue when it LOWERS money or mana (pomodoro break, -rate
+     trackers). The "work N" / "break N" label next to the time follows the
+     same color rule so the pair reads as one unit. */
   .im-doing-time.gain { color: #dc2626; }   /* raises money / mana */
   .im-doing-time.lose { color: #1d4ed8; }   /* lowers money / mana */
   .im-doing-time.gain:hover { background: rgba(220,38,38,.08); }
   .im-doing-time.lose:hover { background: rgba(29,78,216,.08); }
+  .im-doing-phase {
+    font-weight: 700; font-size: .85rem; margin-left: 4px;
+    letter-spacing: .02em; text-transform: lowercase;
+  }
+  .im-doing-phase.gain { color: #dc2626; }
+  .im-doing-phase.lose { color: #1d4ed8; }
   /* Paused & idle overrides win over gain/lose. */
   .im-doing.paused .im-doing-time,
   .im-doing.paused .im-doing-time.gain,
   .im-doing.paused .im-doing-time.lose { color: #b45309; background: #fef3c7; }
+  .im-doing.paused .im-doing-phase,
+  .im-doing.paused .im-doing-phase.gain,
+  .im-doing.paused .im-doing-phase.lose { color: #b45309; }
   .im-doing.idle   .im-doing-name { color: #9ca3af; font-style: italic; font-weight: 500; }
   .im-doing.idle   .im-doing-time,
   .im-doing.idle   .im-doing-time.gain,
   .im-doing.idle   .im-doing-time.lose { color: #9ca3af; cursor: default; }
+  .im-doing.idle   .im-doing-phase { display: none; }
   .im-doing.idle   .im-doing-time:hover { background: transparent; }
   /* Sleep button — softer pill that matches "Set GTD ⏰" so it doesn't
      dominate the Mana area visually. The "must-sleep" red variant later
@@ -2698,6 +2710,7 @@
                     <span class="im-doing-label">I'm doing</span>
                     <span class="im-doing-name" id="im-doing-name">—</span>
                     <span class="im-doing-time" id="im-doing-time" title="Click to pause / resume">00:00:00</span>
+                    <span class="im-doing-phase" id="im-doing-phase"></span>
                   </div>
                 </div>
               </div>
@@ -2884,7 +2897,7 @@
       <li class="feature-item" tabindex="0">
         <span class="feature-ico q1">▦</span>
         <strong>Eisenhower Matrix + Pomodoro</strong>
-        <div class="feature-tooltip">Plan tasks by urgency &amp; importance in the 4-quadrant matrix. Tap a task to start a 25-min Work → 5-min Break cycle (15-min long break every 4 rounds).</div>
+        <div class="feature-tooltip">Plan tasks by urgency &amp; importance in the 4-quadrant matrix. Tap a task to start a 25-min Work → 5-min Break cycle. Long 15-min break after every 4th work session. Tapping the task name again restarts from the beginning of the cycle.</div>
       </li>
       <li class="feature-item" tabindex="0">
         <span class="feature-ico gauge">▥</span>
@@ -2990,7 +3003,8 @@
 
       <li><strong>Pomodoro</strong> — tap any task name to start.
         <ul>
-          <li>Cycle: <strong>25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 15m Longer Break</strong>, then repeats.</li>
+          <li>Cycle: <strong>25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 15m Longer Break</strong> (4 work sessions per cycle), then repeats.</li>
+          <li>Click the task name during a running pomodoro to <strong>restart from the beginning of the cycle</strong> — partial work is still logged + credited; the counter resets to 0 so the next long break only comes after another 4 work sessions.</li>
           <li>At each phase end a popup asks "Start &lt;next phase&gt;?":
             <ul>
               <li><em>Yes</em> — advance to the next phase.</li>
@@ -3298,7 +3312,12 @@ const defaultState = () => ({
   // Single-timer enforcement: at most one of these is "running" at a time.
   // activeTimer represents the timer that is currently ticking.
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
-  pomodoroSessionsInCycle: 0,  // 0..2 — increments after each work+short-break, resets after long break
+  pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work+short-break, resets to 0 after the long break (4 work sessions per cycle)
+  // Lifetime-within-the-day counters used by the "I'm doing" label.
+  // Incremented each time a new work or break phase BEGINS. Reset to 0 by
+  // the 3 AM rollover so each day starts at "work 1" / "break 1".
+  pomodoroWorkCount: 0,
+  pomodoroBreakCount: 0,
   watchLog: [],
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
@@ -3482,6 +3501,8 @@ function migrateState() {
   if (state.sbUserId == null) state.sbUserId = 'me';
   if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
+  if (typeof state.pomodoroWorkCount  !== 'number') state.pomodoroWorkCount  = 0;
+  if (typeof state.pomodoroBreakCount !== 'number') state.pomodoroBreakCount = 0;
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (!Array.isArray(state.events))   state.events   = [];
   if (!Array.isArray(state.versions)) state.versions = [];
@@ -3929,6 +3950,8 @@ async function pushSettingsToCloud() {
       session_state: {
         activeTimer:             state.activeTimer || null,
         pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
+        pomodoroWorkCount:       +state.pomodoroWorkCount  || 0,
+        pomodoroBreakCount:      +state.pomodoroBreakCount || 0,
         timeSegments:            state.timeSegments || [],
         sessionStartMs:          state.sessionStartMs || null,
         lastSnapshotDate:        state.lastSnapshotDate || '',
@@ -4154,6 +4177,8 @@ function applyRemoteSettings(remote) {
     const ss = remote.session_state;
     if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
     if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
+    if (typeof ss.pomodoroWorkCount      === 'number') state.pomodoroWorkCount      = ss.pomodoroWorkCount;
+    if (typeof ss.pomodoroBreakCount     === 'number') state.pomodoroBreakCount     = ss.pomodoroBreakCount;
     if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
     if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
     if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
@@ -6496,14 +6521,19 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
 }
 
 /* ---- Pomodoro timer ----
-   Cycle: 25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 15m
-   Longer Break — then the counter resets and the cycle repeats. Each phase end
-   prompts the user (Yes = continue, No = stop & log). The whole work + break
-   sequence is recorded as one segment in the Activity log. */
+   Cycle: 25m Work · 5m Good Break · 25m Work · 5m Good Break · 25m Work · 5m
+   Good Break · 25m Work · 15m Longer Break — then the counter resets and the
+   cycle repeats. (4 work sessions, 3 short breaks, 1 long break per cycle.)
+   Each phase end prompts the user (Yes = continue, No = stop & log). The
+   whole work + break sequence is recorded as one segment in the Activity log. */
 function startPomodoro(q, i) {
   stopActiveTimer('switch');
   playFx('start');
   const now = Date.now();
+  // New work phase begins — increment the "work N" counter shown next to the
+  // I'm-doing timer. Counters accumulate across cycles and are reset only at
+  // the 3 AM rollover, so the user sees a continuous tally for the day.
+  state.pomodoroWorkCount = (+state.pomodoroWorkCount || 0) + 1;
   state.activeTimer = {
     type: 'pomodoro',
     q, idx: i,
@@ -6669,11 +6699,11 @@ async function showPomoPhaseConfirm() {
   let nextPhase, nextDurMs, nextLabel, currentLabel;
   if (at.phase === 'work') {
     currentLabel = 'Work';
-    // Cycle: 25m work · 5m break · 25m work · 5m break · 25m work · 15m LONG break.
-    // i.e. every 3rd work session ends with a long break. The counter (0..2)
-    // increments after each work+short-break pair, so it reaches 2 right
-    // before the 3rd work session's break, which is when we go long.
-    const isLong = (state.pomodoroSessionsInCycle || 0) >= 2;
+    // Cycle: 25m W · 5m B · 25m W · 5m B · 25m W · 5m B · 25m W · 15m LONG B.
+    // Every 4th work session ends with a long break. The counter (0..3) ticks
+    // up after each work+short-break pair, so it reaches 3 right before the
+    // 4th work session's break — that's when we go long instead of short.
+    const isLong = (state.pomodoroSessionsInCycle || 0) >= 3;
     nextPhase = isLong ? 'long-break' : 'short-break';
     nextDurMs = isLong ? POMO_LONG_MS  : POMO_SHORT_MS;
     nextLabel = isLong ? 'Longer Break (15 min)' : 'Good Break (5 min)';
@@ -6720,6 +6750,13 @@ async function showPomoPhaseConfirm() {
       if (wasLong) state.pomodoroSessionsInCycle = 0;
       else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     }
+    // Bump the daily "work N" / "break N" counter shown next to the timer.
+    // Each NEW phase that begins ticks the matching counter forward by 1.
+    if (nextPhase === 'work') {
+      state.pomodoroWorkCount  = (+state.pomodoroWorkCount  || 0) + 1;
+    } else {
+      state.pomodoroBreakCount = (+state.pomodoroBreakCount || 0) + 1;
+    }
     at2.phase = nextPhase;
     at2.phaseStartedAt = Date.now();
     at2.phaseDurationMs = nextDurMs;
@@ -6741,7 +6778,9 @@ async function showPomoPhaseConfirm() {
     // long-break-after-3 cadence. Increment, and reset to 0 once we've
     // earned the long break (counter would otherwise grow unbounded).
     state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
-    if (state.pomodoroSessionsInCycle > 2) state.pomodoroSessionsInCycle = 0;
+    if (state.pomodoroSessionsInCycle > 3) state.pomodoroSessionsInCycle = 0;
+    // Skipping the break still kicks off a new work phase → tick "work N" up.
+    state.pomodoroWorkCount = (+state.pomodoroWorkCount || 0) + 1;
     at2.phase = 'work';
     at2.phaseStartedAt = Date.now();
     at2.phaseDurationMs = POMO_WORK_MS;
@@ -6807,16 +6846,23 @@ function clickManaTimer(side, manaIdx) {
 function startMuncherTimer(idx) { return startManaTimer('muncher', idx); }
 function stopMuncherTimer(idx)  { return stopManaTimer('muncher', idx); }
 function clickMuncherTimer(idx) { return clickManaTimer('muncher', idx); }
-// Click on task text → toggle pomodoro
+/* Click on task text → restart the pomodoro from the BEGINNING of the cycle.
+   Behavior:
+   - If this task's pomodoro is already running, its current phase is stopped
+     and logged (money / quadrant bonus credited for partial work), then a
+     fresh 25-min Work phase begins.
+   - If a different task's pomodoro is running, that one is stopped & logged
+     via startPomodoro → stopActiveTimer('switch').
+   - In all cases pomodoroSessionsInCycle is reset to 0 so the next long
+     break only arrives after a full 4-work cycle.
+   Stop pathways still available: task completion checkbox, ×-delete button,
+   phase-end popup's "No" choice, Sleep button, or starting a different task. */
 function toggleTaskTimer(q, i) {
-  const at = state.activeTimer;
-  if (at && at.type === 'pomodoro' && at.q === q && at.idx === i) {
-    // Already running for this task — stop and log
-    stopActiveTimer('finish');
-    renderFocusMatrix(); renderManaList('muncher'); renderWatchLog(); drawGauge();
-  } else {
-    startPomodoro(q, i);
-  }
+  state.pomodoroSessionsInCycle = 0;
+  // startPomodoro internally invokes stopActiveTimer('switch') first, which
+  // handles logging + money credit for whatever was running (including the
+  // same task we're about to restart on).
+  startPomodoro(q, i);
 }
 
 /* ---- gauge drawing ---- */
@@ -7487,6 +7533,7 @@ function renderImDoing() {
   const wrap = document.getElementById('im-doing');
   const nameEl = document.getElementById('im-doing-name');
   const timeEl = document.getElementById('im-doing-time');
+  const phaseEl = document.getElementById('im-doing-phase');
   const labelEl = wrap ? wrap.querySelector('.im-doing-label') : null;
   if (!wrap || !nameEl || !timeEl) return;
   const at = state.activeTimer;
@@ -7495,6 +7542,7 @@ function renderImDoing() {
     wrap.classList.remove('paused');
     wrap.classList.add('idle');
     timeEl.classList.remove('gain', 'lose');
+    if (phaseEl) { phaseEl.textContent = ''; phaseEl.classList.remove('gain', 'lose'); }
     if (labelEl) labelEl.style.display = 'none';
     timeEl.style.display = 'none';
     // Phone gets a tighter abbreviation so it doesn't overflow next to Sleep.
@@ -7508,6 +7556,7 @@ function renderImDoing() {
     wrap.classList.remove('paused');
     wrap.classList.add('idle');
     timeEl.classList.remove('gain', 'lose');
+    if (phaseEl) { phaseEl.textContent = ''; phaseEl.classList.remove('gain', 'lose'); }
     if (labelEl) labelEl.style.display = 'none';
     timeEl.style.display = 'none';
     nameEl.textContent = '';
@@ -7519,17 +7568,26 @@ function renderImDoing() {
   timeEl.style.display = '';
   // Resolve the activity name + decide whether this activity RAISES or
   // LOWERS the user's money / mana, which controls the timer color:
-  //   - pomodoro                            → gain (per-min money + bid)
+  //   - pomodoro work phase                 → gain (per-min money + bid)
+  //   - pomodoro break phase (short/long)   → lose (no money earned)
   //   - multiplier/muncher with rate > 0    → gain (adds money or mana)
   //   - multiplier/muncher with rate < 0    → lose (subtracts money/mana)
   //   - rate === 0 (rare)                   → gain (per-minute cents still
   //                                           applies positively to money)
+  // For pomodoro the activity-label ("work N" / "break N") is shown beside
+  // the timer and follows the same gain/lose color rule.
   let name = '(timer)';
-  let effect = null;  // 'gain' | 'lose' | null
+  let effect = null;          // 'gain' | 'lose' | null
+  let phaseLabelText = '';    // "work N" or "break N" — pomodoro only
   if (at.type === 'pomodoro') {
     const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (t) name = t.text || '(task)';
-    effect = 'gain';
+    const isWork = at.phase === 'work';
+    effect = isWork ? 'gain' : 'lose';
+    const n = isWork
+      ? (+state.pomodoroWorkCount  || 0)
+      : (+state.pomodoroBreakCount || 0);
+    phaseLabelText = (isWork ? 'work ' : 'break ') + Math.max(1, n);
   } else if (at.type === 'muncher' || at.type === 'multiplier') {
     const list = at.type === 'multiplier' ? state.mana.multiplier : state.mana.muncher;
     const m = list && list[at.manaIdx];
@@ -7545,6 +7603,11 @@ function renderImDoing() {
   // the orange / gray states still win visually when applicable.
   timeEl.classList.toggle('gain', effect === 'gain');
   timeEl.classList.toggle('lose', effect === 'lose');
+  if (phaseEl) {
+    phaseEl.textContent = phaseLabelText;
+    phaseEl.classList.toggle('gain', effect === 'gain' && !!phaseLabelText);
+    phaseEl.classList.toggle('lose', effect === 'lose' && !!phaseLabelText);
+  }
   // Tooltip differs by timer type: pomodoro uses pause/resume; trackers stop
   // and log. This matches the actual behavior wired in toggleActiveTimerPause.
   timeEl.title = (at.type === 'pomodoro')
@@ -10047,6 +10110,11 @@ function maybe3amReset() {
   ['q1','q2','q3','q4'].forEach(q => {
     state.tasks[q] = (state.tasks[q] || []).filter(t => !t.done);
   });
+  // Reset the daily "work N" / "break N" counters so the next pomodoro of
+  // the new day starts at "work 1" / "break 1". (sessionsInCycle is left
+  // alone — long-break cadence is independent of the calendar day.)
+  state.pomodoroWorkCount  = 0;
+  state.pomodoroBreakCount = 0;
   saveState();
   markSettingsChanged(); pushSettingsToCloud();
   if (typeof renderTasks === 'function') renderTasks();

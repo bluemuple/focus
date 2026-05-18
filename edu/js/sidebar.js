@@ -558,7 +558,7 @@
       // whenever the teacher attached coins to the response.
       const money = (m.gift_money && m.gift_money > 0) ? m.gift_money : 0;
       const moneyChip = money
-        ? `<span class="wc-msg-money">🪙 +${money}</span>`
+        ? `<span class="wc-msg-money">💰 +${money}</span>`
         : '';
       return `
         <div class="wc-msg-row">
@@ -748,7 +748,7 @@
   }
 
   // Add `delta` coins to the current user's wc_users.money, update
-  // the bottom-bar 🪙 counter optimistically, and refresh the cached
+  // the bottom-bar 💰 counter optimistically, and refresh the cached
   // session so other tabs (profile / home) see the new balance on
   // their next render. Failure is logged but not surfaced — the
   // coins are still on the message row, so a refresh recovers them
@@ -777,11 +777,11 @@
     const hasMoney   = (msg.gift_money && msg.gift_money > 0);
     const sprite = hasSticker
       ? `<img src="${window.WCAssets.spriteFor(msg.gift_animal_set, msg.gift_animal_index, false)}" alt=""/>`
-      : hasMoney ? '🪙' : '💌';
+      : hasMoney ? '💰' : '💌';
     // Headline prefers money > sticker > generic reply so the student
     // sees the most exciting word first.
     const headline = hasMoney
-      ? `Your teacher sent you 🪙 ${msg.gift_money}!`
+      ? `Your teacher sent you 💰 ${msg.gift_money}!`
       : hasSticker
         ? 'Your teacher sent a sticker!'
         : 'Your teacher replied!';
