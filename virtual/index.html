@@ -1434,6 +1434,27 @@
     from { transform: translateX(-50%) translateY(0); }
     to   { transform: translateX(-50%) translateY(-4px); }
   }
+
+  /* Team-colour dot — small dot above each player's head that
+     marks them as a member of an active tag team. Colour comes
+     from the team's assigned palette entry (red, blue, green…).
+     Sits just under the "I'm it!" badge so the two never collide
+     for the team's tagger. */
+  .actor-team-dot {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.45);
+    z-index: 108;
+    pointer-events: none;
+    display: none;
+  }
+  .actor-team-dot.show { display: block; }
 </style>
 </head>
 <body>
@@ -2459,6 +2480,7 @@
     root.innerHTML =
       '<div class="actor-bubble"></div>' +
       '<div class="actor-tagger">I&apos;m it!</div>' +
+      '<div class="actor-team-dot"></div>' +
       '<div class="actor-name"></div>' +
       '<img class="actor-sprite" src="' + sprites.stop.down + '" alt="character" draggable="false">' +
       '<img class="wear face hidden"    alt="" draggable="false">' +
@@ -2470,10 +2492,11 @@
       '<img class="wear bottom hidden"  alt="" draggable="false">' +
       '<img class="wear top hidden"     alt="" draggable="false">';
 
-    const sprite   = root.querySelector('.actor-sprite');
-    const nameEl   = root.querySelector('.actor-name');
-    const bubble   = root.querySelector('.actor-bubble');
-    const taggerEl = root.querySelector('.actor-tagger');
+    const sprite    = root.querySelector('.actor-sprite');
+    const nameEl    = root.querySelector('.actor-name');
+    const bubble    = root.querySelector('.actor-bubble');
+    const taggerEl  = root.querySelector('.actor-tagger');
+    const teamDotEl = root.querySelector('.actor-team-dot');
     nameEl.textContent = name;
 
     const wearEls = {};
@@ -2486,6 +2509,7 @@
       sprites: sprites,
       root: root, sprite: sprite, nameEl: nameEl, bubble: bubble,
       taggerEl: taggerEl,
+      teamDotEl: teamDotEl,
       wearEls: wearEls,
       avatar: {}, // applyAvatarToActor() fills this in
       pos: { x: STAGE_W / 2 - CHAR_W / 2, y: STAGE_H / 2 - CHAR_H / 2 },
@@ -3030,6 +3054,12 @@
         placeActor(ra);
         if (p.avatar) applyAvatarToActor(ra, p.avatar);
         remotes.set(tid, ra);
+        // Newly-spawned remote actor may already be on an active
+        // team — re-paint dots AND the tagger badge so both
+        // appear immediately (otherwise they'd only refresh on
+        // the next team event).
+        renderTeamDots();
+        renderTaggerBadge();
       } else {
         if (p.name && ra.name !== p.name) {
           ra.name = p.name;
@@ -3049,12 +3079,29 @@
     for (const tid of Array.from(tag.zoneOccupants.keys())) {
       if (tid !== TAB_ID && !state[tid]) tag.zoneOccupants.delete(tid);
     }
+    // Multi-team cleanup. For every team in the registry:
+    //   • Drop participants who left the channel so their dot
+    //     stops painting.
+    //   • If the team's host left, end the team entirely (each
+    //     remaining client invokes applyTagEnd locally — same
+    //     rule as the single-team original, just per-team now).
+    const teamsToEnd = [];
+    for (const [teamId, team] of allTeams) {
+      for (const tid of Array.from(team.participantTabIds)) {
+        if (tid !== TAB_ID && !state[tid]) team.participantTabIds.delete(tid);
+      }
+      if (team.hostTabId && team.hostTabId !== TAB_ID && !state[team.hostTabId]) {
+        teamsToEnd.push(teamId);
+      }
+    }
+    teamsToEnd.forEach(function (teamId) { applyTagEnd({ teamId: teamId }); });
     if (tag.phase !== 'idle' && tag.hostTabId &&
         tag.hostTabId !== TAB_ID && !state[tag.hostTabId]) {
-      applyTagEnd();
+      applyTagEnd({ teamId: tag.teamId });
     } else {
       updateTagBanner();
       renderTaggerBadge();
+      renderTeamDots();
     }
 
     renderPresenceList(state);
@@ -3082,6 +3129,22 @@
           name:      ME.name,
           inZone:    true,
           enteredAt: tag.enteredAt,
+        },
+      });
+    }
+    // If I'm the host of an active team, re-broadcast tag-start
+    // so the newcomer registers the team in their `allTeams` map
+    // (and paints the colour dots on everyone they can see).
+    if (tag.teamId && tag.hostTabId === TAB_ID && allTeams.has(tag.teamId)) {
+      const team = allTeams.get(tag.teamId);
+      channel.send({
+        type: 'broadcast',
+        event: 'tag-start',
+        payload: {
+          teamId:       tag.teamId,
+          color:        team.color,
+          host:         TAB_ID,
+          participants: tag.participants,
         },
       });
     }
@@ -3162,7 +3225,45 @@
     hostTabId:     null,
     countdownTimer: null,
     wheelAnimating: false,
+    teamId:        null,      // id of the team I'm currently in (null if not in any team)
   };
+
+  // ---- Multi-team registry --------------------------------------
+  // Multiple tag teams can run in parallel. Each team has a unique
+  // colour from this palette; team members wear a small dot of
+  // that colour above their heads. The local `tag` object above
+  // tracks MY team's state (wheel / countdown / "It"); this map
+  // tracks ALL teams across the room so we can paint the dots and
+  // the "I'm it!" badge for taggers in other teams too.
+  const TEAM_COLOURS = [
+    '#ef4444', // 1st team — red
+    '#3b82f6', // 2nd      — blue
+    '#22c55e', // 3rd      — green
+    '#f59e0b', // 4th      — orange
+    '#a855f7', // 5th      — purple
+    '#06b6d4', // 6th      — cyan
+    '#ec4899', // 7th      — pink
+    '#84cc16', // 8th      — lime
+  ];
+  // teamId → { color, participantTabIds: Set, taggerTabId }
+  const allTeams = new Map();
+
+  function pickNextTeamColour() {
+    const taken = new Set();
+    for (const t of allTeams.values()) taken.add(t.color);
+    for (const c of TEAM_COLOURS) if (!taken.has(c)) return c;
+    // All eight in use — wrap around. Rare; means 9+ parallel games.
+    return TEAM_COLOURS[allTeams.size % TEAM_COLOURS.length];
+  }
+  function newTeamId() {
+    return 'team-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  }
+  function teamForTabId(tid) {
+    for (const t of allTeams.values()) {
+      if (t.participantTabIds.has(tid)) return t;
+    }
+    return null;
+  }
 
   const tagBanner       = document.getElementById('tagBanner');
   const tagBannerCount  = document.getElementById('tagBannerCount');
@@ -3307,31 +3408,56 @@
   }
 
   function computeHostInZone() {
+    // The host is the earliest eligible zone occupant. "Eligible"
+    // = not currently on any team; players still wandering through
+    // the zone while their team game is in progress can't host a
+    // new one. Falls back to the absolute earliest occupant only
+    // when no one in the zone is eligible (so the count still
+    // shows a sensible "host name").
     let bestTid = null;
     let bestAt  = Infinity;
+    let fallbackTid = null;
+    let fallbackAt  = Infinity;
     for (const [tid, info] of tag.zoneOccupants) {
-      if (info.enteredAt < bestAt ||
-          (info.enteredAt === bestAt && (bestTid === null || tid < bestTid))) {
-        bestAt  = info.enteredAt;
-        bestTid = tid;
+      const eligible = !teamForTabId(tid);
+      if (eligible) {
+        if (info.enteredAt < bestAt ||
+            (info.enteredAt === bestAt && (bestTid === null || tid < bestTid))) {
+          bestAt  = info.enteredAt;
+          bestTid = tid;
+        }
+      }
+      if (info.enteredAt < fallbackAt ||
+          (info.enteredAt === fallbackAt && (fallbackTid === null || tid < fallbackTid))) {
+        fallbackAt  = info.enteredAt;
+        fallbackTid = tid;
       }
     }
-    return bestTid;
+    return bestTid || fallbackTid;
   }
 
   function updateTagBanner() {
     const visible = tag.inZone && tag.phase === 'idle';
     tagBanner.classList.toggle('show', visible);
     if (!visible) return;
-    const count = tag.zoneOccupants.size;
+    // Eligible = in the zone AND not currently on any team. A
+    // player who's mid-game in team A can still wander through
+    // the zone without being drafted into a new team.
+    const eligibleIds = [];
+    for (const [tid] of tag.zoneOccupants) {
+      if (!teamForTabId(tid)) eligibleIds.push(tid);
+    }
+    const count = eligibleIds.length;
     const host  = computeHostInZone();
-    const iAmHost = host === TAB_ID;
+    const hostEligible = host && !teamForTabId(host);
+    const iAmHost = hostEligible && host === TAB_ID;
     tagBannerCount.textContent = count <= 1
       ? 'Waiting for more players to gather…'
-      : count + ' players ready · host: ' + (tag.zoneOccupants.get(host)?.name || '—');
+      : count + ' players ready · host: ' + (tag.zoneOccupants.get(host)?.name || '—') +
+        (allTeams.size ? ' · ' + allTeams.size + ' team' + (allTeams.size === 1 ? '' : 's') + ' already playing' : '');
     tagStartBtn.style.display = iAmHost ? 'inline-block' : 'none';
     tagStartBtn.disabled = count < 2;
-    tagStartBtn.textContent = count < 2 ? 'Need 2+ players' : 'Start Tag Game';
+    tagStartBtn.textContent = count < 2 ? 'Need 2+ players' : 'Start a New Team';
   }
 
   // Called every frame from step(). Detects local zone transitions
@@ -3440,17 +3566,47 @@
     const occupants = Array.from(tag.zoneOccupants.entries()).map(function (kv) {
       return { tab_id: kv[0], user_id: kv[1].user_id, name: kv[1].name };
     });
-    if (occupants.length < 2) return;
-    const payload = { host: TAB_ID, participants: occupants };
+    // Filter out anyone who's already on another team — they
+    // can't be drafted into a second game while their first is
+    // still in progress.
+    const eligible = occupants.filter(function (o) { return !teamForTabId(o.tab_id); });
+    if (eligible.length < 2) return;
+    const teamId = newTeamId();
+    const color  = pickNextTeamColour();
+    const payload = {
+      teamId:       teamId,
+      color:        color,
+      host:         TAB_ID,
+      participants: eligible,
+    };
     channel.send({ type: 'broadcast', event: 'tag-start', payload: payload });
     applyTagStart(payload);
   }
 
   function applyTagStart(p) {
+    const participants = p.participants || [];
+    const teamId       = p.teamId || newTeamId();
+    const color        = p.color  || pickNextTeamColour();
+    // Register this team in the room-wide registry (every client
+    // tracks every team for dot-rendering, regardless of whether
+    // they're a participant).
+    allTeams.set(teamId, {
+      color:             color,
+      participantTabIds: new Set(participants.map(function (x) { return x.tab_id; })),
+      taggerTabId:       null,
+      hostTabId:         p.host || null,
+    });
+    renderTeamDots();
+    // Only run the wheel / countdown / banner-hide UI when I'm
+    // actually a participant. Bystanders just see the dots.
+    const iAmParticipant = participants.some(function (x) { return x.tab_id === TAB_ID; });
+    if (!iAmParticipant) return;
+
     tag.phase        = 'wheel';
     tag.hostTabId    = p.host;
-    tag.participants = p.participants || [];
+    tag.participants = participants;
     tag.taggerTabId  = null;
+    tag.teamId       = teamId;
     buildWheel(tag.participants);
     tagWheelOverlay.classList.add('show');
     tagBanner.classList.remove('show');
@@ -3478,12 +3634,28 @@
     // Pointer is at 12 o'clock. After rotating by R, the segment
     // whose mid-angle equals (360 - R mod 360) lands under it.
     const finalRotation = spins * 360 + (360 - midAngle);
-    const payload = { winnerIdx: winnerIdx, finalRotation: finalRotation };
+    const winnerTabId   = tag.participants[winnerIdx] && tag.participants[winnerIdx].tab_id;
+    const payload = {
+      teamId:       tag.teamId,
+      winnerIdx:    winnerIdx,
+      winnerTabId:  winnerTabId,    // for non-participants to update the registry
+      finalRotation: finalRotation,
+    };
     channel.send({ type: 'broadcast', event: 'tag-spin', payload: payload });
     applyTagSpin(payload);
   }
 
   function applyTagSpin(p) {
+    // Non-participants still need the registry's taggerTabId set
+    // so the team-coloured "I'm it!" badge appears for them.
+    if (p && p.teamId && p.winnerTabId && allTeams.has(p.teamId)) {
+      allTeams.get(p.teamId).taggerTabId = p.winnerTabId;
+      renderTaggerBadge();
+    }
+    // Beyond the registry update, spin events are noise for people
+    // who aren't on this team — they're already watching their own
+    // (or no) wheel.
+    if (p && p.teamId && tag.teamId !== p.teamId) return;
     if (tag.phase !== 'wheel') return;
     tagSpinBtn.disabled    = true;
     tagSpinBtn.textContent = 'Spinning…';
@@ -3501,6 +3673,11 @@
   function startTagCountdown(taggerTabId) {
     tag.phase = 'countdown';
     tag.taggerTabId = taggerTabId;
+    // Keep the room-wide registry's tagger pointer in sync so
+    // the team-coloured badge tracks the right player.
+    if (tag.teamId && allTeams.has(tag.teamId)) {
+      allTeams.get(tag.teamId).taggerTabId = taggerTabId;
+    }
     renderTaggerBadge();
     tagCountdown.classList.add('show');
     let n = 7;
@@ -3550,18 +3727,34 @@
       }
     }
     if (!nearestTid) return;
-    const payload = { newTagger: nearestTid };
+    const payload = { teamId: tag.teamId, newTagger: nearestTid };
     channel.send({ type: 'broadcast', event: 'tag-tagged', payload: payload });
     applyTagTagged(payload);
   }
 
   function applyTagTagged(p) {
-    if (tag.phase !== 'play') return;
     if (!p || !p.newTagger) return;
+    // Resolve which team this catch belongs to. Old broadcasts
+    // without teamId fall back to MY team (preserves legacy
+    // behaviour during a multi-team rollout).
+    const teamId = p.teamId || tag.teamId;
+    const team   = teamId ? allTeams.get(teamId) : null;
+    if (!team) return;
+    // Keep the room-wide registry in sync so the new "It" gets
+    // the team-coloured tagger badge on every client.
+    const prevTaggerTabId = team.taggerTabId;
+    team.taggerTabId = p.newTagger;
+    renderTeamDots();
+    renderTaggerBadge();
+    // Participants who aren't on this team only update the registry
+    // (badge moves). My local wheel/countdown only runs if it's MY
+    // team's game.
+    if (tag.teamId !== teamId) return;
+    if (tag.phase !== 'play') return;
     // Announce who caught whom in the chat log. Names come from the
     // participants snapshot taken at tag-start time, so they're the
     // same on every client.
-    const catcherTabId = tag.taggerTabId;
+    const catcherTabId = prevTaggerTabId || tag.taggerTabId;
     const victimTabId  = p.newTagger;
     const catcher = tag.participants.find(function (x) { return x.tab_id === catcherTabId; });
     const victim  = tag.participants.find(function (x) { return x.tab_id === victimTabId;  });
@@ -3589,33 +3782,78 @@
   }
 
   function renderTaggerBadge() {
+    // Build the set of all currently-IT tab ids across EVERY
+    // team — multiple teams can be running in parallel, so any
+    // number of taggers may need the badge at once.
+    const taggerTabIds = new Set();
+    for (const t of allTeams.values()) {
+      if (t.taggerTabId) taggerTabIds.add(t.taggerTabId);
+    }
+    // Belt-and-braces: include my local tag.taggerTabId in case a
+    // race between registry-update and DOM render leaves the badge
+    // missing for a frame.
+    if (tag.taggerTabId) taggerTabIds.add(tag.taggerTabId);
+
     const set = function (actor, isTagger) {
       if (!actor || !actor.taggerEl) return;
       actor.taggerEl.classList.toggle('show', isTagger);
     };
-    set(me, tag.taggerTabId === TAB_ID);
+    set(me, taggerTabIds.has(TAB_ID));
     for (const [tid, ra] of remotes) {
-      set(ra, tag.taggerTabId === tid);
+      set(ra, taggerTabIds.has(tid));
     }
-    // The mobile TAG! button piggybacks on the same state — show
-    // it only when this client is the active Tagger in play phase.
+    // Mobile TAG! button — show only when MY team is in play phase
+    // AND I'm the team's tagger.
     tagAttackBtn.classList.toggle(
       'show', tag.phase === 'play' && tag.taggerTabId === TAB_ID
     );
   }
 
+  // Paint the team-colour dot above every player who's currently
+  // on a team. Bystanders' dots stay hidden. Called whenever the
+  // team registry changes (start, end, tagger transfer) and when
+  // a remote actor first appears on screen.
+  function renderTeamDots() {
+    const apply = function (actor, tid) {
+      if (!actor || !actor.teamDotEl) return;
+      const team = teamForTabId(tid);
+      if (team) {
+        actor.teamDotEl.style.background = team.color;
+        actor.teamDotEl.classList.add('show');
+      } else {
+        actor.teamDotEl.classList.remove('show');
+      }
+    };
+    apply(me, TAB_ID);
+    for (const [tid, ra] of remotes) apply(ra, tid);
+  }
+
   function hostEndTagGame() {
     if (tag.phase === 'idle') return;
     if (tag.hostTabId !== TAB_ID) return;
-    channel.send({ type: 'broadcast', event: 'tag-end', payload: {} });
-    applyTagEnd();
+    const payload = { teamId: tag.teamId };
+    channel.send({ type: 'broadcast', event: 'tag-end', payload: payload });
+    applyTagEnd(payload);
   }
 
-  function applyTagEnd() {
+  function applyTagEnd(p) {
+    // Drop the team from the room-wide registry so every client
+    // stops painting that team's dots / badge. Fallback to MY
+    // team's id for legacy broadcasts without a teamId.
+    const teamId = (p && p.teamId) || tag.teamId;
+    if (teamId) allTeams.delete(teamId);
+    renderTeamDots();
+    renderTaggerBadge();
+    // Only flush the local-team UI if this end is for MY team.
+    if (teamId && tag.teamId && teamId !== tag.teamId) {
+      updateTagBanner();
+      return;
+    }
     tag.phase        = 'idle';
     tag.taggerTabId  = null;
     tag.participants = [];
     tag.hostTabId    = null;
+    tag.teamId       = null;
     if (tag.countdownTimer) {
       clearInterval(tag.countdownTimer);
       tag.countdownTimer = null;
@@ -3623,7 +3861,6 @@
     tagCountdown.classList.remove('show');
     tagWheelOverlay.classList.remove('show');
     tagEndBtn.classList.remove('show');
-    renderTaggerBadge();
     updateTagBanner();
   }
 
@@ -3659,8 +3896,8 @@
     applyTagTagged(msg.payload || {});
   });
 
-  channel.on('broadcast', { event: 'tag-end' }, function () {
-    applyTagEnd();
+  channel.on('broadcast', { event: 'tag-end' }, function (msg) {
+    applyTagEnd(msg && msg.payload);
   });
 
   // --- button wiring ------------------------------------------

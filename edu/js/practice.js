@@ -188,22 +188,34 @@
       <div class="pr-answer-row"><input type="number" id="ansInput" class="pr-input" inputmode="numeric"></div>
     `;
   }
-  // -- L3 visual: two ten-frames, first FULL + second with `a%10` ----
+  // -- L3 visual: tens-many full ten-frames + one partial frame ----
+  // For a=23 we need 2 full frames (20 dots) + a partial frame with
+  // 3 dots — total 23. The original code always emitted exactly one
+  // full + one partial, so a=23 showed only 13 dots; this picture
+  // mismatched the equation. Now we scale to `Math.floor(a/10)`.
+  // The tap-to-cross dots live in the LAST (partial) frame only so
+  // the kid takes away from the right end, matching how a ten-frame
+  // worksheet shows the subtraction.
   function renderVisualTeen(q) {
-    const ones = q.a % 10;
-    const f1 = [];
-    for (let i = 0; i < 10; i++) f1.push(`<div class="pr-cell"><div class="pr-dot"></div></div>`);
-    const f2 = [];
-    for (let i = 0; i < 10; i++) {
-      f2.push(`<div class="pr-cell">${i < ones ? `<div class="pr-dot" data-i="${i}"></div>` : ''}</div>`);
+    const fullFrames = Math.floor(q.a / 10);
+    const ones       = q.a % 10;
+    const frames = [];
+    for (let f = 0; f < fullFrames; f++) {
+      const cells = [];
+      for (let i = 0; i < 10; i++) cells.push(`<div class="pr-cell"><div class="pr-dot"></div></div>`);
+      frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
+    }
+    if (ones > 0) {
+      const cells = [];
+      for (let i = 0; i < 10; i++) {
+        cells.push(`<div class="pr-cell">${i < ones ? `<div class="pr-dot" data-i="${i}"></div>` : ''}</div>`);
+      }
+      frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
     }
     return `
       <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
-      <div class="pr-visual"><div class="pr-frames-row">
-        <div class="pr-frame">${f1.join('')}</div>
-        <div class="pr-frame">${f2.join('')}</div>
-      </div></div>
-      <p class="pr-instr">Tap ${q.b} dot${q.b===1?'':'s'} from the right frame to take away, then type the answer.</p>
+      <div class="pr-visual"><div class="pr-frames-row">${frames.join('')}</div></div>
+      <p class="pr-instr">Tap ${q.b} dot${q.b===1?'':'s'} from the last frame to take away, then type the answer.</p>
       <div class="pr-answer-row"><input type="number" id="ansInput" class="pr-input" inputmode="numeric"></div>
     `;
   }
