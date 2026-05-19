@@ -319,6 +319,12 @@
   }
 
   // ---- Leaderboards ------------------------------------------------
+  // Layout — 4-column × 2-row grid:
+  //   Row 1: Biggest Improvers | Top L1 | Top L2 | Top L3
+  //   Row 2: Top L4 | Top L5 | Top L6 | (empty)
+  // Each per-level board ranks by THAT level's best-ever single-run
+  // score (race_state.best[lv]). The improvers board ranks by the
+  // last race's gain across all levels.
   async function renderBoards() {
     const host = $('boards');
     host.innerHTML = '<div class="rc-board"><p>Loading…</p></div>';
@@ -338,27 +344,40 @@
       host.innerHTML = '<div class="rc-board"><p>Couldn\'t load leaderboards.</p></div>';
       return;
     }
+    // Per-row pre-computation. For each student we keep `gain` (the
+    // last-race delta the improvers board needs) AND `bestByLevel`
+    // (a 1..6 → score map driving the per-level boards).
     const rows = classmates.map(u => {
       const rs = (u.race_state && typeof u.race_state === 'object') ? u.race_state : {};
-      const best = Math.max(0, ...Object.values(rs.best || {0:0}));
+      const best = (rs.best && typeof rs.best === 'object') ? rs.best : {};
       return {
-        id: u.id,
+        id:   u.id,
         name: u.real_name || '—',
-        best,
         gain: rs.lastGain || 0,
+        bestByLevel: best,
       };
     });
+
     const byImprover = [...rows].sort((a, b) => b.gain - a.gain).slice(0, 10);
-    const byTop      = [...rows].sort((a, b) => b.best - a.best).slice(0, 10);
+    function topAtLevel(lv) {
+      return [...rows]
+        .map(r => ({ id: r.id, name: r.name, score: Number(r.bestByLevel[lv]) || 0 }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 10);
+    }
+    const levelBoards = [1, 2, 3, 4, 5, 6].map(lv => ({ lv, rows: topAtLevel(lv) }));
+
     host.innerHTML = `
       <div class="rc-board">
-        <h3>🚀 Biggest Improvers (most score gained)</h3>
+        <h3>🚀 Biggest Improvers</h3>
         ${renderBoardTable(byImprover, 'gain')}
       </div>
-      <div class="rc-board">
-        <h3>🏆 Top Scorers (best race ever)</h3>
-        ${renderBoardTable(byTop, 'best')}
-      </div>
+      ${levelBoards.map(({ lv, rows }) => `
+        <div class="rc-board compact">
+          <h3>🏆 Top Scorers · Level ${lv}</h3>
+          ${renderBoardTable(rows, 'score')}
+        </div>
+      `).join('')}
     `;
   }
   function renderBoardTable(rows, scoreKey) {
