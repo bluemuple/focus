@@ -1,24 +1,30 @@
 // =============================================================
 //  Practice 2 — Subtraction Mental Methods 2
 //
-//  Builds on SMM1 with new methods drawn from Maths Week 5:
+//  Six levels, all 2-digit no-borrow subtraction. Picture levels
+//  cap `a` at 39 so the ten-frame row fits the card.
 //
-//    1 — RECAP visual: ones − ones, ten-frame (e.g. 9 − 6)
-//    2 — RECAP: 2-digit − 1-digit no-borrow (e.g. 28 − 2)
-//    3 — SUBTRACT-TO-TEN visual: 26 − 8 = 26 − 6 − 2, with two
-//        ten-frames + extras. Drag/tap to choose the SPLIT and the
-//        REMAINDER chips. Wrong drag → tap the slot to undo.
-//    4 — SUBTRACT-TO-TEN no visual: same decomposition, chips only.
-//    5 — 10s & 1s: 35 − 13 = 35 − 10 − 3 chip decomposition.
-//    6 — Bigger numbers: 124 − 13, 389 − 57. Number-fact extension
-//        (Use 7 − 5 to solve 70 − 50 / 700 − 500). Single answer box.
+//    L1 — 2-digit − 1-digit, WITH picture   (e.g. 25 − 4)
+//    L2 — 2-digit − 2-digit, WITH picture   (e.g. 25 − 14)
+//    L3 — 2-digit − 2-digit, NO picture     (e.g. 25 − 14)
+//    L4 — 2-digit − 1-digit, NO picture     (e.g. 39 − 6)
+//    L5 — 2-digit − 2-digit, WITH picture   (e.g. 39 − 16)
+//    L6 — 2-digit − 2-digit, NO picture     (e.g. 39 − 16, bigger range)
 //
 //  Adaptive:
 //    • Start at level 1.
-//    • FAST PATH — 3 correct in a row at the current level bumps
-//      straight up to the next stage (with 🎉 toast).
-//    • SLOW PATH — every 5 questions: ≥ 4 / 5 → up, ≤ 1 / 5 → down.
+//    • FAST PATH — 3 correct in a row → level up + 🎉 toast.
+//    • SLOW PATH — after LEVEL_CAP questions in a level:
+//        - ≥ up threshold correct → up
+//        - ≤ down threshold correct → down
+//        - else stay
+//      LEVEL_CAP is 5 for L1–L2 and 4 for L3–L6 (per the new spec
+//      that limits each L3+ level to 4 problems per visit).
 //    • 3 wrong in a row → "stop or keep going?" prompt.
+//
+//  No-repeat-within-session: per-level Set of "a-b" keys we've
+//  already shown. Reset when the kid leaves a level so the next
+//  visit starts fresh.
 //
 //  Cumulative score = sum of (correct × 10), persisted to
 //  wc_users.smm2_practice_state.cumulative. ≥ 80 unlocks Race 2.
@@ -38,6 +44,22 @@
   let levelStreak  = 0;
   let currentQ = null;
   let answered = false;
+
+  // ---- Per-level question pool guards ----------------------------
+  const seen = { 1: new Set(), 2: new Set(), 3: new Set(), 4: new Set(), 5: new Set(), 6: new Set() };
+  const LEVEL_CAP = { 1: 5, 2: 5, 3: 4, 4: 4, 5: 4, 6: 4 };
+  function adaptThresholds(lv) {
+    const cap = LEVEL_CAP[lv];
+    return { up: cap === 5 ? 4 : 3, down: 1 };
+  }
+  function qKey(q) { return q.a + '-' + q.b; }
+  function genUnique(lv) {
+    for (let i = 0; i < 50; i++) {
+      const q = genQuestion(lv);
+      if (!seen[lv].has(qKey(q))) { seen[lv].add(qKey(q)); return q; }
+    }
+    return genQuestion(lv);
+  }
 
   // ---- Boot -------------------------------------------------------
   (async function init() {
@@ -59,92 +81,77 @@
   // ---- Question generation ---------------------------------------
   const rand = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
 
-  // Subtract-to-ten split. Returns { a, b, split, remainder, answer }
-  // where a - b = a - split - remainder AND (a - split) is a tens
-  // boundary. e.g. 26 − 8 → split=6, remainder=2, answer=18.
-  function genSubToTen(min, max) {
+  // 2-digit minus 2-digit, no borrow, with a capped at `aMax`.
+  //   • aT (tens digit of a) in [2, floor(aMax/10)]
+  //   • bT in [1, aT - 1]  (strictly less so it's a real 2-digit b)
+  //   • aO in [2, 9]       (≥ 2 leaves room for bO)
+  //   • bO in [0, aO]      (no borrow)
+  function twoDigMinusTwoDig(aMax) {
+    const maxT = Math.floor(aMax / 10);
+    const aT = rand(2, maxT);
+    const aO = rand(2, 9);
+    const a  = aT * 10 + aO;
+    if (a > aMax) return twoDigMinusTwoDig(aMax); // re-roll on overflow
+    const bT = rand(1, Math.max(1, aT - 1));
+    const bO = rand(0, aO);
+    const b  = bT * 10 + bO;
+    return { a, b, answer: a - b };
+  }
+
+  // 2-digit minus 1-digit, no borrow.
+  //   • a in [aMin, aMax] with ones >= 1 (so we can subtract at least 1)
+  //   • b in [1, ones(a)]
+  function twoDigMinusOneDig(aMin, aMax) {
     while (true) {
-      const a = rand(min, max);
-      const aOnes = a % 10;
-      // Need b > aOnes so we cross a ten (otherwise it's a plain
-      // no-borrow problem and the "subtract to ten" method isn't
-      // interesting). Cap b at 9 — single digit is the canonical
-      // PDF case.
-      if (aOnes >= 1 && aOnes <= 8) {
-        const minB = aOnes + 1;
-        if (minB > 9) continue;
-        const b = rand(minB, 9);
-        const split = aOnes;            // 26 − 6 → 20
-        const remainder = b - split;    // 8 − 6 = 2
-        return { a, b, split, remainder, answer: a - b };
+      const a = rand(aMin, aMax);
+      const ones = a % 10;
+      if (ones >= 1) {
+        const b = rand(1, ones);
+        return { a, b, answer: a - b };
       }
     }
   }
 
   function genQuestion(lv) {
     if (lv === 1) {
-      // Recap: ones − ones, visual
-      const a = rand(4, 9);
-      const b = rand(1, a);
-      return { type: 'visual-ones', a, b, answer: a - b };
+      // L1: WITH picture, 2-digit − 1-digit (e.g. 25 − 4).
+      // a ≤ 29 keeps the picture to 3 frames max.
+      const q = twoDigMinusOneDig(11, 29);
+      return Object.assign({ type: 'visual-input' }, q);
     }
     if (lv === 2) {
-      // 2-digit − 1-digit no borrow (e.g. 28 − 2, 36 − 3)
-      const tens = rand(1, 9);
-      const ones = rand(2, 9);
-      const sub  = rand(1, ones);
-      const a = tens * 10 + ones;
-      return { type: 'visual-teen', a, b: sub, answer: a - sub };
+      // L2: WITH picture, 2-digit − 2-digit (e.g. 25 − 14).
+      // a ≤ 29 keeps the picture compact.
+      const q = twoDigMinusTwoDig(29);
+      return Object.assign({ type: 'visual-input' }, q);
     }
     if (lv === 3) {
-      // Subtract-to-ten WITH visual, decomposition slots
-      return Object.assign({ type: 'visual-subtoten' }, genSubToTen(13, 49));
+      // L3: NO picture, same shape as L2 (e.g. 25 − 14).
+      // Up to 39 (still small) since no picture constraint.
+      const q = twoDigMinusTwoDig(39);
+      return Object.assign({ type: 'mc' }, q);
     }
     if (lv === 4) {
-      // Subtract-to-ten NO visual, decomposition slots
-      return Object.assign({ type: 'chips-subtoten' }, genSubToTen(21, 89));
+      // L4: NO picture, 2-digit − 1-digit (e.g. 39 − 6). a can
+      // span the whole 2-digit range now.
+      const q = twoDigMinusOneDig(11, 99);
+      return Object.assign({ type: 'mc' }, q);
     }
     if (lv === 5) {
-      // 10s & 1s decomposition: 35 − 13 = 35 − 10 − 3
-      const aT = rand(2, 9), aO = rand(1, 9);
-      const bT = rand(1, Math.max(1, aT - 1));
-      const bO = rand(0, aO);
-      const a = aT * 10 + aO;
-      const b = bT * 10 + bO;
-      return {
-        type: 'chips-tensones',
-        a, b, bT: bT * 10, bO,
-        answer: a - b,
-      };
+      // L5: WITH picture, 2-digit − 2-digit (e.g. 39 − 16).
+      // a ≤ 39 caps the picture to 4 frames.
+      const q = twoDigMinusTwoDig(39);
+      return Object.assign({ type: 'visual-input' }, q);
     }
-    // lv === 6 — Bigger numbers + number-fact extension (single MC).
-    // Mix two flavours so the kid sees both:
-    //   • 3-digit − 2-digit no-borrow (124 − 13, 389 − 57)
-    //   • "If 7-5=2, what is 70-50?" — extended number facts
-    if (Math.random() < 0.5) {
-      // Extended number fact
-      const seedA = rand(2, 9);
-      const seedB = rand(1, seedA - 1);
-      const scale = [10, 100][rand(0, 1)];
-      return { type: 'mc-big', a: seedA * scale, b: seedB * scale, answer: (seedA - seedB) * scale };
-    } else {
-      // 3-digit − 2-digit no borrow
-      const aH = rand(1, 4);
-      const aT = rand(2, 9), aO = rand(2, 9);
-      const bT = rand(1, aT - 1 < 0 ? 1 : aT);
-      const bO = rand(0, aO);
-      const a = aH * 100 + aT * 10 + aO;
-      const b = bT * 10 + bO;
-      return { type: 'mc-big', a, b, answer: a - b };
-    }
+    // lv === 6: NO picture, 2-digit − 2-digit, bigger range.
+    const q = twoDigMinusTwoDig(99);
+    return Object.assign({ type: 'mc' }, q);
   }
 
   function mcChoices(correct) {
     const choices = new Set([correct]);
     while (choices.size < 4) {
-      // Plausible distractors near the correct value.
-      const scale = correct >= 100 ? 10 : 2;
-      const delta = rand(-5 * scale, 5 * scale);
+      const delta = rand(-9, 9);
       const c = correct + delta;
       if (c >= 0 && c !== correct) choices.add(c);
     }
@@ -158,7 +165,7 @@
 
   // ---- Rendering -------------------------------------------------
   function nextQuestion() {
-    currentQ = genQuestion(level);
+    currentQ = genUnique(level);
     answered = false;
     paintCumulative();
     render();
@@ -170,12 +177,8 @@
     const heading = `<div class="pr-level-label">Level ${level}</div>`;
     let body = '';
     switch (q.type) {
-      case 'visual-ones':     body = renderVisualOnes(q);     break;
-      case 'visual-teen':     body = renderVisualTeen(q);     break;
-      case 'visual-subtoten': body = renderVisualSubToTen(q); break;
-      case 'chips-subtoten':  body = renderChipsSubToTen(q);  break;
-      case 'chips-tensones':  body = renderChipsTensOnes(q);  break;
-      case 'mc-big':          body = renderMC(q);             break;
+      case 'visual-input': body = renderVisualInput(q); break;
+      case 'mc':           body = renderMC(q);          break;
     }
     card.innerHTML = heading + body +
       `<div class="pr-feedback" id="feedback"><span id="fbBody"></span></div>
@@ -186,119 +189,37 @@
     $('nextBtn').addEventListener('click', onNext);
   }
 
-  // -- L1 visual: 5×2 ten-frame, click to take dots away ----------
-  function renderVisualOnes(q) {
-    const cells = [];
-    for (let i = 0; i < 10; i++) {
-      const hasDot = i < q.a;
-      cells.push(`<div class="pr-cell">${hasDot ? `<div class="pr-dot" data-i="${i}"></div>` : ''}</div>`);
-    }
-    return `
-      <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
-      <div class="pr-visual"><div class="pr-frame">${cells.join('')}</div></div>
-      <p class="pr-instr">Tap ${q.b} dot${q.b===1?'':'s'} to take them away, then type the answer.</p>
-      <div class="pr-answer-row"><input type="number" id="ansInput" class="pr-input" inputmode="numeric"></div>
-    `;
-  }
-  // -- L2 visual: 2-digit − 1-digit, all frames full except last --
-  function renderVisualTeen(q) {
-    const ones = q.a % 10;
+  // Render `a` dots across as many full ten-frames as needed,
+  // plus a partial frame for the leftover ones. Every dot is
+  // tappable as a visual "take away" aid — toggles a × overlay.
+  // The kid still types the answer in the input.
+  function renderVisualInput(q) {
     const fullFrames = Math.floor(q.a / 10);
+    const ones       = q.a % 10;
     const frames = [];
+    let globalIdx = 0;
     for (let f = 0; f < fullFrames; f++) {
       const cells = [];
-      for (let i = 0; i < 10; i++) cells.push(`<div class="pr-cell"><div class="pr-dot"></div></div>`);
+      for (let i = 0; i < 10; i++) {
+        cells.push(`<div class="pr-cell"><div class="pr-dot" data-i="${globalIdx++}"></div></div>`);
+      }
       frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
     }
     if (ones > 0) {
       const cells = [];
       for (let i = 0; i < 10; i++) {
-        cells.push(`<div class="pr-cell">${i < ones ? `<div class="pr-dot" data-i="${i}"></div>` : ''}</div>`);
+        cells.push(`<div class="pr-cell">${i < ones ? `<div class="pr-dot" data-i="${globalIdx++}"></div>` : ''}</div>`);
       }
       frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
     }
     return `
       <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
       <div class="pr-visual"><div class="pr-frames-row">${frames.join('')}</div></div>
-      <p class="pr-instr">Tap ${q.b} dot${q.b===1?'':'s'} from the last frame, then type the answer.</p>
+      <p class="pr-instr">Tap dots to take them away (or just count in your head), then type the answer.</p>
       <div class="pr-answer-row"><input type="number" id="ansInput" class="pr-input" inputmode="numeric"></div>
     `;
   }
-  // -- L3 visual: subtract-to-ten with chips ---------------------
-  //  26 − 8  →  26 − [6] − [2]  →  [18]
-  //  Show all 26 dots as full frames + remainder; method shown as
-  //  filled-in equation skeleton (kid drags chips into the empty
-  //  slots, picking the SPLIT then the REMAINDER then the ANSWER).
-  function renderVisualSubToTen(q) {
-    const fullFrames = Math.floor(q.a / 10);
-    const ones = q.a % 10;
-    const frames = [];
-    for (let f = 0; f < fullFrames; f++) {
-      const cells = [];
-      for (let i = 0; i < 10; i++) cells.push(`<div class="pr-cell"><div class="pr-dot"></div></div>`);
-      frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
-    }
-    if (ones > 0) {
-      const cells = [];
-      for (let i = 0; i < 10; i++) {
-        cells.push(`<div class="pr-cell">${i < ones ? `<div class="pr-dot"></div>` : ''}</div>`);
-      }
-      frames.push(`<div class="pr-frame">${cells.join('')}</div>`);
-    }
-    return `
-      <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
-      <div class="pr-visual"><div class="pr-frames-row">${frames.join('')}</div></div>
-      <p class="pr-instr">First subtract to a ten. Goal: <strong>${q.a}</strong> − <strong>${q.split}</strong> − <strong>${q.remainder}</strong> = <strong>${q.answer}</strong></p>
-      ${renderDecompRow(q.a)}
-      ${renderChipPool([q.split, q.remainder, q.answer, q.a - q.split])}
-    `;
-  }
-  // -- L4 chips: subtract-to-ten no visual ----------------------
-  function renderChipsSubToTen(q) {
-    return `
-      <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
-      <p class="pr-instr">Subtract to a ten. Goal: <strong>${q.a}</strong> − <strong>${q.split}</strong> − <strong>${q.remainder}</strong> = <strong>${q.answer}</strong></p>
-      ${renderDecompRow(q.a)}
-      ${renderChipPool([q.split, q.remainder, q.answer,
-                        q.split + 1, q.remainder + 1, q.a - q.split])}
-    `;
-  }
-  // -- L5 chips: 10s & 1s decomposition (35 − 13 = 35 − 10 − 3) -
-  function renderChipsTensOnes(q) {
-    return `
-      <div class="pr-q"><span>${q.a}</span> − <span>${q.b}</span> = ?</div>
-      <p class="pr-instr">Take away the 10s, then the 1s. Goal: <strong>${q.a}</strong> − <strong>${q.bT}</strong> − <strong>${q.bO}</strong> = <strong>${q.answer}</strong></p>
-      ${renderDecompRow(q.a)}
-      ${renderChipPool([q.bT, q.bO, q.answer,
-                        q.bT + 10, Math.max(0, q.bO + 2), q.answer - 1, q.answer + 2])}
-    `;
-  }
-  // Shared decomposition slot row: [a] − [?] − [?] = [?]
-  function renderDecompRow(aPrefilled) {
-    return `
-      <div class="pr-decomp">
-        <div class="slot filled" data-slot="0">${aPrefilled}</div>
-        <span>−</span>
-        <div class="slot" data-slot="1">?</div>
-        <span>−</span>
-        <div class="slot" data-slot="2">?</div>
-        <span>=</span>
-        <div class="slot" data-slot="3">?</div>
-      </div>
-    `;
-  }
-  function renderChipPool(values) {
-    // Dedupe + shuffle. Negatives filtered (extended-distractors).
-    const pool = [...new Set(values.filter(v => v >= 0))];
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [pool[i], pool[j]] = [pool[j], pool[i]];
-    }
-    return `<div class="pr-chips">
-      ${pool.map(v => `<button class="pr-chip" data-v="${v}" draggable="true">${v}</button>`).join('')}
-    </div>`;
-  }
-  // -- L6 multiple choice (big numbers + extended facts) --------
+
   function renderMC(q) {
     const choices = mcChoices(q.answer);
     return `
@@ -311,12 +232,9 @@
 
   // ---- Wire after render ----------------------------------------
   function wireRender(q) {
-    if (q.type === 'visual-ones' || q.type === 'visual-teen') {
-      const dots = document.querySelectorAll('.pr-dot[data-i]');
-      dots.forEach(d => {
-        d.addEventListener('click', () => {
-          d.classList.toggle('taken');
-        });
+    if (q.type === 'visual-input') {
+      document.querySelectorAll('.pr-dot[data-i]').forEach(d => {
+        d.addEventListener('click', () => d.classList.toggle('taken'));
       });
       const inp = $('ansInput');
       inp.addEventListener('input', () => {
@@ -332,17 +250,13 @@
         if (!answered) { checkInput(q, inp.value); return; }
         onNext();
       };
-    } else if (q.type === 'mc-big') {
+    } else if (q.type === 'mc') {
       document.querySelectorAll('.pr-choice').forEach(btn => {
         btn.addEventListener('click', () => {
           if (answered) return;
           checkMC(q, parseInt(btn.dataset.c, 10), btn);
         });
       });
-    } else if (q.type === 'visual-subtoten' || q.type === 'chips-subtoten') {
-      wireDecomp(q, [q.a, q.split, q.remainder, q.answer]);
-    } else if (q.type === 'chips-tensones') {
-      wireDecomp(q, [q.a, q.bT, q.bO, q.answer]);
     }
   }
 
@@ -365,88 +279,6 @@
     });
     showFeedback(isOk, q);
     $('nextBtn').disabled = false;
-  }
-
-  // Decomp: fills four slots according to `expected`. Slot 0 is
-  // pre-filled with q.a (the starting number), so kids actually
-  // only fill slots 1, 2, 3 — but we still grade all four so the
-  // feedback can flag if anyone monkey-patched slot 0 somehow.
-  // Drag-cancel: tapping a filled (non-pre-filled) slot pops the
-  // chip back to the pool.
-  function wireDecomp(q, expected) {
-    const slots = document.querySelectorAll('.pr-decomp .slot');
-    const slotVals = new Array(slots.length).fill(-1);
-    // Slot 0 starts already filled with q.a → mark it.
-    slotVals[0] = q.a;
-
-    function nextEmpty() {
-      // Skip slot 0 (pre-filled). Fill 1 → 2 → 3 left-to-right.
-      for (let i = 1; i < slotVals.length; i++) if (slotVals[i] === -1) return i;
-      return -1;
-    }
-
-    function fill(val, srcBtn) {
-      if (answered) return;
-      const i = nextEmpty();
-      if (i < 0) return;
-      slots[i].textContent = val;
-      slots[i].classList.add('filled');
-      slotVals[i] = val;
-      if (srcBtn) srcBtn.disabled = true;
-      if (nextEmpty() === -1) {
-        answered = true;
-        let allOk = true;
-        for (let k = 1; k < slotVals.length; k++) {
-          if (slotVals[k] !== expected[k]) {
-            slots[k].style.borderColor = '#ef4444';
-            slots[k].style.background  = '#fee2e2';
-            slots[k].style.color       = '#b91c1c';
-            allOk = false;
-          }
-        }
-        showFeedback(allOk, q);
-        $('nextBtn').disabled = false;
-      }
-    }
-
-    function unfill(i) {
-      if (answered) return;
-      if (i === 0) return;                 // pre-filled — locked
-      if (slotVals[i] === -1) return;
-      const v = slotVals[i];
-      slots[i].textContent = '?';
-      slots[i].classList.remove('filled');
-      slots[i].style.borderColor = '';
-      slots[i].style.background  = '';
-      slots[i].style.color       = '';
-      slotVals[i] = -1;
-      const chip = document.querySelector('.pr-chip[data-v="' + v + '"][disabled]');
-      if (chip) chip.disabled = false;
-    }
-
-    document.querySelectorAll('.pr-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        if (answered || btn.disabled) return;
-        fill(parseInt(btn.dataset.v, 10), btn);
-      });
-      btn.addEventListener('dragstart', e => e.dataTransfer.setData('text/plain', btn.dataset.v));
-    });
-    slots.forEach((slot, i) => {
-      if (i === 0) return;                 // pre-filled — no listeners
-      slot.addEventListener('dragover', e => e.preventDefault());
-      slot.addEventListener('drop', e => {
-        e.preventDefault();
-        if (answered) return;
-        const v = parseInt(e.dataTransfer.getData('text/plain'), 10);
-        if (!Number.isFinite(v)) return;
-        if (slotVals[i] !== -1) unfill(i);
-        const btn = document.querySelector('.pr-chip[data-v="' + v + '"]:not(:disabled)');
-        fill(v, btn);
-      });
-      slot.title = 'Tap to take it back';
-      slot.style.cursor = 'pointer';
-      slot.addEventListener('click', () => unfill(i));
-    });
   }
 
   // ---- Feedback + tally + stop prompt ----------------------------
@@ -485,6 +317,7 @@
       }
       levelWrong = 0;
     }
+    const prevLevel = level;
     let leveled = false;
     if (levelStreak >= 3 && level < 6) {
       level++;
@@ -493,15 +326,19 @@
       levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
       saveProgress();
     }
-    if (!leveled && levelTotal >= 5) {
-      if (levelCorrect >= 4 && level < 6) {
-        level++;
-        showLevelUpToast(level);
-      } else if (levelCorrect <= 1 && level > 1) {
-        level--;
-      }
+    if (!leveled && levelTotal >= LEVEL_CAP[level]) {
+      const { up, down } = adaptThresholds(level);
+      if (levelCorrect >= up   && level < 6) { level++; showLevelUpToast(level); }
+      else if (levelCorrect <= down && level > 1) { level--; }
       levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
       saveProgress();
+    }
+    // Fresh batch on every level visit — wipe both the level we
+    // just left AND the one we're entering so repeat problems
+    // don't bleed across visits.
+    if (level !== prevLevel) {
+      seen[prevLevel].clear();
+      seen[level].clear();
     }
     nextQuestion();
   }

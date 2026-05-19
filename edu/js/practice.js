@@ -44,6 +44,32 @@
   let currentQ = null;
   let answered = false;
 
+  // ---- Per-level question pool guards ----------------------------
+  // No-repeat-within-session: per-level Set of "a-b" keys we've
+  // already shown. Reset when the kid leaves a level so the next
+  // visit starts fresh. genUnique() retries the random generator
+  // until it lands on a key not in the Set (up to 50 attempts).
+  const seen = { 1: new Set(), 2: new Set(), 3: new Set(), 4: new Set(), 5: new Set(), 6: new Set() };
+  // Question-count cap per level. After this many questions in a
+  // level, the slow-path adaptive rule fires. Levels 3–6 are 4 per
+  // the new spec; levels 1–2 keep the original 5.
+  const LEVEL_CAP = { 1: 5, 2: 5, 3: 4, 4: 4, 5: 4, 6: 4 };
+  // Up/down thresholds derived from the cap: ≥75% → up, ≤25% → down.
+  function adaptThresholds(lv) {
+    const cap = LEVEL_CAP[lv];
+    return { up: cap === 5 ? 4 : 3, down: 1 };
+  }
+  function qKey(q) { return q.a + '-' + q.b; }
+  function genUnique(lv) {
+    for (let i = 0; i < 50; i++) {
+      const q = genQuestion(lv);
+      if (!seen[lv].has(qKey(q))) { seen[lv].add(qKey(q)); return q; }
+    }
+    // Pool exhausted — return whatever (rare; only if the kid lingers
+    // far past the per-level cap without leveling out).
+    return genQuestion(lv);
+  }
+
   // ---- Boot -------------------------------------------------------
   (async function init() {
     try {
@@ -71,16 +97,27 @@
       const b = rand(1, a);
       return { type: lv === 1 ? 'visual-ones' : 'mc-ones', a, b, answer: a - b };
     }
-    if (lv === 3 || lv === 4) {
-      // teen-style: e.g. 17 − 2. Ones must be subtractable without borrow.
+    if (lv === 3) {
+      // teen-style WITH visual: a ≤ 39 so the ten-frames stay at
+      // most 4 frames wide (and the picture fits the card). tens
+      // capped at 3 enforces that without extra checks.
+      const tens = rand(1, 3);
+      const ones = rand(1, 9);
+      const sub  = rand(1, ones);                 // no borrow
+      const a = tens * 10 + ones;
+      return { type: 'visual-teen', a, b: sub, answer: a - sub };
+    }
+    if (lv === 4) {
+      // teen-style NO visual — no a-cap needed.
       const tens = rand(1, 9);
       const ones = rand(1, 9);
-      const sub  = rand(1, ones);                 // can't exceed the ones
+      const sub  = rand(1, ones);
       const a = tens * 10 + ones;
-      return { type: lv === 3 ? 'visual-teen' : 'mc-teen', a, b: sub, answer: a - sub };
+      return { type: 'mc-teen', a, b: sub, answer: a - sub };
     }
     if (lv === 5 || lv === 6) {
-      // 2-digit − 2-digit, no borrow.
+      // 2-digit − 2-digit, no borrow. No ten-frame visual on these
+      // levels (L5 is the drag/chip decomp, L6 is MC) → no a-cap.
       const aT = rand(2, 9), aO = rand(1, 9);
       const bT = rand(1, aT - 1 < 0 ? 1 : aT);    // bT ≤ aT
       const bO = rand(0, aO);                     // bO ≤ aO
@@ -109,7 +146,7 @@
 
   // ---- Rendering -------------------------------------------------
   function nextQuestion() {
-    currentQ = genQuestion(level);
+    currentQ = genUnique(level);
     answered = false;
     paintCumulative();
     render();
@@ -402,29 +439,33 @@
       // Continue — reset wrong streak counter (but keep tallies)
       levelWrong = 0;
     }
+    const prevLevel = level;
     // FAST PATH — 3 correct in a row pops the kid up a stage
-    // immediately. Skip the slow every-5 rule for this turn so we
-    // don't double-bump.
+    // immediately. Skip the slow per-level cap rule for this turn
+    // so we don't double-bump.
     let leveled = false;
     if (levelStreak >= 3 && level < 6) {
       level++;
       showLevelUpToast(level);
       leveled = true;
-      // Reset all level tallies — the next stage starts fresh.
       levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
       saveProgress();
     }
-    // SLOW PATH — every 5 questions in a level, decide a step.
-    if (!leveled && levelTotal >= 5) {
-      if (levelCorrect >= 4 && level < 6) {
-        level++;
-        showLevelUpToast(level);
-      } else if (levelCorrect <= 1 && level > 1) {
-        level--;
-      }
-      // reset level tallies
+    // SLOW PATH — after LEVEL_CAP questions in a level, decide a
+    // step. Cap is 5 for L1–L2 and 4 for L3–L6 (per the new spec).
+    if (!leveled && levelTotal >= LEVEL_CAP[level]) {
+      const { up, down } = adaptThresholds(level);
+      if (levelCorrect >= up   && level < 6) { level++; showLevelUpToast(level); }
+      else if (levelCorrect <= down && level > 1) { level--; }
       levelCorrect = 0; levelTotal = 0; levelWrong = 0; levelStreak = 0;
       saveProgress();
+    }
+    // Whenever we LEAVE a level (up or down), wipe the seen-set
+    // for the previous AND the destination level so the kid gets
+    // a fresh, repeat-free batch on the next visit.
+    if (level !== prevLevel) {
+      seen[prevLevel].clear();
+      seen[level].clear();
     }
     nextQuestion();
   }
