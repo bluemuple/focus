@@ -91,8 +91,9 @@
   });
   $('inputDecTens').addEventListener('input', () => {
     clampDigits($('inputDecTens'));
-    const { y } = readEquation();
-    const expected = Math.floor(y / 10) * 10;
+    const { x, y } = readEquation();
+    const mode     = decompMode(x, y);
+    const expected = expectedDecomp(x, y, mode).tens;
     const typed    = parseInt($('inputDecTens').value, 10);
     highlightTens = Number.isFinite(typed) && typed === expected && expected > 0;
     applyAllColors();
@@ -103,8 +104,9 @@
   });
   $('inputDecOnes').addEventListener('input', () => {
     clampDigits($('inputDecOnes'));
-    const { y } = readEquation();
-    const expected = y % 10;
+    const { x, y } = readEquation();
+    const mode     = decompMode(x, y);
+    const expected = expectedDecomp(x, y, mode).ones;
     const typed    = parseInt($('inputDecOnes').value, 10);
     highlightOnes = Number.isFinite(typed) && typed === expected && expected > 0;
     applyAllColors();
@@ -124,10 +126,22 @@
       if (target === 'x') {
         colorX = !colorX;
       } else if (target === 'y') {
-        const { y } = readEquation();
+        const { x, y } = readEquation();
+        const mode = decompMode(x, y);
         const yOnes = y % 10;
-        const wantsTens = y >= 10;
-        const wantsOnes = (y < 10) || yOnes > 0;
+        // Which bands MAKE SENSE to light up for this equation?
+        //   sub-to-ten → both (make-10 chunk + remainder chunk)
+        //   tens-ones  → both (tens place + ones place of Y)
+        //   pure Y<10  → only ones (no tens to colour)
+        //   pure Y%10=0 → only tens
+        let wantsTens, wantsOnes;
+        if (mode === 'sub-to-ten') {
+          wantsTens = true;
+          wantsOnes = true;
+        } else {
+          wantsTens = y >= 10;
+          wantsOnes = (y < 10) || yOnes > 0;
+        }
         const allOn = (!wantsTens || highlightTens) && (!wantsOnes || highlightOnes);
         if (allOn) {
           highlightTens = false;
@@ -151,25 +165,24 @@
   // highlights, clearing turns them off.
   $('qBtn').addEventListener('click', () => {
     playClick();
-    const { y } = readEquation();
-    const yTens = Math.floor(y / 10);
-    const yOnes = y % 10;
-    if (y < 10) return;
+    const { x, y } = readEquation();
+    const mode = decompMode(x, y);
+    if (mode === 'none') return;
+    const exp = expectedDecomp(x, y, mode);
     // Are the boxes already showing the right values? If so, the
     // click is a "hide" toggle — wipe them. Compare against the
     // EXPECTED values so manual typing doesn't accidentally trigger
     // the hide branch (we only auto-clear what we'd auto-fill).
-    const tensExpected = yTens * 10;
     const tensCurrent  = parseInt($('inputDecTens').value, 10);
     const onesCurrent  = parseInt($('inputDecOnes').value, 10);
-    const tensFilled = (tensCurrent === tensExpected);
-    const onesFilled = (yOnes === 0) || (onesCurrent === yOnes);
+    const tensFilled = (tensCurrent === exp.tens);
+    const onesFilled = (exp.ones === 0) || (onesCurrent === exp.ones);
     if (tensFilled && onesFilled) {
       $('inputDecTens').value = '';
       $('inputDecOnes').value = '';
     } else {
-      $('inputDecTens').value = tensExpected;
-      if (yOnes > 0) $('inputDecOnes').value = yOnes;
+      $('inputDecTens').value = exp.tens;
+      if (exp.ones > 0) $('inputDecOnes').value = exp.ones;
     }
     // Dispatch input events so the existing live-typing handlers
     // re-run — they recompute highlight state from the new (or
@@ -202,20 +215,50 @@
     return { x, y, dogsX: x, dogsY: y };
   }
 
+  // Which decomposition pattern fits this equation?
+  //   'none'       no decomposition needed (Y < 10 with X_ones ≥ Y,
+  //                or Y is a pure multiple of 10).
+  //   'tens-ones'  the original "take the 10s, then the 1s" path —
+  //                Y ≥ 10 with non-zero ones. Boxes hold
+  //                [Y_tens × 10, Y_ones]. e.g. 35 − 13 → 10, 3
+  //   'sub-to-ten' the new "make-a-ten first" path from PDF page 3 —
+  //                Y < 10 AND X ≥ 10 AND X_ones < Y AND X_ones > 0.
+  //                Boxes hold [X_ones, Y − X_ones]. e.g. 26 − 8 →
+  //                26 − 6 − 2 = 18 (first strip X down to a ten,
+  //                then take what's left from the now-clean ten).
+  function decompMode(x, y) {
+    const yOnes = y % 10;
+    if (y >= 10 && yOnes > 0) return 'tens-ones';
+    const xOnes = x % 10;
+    if (y > 0 && y < 10 && x >= 10 && xOnes > 0 && xOnes < y) return 'sub-to-ten';
+    return 'none';
+  }
+  // Expected values for the two middle decomp boxes, given the mode.
+  function expectedDecomp(x, y, mode) {
+    if (mode === 'tens-ones') {
+      return { tens: Math.floor(y / 10) * 10, ones: y % 10 };
+    }
+    if (mode === 'sub-to-ten') {
+      const xOnes = x % 10;
+      return { tens: xOnes, ones: y - xOnes };
+    }
+    return { tens: 0, ones: 0 };
+  }
+
   // ---- Master update ---------------------------------------------
   function updateAll() {
     const { x, y } = readEquation();
-    const yOnes = y % 10;
+    const mode = decompMode(x, y);
 
-    // Decomp row visibility — Y ≥ 10 AND breaking it down is
-    // meaningful (yOnes > 0). Pure multiples of 10 (e.g. 50 − 30)
-    // get the simple equation; nothing to decompose.
-    const showDecomp = (y >= 10 && yOnes > 0);
+    // Decomp row visibility — show the three-box layout whenever a
+    // mental method (tens-ones OR sub-to-ten) applies. "Pure" cases
+    // (Y < 10 with X_ones ≥ Y, or Y a multiple of 10) skip the row.
+    const showDecomp = mode !== 'none';
     $('decompRow').hidden = !showDecomp;
     if (showDecomp) $('inputDecX').value = x;
 
-    // "?" bubble — only shown when there's a meaningful decomp.
-    $('qBtn').hidden = !(y >= 10);
+    // "?" bubble — visible whenever a decomposition fits.
+    $('qBtn').hidden = !showDecomp;
 
     renderFrames();
     applyAllColors();
@@ -488,6 +531,35 @@
     if (!yActive && !colorX) return;
 
     const { x, y } = readEquation();
+    const mode = decompMode(x, y);
+
+    // ---- sub-to-ten path -----------------------------------------
+    // 26 − 8 → first cross the rightmost X_ones dots (the "make-10"
+    // step), then the next (Y − X_ones) dots leftward of those.
+    // Both chunks live at the END of the dot list — that's the
+    // mental picture of subtracting backwards.
+    if (mode === 'sub-to-ten' && yActive) {
+      const xOnes = x % 10;
+      const remn  = y - xOnes;            // remainder after the make-10 step
+      // Red ("tens" colour) — the make-10 chunk at the very end.
+      if (highlightTens && xOnes > 0) {
+        for (let i = Math.max(0, all.length - xOnes); i < all.length; i++) {
+          all[i].classList.add('hl-tens');
+          if (all[i].parentElement) all[i].parentElement.classList.add('hl-tens');
+        }
+      }
+      // Green ("ones" colour) — the remainder, just before the
+      // make-10 chunk.
+      if (highlightOnes && remn > 0) {
+        const endIdx   = Math.max(0, all.length - xOnes);
+        const startIdx = Math.max(0, endIdx - remn);
+        for (let i = startIdx; i < endIdx; i++) {
+          all[i].classList.add('hl-ones');
+          if (all[i].parentElement) all[i].parentElement.classList.add('hl-ones');
+        }
+      }
+      return;
+    }
 
     // Pick the driving number + which colour bands to show.
     let value, srcTens, srcOnes, doTens, doOnes;
