@@ -1629,6 +1629,16 @@
   /* Drag handle + delete × on PC. */
   .focus-cell .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; cursor: pointer; }
   .focus-cell .task-row .drag-handle { cursor: grab; color: #9ca3af; padding: 0 2px; user-select: none; }
+  /* Clicking the quadrant title (h4) toggles the row action buttons
+     (✎ edit, × delete, ≡ drag handle). They're hidden by default so the
+     task name has the full row width — click the title to reveal/hide. */
+  .focus-cell > h4 { cursor: pointer; user-select: none; }
+  .focus-cell > h4:hover { opacity: .78; }
+  .focus-cell:not(.show-actions) .task-row .task-edit-pen,
+  .focus-cell:not(.show-actions) .task-row > .x,
+  .focus-cell:not(.show-actions) .task-row .drag-handle {
+    display: none !important;
+  }
   .focus-cell .add-task {
     /* Sits between the cell title and the first task. Slim margin so the
        cell doesn't grow vertically. */
@@ -3313,6 +3323,10 @@ const defaultState = () => ({
   // activeTimer represents the timer that is currently ticking.
   activeTimer: null,  // { type: 'pomodoro'|'muncher', q,idx | manaIdx, startedAt, ... }
   pomodoroSessionsInCycle: 0,  // 0..3 — increments after each work+short-break, resets to 0 after the long break (4 work sessions per cycle)
+  // Per-quadrant UI toggle — whether the ✎ / × / ≡ action buttons are
+  // currently revealed on the task rows. Click the cell title (h4) to flip.
+  // Local-only preference (not synced across devices).
+  focusActionsShown: { q1: false, q2: false, q3: false, q4: false },
   watchLog: [],
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
@@ -3496,6 +3510,12 @@ function migrateState() {
   if (state.sbUserId == null) state.sbUserId = 'me';
   if (state.settingsUpdatedAt == null) state.settingsUpdatedAt = 0;
   if (state.pomodoroSessionsInCycle == null) state.pomodoroSessionsInCycle = 0;
+  if (!state.focusActionsShown || typeof state.focusActionsShown !== 'object') {
+    state.focusActionsShown = { q1: false, q2: false, q3: false, q4: false };
+  }
+  ['q1','q2','q3','q4'].forEach(_q => {
+    if (typeof state.focusActionsShown[_q] !== 'boolean') state.focusActionsShown[_q] = false;
+  });
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (!Array.isArray(state.events))   state.events   = [];
   if (!Array.isArray(state.versions)) state.versions = [];
@@ -6125,6 +6145,21 @@ function renderFocusMatrix() {
     // The add-task button sits BETWEEN the title and the task list so the
     // creation entry point is always at the top of the cell.
     cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ add task</button><div class="tasks"></div>`;
+    // Per-quadrant action-buttons toggle. The cell carries .show-actions when
+    // the user has tapped this cell's title — that class reveals ✎ × ≡ on
+    // every task row inside this cell.
+    if (state.focusActionsShown && state.focusActionsShown[q]) {
+      cell.classList.add('show-actions');
+    }
+    const _h4 = cell.querySelector('h4');
+    if (_h4) {
+      _h4.addEventListener('click', () => {
+        if (!state.focusActionsShown) state.focusActionsShown = { q1:false, q2:false, q3:false, q4:false };
+        state.focusActionsShown[q] = !state.focusActionsShown[q];
+        cell.classList.toggle('show-actions', state.focusActionsShown[q]);
+        saveState();
+      });
+    }
     const tasksDiv = cell.querySelector('.tasks');
     state.tasks[q].forEach((t, i) => {
       // Empty (newly-created) tasks render an inline input bar instead of a
@@ -6270,7 +6305,11 @@ function renderFocusMatrix() {
         const display = document.createElement('span');
         display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
         display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
-        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s</span><span class="phase-name">· ${pomodoroPhaseLabel(at.phase)}${at.paused?' (paused)':''}</span>`;
+        // Just the time — the phase (work / break) is conveyed by the
+        // background color (.work / .short-break / .long-break classes on
+        // the pomodoro-display); the text was redundant and cost a line so
+        // tasks were wrapping to 2 lines.
+        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s${at.paused?' ⏸':''}</span>`;
         display.onclick = (e) => { e.stopPropagation(); togglePomodoroPause(); };
         // Insert ABOVE the bid pill so they stack vertically inside bidWrap.
         bidWrap.insertBefore(display, bidBtn);
@@ -6401,11 +6440,9 @@ function tickTaskTimers() {
       const totalSec = Math.max(0, Math.floor(remaining / 1000));
       const m = Math.floor(totalSec / 60), s = totalSec % 60;
       const timeEl = display.querySelector('.time');
-      if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s`;
+      if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s${at.paused?' ⏸':''}`;
       display.className = `pomodoro-display ${at.phase}${at.paused?' paused':''}`;
       display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
-      const phaseEl = display.querySelector('.phase-name');
-      if (phaseEl) phaseEl.textContent = '· ' + pomodoroPhaseLabel(at.phase) + (at.paused?' (paused)':'');
     }
   }
 }
