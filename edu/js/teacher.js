@@ -2581,14 +2581,16 @@
     // hide_features JSONB column the longer toggles above use.
     const NAV_TOGGLES = [
       // Maths bars + Reading
-      { key: 'hideReading',     label: 'Reading' },
-      { key: 'hideSubtraction', label: 'Subtraction' },
-      { key: 'hideFraction',    label: 'Fraction' },
+      { key: 'hideReading',        label: 'Reading' },
+      { key: 'hideSubtraction',    label: 'Subtraction' },
+      { key: 'hideFunTakingAway',  label: 'Fun Taking Away' },
+      { key: 'hideMinusBombs',     label: 'Minus Bombs' },
+      { key: 'hideFraction',       label: 'Fraction' },
       // Other app tiles
-      { key: 'hideMyPets',      label: 'My Pets' },
-      { key: 'hideTheSpace',    label: 'The Space' },
-      { key: 'hidePhonics',     label: 'Phonics' },
-      { key: 'hideAnimals',     label: 'Animals' },
+      { key: 'hideMyPets',         label: 'My Pets' },
+      { key: 'hideTheSpace',       label: 'The Space' },
+      { key: 'hidePhonics',        label: 'Phonics' },
+      { key: 'hideAnimals',        label: 'Animals' },
     ];
 
     // Per-level encounter probabilities. Start from whatever is saved

@@ -1,0 +1,2130 @@
+<!doctype html>
+<html lang="en-NZ">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Minus Bombs</title>
+  <style>
+  /* ==============================================================
+     A teaching page for the "subtract to ten" mental method:
+       13 − 9 = 13 − 3 − 6 = 10 − 6 = 4
+
+     Layout is centred. Top: equation editor (□ − □ = □) with ▲/▼
+     steppers. Below: a visualisation stage with two number-blocks
+     (X and Y) flanking a giant minus. Each digit is a 300×300 PNG
+     (./images/1-0/number_*.png) with a 2-wide column of 20px
+     grey squares underneath. The squares animate INCREMENTALLY
+     — only the diff between old and new value pops in / out, not
+     the whole grid.
+
+     When X_ones < Y_ones the kid can CLICK Y's digit image to
+     swing it open like a saloon door, revealing the X_ones (pink)
+     + (Y − X_ones) (blue) breakdown. The squares under Y recolour
+     so the pink shape matches X_ones' grid shape exactly. Then:
+       • Click any pink square → all pink fly up onto X_ones and
+         the whole pair explodes together (3 + 3 = 6 boxes gone).
+       • Click any blue square → ONE blue flies up, pairs with one
+         X_tens square, both explode. Repeats until all blues are
+         spent. X's display updates live as squares disappear.
+     ============================================================ */
+
+  :root {
+    --ink:       #1f2937;
+    --muted:    #6b7280;
+    --bg:       #fefcf6;
+    --pink:     #ec4899;
+    --blue:     #38bdf8;
+    --green:    #a3e635;     /* 연두색 — Y_tens preview colour */
+    --line:     #cbd5e1;
+    --paper:    #ffffff;
+
+    /* Scaled ~2× over the original sizing so the equation, digit
+       images, squares and explosions all read clearly from the
+       back of a classroom on a projected screen. Most CSS sizes
+       below derive from these custom properties, so the rest of
+       the layout follows automatically. */
+    --square:   60px;
+    --gap:      6px;
+    --digit-w:  184px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
+  }
+
+  /* Back to Ako home — same pattern as the other mental pages.
+     Sized 2× for classroom-screen visibility. */
+  .back-btn {
+    position: fixed; top: 28px; left: 28px; z-index: 1000;
+    display: inline-flex; align-items: center; gap: 12px;
+    padding: 16px 32px;
+    background: #fff; color: var(--ink);
+    border: 3px solid var(--line); border-radius: 999px;
+    font-size: 28px; font-weight: 700; text-decoration: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    transition: background .15s ease, transform .15s ease;
+  }
+  .back-btn:hover  { background: #f3f4f6; transform: translateY(-2px); }
+  .back-btn:active { transform: translateY(0); }
+
+  /* Stack of fixed bottom-left controls — generates, auto-fly
+     toggle, mute. The mute button kept its original visual; new
+     buttons match the back-btn pill language. */
+  .controls-stack {
+    position: fixed; bottom: 28px; left: 28px; z-index: 1000;
+    display: flex; flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+  .gen-btn, .toggle-btn {
+    display: inline-flex; align-items: center; justify-content: flex-start;
+    gap: 12px;
+    padding: 12px 18px;
+    background: #fff; color: var(--ink);
+    border: 3px solid var(--line); border-radius: 999px;
+    font-size: 22px; font-weight: 800; line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    transition: background .15s ease, transform .15s ease, border-color .15s ease;
+    text-align: left;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  }
+  .gen-btn:hover, .toggle-btn:hover { background: #f3f4f6; transform: translateY(-2px); }
+  .gen-btn:active, .toggle-btn:active { transform: translateY(0); }
+  .gen-key {
+    display: inline-grid; place-items: center;
+    width: 32px; height: 32px;
+    background: var(--ink); color: #fff;
+    border-radius: 8px;
+    font-size: 18px; font-weight: 900;
+    font-family: inherit;
+  }
+  .toggle-btn[aria-pressed="true"] {
+    background: #fde68a; border-color: #f59e0b; color: #78350f;
+  }
+
+  .mute-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 88px; height: 88px;
+    background: #fff; color: var(--ink);
+    border: 3px solid var(--line); border-radius: 50%;
+    font-size: 40px; cursor: pointer; padding: 0; line-height: 1;
+    box-shadow: 0 4px 16px rgba(0,0,0,.08);
+    transition: background .15s ease, transform .15s ease;
+    align-self: center;
+  }
+  .mute-btn:hover  { background: #f3f4f6; transform: translateY(-2px); }
+  .mute-btn:active { transform: translateY(0); }
+
+  .page {
+    /* Top padding kept small so the "Minus Bombs" heading sits on
+       roughly the same horizontal line as the fixed "← Ako home"
+       button (which lives at top: 28px). Bottom padding tightened
+       too so the whole layout shifts up. */
+    padding: 30px 48px 48px;
+    max-width: 2200px;
+    margin: 0 auto;
+    text-align: center;   /* centres the heading, equation row and stage */
+    transform-origin: top center;  /* autofit scales from the top */
+  }
+  h1 { margin: 0 0 24px; font-size: 44px; }
+
+  /* =====================  Top input row  ===================== */
+  /* Just "[X] − [Y]" with no ± buttons. ‹ › live below, next to
+     the digit images. When the split fires, a textual decomposition
+     ( "= 13 − 3 − 6" ) appends to the right of [Y]. */
+  .top-eq {
+    display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap;
+    gap: 28px;
+    margin-bottom: 64px;
+  }
+  .top-eq input[type="number"] {
+    width: 180px; height: 96px;
+    text-align: center;
+    font-size: 52px; font-weight: 800;
+    border: 5px solid var(--line); border-radius: 20px;
+    background: var(--paper); color: var(--ink);
+    appearance: textfield;
+    -moz-appearance: textfield;
+  }
+  .top-eq input[type="number"]::-webkit-outer-spin-button,
+  .top-eq input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none; margin: 0;
+  }
+  .top-eq input:focus {
+    outline: 0;
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 6px rgba(245,158,11,.25);
+  }
+  .top-eq .eq-op {
+    font-size: 64px; font-weight: 800; color: var(--muted);
+  }
+  /* Textual decomposition that sprouts to the right of the input
+     row once Y is split. Pink + blue match the squares/reveal. */
+  .decomp-text {
+    display: inline-flex; align-items: center; gap: 20px;
+    margin-left: 28px;
+    font-family: ui-rounded, system-ui, sans-serif;
+    font-weight: 900; font-size: 60px;
+    color: var(--ink);
+    line-height: 1;
+  }
+  .decomp-text[hidden] { display: none; }
+  .decomp-text .dec-op    { color: var(--muted); font-weight: 800; }
+  .decomp-text .dec-pink  { color: var(--pink); }
+  .decomp-text .dec-blue  { color: var(--blue); }
+  .decomp-text .dec-green { color: #4d7c0f; }   /* Y_tens portion */
+
+  /* =====================  Block + arrows row  ===================== */
+  /* The block-wrap now lays out horizontally: ‹  [block]  › . The
+     ‹ › buttons sit beside the digit images and stay vertically
+     aligned with the digit-image centre (margin-top nudges them
+     down past the top edge of the block). */
+  .block-wrap {
+    display: inline-flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .block-wrap .arrow {
+    margin-top: 60px;     /* ≈ centre of the 184px digit image */
+  }
+  /* Side arrows — click = ±1; keyboard ← / → on a focused input
+     does the same. */
+  .arrow {
+    background: #fff;
+    border: 3px solid var(--line); border-radius: 50%;
+    width: 64px; height: 64px;
+    cursor: pointer;
+    display: grid; place-items: center;
+    font-size: 40px; font-weight: 800; color: var(--muted);
+    transition: background .12s ease, color .12s ease, transform .08s ease;
+    padding: 0; line-height: 1;
+  }
+  .arrow:hover  { background: #f3f4f6; color: var(--ink); }
+  .arrow:active { transform: scale(.9); }
+
+  /* =====================  Visualization  ======================= */
+  /* The stage is also centred. Without Y, only the X block + the
+     answer-side empty space show. Once Y has a value the giant
+     minus + Y block reveal beside it. */
+  .viz-stage {
+    display: flex; align-items: flex-start; justify-content: center;
+    gap: 56px;
+    min-height: 720px;
+    padding-top: 16px;
+    overflow: visible;
+  }
+  .op-large {
+    font-size: 176px; font-weight: 900; line-height: .9; color: var(--ink);
+    align-self: flex-start;
+    margin-top: 16px;
+    visibility: hidden; opacity: 0;
+    transition: opacity .25s ease;
+  }
+  .viz-stage.has-y .op-large { visibility: visible; opacity: 1; }
+  .viz-stage:not(.has-y) .block-y { display: none; }
+
+  /* A "block" is one whole number (e.g. "13") — flex row of digit
+     wrappers (tens on the left, ones on the right). */
+  .block {
+    display: flex; gap: 16px;
+    align-items: flex-start;
+    position: relative;     /* fly-target anchors are computed off this */
+  }
+  .digit {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 28px;
+    position: relative;
+    transition: transform .55s cubic-bezier(.55,.1,.3,1);
+  }
+  /* When the tens digit enters mid-animation (9 → 10) it slides
+     in from the RIGHT of the "0" toward its natural place.
+     Distance scaled with the doubled digit width so the slide
+     still reads as "from behind the 0". */
+  .digit.slide-in-from-right {
+    animation: slide-in-right .55s cubic-bezier(.25,.8,.4,1) backwards;
+  }
+  @keyframes slide-in-right {
+    from { transform: translateX(220px); opacity: 0; }
+    to   { transform: translateX(0);     opacity: 1; }
+  }
+
+  .digit-img {
+    width: var(--digit-w); height: var(--digit-w);
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+    transition: opacity .25s ease;
+  }
+  /* Y's ones-digit image becomes a clickable invitation once the
+     borrow condition is met (visual hint: subtle glow + pointer). */
+  .digit.click-to-split .digit-img {
+    cursor: pointer;
+    animation: split-hint 1.6s ease-in-out infinite;
+  }
+  @keyframes split-hint {
+    0%, 100% { filter: none; }
+    50%      { filter: drop-shadow(0 0 8px rgba(236,72,153,.55))
+                       drop-shadow(0 0 16px rgba(56,189,248,.45)); }
+  }
+  /* Same affordance for the Y_tens digit — clicking it arms the
+     "subtract the 10s" phase. */
+  .digit.click-to-tens .digit-img {
+    cursor: pointer;
+    animation: tens-hint 1.6s ease-in-out infinite;
+  }
+  @keyframes tens-hint {
+    0%, 100% { filter: none; }
+    50%      { filter: drop-shadow(0 0 8px rgba(163,230,53,.7)); }
+  }
+
+  /* Squares column — single 2×N grid; we add/remove cells
+     individually so animations only run on the diff. */
+  /* Up to 2 ten-grids fit on ONE row (each 2 squares wide); when
+     the tens digit is 3+ the third group wraps to a second row.
+     For X = 33 the kid sees 20 boxes on top + 10 below — and the
+     whole page autofits if the new height overflows the screen. */
+  .squares-col {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 20px;
+    /* Cap at 2 ten-grids per row: 2 × (2 · square + gap) + flex-gap.
+       With square=60, gap=6 → 2 × 126 + 20 = 272. Allow a little
+       breathing room. */
+    max-width: calc(2 * (2 * var(--square) + var(--gap)) + 28px);
+  }
+  .ten-grid {
+    display: grid;
+    grid-template-columns: repeat(2, var(--square));
+    grid-auto-rows: var(--square);
+    gap: var(--gap);
+    justify-content: center;
+  }
+
+  .sq {
+    width: var(--square); height: var(--square);
+    background: #d4d4d8;
+    border: 3px solid #1f2937;
+    border-radius: 6px;
+    transition: background .3s ease, transform .25s ease, opacity .25s ease;
+    cursor: default;
+  }
+  /* Outline-ripple "pop in" — used for squares NEWLY added on the
+     current update. Existing squares keep their state untouched. */
+  .sq.entering {
+    animation: sq-pop .35s cubic-bezier(.2,1.3,.4,1) backwards;
+  }
+  @keyframes sq-pop {
+    0%   { transform: scale(.4); opacity: 0;
+           box-shadow: 0 0 0 0 rgba(31,41,55,.45); }
+    55%  { transform: scale(1.18); opacity: 1;
+           box-shadow: 0 0 0 8px rgba(31,41,55,0); }
+    100% { transform: scale(1);    opacity: 1;
+           box-shadow: 0 0 0 0 rgba(31,41,55,0); }
+  }
+  /* Inverse "pop out" — used when a square is removed by a digit
+     decrement. The transition handles colour separately. */
+  .sq.leaving {
+    animation: sq-out .28s ease forwards;
+  }
+  @keyframes sq-out {
+    to { transform: scale(0); opacity: 0; }
+  }
+  .sq.pink  { background: var(--pink);  border-color: #be185d; cursor: pointer; border-width: 3px; }
+  .sq.blue  { background: var(--blue);  border-color: #0284c7; cursor: pointer; border-width: 3px; }
+  .sq.green { background: var(--green); border-color: #4d7c0f; cursor: pointer; border-width: 3px; }
+  .sq.pink:hover, .sq.blue:hover { transform: scale(1.08); }
+
+  /* Bomb explosion — the square stays in place but fades while a
+     30×30 explosion GIF is laid on top of it. The GIF + square
+     disappear together when the animation ends, so the kid sees
+     "two boxes meet → BOOM → both vanish". */
+  .sq.exploding {
+    animation: sq-fade .6s ease forwards;
+    pointer-events: none;
+    position: relative;
+  }
+  @keyframes sq-fade {
+    0%   { opacity: 1; transform: scale(1); }
+    50%  { opacity: 1; transform: scale(1.05); }
+    100% { opacity: 0; transform: scale(0.4); }
+  }
+  /* Bomb burst — absolutely-positioned GIF the explosion handler
+     drops onto the screen at the explosion site. The GIF itself
+     animates once; we just fade it out as it finishes. The .big
+     variant covers the larger 92×92 digit footprint. */
+  .boom-gif {
+    position: fixed;
+    width: var(--square);
+    height: var(--square);
+    z-index: 510;
+    pointer-events: none;
+    object-fit: contain;
+    animation: boom-fade .6s ease forwards;
+  }
+  .boom-gif.big {
+    width: 180px;
+    height: 180px;
+    animation-duration: .75s;
+  }
+  @keyframes boom-fade {
+    0%   { opacity: 1; transform: scale(1); }
+    70%  { opacity: 1; transform: scale(1.15); }
+    100% { opacity: 0; transform: scale(0.8); }
+  }
+
+  /* Floating square that flies from Y to X during the explode
+     interaction — a clone of the original positioned absolute. */
+  .fly-sq {
+    position: fixed;
+    width: var(--square); height: var(--square);
+    border-radius: 3px;
+    border: 1.5px solid #1f2937;
+    z-index: 500;
+    pointer-events: none;
+    transition: transform .55s cubic-bezier(.55,.1,.3,1), opacity .25s ease;
+  }
+
+  /* ============  Split (3D door-open) mechanic  ================
+     Triggered by CLICK on Y's ones digit. The image is replaced
+     by two halves that swing outward TOP-down + BOTTOM-up (like
+     a cabinet door opening vertically); behind them the pink +
+     blue breakdown fades in — pink on top, blue on the bottom,
+     each half-height to match the half-image it replaces. */
+  .split {
+    position: relative;
+    width: var(--digit-w); height: var(--digit-w);
+    perspective: 900px;
+  }
+  .split-half {
+    position: absolute; left: 0;
+    width: 100%; height: calc(var(--digit-w) / 2);
+    backface-visibility: hidden;
+    transition: transform .85s cubic-bezier(.55,.1,.3,1);
+    transform-style: preserve-3d;
+    z-index: 2;
+    pointer-events: none;   /* clicks pass through to the reveals */
+  }
+  .split-half img { width: 100%; height: 100%; display: block; }
+  .split-half.top    { top: 0;    transform-origin: center top; }
+  .split-half.bottom { bottom: 0; transform-origin: center bottom; }
+  .split.open .split-half.top    { transform: rotateX( 110deg); }
+  .split.open .split-half.bottom { transform: rotateX(-110deg); }
+
+  .split-reveal {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    justify-content: space-between; align-items: stretch;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity .3s ease .45s;  /* fade in mid-rotation */
+    font-family: ui-rounded, system-ui, sans-serif;
+    font-weight: 900;
+    line-height: 1;
+  }
+  .split.open .split-reveal { opacity: 1; }
+  .split-reveal .reveal-num {
+    height: calc(var(--digit-w) / 2);
+    /* Font scales to roughly fill the half-image footprint so the
+       text size matches what was just there. */
+    font-size: calc(var(--digit-w) * 0.55);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;     /* clicking the number reverts the split */
+  }
+  .split-reveal .reveal-num.pink { color: var(--pink); }
+  .split-reveal .reveal-num.blue { color: var(--blue); }
+  /* Pulsing hint shown on a reveal-num that's waiting for its
+     digit-fly click (toggle mode, post-box explosion). */
+  .reveal-num.reveal-pending {
+    animation: reveal-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes reveal-pulse {
+    0%, 100% { text-shadow: none;             transform: scale(1); }
+    50%      { text-shadow: 0 0 24px currentColor; transform: scale(1.08); }
+  }
+  /* Same idea for the Y_tens digit waiting for its digit fly. */
+  .digit.digit-pending .digit-img {
+    cursor: pointer;
+    animation: tens-hint 1.4s ease-in-out infinite;
+  }
+
+  </style>
+</head>
+<body>
+  <a class="back-btn" href="../../edu/home.html">← Ako home</a>
+
+  <!-- Sound effects. `dropping.mp3` plays while at least one
+       fly-animation is in flight (boxes or digits sliding left);
+       loops in case the slide outlasts the clip, and is paused
+       the moment the last in-flight item lands. `bomb.mp3` is a
+       short impact played whenever a boom GIF is spawned — clones
+       per call so several explosions can overlap without cutting
+       each other off. -->
+  <audio id="sndDropping" src="./sounds/dropping.mp3" preload="auto" loop></audio>
+  <audio id="sndBomb"     src="./sounds/bomb.mp3"     preload="auto"></audio>
+
+  <!-- Bottom-left control stack — generate buttons, the "fly the
+       digit separately" toggle, and the mute toggle. Keyboard
+       shortcuts 1..4 map to the four generate buttons (only when
+       no input is focused, so number typing still works). -->
+  <div class="controls-stack" id="controlsStack">
+    <button class="gen-btn" data-gen="easy-nn-n"   type="button" title="Generate nn − n (no borrow)">
+      <span class="gen-key">1</span><span>Easy   nn − n</span>
+    </button>
+    <button class="gen-btn" data-gen="medium-nn-n" type="button" title="Generate nn − n (borrow, tens ≤ 4)">
+      <span class="gen-key">2</span><span>Medium nn − n</span>
+    </button>
+    <button class="gen-btn" data-gen="easy-nn-nn"  type="button" title="Generate nn − nn (no borrow, tens ≤ 4)">
+      <span class="gen-key">3</span><span>Easy   nn − nn</span>
+    </button>
+    <button class="gen-btn" data-gen="medium-nn-nn" type="button" title="Generate nn − nn (borrow, tens ≤ 4)">
+      <span class="gen-key">4</span><span>Medium nn − nn</span>
+    </button>
+    <button class="toggle-btn" id="separateToggle" type="button"
+            aria-pressed="false" title="Fly the digit separately (shortcut: 5)">
+      <span class="gen-key">5</span>
+      <span class="tg-on">🔗 Auto fly digit</span>
+    </button>
+    <button class="mute-btn" id="muteBtn" type="button" aria-label="Mute or unmute sound effects">🔊</button>
+  </div>
+
+  <div class="page">
+    <h1>Minus Bombs</h1>
+
+    <!-- =====================  Top input row  =====================
+         Plain "[X] − [Y]" editor. Typing updates the visualisation
+         beneath. When the kid clicks the Y digit image and the
+         split fires, a textual decomposition (e.g. "= 13 − 3 − 6")
+         appears to the right of the inputs — same row, not a
+         separate equation below. -->
+    <section class="top-eq">
+      <input id="numX" type="number" min="9" max="99" value="13" inputmode="numeric"
+             autocomplete="off">
+      <span class="eq-op">−</span>
+      <!-- Y allowed down to 1 for single-digit subtractors.
+           Defaults to 9 so the page opens on the canonical lesson
+           example (13 − 9). `autocomplete="off"` stops the browser
+           from re-populating the field with a previously-typed
+           value (which was showing "13 − 6" on fresh loads). -->
+      <input id="numY" type="number" min="1" max="99" value="9" inputmode="numeric"
+             autocomplete="off">
+      <div class="decomp-text" id="decompText" hidden aria-live="polite">
+        <span class="dec-op">=</span>
+        <span id="decompX"></span>
+        <span class="dec-op">−</span>
+        <span class="dec-pink" id="decompPink"></span>
+        <span class="dec-op">−</span>
+        <span class="dec-blue" id="decompBlue"></span>
+      </div>
+    </section>
+
+    <!-- =====================  Visualisation stage  =====================
+         Arrows now flank the digit-image area (NOT the input
+         fields). Clicking a digit focuses its top-row input so the
+         keyboard ← / → also drives the value. -->
+    <section class="viz-stage" id="stage">
+      <div class="block-wrap">
+        <button class="arrow arrow-left" data-target="x" aria-label="X − 1">‹</button>
+        <div class="block block-x" id="blockX"></div>
+        <button class="arrow arrow-right" data-target="x" aria-label="X + 1">›</button>
+      </div>
+      <div class="op-large op-main" id="opMinus">−</div>
+      <div class="block-wrap">
+        <button class="arrow arrow-left" data-target="y" aria-label="Y − 1">‹</button>
+        <div class="block block-y" id="blockY"></div>
+        <button class="arrow arrow-right" data-target="y" aria-label="Y + 1">›</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+  (() => {
+    // ----- DOM refs --------------------------------------------------
+    const $       = (id) => document.getElementById(id);
+    const numX    = $('numX');
+    const numY    = $('numY');
+    const stage   = $('stage');
+    const blockX  = $('blockX');
+    const blockY  = $('blockY');
+    const decompText   = $('decompText');
+    const decompXEl   = $('decompX');
+    const decompPinkEl = $('decompPink');
+    const decompBlueEl = $('decompBlue');
+    const sndDropping  = $('sndDropping');
+    const sndBomb      = $('sndBomb');
+    const muteBtn      = $('muteBtn');
+    const separateBtn  = $('separateToggle');
+
+    // ---- Sound -----------------------------------------------------
+    // The dropping clip loops while at least one fly-animation is
+    // running (we ref-count concurrent flights so a group of 6
+    // squares + 1 digit all sharing the same beat doesn't cut the
+    // loop short). The bomb clip is cloned per spawn so multiple
+    // overlapping explosions don't trim each other.
+    const MUTE_KEY = 'mb-muted';
+    let isMuted = false;
+    try { isMuted = localStorage.getItem(MUTE_KEY) === '1'; } catch {}
+    function applyMuteUi() {
+      muteBtn.textContent = isMuted ? '🔇' : '🔊';
+      muteBtn.setAttribute('aria-pressed', String(isMuted));
+      if (sndDropping) sndDropping.muted = isMuted;
+      if (sndBomb)     sndBomb.muted = isMuted;
+      if (isMuted) {
+        try { sndDropping.pause(); sndDropping.currentTime = 0; } catch {}
+      }
+    }
+    muteBtn.addEventListener('click', () => {
+      isMuted = !isMuted;
+      try { localStorage.setItem(MUTE_KEY, isMuted ? '1' : '0'); } catch {}
+      applyMuteUi();
+    });
+    applyMuteUi();
+
+    let flightCount = 0;
+    function flightStart() {
+      // Refcount so concurrent flies share ONE loop of the dropping
+      // sound (and stop it together when the last one lands).
+      if (flightCount === 0 && !isMuted && sndDropping) {
+        try {
+          sndDropping.currentTime = 0;
+          sndDropping.play().catch(() => {});
+        } catch {}
+      }
+      flightCount++;
+    }
+    function flightEnd() {
+      flightCount = Math.max(0, flightCount - 1);
+      if (flightCount === 0 && sndDropping) {
+        try { sndDropping.pause(); sndDropping.currentTime = 0; } catch {}
+      }
+    }
+    function playBomb() {
+      if (isMuted || !sndBomb) return;
+      try {
+        // Clone so several near-simultaneous booms don't truncate
+        // each other; the original element stays usable as the
+        // template for future plays.
+        const c = sndBomb.cloneNode();
+        c.muted = isMuted;
+        c.play().catch(() => {});
+        // GC the clone after the file's run-length elapses (the
+        // clip is short — 1.5 s is plenty even for long bombs).
+        setTimeout(() => { try { c.src = ''; } catch {} }, 1500);
+      } catch {}
+    }
+
+    // ----- Page state -----------------------------------------------
+    // The "displayed" X is what the kid currently sees — it diverges
+    // from the input value while the explosion choreography runs
+    // down (e.g. 13 → 10 → 9 → 8 → … → 4 as blue squares fly).
+    let xDisplay  = 0;
+    let yDisplay  = 0;
+    let splitOpen = false;   // has Y been clicked-to-split?
+    // Per-phase locks — once the kid has triggered the pink or
+    // blue group-explosion we ignore further taps on that colour
+    // (otherwise a quick double-tap would re-fire on the already
+    // shrinking clones). Reset when the equation changes.
+    let pinkPhaseDone = false;
+    let bluePhaseDone = false;
+    // Direct subtract — used when X_ones ≥ Y_ones (no borrow). Click
+    // on Y in this state sends Y's squares straight onto X's ones,
+    // no split intermediate. The lock keeps a double-tap from
+    // re-firing on the already-shrinking clones.
+    let directPhaseDone = false;
+    // Y-tens subtract — for multi-digit Y the kid clicks Y_tens
+    // (digit or square) to start the "subtract the 10s" phase.
+    // Independent of pink/blue; order doesn't matter.
+    let yTensPhaseDone = false;
+    // ---- "Armed" state — the first click on each phase doesn't
+    // fire the flight; instead it PREVIEWS by colouring the X-side
+    // target squares the same colour Y will use. A second click on
+    // the same colour actually launches the explosion. Stops the
+    // kid firing accidentally and lets them see the cause/effect
+    // pairing first.
+    let pinkArmed   = false;
+    let blueArmed   = false;
+    let yTensArmed  = false;
+    // Captured at arm-time so the explosion re-uses the exact same
+    // X-side squares the kid was previewing.
+    let pinkXTargets  = [];
+    let blueXTargets  = [];
+    let yTensXTargets = [];
+    // ---- "Digit pending" — when `digitSeparate` is ON the box
+    // phase finishes and waits for the kid to click the matching
+    // digit (or reveal-num) for the digit fly. Cleared when the
+    // digit phase fires.
+    let pinkDigitPending  = false;
+    let blueDigitPending  = false;
+    let yTensDigitPending = false;
+    // X-side fly targets captured at box-phase start, reused by
+    // the digit phase (which may fire much later in toggle mode).
+    let pinkXOnesCentre  = null;
+    let blueXTensCentre  = null;
+    let yTensXTensCentre = null;
+
+    // ----- Helpers ---------------------------------------------------
+    function parseInput(el) {
+      const raw = el.value.trim();
+      if (raw === '') return NaN;
+      const n = parseInt(raw, 10);
+      if (!Number.isFinite(n)) return NaN;
+      return Math.max(0, Math.min(99, n));
+    }
+    function clampToBounds(el, n) {
+      const min = parseInt(el.min, 10);
+      const max = parseInt(el.max, 10);
+      if (Number.isFinite(min) && n < min) n = min;
+      if (Number.isFinite(max) && n > max) n = max;
+      return n;
+    }
+
+    // Builds the decomp equation text from whatever state the
+    // lesson is currently in. Shown whenever EITHER the Y_ones
+    // split is open OR the Y_tens click has been armed.
+    //   • Y_tens armed only        → "= X − Y_tens − Y_ones"
+    //   • Y_ones split (no tens)   → "= X − pink − blue"
+    //   • Y_ones split (with tens) → "= X − Y_tens − pink − blue"
+    //   • neither                  → hidden
+    function updateDecompText() {
+      const x     = xDisplay, y = yDisplay;
+      const xOnes = x % 10;
+      const yOnes = y % 10;
+      const yTens = Math.floor(y / 10) * 10;
+      if (!splitOpen && !yTensArmed) {
+        decompText.hidden = true;
+        return;
+      }
+      let h = '<span class="dec-op">=</span>';
+      h    += '<span>' + x + '</span>';
+      if (yTens > 0) {
+        h += '<span class="dec-op">−</span>';
+        h += '<span class="dec-green">' + yTens + '</span>';
+      }
+      if (splitOpen) {
+        const pink = xOnes;
+        const blue = yOnes - xOnes;
+        h += '<span class="dec-op">−</span>';
+        h += '<span class="dec-pink">' + pink + '</span>';
+        h += '<span class="dec-op">−</span>';
+        h += '<span class="dec-blue">' + blue + '</span>';
+      } else if (yOnes > 0) {
+        h += '<span class="dec-op">−</span>';
+        h += '<span>' + yOnes + '</span>';
+      }
+      decompText.innerHTML = h;
+      decompText.hidden = false;
+    }
+
+    // Build a fresh digit wrapper (image + an empty squares column).
+    // Squares are populated separately by setDigitSquareCount, which
+    // diffs the new count against the existing children so existing
+    // squares stay put and only added / removed ones animate.
+    function makeDigitWrapper(digitValue, place) {
+      const wrap = document.createElement('div');
+      wrap.className = 'digit';
+      wrap.dataset.place = place;
+      // We always create the `<img>` element (even when the digit
+      // is 0) so the rest of the code can rely on its presence —
+      // setDigitImage just hides it and adds a CSS placeholder
+      // beside it when the value is 0.
+      const img = document.createElement('img');
+      img.className = 'digit-img';
+      img.draggable = false;
+      wrap.appendChild(img);
+      const col = document.createElement('div');
+      col.className = 'squares-col';
+      wrap.appendChild(col);
+      setDigitImage(wrap, digitValue);
+      return wrap;
+    }
+    // Sets the digit "face" by pointing the `<img>` at the matching
+    // PNG. number_0.png exists now, so 0 is handled with the same
+    // path as 1–9 — no more CSS-text placeholder.
+    function setDigitImage(digitEl, digitValue) {
+      const img = digitEl.querySelector('.digit-img');
+      if (!img) return;
+      img.style.display = '';
+      img.style.opacity = '';   // clear any leftover fade from explosions
+      const src = `./images/1-0/number_${digitValue}.png`;
+      // Only re-set src when it actually changed — avoids the image
+      // flicker on no-op renders.
+      if (img.src.indexOf('/number_' + digitValue + '.png') < 0) {
+        img.src = src;
+        img.alt = String(digitValue);
+      }
+    }
+
+    // Bring a digit's squares-column to a target square count.
+    //   place === 'tens' → target = digitValue × 10 (stacked in grids of 10)
+    //   place === 'ones' → target = digitValue
+    // The column actually holds one logical "ten-grid" per chunk
+    // of 10 + a remainder grid; we keep the data model simpler by
+    // using a SINGLE ten-grid per slot for ones, and N stacked
+    // ten-grids for tens. Diff logic:
+    //   add a square → append .sq with `entering` class
+    //   remove one  → mark last .sq with `leaving`, then drop it
+    function setOnesSquares(digitEl, count) {
+      const col = digitEl.querySelector('.squares-col');
+      let grid = col.querySelector('.ten-grid');
+      if (!grid) {
+        grid = document.createElement('div');
+        grid.className = 'ten-grid';
+        col.appendChild(grid);
+      }
+      diffSquareCount(grid, count);
+    }
+    function setTensSquares(digitEl, tensValue) {
+      const col = digitEl.querySelector('.squares-col');
+      const need = tensValue;                 // number of 10-grids needed
+      let grids = Array.from(col.querySelectorAll('.ten-grid'));
+      // Add grids if needed.
+      while (grids.length < need) {
+        const grid = document.createElement('div');
+        grid.className = 'ten-grid';
+        col.appendChild(grid);
+        // Fill each new tens grid with 10 squares (all entering).
+        for (let i = 0; i < 10; i++) {
+          const sq = document.createElement('div');
+          sq.className = 'sq entering';
+          sq.style.animationDelay = (i * 30) + 'ms';
+          grid.appendChild(sq);
+        }
+        grids.push(grid);
+      }
+      // Ensure each kept grid has its full 10 squares — a post-
+      // explosion grid might be sitting at 4, so a later "X grew
+      // again" edit needs to top it back up rather than leaving a
+      // half-full ten-frame.
+      for (let g = 0; g < need; g++) {
+        diffSquareCount(grids[g], 10);
+      }
+      // Remove extra trailing grids.
+      while (grids.length > need) {
+        const tail = grids.pop();
+        Array.from(tail.children).forEach((sq, i) => {
+          sq.classList.add('leaving');
+          sq.style.animationDelay = (i * 18) + 'ms';
+        });
+        setTimeout(() => tail.remove(), 320);
+      }
+    }
+    function diffSquareCount(grid, targetCount) {
+      const present = grid.children.length;
+      if (present === targetCount) return;
+      if (present < targetCount) {
+        for (let i = present; i < targetCount; i++) {
+          const sq = document.createElement('div');
+          sq.className = 'sq entering';
+          sq.style.animationDelay = ((i - present) * 35) + 'ms';
+          grid.appendChild(sq);
+        }
+      } else {
+        for (let i = present - 1; i >= targetCount; i--) {
+          const sq = grid.children[i];
+          sq.classList.add('leaving');
+          sq.style.animationDelay = ((present - 1 - i) * 18) + 'ms';
+          // Detach after the pop-out finishes so it doesn't count
+          // toward grid.children for subsequent diff calls.
+          setTimeout(() => sq.remove(), 280);
+        }
+      }
+    }
+
+    // ----- Block rendering with incremental updates -----------------
+    // Build / update a block so its visible digits + square counts
+    // match `newValue`. Adds or removes digit slots as needed; never
+    // wipes existing squares that should stay (so only the diff
+    // animates).
+    // Count squares in a slot that haven't been marked leaving or
+    // exploding — i.e. those that are still visually "present".
+    function survivingSquaresIn(slotEl) {
+      if (!slotEl) return 0;
+      return slotEl.querySelectorAll(
+        '.sq:not(.leaving):not(.exploding)'
+      ).length;
+    }
+
+    function updateBlock(container, oldValue, newValue, opts) {
+      opts = opts || {};
+      if (!Number.isFinite(newValue) || newValue < 0) {
+        // Clear out — kid emptied the input.
+        container.innerHTML = '';
+        return;
+      }
+      const newTens = Math.floor(newValue / 10);
+      const newOnes = newValue % 10;
+      const tensVisible = newTens > 0;
+      // Show the ones slot whenever any digit is non-zero. For
+      // values like 10/20/30 this paints the "0" placeholder beside
+      // the tens digit so the kid reads the full number; for plain
+      // single-digit values (1–9) the tens slot stays hidden and
+      // only the ones digit shows.
+      const onesVisible = newOnes > 0 || newTens > 0;
+
+      // ----- POST-EXPLOSION SPECIAL CASE -----
+      // After a blue-explosion the X-tens slot keeps its surviving
+      // squares while the kid expects the IMAGE above them to update
+      // to match the new count (e.g. 13 − 9: 6 of the 10 tens
+      // squares exploded; the 4 survivors should stay put under a
+      // freshly-labelled "4" image, not get destroyed and re-built
+      // as an ones slot). We detect this by looking at the existing
+      // DOM: if the tens slot still has squares AND the new value
+      // is < 10 AND the surviving square count matches the new
+      // value, we just relabel + tear down any obsolete ones slot.
+      const existingTens = container.querySelector('.digit[data-place="tens"]');
+      const tensSurvivors = survivingSquaresIn(existingTens);
+      if (newValue < 10 && newValue > 0 && existingTens && tensSurvivors === newValue) {
+        setDigitImage(existingTens, newValue);
+        const obsoleteOnes = container.querySelector('.digit[data-place="ones"]');
+        if (obsoleteOnes) {
+          // ones slot might be empty — yank it without animation.
+          obsoleteOnes.remove();
+        }
+        return;
+      }
+
+      // ----- TENS slot -----
+      let tensEl = container.querySelector('.digit[data-place="tens"]');
+      if (tensVisible) {
+        if (!tensEl) {
+          tensEl = makeDigitWrapper(newTens, 'tens');
+          // 9 → 10: tens slot enters from the right of the ones
+          // slot for the user's described slide-in animation.
+          if (oldValue === 9 && newValue === 10) {
+            tensEl.classList.add('slide-in-from-right');
+          }
+          container.insertBefore(tensEl, container.firstChild);
+        } else {
+          setDigitImage(tensEl, newTens);
+        }
+        setTensSquares(tensEl, newTens);
+      } else if (tensEl) {
+        // Tens dropped to 0 — fade the whole slot out.
+        Array.from(tensEl.querySelectorAll('.sq')).forEach((sq, i) => {
+          sq.classList.add('leaving');
+          sq.style.animationDelay = (i * 15) + 'ms';
+        });
+        const dyingTens = tensEl;
+        setTimeout(() => { try { dyingTens.remove(); } catch {} }, 360);
+      }
+
+      // ----- ONES slot -----
+      let onesEl = container.querySelector('.digit[data-place="ones"]');
+      if (onesVisible) {
+        if (!onesEl) {
+          onesEl = makeDigitWrapper(newOnes, 'ones');
+          container.appendChild(onesEl);
+        } else {
+          setDigitImage(onesEl, newOnes);
+        }
+        setOnesSquares(onesEl, newOnes);
+      } else if (onesEl) {
+        Array.from(onesEl.querySelectorAll('.sq')).forEach((sq, i) => {
+          sq.classList.add('leaving');
+          sq.style.animationDelay = (i * 15) + 'ms';
+        });
+        const dyingOnes = onesEl;
+        setTimeout(() => { try { dyingOnes.remove(); } catch {} }, 360);
+      }
+    }
+
+    // ----- The "split" overlay (now click-triggered) ----------------
+    // After Y's ones-digit image is clicked AND the borrow condition
+    // holds, we swap the image for the split-doors overlay and
+    // recolour the Y squares so the PINK shape matches X's ones grid
+    // exactly. e.g. X = 3 (shape PP / P) → first 3 indices of Y's
+    // grid become pink, rest blue.
+    function openSplit() {
+      if (splitOpen) return;
+      const x = xDisplay, y = yDisplay;
+      const xOnes = x % 10;
+      const yOnes = y % 10;
+      const yTens = Math.floor(y / 10) * 10;
+      // Eligibility now keys on Y_ONES, not Y as a whole — multi-
+      // digit Y (e.g. 15) can split when its ones digit > X_ones.
+      if (yOnes === 0) return;
+      if (xOnes === 0 || xOnes >= yOnes) return;
+      // Need enough X left to actually subtract Y_ONES (pink + blue
+      // together consume yOnes from X). The Y_tens portion is a
+      // separate phase — that's why we don't gate on full `y`.
+      if (x < yOnes) return;
+      const pink = xOnes;
+      const blue = yOnes - xOnes;        // splits the Y_ONES digit only
+
+      // Decomp text is rebuilt by `updateDecompText()` based on the
+      // CURRENT split + Y_tens-armed state — that lets a Y_tens-only
+      // click show "= 23 − 10 − 9" while a split shows the fuller
+      // "= 23 − 10 − 3 − 6".
+      updateDecompText();
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      if (!yDigit) return;
+      const oldImg = yDigit.querySelector('.digit-img');
+      if (!oldImg) return;
+
+      // Vertical split — top half swings UP, bottom half swings DOWN.
+      // The pink number sits behind the TOP half; the blue number
+      // behind the BOTTOM half. The image is always the Y_ONES
+      // digit (e.g. 23 − 15 → "5" splits, not "15"), so we use
+      // `yOnes` for the file lookup.
+      const split = document.createElement('div');
+      split.className = 'split';
+      split.innerHTML =
+        '<div class="split-half top"><img src="./images/top-bottom/number_' +
+          yOnes + '_top.png" alt=""></div>' +
+        '<div class="split-half bottom"><img src="./images/top-bottom/number_' +
+          yOnes + '_bottom.png" alt=""></div>' +
+        '<div class="split-reveal">' +
+          '<div class="reveal-num pink">' + pink + '</div>' +
+          '<div class="reveal-num blue">' + blue + '</div>' +
+        '</div>';
+      oldImg.replaceWith(split);
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => split.classList.add('open'));
+      });
+
+      // Recolour squares — the PINK shape mirrors X's ones grid
+      // exactly. For X = 3 the X grid has cells at row-major indices
+      // 0, 1, 2; we colour Y's grid cells 0..pink-1 pink and the
+      // rest blue. That gives the kid the visual "this pink shape
+      // matches X's ones shape" mental model from the worksheet.
+      const grid = yDigit.querySelector('.ten-grid');
+      if (!grid) return;
+      Array.from(grid.children).forEach((sq, i) => {
+        sq.classList.remove('pink', 'blue');
+        sq.classList.add(i < pink ? 'pink' : 'blue');
+        // Square is now interactive — wire the two-step handler
+        // (first click arms, second click fires). NOT `once: true`
+        // any more, because the same square may be clicked twice.
+        sq.addEventListener('click', onColouredSquareClick);
+      });
+      // Wire the reveal-num text. Behaviour depends on phase state:
+      //   • If a matching DIGIT-pending flag is set (toggle mode,
+      //     post-box-explosion) → fire that colour's digit phase.
+      //   • Else if either side has ALREADY fired (pink or blue
+      //     phase done) → ignore. The lesson is mid-flight and a
+      //     close would yank the blue reveal off-screen, which was
+      //     the "pink slides → blue disappears" bug.
+      //   • Otherwise → close the split (revert to the original
+      //     Y digit image).
+      split.querySelectorAll('.reveal-num').forEach(rev => {
+        rev.addEventListener('click', () => {
+          const isPink = rev.classList.contains('pink');
+          const isBlue = rev.classList.contains('blue');
+          if (isPink && pinkDigitPending) {
+            pinkDigitPending = false;
+            runPinkDigitPhase();
+            return;
+          }
+          if (isBlue && blueDigitPending) {
+            blueDigitPending = false;
+            // The blueCount needs to match what was captured at box
+            // phase. Derive from blueXTargets (which were sized to
+            // the live blue count by armBlue).
+            runBlueDigitPhase((blueXTargets && blueXTargets.length) || 0);
+            return;
+          }
+          // Block close once any phase is in motion — otherwise the
+          // (now invisible) pink reveal still catches stray clicks
+          // and pulls the whole split down with it.
+          if (pinkPhaseDone || bluePhaseDone || yTensPhaseDone) return;
+          closeSplit();
+        });
+      });
+      splitOpen = true;
+      yDigit.classList.remove('click-to-split');
+    }
+
+    function onYTensSquareClick() {
+      // Toggle-mode "click digit to fly" branch MUST be checked
+      // first. `yTensPhaseDone` was flipped to true when the
+      // boxes fired (so the box phase can't re-arm) — the old
+      // early-return on that flag swallowed the digit-fly click
+      // before it ever reached this branch.
+      if (yTensDigitPending) {
+        yTensDigitPending = false;
+        // The drop equals the original Y_tens square count, which
+        // we recover from the live Y_tens digit value. yDisplay may
+        // have changed but the actual squares were destroyed; the
+        // tens digit value is the canonical source.
+        const drop = Math.floor(yDisplay / 10) * 10;
+        runYTensDigitPhase(drop);
+        return;
+      }
+      if (yTensPhaseDone) return;
+      if (!yTensArmed) { armYTens(); return; }
+      yTensPhaseDone = true;
+      explodeYTens();
+    }
+
+    // Reverse-animate the split: doors swing back closed (CSS
+    // transition on `transform` plays in reverse when `.open` is
+    // removed), reveals fade out (their opacity transition mirrors
+    // automatically), then restore Y to its original digit image
+    // and reset all phase state so the kid can replay if they want.
+    function closeSplit() {
+      if (!splitOpen) return;
+      const split = blockY.querySelector('.split');
+      if (!split) return;
+      // Guard against double-fire — the reveal handler might be
+      // tapped twice while the animation is in flight.
+      if (split._closing) return;
+      split._closing = true;
+
+      // Trigger the reverse — CSS handles the actual animation.
+      split.classList.remove('open');
+
+      // Wait for the rotate animation to finish (~850ms), then
+      // swap the .split overlay back to a fresh <img>.
+      setTimeout(() => restoreYAfterClose(), 880);
+    }
+
+    function restoreYAfterClose() {
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      const split  = blockY.querySelector('.split');
+      if (!yDigit) return;
+
+      if (split) {
+        // Re-create the original Y ones-digit-img so subsequent
+        // typing / arrow clicks work via the normal setDigitImage
+        // path. For multi-digit Y (e.g. 15) we restore the ONES
+        // digit only — the tens slot was never touched.
+        const yOnes = yDisplay % 10;
+        const img = document.createElement('img');
+        img.className = 'digit-img';
+        img.src = './images/1-0/number_' + yOnes + '.png';
+        img.alt = String(yOnes);
+        img.draggable = false;
+        split.replaceWith(img);
+      }
+
+      // Reset squares to neutral grey + drop the once-true click
+      // handlers so a future re-open doesn't double-wire them.
+      const grid = yDigit.querySelector('.ten-grid');
+      if (grid) {
+        Array.from(grid.children).forEach(sq => {
+          sq.classList.remove('pink', 'blue');
+          sq.removeEventListener('click', onColouredSquareClick);
+        });
+      }
+      // Same for the Y_tens squares (if any) — drop the cursor
+      // hint + the once-true subtract-tens handlers.
+      const yTensDigit = blockY.querySelector('.digit[data-place="tens"]');
+      if (yTensDigit) {
+        yTensDigit.querySelectorAll('.sq').forEach(sq => {
+          sq.style.cursor = '';
+          sq.removeEventListener('click', onYTensSquareClick);
+        });
+      }
+
+      // Reset phase state — the lesson can be replayed from here.
+      splitOpen = false;
+      pinkPhaseDone = false;
+      bluePhaseDone = false;
+      yTensPhaseDone = false;
+      pinkArmed = false;
+      blueArmed = false;
+      yTensArmed = false;
+      pinkXTargets = [];
+      blueXTargets = [];
+      yTensXTargets = [];
+      pinkDigitPending = blueDigitPending = yTensDigitPending = false;
+      pinkXOnesCentre = blueXTensCentre = yTensXTensCentre = null;
+      decompText.hidden = true;
+
+      // Re-paint the click affordance so the kid sees Y is tappable
+      // again (if the borrow condition still holds).
+      refreshYClickAffordance();
+    }
+
+    // ----- Click-to-explode handlers --------------------------------
+    // Click any pink → ALL pink fly to X's ones position; together
+    //                  with the X-ones squares they explode (3+3=6).
+    // Click any blue → ONE blue flies to X's tens position; lands
+    //                  on a tens square; both explode. Repeats per
+    //                  click until the kid has exhausted the blues.
+    // Click flow on pink / blue Y squares:
+    //   1st click → ARM (preview)
+    //   2nd click → fire the BOX phase
+    // If the "fly digit separately" toggle is OFF (default), the
+    // box phase also auto-runs the DIGIT phase right after. If
+    // ON, the box phase stops after boxes explode and waits for a
+    // click on the matching reveal-num (handled in onPinkRevealClick
+    // / onBlueRevealClick) to fire the digit fly.
+    function onColouredSquareClick(e) {
+      const sq = e.currentTarget;
+      if (sq.classList.contains('pink')) {
+        if (pinkPhaseDone) return;
+        if (!pinkArmed) { armPink(); return; }
+        pinkPhaseDone = true;
+        explodePink();
+      } else if (sq.classList.contains('blue')) {
+        if (bluePhaseDone) return;
+        if (!blueArmed) { armBlue(); return; }
+        bluePhaseDone = true;
+        explodeBlue();
+      }
+    }
+
+    // ----- Arm helpers — paint the X-side targets the same
+    // colour as the Y-side group that will hit them. Captured
+    // target arrays are reused by the explode functions so the
+    // arming-preview and firing-target stay in sync.
+    function armPink() {
+      if (pinkArmed || pinkPhaseDone) return;
+      pinkArmed = true;
+      const xOnesDigit = blockX.querySelector('.digit[data-place="ones"]');
+      if (xOnesDigit) {
+        const grid = xOnesDigit.querySelector('.ten-grid');
+        if (grid) {
+          pinkXTargets = Array.from(grid.children)
+                              .filter(s => !s.classList.contains('exploding'));
+          pinkXTargets.forEach(sq => sq.classList.add('pink'));
+        }
+      }
+      updateDecompText();
+    }
+    function armBlue() {
+      if (blueArmed || bluePhaseDone) return;
+      blueArmed = true;
+      // SOURCE OF TRUTH = the live count of blue squares currently
+      // sitting under Y's ones digit.
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      const yGrid  = yDigit && yDigit.querySelector('.ten-grid');
+      const blues  = yGrid ? Array.from(yGrid.querySelectorAll('.sq.blue'))
+                                  .filter(s => !s.classList.contains('exploding'))
+                           : [];
+      const blueCount = blues.length;
+      if (blueCount <= 0) return;
+      let host = blockX.querySelector('.digit[data-place="tens"]');
+      if (!host || !host.querySelector('.sq')) {
+        host = blockX.querySelector('.digit[data-place="ones"]');
+      }
+      if (!host) return;
+      // Bottom-up ordering — walk the X-tens groups from the
+      // BOTTOM-most group first, and inside each group walk row by
+      // row from the bottom row up (still left → right within a
+      // row). So the first blue paints the bottom-left corner,
+      // the next paints the bottom-right, the next moves one row
+      // up, and so on. Matches the user's "가장 왼쪽 + 가장 아래
+      // 부터" rule and reads as "the kid is taking boxes away
+      // from the bottom of the stack".
+      const groups  = Array.from(host.querySelectorAll('.ten-grid')).reverse();
+      const ordered = [];
+      for (const grp of groups) {
+        const all = Array.from(grp.querySelectorAll('.sq'))
+                         .filter(s => !s.classList.contains('exploding'));
+        const rows = Math.ceil(all.length / 2);
+        for (let r = rows - 1; r >= 0; r--) {
+          const left  = all[r * 2];
+          const right = all[r * 2 + 1];
+          if (left)  ordered.push(left);
+          if (right) ordered.push(right);
+        }
+      }
+      blueXTargets = ordered.slice(0, blueCount);
+      blueXTargets.forEach(sq => sq.classList.add('blue'));
+      updateDecompText();
+    }
+    function armYTens() {
+      if (yTensArmed || yTensPhaseDone) return;
+      yTensArmed = true;
+      const yTensDigit = blockY.querySelector('.digit[data-place="tens"]');
+      if (!yTensDigit) return;
+      // Paint every Y_tens square green.
+      const yTensSquares = Array.from(yTensDigit.querySelectorAll('.sq'))
+                                .filter(s => !s.classList.contains('exploding'));
+      yTensSquares.forEach(sq => sq.classList.add('green'));
+      // Pick the matching count of X-tens targets (last group first,
+      // walking backwards through groups — same order as explodeYTens).
+      const xTensDigit = blockX.querySelector('.digit[data-place="tens"]');
+      yTensXTargets = [];
+      if (xTensDigit) {
+        const groups = Array.from(xTensDigit.querySelectorAll('.ten-grid')).reverse();
+        for (const grp of groups) {
+          const sqs = Array.from(grp.querySelectorAll('.sq'))
+                           .filter(s => !s.classList.contains('exploding'));
+          for (const sq of sqs) {
+            yTensXTargets.push(sq);
+            if (yTensXTargets.length >= yTensSquares.length) break;
+          }
+          if (yTensXTargets.length >= yTensSquares.length) break;
+        }
+        yTensXTargets.forEach(sq => sq.classList.add('green'));
+      }
+      updateDecompText();
+    }
+
+    // Drop a one-shot explosion GIF over `sq`'s viewport position.
+    // Re-loads the gif each call (via a cache-bust suffix) so its
+    // single animation cycle restarts cleanly even when several
+    // explosions fire at once. `big === true` swaps in the 90×90
+    // variant used for digit-sized booms; default is 30×30 (square).
+    function spawnBoom(sq, big) {
+      const r = sq.getBoundingClientRect();
+      const img = document.createElement('img');
+      img.className = 'boom-gif' + (big ? ' big' : '');
+      img.src = './images/explosion.gif?t=' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
+      img.alt = '';
+      // Scaled 2× along with the rest of the page — the small box-
+      // sized boom matches `--square` (60px); the big digit-sized
+      // boom matches `.boom-gif.big` (180px).
+      const size = big ? 180 : 60;
+      img.style.left = (r.left + r.width  / 2 - size / 2) + 'px';
+      img.style.top  = (r.top  + r.height / 2 - size / 2) + 'px';
+      document.body.appendChild(img);
+      // Sync sound effect with the visual explosion.
+      playBomb();
+      setTimeout(() => img.remove(), big ? 760 : 620);
+    }
+
+    // Clone a digit element (a `.digit-img` or `.reveal-num`),
+    // pin the clone fixed at the source's current viewport rect,
+    // hide the original, then translate the clone over to (tx,ty).
+    // Resolves with the clone DOM node so the caller can fade /
+    // explode it. Used to animate Y's digit halves flying onto
+    // X's matching place.
+    async function flyDigitTo(srcEl, tx, ty) {
+      const r = srcEl.getBoundingClientRect();
+      const clone = srcEl.cloneNode(true);
+      // Wipe inherited inline positioning (the original's absolute
+      // placement inside .split-reveal doesn't apply on body).
+      clone.style.cssText = '';
+      Object.assign(clone.style, {
+        position:       'fixed',
+        left:           r.left + 'px',
+        top:            r.top  + 'px',
+        width:          r.width  + 'px',
+        height:         r.height + 'px',
+        margin:         '0',
+        zIndex:         '500',
+        pointerEvents:  'none',
+        transition:     'transform .6s cubic-bezier(.55,.1,.3,1), opacity .35s ease',
+        transformOrigin: 'center',
+        display:        'flex',
+        alignItems:     'center',
+        justifyContent: 'center',
+        lineHeight:     '1',
+      });
+      // .reveal-num divs need the font carried over manually —
+      // the `.split-reveal .reveal-num` rule no longer matches once
+      // the clone is mounted on body, outside any .split parent.
+      // Font-size matches the new half-image footprint (≈ 55% of
+      // the full digit width).
+      if (srcEl.classList && srcEl.classList.contains('reveal-num')) {
+        clone.style.fontFamily = 'ui-rounded, system-ui, sans-serif';
+        clone.style.fontWeight = '900';
+        clone.style.fontSize   = 'calc(var(--digit-w) * 0.55)';
+      }
+      document.body.appendChild(clone);
+      srcEl.style.opacity = '0';
+
+      flightStart();
+      await new Promise(res => requestAnimationFrame(res));
+      const dx = tx - (r.left + r.width  / 2);
+      const dy = ty - (r.top  + r.height / 2);
+      clone.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      await new Promise(res => setTimeout(res, 640));
+      flightEnd();
+      return clone;
+    }
+
+    // Boom + fade for a flying digit clone. Spawns the 90×90 big
+    // GIF over the target, fades the clone, then removes it.
+    async function explodeDigit(clone, tx, ty) {
+      const fake = { getBoundingClientRect: () => ({
+        left: tx - 45, top: ty - 45, width: 90, height: 90,
+      })};
+      spawnBoom(fake, true);
+      clone.style.opacity = '0';
+      await new Promise(res => setTimeout(res, 500));
+      try { clone.remove(); } catch {}
+    }
+    // Snap a digit element's centre point in viewport coords.
+    // Captured pre-flight so the fly-target survives any DOM
+    // reflow that updateBlock might trigger in between.
+    function centerOf(el) {
+      if (!el) return { x: 0, y: 0 };
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+
+    // Animate a clone of `sq` flying from its current viewport
+    // position to `targetEl`'s centre, then resolve.
+    function flyTo(sq, targetEl) {
+      return new Promise(resolve => {
+        const fromR = sq.getBoundingClientRect();
+        const toR   = targetEl.getBoundingClientRect();
+        const fly = document.createElement('div');
+        fly.className = 'fly-sq';
+        // Match the source's colour + border via inline styles
+        // (cheaper than recomputing class state).
+        const cs = getComputedStyle(sq);
+        fly.style.background = cs.backgroundColor;
+        fly.style.borderColor = cs.borderColor;
+        fly.style.left = fromR.left + 'px';
+        fly.style.top  = fromR.top  + 'px';
+        document.body.appendChild(fly);
+        sq.style.opacity = '0';   // hide source while clone flies
+        const dx = (toR.left + toR.width  / 2) - (fromR.left + fromR.width  / 2);
+        const dy = (toR.top  + toR.height / 2) - (fromR.top  + fromR.height / 2);
+        flightStart();
+        requestAnimationFrame(() => {
+          fly.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+        });
+        setTimeout(() => {
+          fly.remove();
+          flightEnd();
+          resolve();
+        }, 560);
+      });
+    }
+
+    async function explodePink() {
+      const yDigit     = blockY.querySelector('.digit[data-place="ones"]');
+      const xOnesDigit = blockX.querySelector('.digit[data-place="ones"]');
+      if (!yDigit || !xOnesDigit) return;
+      const yGrid = yDigit.querySelector('.ten-grid');
+      const xGrid = xOnesDigit.querySelector('.ten-grid');
+      if (!yGrid || !xGrid) return;
+      const pinks = Array.from(yGrid.querySelectorAll('.sq.pink'));
+      // Prefer the targets the kid was previewing during the arm
+      // step; fall back to "every X-ones square" if for some
+      // reason the arm capture was empty.
+      const xOnes = (pinkXTargets && pinkXTargets.length)
+        ? pinkXTargets
+        : Array.from(xGrid.children);
+      if (!pinks.length) return;
+
+      // Capture the X-ones digit-image centre BEFORE we change
+      // anything — that's the landing zone for the pink reveal-num
+      // fly-step. Stored on a module-level slot so the digit phase
+      // can find it later (it may fire seconds after, in toggle
+      // mode).
+      pinkXOnesCentre = centerOf(xOnesDigit.querySelector('.digit-img'));
+
+      // ----- Phase 1: pink squares fly to X-ones squares + boom.
+      await Promise.all(pinks.map((sq, i) => {
+        const tgt = xOnes[i] || xOnes[xOnes.length - 1] || xGrid;
+        return flyTo(sq, tgt);
+      }));
+      xOnes.forEach(sq => { sq.classList.add('exploding'); spawnBoom(sq); });
+      await new Promise(res => setTimeout(res, 620));
+      pinks.forEach(sq => sq.remove());
+
+      // ----- Phase 2: digit fly. Auto-runs unless the toggle is
+      // ON, in which case we just mark it pending and let the kid
+      // click the pink reveal whenever they're ready.
+      if (digitSeparate) {
+        pinkDigitPending = true;
+        const pinkReveal = blockY.querySelector('.reveal-num.pink');
+        if (pinkReveal) pinkReveal.classList.add('reveal-pending');
+      } else {
+        await runPinkDigitPhase();
+      }
+    }
+
+    // Pink reveal-num flies to where the X-ones image sits, fades
+    // it together with the big boom, then updateBlock paints the
+    // new "0". Used for both the auto + toggle paths.
+    async function runPinkDigitPhase() {
+      const xOnesDigit = blockX.querySelector('.digit[data-place="ones"]');
+      const xOnesImg   = xOnesDigit && xOnesDigit.querySelector('.digit-img');
+      const pinkReveal = blockY.querySelector('.reveal-num.pink');
+      const c = pinkXOnesCentre || (xOnesImg ? centerOf(xOnesImg) : { x: 0, y: 0 });
+      if (pinkReveal) {
+        pinkReveal.classList.remove('reveal-pending');
+        // Disable pointer-events on the source — once it's invisible
+        // mid-flight any further click would slide through to the
+        // close-handler and yank the still-needed blue reveal.
+        pinkReveal.style.pointerEvents = 'none';
+        const clone = await flyDigitTo(pinkReveal, c.x, c.y);
+        if (xOnesImg) {
+          xOnesImg.style.transition = 'opacity .35s ease';
+          xOnesImg.style.opacity = '0';
+        }
+        await explodeDigit(clone, c.x, c.y);
+      }
+      const wasX     = xDisplay;
+      const xOnesNum = xDisplay % 10;
+      const newX     = xDisplay - xOnesNum;
+      xDisplay = newX;
+      updateBlock(blockX, wasX, newX);
+      maybeFinishLesson();
+    }
+
+    // Group flight — ALL remaining blue squares fly together to
+    // X's tens region. Each blue lands on a different (still-alive)
+    // X-tens square, then every paired square explodes simultaneously.
+    // The X tens slot loses `blueCount` squares; the remaining tens
+    // squares stay put and X re-renders to reflect the new total.
+    // For 13 − 9: 6 blues + 6 of the 10 tens squares vanish → X = 4.
+    async function explodeBlue() {
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      if (!yDigit) return;
+      const yGrid = yDigit.querySelector('.ten-grid');
+      if (!yGrid) return;
+      const blues = Array.from(yGrid.querySelectorAll('.sq.blue'))
+                         .filter(s => !s.classList.contains('exploding'));
+      if (!blues.length) return;
+
+      // Pick the X "host" — tens slot if it still has squares,
+      // else fall back to ones (e.g. when the kid set up an
+      // equation where X already < 10).
+      const xTensDigit = blockX.querySelector('.digit[data-place="tens"]');
+      const xOnesDigit = blockX.querySelector('.digit[data-place="ones"]');
+      let host = xTensDigit;
+      if (!host || !host.querySelector('.sq')) host = xOnesDigit;
+      if (!host) return;
+      const survivors = Array.from(host.querySelectorAll('.sq'))
+                             .filter(s => !s.classList.contains('exploding'));
+      if (!survivors.length) return;
+
+      // Pair each blue with a distinct survivor (one-to-one).
+      // Prefer the targets captured at arm-time so the explosion
+      // hits exactly the squares the kid was previewing.
+      const tgts = (blueXTargets && blueXTargets.length)
+        ? blueXTargets
+        : survivors;
+      const pairs = blues.map((blue, i) => ({
+        blue: blue,
+        tgt:  tgts[i] || tgts[tgts.length - 1],
+      }));
+
+      // Landing zone for the blue reveal-num — MIDPOINT between
+      // X's tens and ones digit centres. After the pink phase X
+      // typically shows "10" (tens "1" + ones "0"), so the blue
+      // digit lands between them. Falls back to whichever slot is
+      // still in the DOM when only one is available.
+      const xTensImgEl = xTensDigit && xTensDigit.querySelector('.digit-img');
+      const xOnesImgEl = xOnesDigit && xOnesDigit.querySelector('.digit-img');
+      let xTensCentre;
+      if (xTensImgEl && xOnesImgEl) {
+        const tc = centerOf(xTensImgEl);
+        const oc = centerOf(xOnesImgEl);
+        xTensCentre = { x: (tc.x + oc.x) / 2, y: (tc.y + oc.y) / 2 };
+      } else if (xTensImgEl) {
+        xTensCentre = centerOf(xTensImgEl);
+      } else if (xOnesImgEl) {
+        xTensCentre = centerOf(xOnesImgEl);
+      } else {
+        return;
+      }
+
+      blueXTensCentre = xTensCentre;
+      const blueCount = blues.length;
+
+      // ----- Phase 1: blue squares fly + boom.
+      await Promise.all(pairs.map(p => flyTo(p.blue, p.tgt)));
+      pairs.forEach(p => {
+        p.tgt.classList.add('exploding');
+        spawnBoom(p.tgt);
+      });
+      await new Promise(res => setTimeout(res, 620));
+      pairs.forEach(p => {
+        p.blue.remove();
+        try { p.tgt.remove(); } catch {}
+      });
+      await new Promise(res => setTimeout(res, 120));
+
+      // ----- Phase 2: digit fly. Defer if the toggle is ON.
+      if (digitSeparate) {
+        blueDigitPending = true;
+        const blueReveal = blockY.querySelector('.reveal-num.blue');
+        if (blueReveal) blueReveal.classList.add('reveal-pending');
+      } else {
+        await runBlueDigitPhase(blueCount);
+      }
+    }
+
+    async function runBlueDigitPhase(blueCount) {
+      const c = blueXTensCentre;
+      const blueReveal = blockY.querySelector('.reveal-num.blue');
+      if (blueReveal && c) {
+        blueReveal.classList.remove('reveal-pending');
+        blueReveal.style.pointerEvents = 'none';
+        const clone = await flyDigitTo(blueReveal, c.x, c.y);
+        await explodeDigit(clone, c.x, c.y);
+      }
+      // X-tens image changes ("1" → "4") only AFTER the digit boom.
+      const old = xDisplay;
+      xDisplay = Math.max(0, xDisplay - (blueCount || 0));
+      updateBlock(blockX, old, xDisplay);
+      maybeFinishLesson();
+    }
+
+    // Y-tens explosion. The 10 squares under Y's tens digit fly
+    // as a group to X-tens, pair with 10 X-tens squares from the
+    // LAST tens group (the one closest to ones), then everything
+    // explodes. The Y-tens digit image flies separately and explodes
+    // on the X-tens centre. X drops by exactly 10. Independent
+    // from pink/blue — for 23 − 15 the kid can click pink, then
+    // Y_tens, then blue (or any order) and the maths still works.
+    async function explodeYTens() {
+      const yTensDigit = blockY.querySelector('.digit[data-place="tens"]');
+      const xTensDigit = blockX.querySelector('.digit[data-place="tens"]');
+      if (!yTensDigit || !xTensDigit) return;
+      const yTensSquares = Array.from(yTensDigit.querySelectorAll('.sq'))
+                                .filter(s => !s.classList.contains('exploding'));
+      if (!yTensSquares.length) return;
+      // Prefer the targets captured at arm-time so the explosion
+      // hits exactly the squares the kid was previewing in green.
+      let xTensTgt = (yTensXTargets && yTensXTargets.length)
+        ? yTensXTargets.slice()
+        : null;
+      if (!xTensTgt) {
+        // Fallback: pull from trailing X-tens groups (last-first)
+        // so the kid sees complete groups disappear rather than
+        // half-emptying every group.
+        const xTensGroups = Array.from(xTensDigit.querySelectorAll('.ten-grid')).reverse();
+        xTensTgt = [];
+        for (const grp of xTensGroups) {
+          const remaining = Array.from(grp.querySelectorAll('.sq'))
+                                 .filter(s => !s.classList.contains('exploding'));
+          for (const sq of remaining) {
+            xTensTgt.push(sq);
+            if (xTensTgt.length >= yTensSquares.length) break;
+          }
+          if (xTensTgt.length >= yTensSquares.length) break;
+        }
+      }
+      if (!xTensTgt.length) return;
+
+      // Capture digit-image centres for the digit fly + boom.
+      const yTensImgEl  = yTensDigit.querySelector('.digit-img');
+      const xTensImgEl  = xTensDigit.querySelector('.digit-img');
+      const xTensCentre = centerOf(xTensImgEl);
+
+      // ----- Phase 1: every Y_tens square flies onto a distinct
+      // X-tens square (1-to-1). For 33 − 26 that's 20 + 20 = 40
+      // squares all exploding together.
+      const pairs = yTensSquares.map((sq, i) => ({
+        y: sq,
+        x: xTensTgt[i] || xTensTgt[xTensTgt.length - 1],
+      }));
+      yTensXTensCentre = xTensCentre;
+      const yTensDrop  = yTensSquares.length;
+
+      await Promise.all(pairs.map(p => flyTo(p.y, p.x)));
+      pairs.forEach(p => {
+        p.x.classList.add('exploding');
+        spawnBoom(p.x);
+      });
+      await new Promise(res => setTimeout(res, 620));
+      pairs.forEach(p => {
+        p.y.remove();
+        try { p.x.remove(); } catch {}
+      });
+      await new Promise(res => setTimeout(res, 120));
+
+      // ----- Phase 2: digit fly. Defer if the toggle is ON.
+      if (digitSeparate) {
+        yTensDigitPending = true;
+        if (yTensDigit) yTensDigit.classList.add('digit-pending');
+      } else {
+        await runYTensDigitPhase(yTensDrop);
+      }
+    }
+
+    async function runYTensDigitPhase(yTensDrop) {
+      const yTensDigit = blockY.querySelector('.digit[data-place="tens"]');
+      const yTensImgEl = yTensDigit && yTensDigit.querySelector('.digit-img');
+      const c = yTensXTensCentre;
+      if (yTensImgEl && c) {
+        if (yTensDigit) yTensDigit.classList.remove('digit-pending');
+        const clone = await flyDigitTo(yTensImgEl, c.x, c.y);
+        await explodeDigit(clone, c.x, c.y);
+      }
+      const old = xDisplay;
+      xDisplay = Math.max(0, xDisplay - (yTensDrop || 0));
+      updateBlock(blockX, old, xDisplay);
+      if (yTensDigit) try { yTensDigit.remove(); } catch {}
+      maybeFinishLesson();
+    }
+
+    // Called at the end of EACH explosion phase. Wipes Y + hides
+    // `has-y` only when every applicable phase has fired (pink,
+    // blue, and — for multi-digit Y — yTens). For single-digit Y
+    // this collapses to "pink + blue done".
+    function maybeFinishLesson() {
+      const needYTens = (yDisplay >= 10);
+      if (pinkPhaseDone && bluePhaseDone && (!needYTens || yTensPhaseDone)) {
+        blockY.innerHTML = '';
+        stage.classList.remove('has-y');
+      }
+    }
+
+    // Direct subtract path — used when the kid clicks Y in the
+    // no-borrow case (X_ones ≥ Y_ones). All of Y's squares fly to
+    // X's ones grid, pair one-to-one with the topmost X-ones
+    // squares, and both sides explode together. X then drops by
+    // exactly Y. e.g. 13 − 2 → 2 Y-squares + the top 2 of X's 3
+    // ones squares vanish; X re-renders as 11.
+    async function explodeDirect() {
+      if (directPhaseDone) return;
+      directPhaseDone = true;
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      if (!yDigit) { directPhaseDone = false; return; }
+      const yGrid = yDigit.querySelector('.ten-grid');
+      if (!yGrid) { directPhaseDone = false; return; }
+      const ySquares = Array.from(yGrid.querySelectorAll('.sq'))
+                            .filter(s => !s.classList.contains('exploding'));
+      if (!ySquares.length) { directPhaseDone = false; return; }
+
+      // Pick the target X squares + the digit-fly landing centre.
+      // Prefer X-ones when it has live squares (standard direct
+      // like 13 − 2). When X-ones is empty (e.g. 10 − 2) fall back
+      // to a BOTTOM-UP walk of the X-tens groups — the Y boxes
+      // land on the bottom-most tens squares and the Y digit
+      // lands at the MIDPOINT of X's tens + ones digit images
+      // (so the digit appears to land "in the middle of the 2-
+      // digit X" the way the user described).
+      const xOnesDigit = blockX.querySelector('.digit[data-place="ones"]');
+      const xTensDigit = blockX.querySelector('.digit[data-place="tens"]');
+      let xSquares = [];
+      let landingCentre = null;
+      if (xOnesDigit) {
+        const xOnesGrid = xOnesDigit.querySelector('.ten-grid');
+        const sqs = xOnesGrid
+          ? Array.from(xOnesGrid.children).filter(s => !s.classList.contains('exploding'))
+          : [];
+        if (sqs.length) {
+          xSquares = sqs;
+          landingCentre = centerOf(xOnesDigit.querySelector('.digit-img'));
+        }
+      }
+      if (!xSquares.length && xTensDigit) {
+        const groups = Array.from(xTensDigit.querySelectorAll('.ten-grid')).reverse();
+        for (const grp of groups) {
+          const all = Array.from(grp.querySelectorAll('.sq'))
+                           .filter(s => !s.classList.contains('exploding'));
+          const rows = Math.ceil(all.length / 2);
+          for (let r = rows - 1; r >= 0; r--) {
+            const left  = all[r * 2];
+            const right = all[r * 2 + 1];
+            if (left)  xSquares.push(left);
+            if (right) xSquares.push(right);
+          }
+        }
+        const tensImg = xTensDigit.querySelector('.digit-img');
+        const onesImg = xOnesDigit && xOnesDigit.querySelector('.digit-img');
+        if (tensImg && onesImg) {
+          const tc = centerOf(tensImg);
+          const oc = centerOf(onesImg);
+          landingCentre = { x: (tc.x + oc.x) / 2, y: (tc.y + oc.y) / 2 };
+        } else if (tensImg) {
+          landingCentre = centerOf(tensImg);
+        }
+      }
+      if (!xSquares.length || !landingCentre) { directPhaseDone = false; return; }
+
+      // Pair Y's squares to X squares one-to-one. xSquares is now
+      // top-down (X-ones case) OR bottom-up (X-tens fallback) —
+      // either way the kid sees Y's column hit X cleanly.
+      const pairs = ySquares.map((ys, i) => ({
+        y: ys,
+        x: xSquares[i] || xSquares[xSquares.length - 1],
+      }));
+
+      // ----- Phase 1: Y squares fly + boom.
+      await Promise.all(pairs.map(p => flyTo(p.y, p.x)));
+      pairs.forEach(p => {
+        p.x.classList.add('exploding');
+        spawnBoom(p.x);
+      });
+      await new Promise(res => setTimeout(res, 620));
+      pairs.forEach(p => {
+        p.y.remove();
+        try { p.x.remove(); } catch {}
+      });
+      await new Promise(res => setTimeout(res, 120));
+
+      // ----- Phase 2: Y's digit-img flies to the landing centre + boom.
+      const yImg = yDigit.querySelector('.digit-img');
+      if (yImg) {
+        const clone = await flyDigitTo(yImg, landingCentre.x, landingCentre.y);
+        await explodeDigit(clone, landingCentre.x, landingCentre.y);
+      }
+
+      // ----- Phase 3: X re-renders at the new value.
+      const old = xDisplay;
+      xDisplay = Math.max(0, xDisplay - ySquares.length);
+      updateBlock(blockX, old, xDisplay);
+
+      // ----- Phase 4: clear Y so only X (the remainder) remains.
+      blockY.innerHTML = '';
+      stage.classList.remove('has-y');
+      decompText.hidden = true;
+    }
+
+    // ----- Y click wiring -------------------------------------------
+    // After every render of Y we (re-)evaluate whether the digit
+    // should be tappable. Two paths:
+    //   • BORROW (X_ones < Y_ones)  → click splits Y into pink + blue
+    //   • DIRECT (X_ones ≥ Y_ones)  → click sends Y's squares onto
+    //                                  X's ones grid for a clean
+    //                                  pairwise explosion (e.g.
+    //                                  13 − 2 → X = 11)
+    // The two share the same visual hint + click handler; `onYClick`
+    // picks the right action at fire time from the current digit
+    // breakdown so a mid-equation edit can flip modes without the
+    // listener going stale.
+    function refreshYClickAffordance() {
+      if (directPhaseDone) return;
+      const x = xDisplay, y = yDisplay;
+      const yDigit = blockY.querySelector('.digit[data-place="ones"]');
+      if (!yDigit) return;
+      const xOnes = x % 10;
+      const yOnes = y % 10;
+      const yTensVal = Math.floor(y / 10) * 10;
+      // Y_ones eligibility — borrow vs direct.
+      const isBorrow = (yOnes > 0 && xOnes > 0 && xOnes < yOnes && x >= yOnes);
+      // Direct mode covers TWO single-digit-Y shapes:
+      //   • xOnes ≥ y  → standard no-borrow (e.g. 13 − 2)
+      //   • xOnes === 0 && x ≥ 10 → "borrow from tens" path
+      //     (e.g. 10 − 2). X has no ones squares so the Y boxes
+      //     fly into X's TENS group instead.
+      const isDirect = (
+        y > 0 && y < 10 && x >= y &&
+        ((xOnes >= y) || (xOnes === 0 && x >= 10))
+      );
+      const onesEligible = !splitOpen && (isBorrow || isDirect);
+      yDigit.classList.toggle('click-to-split', onesEligible);
+      if (onesEligible) {
+        const img = yDigit.querySelector('.digit-img');
+        if (img && !img._wired) {
+          img._wired = true;
+          img.addEventListener('click', onYClick);
+        }
+      }
+      // Y_tens eligibility — independent of split. Multi-digit Y
+      // with X ≥ Y means the kid can click the Y_tens digit or any
+      // of its squares to ARM (preview) and then again to FIRE.
+      const yTensDigit = blockY.querySelector('.digit[data-place="tens"]');
+      const tensEligible = !yTensPhaseDone && yTensVal > 0 && x >= y;
+      if (yTensDigit) {
+        yTensDigit.classList.toggle('click-to-tens', tensEligible && !yTensArmed);
+        if (tensEligible) {
+          const tImg = yTensDigit.querySelector('.digit-img');
+          if (tImg && !tImg._tensWired) {
+            tImg._tensWired = true;
+            tImg.style.cursor = 'pointer';
+            tImg.addEventListener('click', onYTensSquareClick);
+          }
+          yTensDigit.querySelectorAll('.sq').forEach(sq => {
+            if (!sq._tensWired) {
+              sq._tensWired = true;
+              sq.style.cursor = 'pointer';
+              sq.addEventListener('click', onYTensSquareClick);
+            }
+          });
+        }
+      }
+    }
+    function onYClick() {
+      // Decide at click time from the LIVE values — the user might
+      // have nudged the steppers between mode-changes since the
+      // handler was wired. Borrow gate uses `x >= yOnes` (not
+      // `x >= y`) so the split still opens after Y_tens has
+      // already drained 10 from X.
+      const x = xDisplay, y = yDisplay;
+      const xOnes = x % 10;
+      const yOnes = y % 10;
+      if (y > 0 && yOnes > 0 && xOnes > 0 && xOnes < yOnes && x >= yOnes) openSplit();
+      else if (y > 0 && y < 10 && x >= y &&
+               ((xOnes >= y) || (xOnes === 0 && x >= 10))) explodeDirect();
+    }
+
+    // ----- Top-level update -----------------------------------------
+    function updateAll(opts) {
+      opts = opts || {};
+      const x = parseInput(numX);
+      const y = parseInput(numY);
+
+      // Editing the inputs resets any in-progress split / explosion
+      // choreography so the kid can rewind to a new equation.
+      const xChanged = Number.isFinite(x) && x !== xDisplay;
+      const yChanged = (Number.isFinite(y) ? y : -1) !== (Number.isFinite(yDisplay) ? yDisplay : -1);
+      const wasSplitOpen = splitOpen;
+      if (xChanged || yChanged) {
+        splitOpen = false;
+        pinkPhaseDone = false;
+        bluePhaseDone = false;
+        directPhaseDone = false;
+        yTensPhaseDone = false;
+        pinkArmed = false;
+        blueArmed = false;
+        yTensArmed = false;
+        pinkXTargets = [];
+        blueXTargets = [];
+        yTensXTargets = [];
+        pinkDigitPending = blueDigitPending = yTensDigitPending = false;
+        pinkXOnesCentre = blueXTensCentre = yTensXTensCentre = null;
+        // The decomp equation only makes sense for the equation we
+        // split — once the kid edits, drop it.
+        decompText.hidden = true;
+      }
+
+      const prevX = xDisplay;
+      const prevY = yDisplay;
+      const targetX = Number.isFinite(x) ? x : 0;
+      const targetY = Number.isFinite(y) ? y : 0;
+      xDisplay = targetX;
+      yDisplay = targetY;
+
+      // If the kid is reshaping the equation while the split was
+      // still on screen, blow the Y block away and rebuild from
+      // scratch — the .split overlay + pink/blue classes have to
+      // clear before we can incrementally update again.
+      if (wasSplitOpen && (xChanged || yChanged)) {
+        blockY.innerHTML = '';
+      }
+
+      updateBlock(blockX, prevX, targetX);
+
+      const hasY = Number.isFinite(y);
+      stage.classList.toggle('has-y', hasY);
+      if (hasY) {
+        // After a full wipe the "previous" Y is effectively 0 so
+        // every square enters with the pop animation.
+        const yPrev = (wasSplitOpen && (xChanged || yChanged)) ? 0 : prevY;
+        updateBlock(blockY, yPrev, targetY);
+        // Wait for the just-rendered Y to be in the DOM, then wire
+        // the click affordance.
+        requestAnimationFrame(refreshYClickAffordance);
+      } else {
+        blockY.innerHTML = '';
+      }
+    }
+
+    // ----- Input wiring ---------------------------------------------
+    // Plain typing on either input updates the visualisation live.
+    [numX, numY].forEach(el => {
+      el.addEventListener('input', () => updateAll());
+      // Keyboard ← / → on a focused input does ±1. Native ↑ / ↓
+      // already work on number inputs but we mirror them onto the
+      // horizontal arrows so the kid only needs to remember "side
+      // arrows" once they've clicked a digit image.
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          stepInput(el, -1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          stepInput(el, 1);
+        }
+      });
+    });
+
+    // ‹ / › side-arrow buttons — same effect as keyboard ← / →.
+    document.querySelectorAll('.arrow').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const target = btn.dataset.target;
+        const el     = target === 'x' ? numX : numY;
+        const delta  = btn.classList.contains('arrow-right') ? 1 : -1;
+        stepInput(el, delta);
+      });
+    });
+
+    function stepInput(el, delta) {
+      const cur  = parseInt(el.value, 10);
+      const base = Number.isFinite(cur) ? cur : (parseInt(el.min, 10) || 0);
+      const next = clampToBounds(el, base + delta);
+      el.value = String(next);
+      updateAll();
+    }
+
+    // Clicking the digit-image area also focuses the matching input
+    // so keyboard arrows take over from there. (For Y the same
+    // click can also fire the split / direct-explode flow — that's
+    // wired separately in refreshYClickAffordance.)
+    blockX.addEventListener('click', () => numX.focus());
+    blockY.addEventListener('click', () => numY.focus());
+
+    // ----- Question generators ------------------------------------
+    // Always X > Y.
+    //   1 — Easy   nn − n  : 2-digit X, 1-digit Y, X_ones > Y_ones
+    //                        (no borrow needed)
+    //   2 — Medium nn − n  : 2-digit X (tens ≤ 4), 1-digit Y,
+    //                        X_ones < Y_ones (borrow needed)
+    //   3 — Easy   nn − nn : both 2-digit, tens ≤ 4, X_ones > Y_ones
+    //   4 — Medium nn − nn : both 2-digit, tens ≤ 4, X_ones < Y_ones
+    function randInt(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
+    const generators = {
+      'easy-nn-n':    () => {
+        // X tens ≤ 4 (X in 10-49) per the user's spec — both
+        // numbers' tens digits stay ≤ 4. Y is single-digit so
+        // Y_tens = 0 trivially satisfies the rule.
+        while (true) {
+          const x = randInt(10, 49), y = randInt(1, 9);
+          if (x > y && (x % 10) > y) return { x, y };
+        }
+      },
+      'medium-nn-n':  () => {
+        while (true) {
+          const x = randInt(10, 49), y = randInt(1, 9);
+          if (x > y && (x % 10) < y) return { x, y };
+        }
+      },
+      'easy-nn-nn':   () => {
+        while (true) {
+          const xT = randInt(1, 4), xO = randInt(0, 9);
+          const yT = randInt(1, 4), yO = randInt(0, 9);
+          const x = xT * 10 + xO, y = yT * 10 + yO;
+          if (x > y && xO > yO) return { x, y };
+        }
+      },
+      'medium-nn-nn': () => {
+        while (true) {
+          const xT = randInt(1, 4), xO = randInt(0, 9);
+          const yT = randInt(1, 4), yO = randInt(0, 9);
+          const x = xT * 10 + xO, y = yT * 10 + yO;
+          if (x > y && xO < yO) return { x, y };
+        }
+      },
+    };
+    function applyGenerated(kind) {
+      const fn = generators[kind];
+      if (!fn) return;
+      const { x, y } = fn();
+      numX.value = String(x);
+      numY.value = String(y);
+      updateAll();
+    }
+    document.querySelectorAll('.gen-btn').forEach(btn => {
+      btn.addEventListener('click', () => applyGenerated(btn.dataset.gen));
+    });
+    // Keyboard 1..4 → fire generators; 5 → flip the auto-fly-digit
+    // toggle. Only when no input is focused, so the kid can still
+    // type digits into X / Y without these shortcuts hijacking
+    // the number keys.
+    const GEN_ORDER = ['easy-nn-n', 'medium-nn-n', 'easy-nn-nn', 'medium-nn-nn'];
+    document.addEventListener('keydown', (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+      if (e.key >= '1' && e.key <= '4') {
+        e.preventDefault();
+        applyGenerated(GEN_ORDER[parseInt(e.key, 10) - 1]);
+      } else if (e.key === '5') {
+        e.preventDefault();
+        separateBtn.click();
+      }
+    });
+
+    // ----- "Fly the digit separately" toggle ----------------------
+    // Default OFF — the box-fire phase auto-runs the digit-fly
+    // right after. When ON, the box-fire ends after the boxes
+    // explode and the digit waits for its OWN click before flying.
+    const SEP_KEY = 'mb-separate';
+    let digitSeparate = false;
+    try { digitSeparate = localStorage.getItem(SEP_KEY) === '1'; } catch {}
+    function applySepUi() {
+      separateBtn.setAttribute('aria-pressed', String(digitSeparate));
+      // Update only the LABEL span (.tg-on). The .gen-key chip
+      // sits next to it and stays put.
+      const lbl = separateBtn.querySelector('.tg-on');
+      if (lbl) lbl.textContent = digitSeparate ? '✂️ Click digit to fly' : '🔗 Auto fly digit';
+    }
+    separateBtn.addEventListener('click', () => {
+      digitSeparate = !digitSeparate;
+      try { localStorage.setItem(SEP_KEY, digitSeparate ? '1' : '0'); } catch {}
+      applySepUi();
+    });
+    applySepUi();
+
+    // ----- Autofit -------------------------------------------------
+    // Squares get many on a multi-digit X (e.g. 33 has 3 ten-groups
+    // wrapping into 2 rows of squares — total height ~850px BEFORE
+    // accounting for the digit images on top). On smaller classroom
+    // screens that pushes content below the fold. We measure the
+    // natural layout size and apply a single `transform: scale()`
+    // on `.page` so EVERYTHING (heading, inputs, digits, squares,
+    // explosions) shrinks proportionally. Floor at 0.5 so we
+    // never go too small — the kid still needs to read it.
+    const pageEl = document.querySelector('.page');
+    let lastAppliedZoom = 1;
+    // Hysteresis threshold — a target-zoom this close to what we
+    // already have won't re-apply. Stops 1-2 box jitter from
+    // flipping the page in/out of zoom on every keystroke; a full
+    // ten-group (gain/loss of ~10 boxes) easily crosses this
+    // threshold so the page DOES re-fit when it matters.
+    const ZOOM_HYSTERESIS = 0.05;
+    function autofit() {
+      if (!pageEl) return;
+      // Reset to natural size before measuring. We use `zoom`
+      // rather than `transform: scale` because zoom also shrinks
+      // the element's LAYOUT box — otherwise the un-scaled height
+      // still pushes the body taller than the viewport and leaves
+      // a residual scrollbar.
+      pageEl.style.zoom = '';
+      const r = pageEl.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) return;
+      const pad = 20;
+      const sx = (window.innerWidth  - pad) / r.width;
+      const sy = (window.innerHeight - pad) / r.height;
+      // Allow zoom UP to fill the screen when content shrinks
+      // (e.g. 34 − 19 → 24 − 19 — one less ten group means lots
+      // of empty space below; we want to enlarge the rest).
+      let s = Math.min(sx, sy);
+      s = Math.max(0.5, Math.min(2.0, s));
+      // Skip if the new zoom is close to the one we already have.
+      if (Math.abs(s - lastAppliedZoom) < ZOOM_HYSTERESIS) {
+        if (lastAppliedZoom !== 1) pageEl.style.zoom = lastAppliedZoom;
+        return;
+      }
+      lastAppliedZoom = s;
+      if (Math.abs(s - 1) < 0.001) {
+        pageEl.style.zoom = '';
+      } else {
+        pageEl.style.zoom = s;
+      }
+    }
+    // Re-fit on resize + after every render path. The flight /
+    // explosion animations also reflow the page, so we autofit at
+    // the end of `updateBlock` indirectly by calling it after each
+    // visible change via a debounced rAF.
+    let _autofitPending = false;
+    function autofitSoon() {
+      if (_autofitPending) return;
+      _autofitPending = true;
+      requestAnimationFrame(() => {
+        _autofitPending = false;
+        autofit();
+      });
+    }
+    window.addEventListener('resize', autofit);
+
+    // Wrap updateAll + updateBlock so a fresh autofit follows every
+    // layout-affecting call without scattering autofit() everywhere.
+    const _origUpdateAll   = updateAll;
+    const _origUpdateBlock = updateBlock;
+    updateAll = function (...args) {
+      const r = _origUpdateAll.apply(this, args);
+      autofitSoon();
+      return r;
+    };
+    updateBlock = function (...args) {
+      const r = _origUpdateBlock.apply(this, args);
+      autofitSoon();
+      return r;
+    };
+
+    // First paint.
+    updateAll();
+    // After the initial layout settles + digit images load, fit again.
+    setTimeout(autofit, 60);
+    window.addEventListener('load', autofit);
+  })();
+  </script>
+</body>
+</html>
