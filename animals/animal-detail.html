@@ -2839,10 +2839,25 @@
 
   async function refreshCommentBoxVisibility(animalId) {
     if (!window.WCDB || !window.WCDB.animalContributions) return;
+    // Class-level kill switch — Settings → "Hide comments on Animal
+    // Friends pages" (hide_features.hideAnimalComments). When on we
+    // skip the contributor lookups entirely and just hide the card.
+    const me = currentSession();
+    if (me && me.class_id && window.WCDB.classes && window.WCDB.classes.byId) {
+      try {
+        const cls = await window.WCDB.classes.byId(me.class_id);
+        if (cls && cls.hide_features && cls.hide_features.hideAnimalComments) {
+          const card = document.getElementById('commentsCard');
+          const hint = document.getElementById('commentUnlockHint');
+          if (card) card.classList.remove('shown');
+          if (hint) hint.style.display = 'none';
+          return;
+        }
+      } catch (e) { /* network blip → fall through, fail-open */ }
+    }
     try {
       _animalHasContrib = await window.WCDB.animalContributions.hasAnyOnAnimal(animalId);
     } catch (e) { _animalHasContrib = false; }
-    const me = currentSession();
     if (me && me.id) {
       try { _canPostComment = await window.WCDB.animalContributions.hasAny(me.id); }
       catch (e) { _canPostComment = false; }

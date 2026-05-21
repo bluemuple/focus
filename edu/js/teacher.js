@@ -2575,6 +2575,7 @@
       { key: 'hideVisualizationSidebar', label: 'Hide the "Imagine this!" sidebar section', tip: 'Students won\'t see the text input → teacher pipeline.' },
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
       { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
+      { key: 'hideAnimalComments',       label: 'Hide comments on Animal Friends pages',     tip: 'Removes the comment thread + post box at the bottom of every animal-detail page. Existing comments are kept in the database — toggling back on restores them.' },
     ];
     // Compact home-page toggles — short labels. Each tick removes
     // one button from the student home. Saved into the same
