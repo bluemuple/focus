@@ -2843,19 +2843,20 @@
     host.innerHTML = `
       <div class="wc-popup wc-bubble-editor">
         <button class="wc-popup-close" aria-label="Close">×</button>
-        <h3 style="margin:0 0 8px;">Speech bubbles — [[IMG:${idx}]]</h3>
-        <div class="wc-be-toolbar">
-          <button class="wc-btn" id="beAddRect" type="button">+ Add rectangle</button>
-          <button class="wc-btn" id="beAddCircle" type="button">+ Add circle</button>
-          <span class="wc-muted" id="beCount"></span>
-          <span class="wc-be-msg" id="beMsg"></span>
+        <div class="wc-be-head-sticky">
+          <h3 style="margin:0 0 6px;">Speech bubbles — [[IMG:${idx}]]</h3>
+          <div class="wc-be-toolbar">
+            <button class="wc-btn wc-be-toolbtn" id="beAddRect" type="button">+ Add rectangle</button>
+            <button class="wc-btn wc-be-toolbtn" id="beAddCircle" type="button">+ Add circle</button>
+            <span class="wc-muted wc-be-meta" id="beCount"></span>
+            <span class="wc-be-msg" id="beMsg"></span>
+            <span class="wc-be-spacer"></span>
+            <button class="wc-btn ghost wc-be-toolbtn" id="beCancel" type="button">Cancel</button>
+            <button class="wc-btn wc-be-toolbtn" id="beDone" type="button">Save</button>
+          </div>
         </div>
         <div class="wc-be-stage-wrap">
           <div class="wc-be-stage" id="beStage"></div>
-        </div>
-        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
-          <button class="wc-btn ghost" id="beCancel" type="button">Cancel</button>
-          <button class="wc-btn" id="beDone" type="button">Save bubbles</button>
         </div>
       </div>
     `;
