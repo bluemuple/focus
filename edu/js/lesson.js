@@ -924,6 +924,9 @@
     if (parts.length === 1 && parts[0].kind === 'html') {
       root.innerHTML = parts[0].html;
       tokenizeTextNodesInPlace(root, globalStartOfPage(pageIdx));
+      // Comic-panel bubbles re-parsed from serialised HTML need a
+      // fit pass (their image-load hook won't re-fire on a cache hit).
+      requestAnimationFrame(fitAllBubbles);
       return;
     }
     let globalStart = 0;
@@ -948,6 +951,7 @@
     });
     // Prefetch chunks for everything just rendered — fire-and-forget.
     if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
+    requestAnimationFrame(fitAllBubbles);
   }
 
   // Single-sentence mode auto-fit. The CSS sets the active sentence
@@ -997,16 +1001,25 @@
   // centres on its own line, and `panel` renders a full-width comic
   // "네모" box. `scale` (defaults to 1.0) scales the base width by
   // 5 %-step adjustments the teacher made in the chip preview.
+  //
+  // A `panel` image that ALSO carries a `bubbles` array is rendered
+  // as a full comic panel — see makeComicPanel.
   function makeFloatingImage(idx) {
     const list = Array.isArray(lesson?.images) ? lesson.images : [];
     const rec  = list[idx];
     if (!rec || !rec.data_url) return null;
+    const scale = Number.isFinite(rec.scale) ? rec.scale : 1.0;
+
+    // Comic panel WITH speech bubbles → positioned text-overlay panel.
+    if (rec.corner === 'panel' && Array.isArray(rec.bubbles) && rec.bubbles.length) {
+      return makeComicPanel(rec, scale);
+    }
+
     const img = document.createElement('img');
     img.className = 'wc-lesson-img wc-corner-' + (rec.corner || 'tr');
     img.src = rec.data_url;
     img.alt = '';
     img.draggable = false;
-    const scale = Number.isFinite(rec.scale) ? rec.scale : 1.0;
     if (scale !== 1.0) {
       if (rec.corner === 'panel') {
         // Comic panel — the CSS base width is 88 % of the card (a big
@@ -1025,6 +1038,165 @@
       }
     }
     return img;
+  }
+
+  // ============================================================
+  //  COMIC PANEL  — image + speech-bubble text overlays
+  //
+  //  A comic-panel image stores `bubbles: [{x,y,w,h,text}, …]` where
+  //  x/y/w/h are 0-1 fractions of the image. For each bubble we lay
+  //  a white <span class="wc-bubble"> over that region: the white
+  //  background hides the original baked-in lettering, and the
+  //  teacher-typed `text` is rendered as REAL tokenised words.
+  //
+  //  Those words get the full study treatment — colour level on
+  //  render, and on tap: amber word-ring, chunk underline, sidebar
+  //  word card, chunk TTS. Taps are caught by a delegated listener
+  //  on #lessonBody (see wireBubbleDelegation) so they survive the
+  //  serialise / re-parse that repaginateOverflow does to panels.
+  //
+  //  Wrapper + bubbles are <span>s (display-block / absolute via CSS)
+  //  rather than <figure>/<div> so the markup stays valid phrasing
+  //  content inside the <p> the [[IMG:N]] marker lives in — block
+  //  elements there would be re-parented on every innerHTML cycle.
+  // ============================================================
+  let bubbleSentSeq = 0;   // unique-id source for .wc-bubble-sent
+
+  function makeComicPanel(rec, scale) {
+    const panel = document.createElement('span');
+    panel.className = 'wc-panel';
+    if (scale && scale !== 1.0) {
+      panel.style.width = Math.min(100, 88 * scale).toFixed(1) + '%';
+    }
+    const img = document.createElement('img');
+    img.className = 'wc-panel-img';
+    img.src = rec.data_url;
+    img.alt = '';
+    img.draggable = false;
+    panel.appendChild(img);
+
+    const pct = (n) => (Math.max(0, Math.min(1, Number(n) || 0)) * 100).toFixed(2) + '%';
+    rec.bubbles.forEach(b => {
+      if (!b) return;
+      const bub = document.createElement('span');
+      bub.className = 'wc-bubble';
+      bub.style.left   = pct(b.x);
+      bub.style.top    = pct(b.y);
+      bub.style.width  = pct(b.w);
+      bub.style.height = pct(b.h);
+      // One inner wrapper = the single flex item, so the dialogue is
+      // centred both ways and its words wrap within the box width.
+      const inner = document.createElement('span');
+      inner.className = 'wc-bubble-inner';
+      inner.appendChild(makeBubbleSentences(String(b.text || '')));
+      bub.appendChild(inner);
+      panel.appendChild(bub);
+    });
+
+    // Bubble boxes are %-sized, so the text can't be fitted until the
+    // image's real pixel dimensions are known.
+    const fit = () => fitBubblesIn(panel);
+    img.addEventListener('load', fit);
+    if (img.complete) requestAnimationFrame(fit);
+    return panel;
+  }
+
+  // Tokenise bubble dialogue into one or more `.wc-bubble-sent` spans
+  // (one per sentence) holding clickable `.w` word spans. Mirrors
+  // makeSentenceWrap but for the overlay: a distinct class keeps these
+  // out of the body's `.wc-sentence` machinery, and NO direct click
+  // handler is bound — bubble taps run through delegation instead.
+  function makeBubbleSentences(text) {
+    const frag = document.createDocumentFragment();
+    const sents = splitSentencesSafe(text);
+    const list  = sents.length ? sents.map(s => s.text) : [text];
+    list.forEach((sentText, si) => {
+      if (!sentText || !sentText.trim()) return;
+      if (si > 0) frag.appendChild(document.createTextNode(' '));
+      const sent = document.createElement('span');
+      sent.className = 'wc-bubble-sent';
+      sent.dataset.idx  = 'b' + (bubbleSentSeq++);   // unique chunk-key source
+      sent.dataset.text = sentText;
+      let wIdx = 0;
+      extractWordTokens(sentText).forEach(tok => {
+        if (tok.kind === 'glue') {
+          const g = document.createElement('span');
+          g.className = 'w punct';
+          g.textContent = tok.text;
+          sent.appendChild(g);
+          return;
+        }
+        const sp = document.createElement('span');
+        sp.className = 'w';
+        sp.dataset.word = tok.lower;
+        sp.dataset.wIdx = String(wIdx);
+        sp.textContent  = tok.text;
+        applyLevelClass(sp, wordLevels.has(tok.lower) ? wordLevels.get(tok.lower) : null);
+        sent.appendChild(sp);
+        wIdx++;
+      });
+      frag.appendChild(sent);
+    });
+    return frag;
+  }
+
+  // A bubble word was tapped. Same study reaction as a body word
+  // (onWordClick → applyFocus) but scoped to the overlay: clear any
+  // body selection, ring this word, fire wc:word-selected for the
+  // sidebar, then paint the chunk underline + speak the chunk.
+  function onBubbleWordClick(wordEl) {
+    const sentEl = wordEl.closest('.wc-bubble-sent');
+    if (!sentEl) return;
+    // A bubble selection supersedes any body-word selection.
+    focusedSentIdx = null;
+    focusedWordIdx = null;
+    document.querySelectorAll('.w.focused').forEach(el => el.classList.remove('focused'));
+    wordEl.classList.add('focused');
+
+    const lower    = wordEl.dataset.word || '';
+    const original = wordEl.textContent  || '';
+    const sentText = sentEl.dataset.text || '';
+    window.dispatchEvent(new CustomEvent('wc:word-selected', {
+      detail: { word: original, lower, sentence: sentText },
+    }));
+
+    const wIdx = parseInt(wordEl.dataset.wIdx, 10) || 0;
+    window.WCChunks.fetch(sentText).then(chunks => {
+      const chunk = window.WCChunks.findChunkAt(chunks, wIdx);
+      if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
+      else       clearChunkUnderline();
+      if (chunkMuted) return;
+      const speakText = (chunk && chunk.text) ? chunk.text : sentText;
+      if (!speakText) return;
+      if (window.WCTTS) {
+        try { window.WCTTS.stop(); } catch {}
+        window.WCTTS.speak(speakText).catch(e =>
+          console.warn('[bubble-tts] failed', e && e.message));
+      }
+    }).catch(e => console.warn('[bubble-tts] chunks fetch failed', e && e.message));
+  }
+
+  // Shrink each bubble's font until its text fits the box. Bubbles
+  // are %-sized so this re-runs on image load, render and resize.
+  function fitBubblesIn(panelEl) {
+    if (panelEl) panelEl.querySelectorAll('.wc-bubble').forEach(fitOneBubble);
+  }
+  function fitAllBubbles() {
+    document.querySelectorAll('#lessonBody .wc-bubble').forEach(fitOneBubble);
+  }
+  function fitOneBubble(bub) {
+    bub.style.fontSize = '';
+    // Seed proportional to box height so a big panel reads large and
+    // a tiny bubble starts small, then shrink to fit.
+    let size = Math.max(7, Math.min(22, bub.clientHeight * 0.4));
+    bub.style.fontSize = size + 'px';
+    let guard = 30;
+    while (guard-- > 0 && size > 6 &&
+           (bub.scrollHeight > bub.clientHeight + 1 ||
+            bub.scrollWidth  > bub.clientWidth  + 1)) {
+      size -= 1;
+      bub.style.fontSize = size + 'px';
+    }
   }
 
   // HTML body tokenisation. For every block-level element inside
@@ -1558,6 +1730,34 @@
       }
     });
   }
+
+  // ============================================================
+  //  BUBBLE INTERACTION  — delegated so it survives re-renders
+  //
+  //  repaginateOverflow serialises rendered panels back to HTML
+  //  (children.outerHTML), which would drop directly-bound click
+  //  listeners. Binding the handler ONCE on the stable #lessonBody
+  //  container — which renderBody only ever empties, never replaces —
+  //  keeps bubble words tappable across every render / repagination.
+  // ============================================================
+  (function wireBubbleDelegation() {
+    const body = $('lessonBody');
+    if (!body) return;
+    body.addEventListener('click', (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      const w = t.closest('.wc-bubble .w');
+      if (!w || w.classList.contains('punct')) return;
+      onBubbleWordClick(w);
+    });
+  })();
+  // Bubble boxes are %-sized, so a viewport resize changes their
+  // pixel size — re-fit the text once the resize settles.
+  let _bubbleResizeT = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(_bubbleResizeT);
+    _bubbleResizeT = setTimeout(fitAllBubbles, 180);
+  });
 
   // ============================================================
   //  KEYBOARD NAV  — ←/→ word, ↑/↓ chunk

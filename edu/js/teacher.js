@@ -1846,17 +1846,27 @@
       // so the −/+ buttons display "100%" instead of "NaN%".
       if (!Number.isFinite(im.scale)) im.scale = 1.0;
       const pct = Math.round(im.scale * 100);
+      const bubbleCount = Array.isArray(im.bubbles) ? im.bubbles.length : 0;
+      // Comic-panel images get a "Bubbles" button — opens the editor
+      // where the teacher boxes each speech bubble + types its text.
+      const bubbleBtn = im.corner === 'panel'
+        ? `<button data-bubbles="${i}" class="wc-btn ghost" title="Add speech-bubble text overlays">🗨 Bubbles${bubbleCount ? ` (${bubbleCount})` : ''}</button>`
+        : '';
+      const bubbleMeta = (im.corner === 'panel' && bubbleCount)
+        ? ` · ${bubbleCount} bubble${bubbleCount > 1 ? 's' : ''}`
+        : '';
       return `
         <div class="wc-img-chip">
           <img src="${im.data_url}" alt="image ${i}"/>
           <div class="wc-img-chip-meta">
             <strong>[[IMG:${i}]]</strong>
-            <span class="wc-muted">${cornerLabel(im.corner)} · ${pct}%</span>
+            <span class="wc-muted">${cornerLabel(im.corner)} · ${pct}%${bubbleMeta}</span>
           </div>
           <div class="wc-img-chip-actions">
             <button data-size="-"   data-i="${i}" class="wc-btn ghost" title="Shrink 5%">−</button>
             <button data-size="+"   data-i="${i}" class="wc-btn ghost" title="Grow 5%">+</button>
             <button data-corner-edit="${i}" class="wc-btn ghost" title="Change where this image sits">📍 Position</button>
+            ${bubbleBtn}
             <button data-rm="${i}"  class="wc-btn ghost">Remove</button>
           </div>
         </div>
@@ -1882,6 +1892,190 @@
           renderImagesPreview();
         }, im.corner);
       });
+    });
+    wrap.querySelectorAll('[data-bubbles]').forEach(b => {
+      b.addEventListener('click', () =>
+        openBubbleEditor(parseInt(b.dataset.bubbles, 10)));
+    });
+  }
+
+  // ----------------------------------------------------------------
+  //  SPEECH-BUBBLE EDITOR  (comic-panel images)
+  //
+  //  The teacher lays a box over each speech bubble and types the
+  //  dialogue it should contain. Boxes are stored on the image record
+  //  as `bubbles: [{x,y,w,h,text}]` where x/y/w/h are 0-1 fractions
+  //  of the image — resolution-independent, so the lesson renderer
+  //  can overlay them at any display size. The overlaid white box
+  //  hides the original lettering; the typed text becomes real,
+  //  studyable words (chunk underline / select / highlight / TTS).
+  // ----------------------------------------------------------------
+  function escForTextarea(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;');
+  }
+  function clamp01(n) { return Math.max(0, Math.min(1, Number(n) || 0)); }
+
+  function openBubbleEditor(idx) {
+    const im = lessonImages[idx];
+    if (!im) return;
+    if (!Array.isArray(im.bubbles)) im.bubbles = [];
+
+    const old = document.getElementById('bubbleEditorHost');
+    if (old) old.remove();
+
+    const host = document.createElement('div');
+    host.id = 'bubbleEditorHost';
+    host.className = 'wc-popup-backdrop';
+    host.innerHTML = `
+      <div class="wc-popup wc-bubble-editor">
+        <button class="wc-popup-close" aria-label="Close">×</button>
+        <h3 style="margin:0 0 4px;">Speech bubbles — [[IMG:${idx}]]</h3>
+        <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
+          Put a box over each speech bubble and type what it says. The white box hides the
+          original lettering; the text you type becomes studyable — chunk underline, word
+          select, highlight and TTS all work on it. Drag a box to move it, drag its
+          corner dot to resize. Empty boxes are discarded on save.
+        </p>
+        <div class="wc-be-toolbar">
+          <button class="wc-btn" id="beAdd" type="button">+ Add bubble</button>
+          <span class="wc-muted" id="beCount"></span>
+        </div>
+        <div class="wc-be-stage-wrap">
+          <div class="wc-be-stage" id="beStage"></div>
+        </div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
+          <button class="wc-btn ghost" id="beCancel" type="button">Cancel</button>
+          <button class="wc-btn" id="beDone" type="button">Save bubbles</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(host);
+
+    const stage   = host.querySelector('#beStage');
+    const countEl = host.querySelector('#beCount');
+
+    function refreshCount() {
+      const n = stage.querySelectorAll('.wc-be-box').length;
+      countEl.textContent = n
+        ? `${n} bubble${n > 1 ? 's' : ''}`
+        : 'No bubbles yet — click “Add bubble”.';
+    }
+
+    // Draw the panel image into the stage at a fitted size, then lay
+    // out any saved bubble boxes on top of it.
+    const probe = new Image();
+    probe.onload = () => {
+      const maxW = 700, maxH = 440;
+      const r  = Math.min(maxW / probe.naturalWidth, maxH / probe.naturalHeight, 1);
+      const sw = Math.round(probe.naturalWidth  * r);
+      const sh = Math.round(probe.naturalHeight * r);
+      stage.style.width  = sw + 'px';
+      stage.style.height = sh + 'px';
+      stage.style.backgroundImage = `url("${im.data_url}")`;
+      im.bubbles.forEach(addBox);
+      refreshCount();
+    };
+    probe.onerror = () => { stage.textContent = 'Could not load image.'; };
+    probe.src = im.data_url;
+
+    function addBox(model) {
+      const sw = stage.clientWidth, sh = stage.clientHeight;
+      const box = document.createElement('div');
+      box.className = 'wc-be-box';
+      box.style.left   = (clamp01(model.x) * sw) + 'px';
+      box.style.top    = (clamp01(model.y) * sh) + 'px';
+      box.style.width  = (Math.max(0.05, clamp01(model.w)) * sw) + 'px';
+      box.style.height = (Math.max(0.05, clamp01(model.h)) * sh) + 'px';
+      box.innerHTML = `
+        <textarea class="wc-be-text" placeholder="Type dialogue…">${escForTextarea(model.text)}</textarea>
+        <div class="wc-be-handle" title="Resize"></div>
+        <button class="wc-be-del" type="button" title="Delete bubble">×</button>
+      `;
+      stage.appendChild(box);
+      wireBox(box);
+      return box;
+    }
+
+    // Pointer drag helper — `onMove(dx,dy)` fires per mousemove until
+    // the button is released.
+    function startDrag(e, onMove) {
+      e.preventDefault();
+      const sx = e.clientX, sy = e.clientY;
+      function mv(ev) { onMove(ev.clientX - sx, ev.clientY - sy); }
+      function up() {
+        document.removeEventListener('mousemove', mv);
+        document.removeEventListener('mouseup', up);
+      }
+      document.addEventListener('mousemove', mv);
+      document.addEventListener('mouseup', up);
+    }
+
+    function wireBox(box) {
+      const handle = box.querySelector('.wc-be-handle');
+      const del    = box.querySelector('.wc-be-del');
+      const ta     = box.querySelector('.wc-be-text');
+
+      del.addEventListener('click', (e) => {
+        e.stopPropagation();
+        box.remove();
+        refreshCount();
+      });
+
+      // Move — mousedown on the box body (ignore textarea/handle/del).
+      box.addEventListener('mousedown', (e) => {
+        if (e.target === ta || e.target === handle || e.target === del) return;
+        const sw = stage.clientWidth, sh = stage.clientHeight;
+        const x0 = box.offsetLeft, y0 = box.offsetTop;
+        startDrag(e, (dx, dy) => {
+          box.style.left = Math.max(0, Math.min(sw - box.offsetWidth,  x0 + dx)) + 'px';
+          box.style.top  = Math.max(0, Math.min(sh - box.offsetHeight, y0 + dy)) + 'px';
+        });
+      });
+
+      // Resize — drag the corner handle.
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        const sw = stage.clientWidth, sh = stage.clientHeight;
+        const w0 = box.offsetWidth, h0 = box.offsetHeight;
+        startDrag(e, (dx, dy) => {
+          box.style.width  = Math.max(40, Math.min(sw - box.offsetLeft, w0 + dx)) + 'px';
+          box.style.height = Math.max(28, Math.min(sh - box.offsetTop,  h0 + dy)) + 'px';
+        });
+      });
+    }
+
+    host.querySelector('#beAdd').addEventListener('click', () => {
+      if (!stage.clientWidth) return;   // image not loaded yet
+      addBox({ x: 0.34, y: 0.36, w: 0.32, h: 0.2, text: '' });
+      refreshCount();
+    });
+
+    function close() { host.remove(); }
+    host.querySelector('.wc-popup-close').addEventListener('click', close);
+    host.querySelector('#beCancel').addEventListener('click', close);
+    host.addEventListener('click', (e) => { if (e.target === host) close(); });
+
+    host.querySelector('#beDone').addEventListener('click', () => {
+      const sw = stage.clientWidth, sh = stage.clientHeight;
+      const out = [];
+      if (sw && sh) {
+        stage.querySelectorAll('.wc-be-box').forEach(box => {
+          const text = (box.querySelector('.wc-be-text').value || '').trim();
+          if (!text) return;   // drop empty bubbles
+          out.push({
+            x: +(box.offsetLeft   / sw).toFixed(4),
+            y: +(box.offsetTop    / sh).toFixed(4),
+            w: +(box.offsetWidth  / sw).toFixed(4),
+            h: +(box.offsetHeight / sh).toFixed(4),
+            text,
+          });
+        });
+      }
+      im.bubbles = out;
+      renderImagesPreview();
+      close();
     });
   }
 
