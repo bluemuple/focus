@@ -521,13 +521,19 @@
 
   async function buildKorMcqQuestions(count) {
     const L = window.WCLesson;
-    let sentences = (L && L.quizSentences) || [];
-    sentences = sentences.filter(s =>
-      (String(s).match(/[A-Za-z]+/g) || []).length >= 4);
-    if (!sentences.length) return [];
+    let allSentences = (L && L.quizSentences) || [];
+    allSentences = allSentences.map(s => String(s).trim()).filter(Boolean);
+    // Cloze / unscramble need a sentence with ≥4 words to blank a
+    // word out of. Comic-bubble dialogue is often shorter than that,
+    // so the word pool (below) draws from ALL sentences — short
+    // bubbles still contribute vocabulary for the word↔meaning
+    // question types even when no sentence is long enough for cloze.
+    const sentences = allSentences.filter(s =>
+      (s.match(/[A-Za-z]+/g) || []).length >= 4);
+    if (!allSentences.length) return [];
 
     const n         = Math.max(2, count || 2);
-    const pool      = await buildKorWordPool(sentences);
+    const pool      = await buildKorWordPool(allSentences);
     const usedSents = new Set();
 
     // Plan an even type mix, then shuffle the order.

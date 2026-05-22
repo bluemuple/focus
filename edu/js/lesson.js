@@ -71,6 +71,12 @@
   // viewport-fitting algorithm. Future: dynamic auto-fit pagination.
   let pages       = [];      // [[sentence,…], …]  groups of parts
   let pageIdx     = 0;
+  // Continuous-scroll reading mode (⬇ toolbar chip). When true the
+  // body drops pagination and renders EVERY page stacked into one
+  // scrollable column — comic panels flow vertically. Wired in
+  // wireToolbar(); declared here so renderBody / repaginateOverflow
+  // (module-scope functions) can branch on it.
+  let scrollMode  = false;
   // Subscribers (sidebar) that want to react to word-level changes.
   const levelChangeListeners = [];
   function notifyLevelChange(detail) {
@@ -99,11 +105,33 @@
     // Sentences from the lesson start up to (and including) the
     // sentence of the last word the student tapped — the scope the
     // Korean quiz draws its questions from.
+    //
+    // Comic lessons keep ALL their dialogue inside speech bubbles,
+    // not in lesson.body, so sentenceList() is empty for them and
+    // the quiz had no source material ("퀴즈를 만들 수 없어요"). We
+    // fold the bubble sentences (DOM order = reading order) into the
+    // scope — up to the focused bubble when one is selected.
     get quizSentences() {
       try {
         const flat = sentenceList().map(s => s.text);
         const upto = Math.max(0, Math.min(flat.length - 1, lastSelectedSentenceIdx || 0));
-        return flat.slice(0, upto + 1);
+        let scope = flat.slice(0, upto + 1);
+        const bubbleEls = Array.from(
+          document.querySelectorAll('#lessonBody .wc-bubble-sent'));
+        if (bubbleEls.length) {
+          let lastIdx = bubbleEls.length - 1;
+          const focusedSent = bubbleFocusEl
+            && bubbleFocusEl.closest('.wc-bubble-sent');
+          if (focusedSent) {
+            const i = bubbleEls.indexOf(focusedSent);
+            if (i >= 0) lastIdx = i;
+          }
+          const bubbleScope = bubbleEls.slice(0, lastIdx + 1)
+            .map(el => ((el.dataset && el.dataset.text) || '').trim())
+            .filter(Boolean);
+          scope = scope.concat(bubbleScope);
+        }
+        return scope;
       } catch { return []; }
     },
     // encounter.js polls this to decide whether to fire an animal
@@ -956,6 +984,9 @@
       return;
     }
 
+    // Continuous-scroll mode — every page stacked into one column.
+    if (scrollMode) { renderScroll(root); return; }
+
     // HTML body — render the raw HTML, then walk text nodes and
     // tokenise each in-place. This preserves H1/H2/H3/B/U/colour
     // markup while making every word individually clickable. The
@@ -992,6 +1023,50 @@
       pageSentIdx++;
     });
     // Prefetch chunks for everything just rendered — fire-and-forget.
+    if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
+    requestAnimationFrame(fitAllBubbles);
+  }
+
+  // Continuous-scroll renderer (⬇ mode). Stacks EVERY page into
+  // #lessonBody as a column of `.wc-scroll-page` blocks instead of
+  // showing one page at a time. Global sentence indices (data-idx)
+  // stay consistent across the whole column so word focus, keyboard
+  // nav, TTS auto-advance and recording playback all keep working —
+  // they query `.wc-sentence[data-idx]` globally either way.
+  function renderScroll(root) {
+    const allHtml = pages.length && pages.every(parts =>
+      parts.length === 1 && parts[0].kind === 'html');
+    const visibleSentences = [];
+    let gStart = 0;
+    pages.forEach((parts, pi) => {
+      const pageWrap = document.createElement('div');
+      pageWrap.className = 'wc-scroll-page';
+      pageWrap.dataset.page = String(pi);
+      if (allHtml) {
+        pageWrap.innerHTML = parts[0].html;
+        tokenizeTextNodesInPlace(pageWrap, gStart);
+        (parts[0].sentences || []).forEach(s => visibleSentences.push(s.text));
+        gStart += (parts[0].sentences || []).length;
+      } else {
+        let pageSentIdx = 0;
+        parts.forEach(p => {
+          if (p.kind === 'gap') {
+            pageWrap.appendChild(document.createTextNode(p.text));
+            return;
+          }
+          if (p.kind === 'img') {
+            const img = makeFloatingImage(p.idx);
+            if (img) pageWrap.appendChild(img);
+            return;
+          }
+          pageWrap.appendChild(makeSentenceWrap(p, gStart + pageSentIdx));
+          visibleSentences.push(p.text);
+          pageSentIdx++;
+        });
+        gStart += pageSentIdx;
+      }
+      root.appendChild(pageWrap);
+    });
     if (window.WCChunks) window.WCChunks.prefetchSentences(visibleSentences);
     requestAnimationFrame(fitAllBubbles);
   }
@@ -1230,6 +1305,7 @@
   // any body selection, ring this word, fire wc:word-selected for the
   // sidebar, then paint the chunk underline + speak the chunk.
   let bubbleFocusEl = null;   // currently-focused bubble .w, or null
+  let lastBubblePanel = null; // .wc-panel the focus last sat in (scroll mode)
 
   function focusBubbleWord(wordEl) {
     const sentEl = wordEl && wordEl.closest('.wc-bubble-sent');
@@ -1241,8 +1317,17 @@
     document.querySelectorAll('.w.focused').forEach(el => el.classList.remove('focused'));
     wordEl.classList.add('focused');
     // Keep the focused word on-screen when arrow-stepping crosses
-    // panels — no-op when it's already visible.
-    try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+    // panels. In scroll mode, stepping into a NEW comic panel pulls
+    // that whole panel up to the top of the view (teacher spec:
+    // "다음 컷의 만화가 맨 위로 올라가도록"); otherwise just nudge
+    // the word into view with block:'nearest'.
+    const panel = wordEl.closest('.wc-panel');
+    if (scrollMode && panel && panel !== lastBubblePanel) {
+      try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+    } else {
+      try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+    }
+    lastBubblePanel = panel || null;
 
     const lower    = wordEl.dataset.word || '';
     const original = wordEl.textContent  || '';
@@ -1529,10 +1614,20 @@
     try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
     try {
       const flat = sentenceList();   // ordered, whole lesson
-      for (const s of flat) {
+      for (let i = 0; i < flat.length; i++) {
         if (!playAllBusy) break;
-        const take = activeTake(normAudioKey(s.text || ''));
-        if (take) await playRecordingClip(take);
+        const s = flat[i];
+        const take = activeTake(normAudioKey((s && s.text) || ''));
+        if (!take) continue;
+        // Highlight + centre the sentence being played — in scroll
+        // mode this keeps the spoken line in the middle of the view.
+        const span = document.querySelector(`.wc-sentence[data-idx="${i}"]`);
+        if (span) {
+          span.classList.add('wc-tts-reading');
+          try { span.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
+        }
+        await playRecordingClip(take);
+        if (span) span.classList.remove('wc-tts-reading');
       }
     } finally {
       playAllBusy = false;
@@ -2694,6 +2789,10 @@
 
   function repaginateOverflow() {
     if (singleMode) return;
+    // Continuous-scroll mode has no card-height constraint — every
+    // page flows in one column — so there is nothing to split. Just
+    // re-fit the comic bubbles (this path is also the resize hook).
+    if (scrollMode) { requestAnimationFrame(fitAllBubbles); return; }
     const bodyEl = $('lessonBody');
     if (!bodyEl) return;
 
@@ -2956,10 +3055,18 @@
       if (!singleMode) {
         const sentPage = pageForGlobalSent(i);
         if (sentPage != null && sentPage !== pageIdx) {
-          goPage(sentPage);
-          // Wait for the slide animation (~460 ms) so the new DOM is
-          // mounted before we try to find the sentence span.
-          await new Promise(r => setTimeout(r, 500));
+          if (scrollMode) {
+            // Scroll mode — every page is already mounted; just keep
+            // the counter honest, the scrollIntoView below moves the
+            // viewport to the sentence.
+            pageIdx = sentPage;
+            refreshPageCounter();
+          } else {
+            goPage(sentPage);
+            // Wait for the slide animation (~460 ms) so the new DOM is
+            // mounted before we try to find the sentence span.
+            await new Promise(r => setTimeout(r, 500));
+          }
         }
       } else {
         // Single-sentence mode — keep its index in sync.
@@ -3242,6 +3349,55 @@
       });
     }
 
+    // ── Continuous-scroll toggle (⬇ off / on, next to Kor Bar).
+    // ON drops pagination and flows the whole lesson in one
+    // scrollable column. Resolution order for the initial state
+    // mirrors the 🐾 / Play-chunk chips:
+    //   1. per-lesson default_scroll (teacher's choice on upload)
+    //   2. per-device localStorage override
+    //   3. out-of-the-box default — ON for comic lessons (panels
+    //      read best stacked), OFF for text / song lessons.
+    const SCROLL_KEY = 'wc.scrollMode.v1';
+    if (lesson && typeof lesson.default_scroll === 'boolean') {
+      scrollMode = lesson.default_scroll;
+    } else {
+      const stored = localStorage.getItem(SCROLL_KEY);
+      if (stored === '1')      scrollMode = true;
+      else if (stored === '0') scrollMode = false;
+      else                     scrollMode = !!(lesson && lesson.mode === 'comic');
+    }
+    function applyScrollMode() {
+      document.body.classList.toggle('wc-scroll-mode', scrollMode);
+      const b = $('btnScrollMode'), lbl = $('btnScrollModeLabel');
+      if (b) {
+        b.classList.toggle('active', scrollMode);
+        b.setAttribute('aria-pressed', scrollMode ? 'true' : 'false');
+      }
+      if (lbl) lbl.textContent = scrollMode ? 'on' : 'off';
+    }
+    applyScrollMode();
+    // The first renderBody() (init, before wireToolbar) drew the
+    // paginated layout — rebuild as the scroll column now if that is
+    // the resolved default. repaginateFromScratch re-tokenises and
+    // re-renders via renderBody → renderScroll.
+    if (scrollMode) repaginateFromScratch();
+    if ($('btnScrollMode')) {
+      $('btnScrollMode').addEventListener('click', () => {
+        scrollMode = !scrollMode;
+        try { localStorage.setItem(SCROLL_KEY, scrollMode ? '1' : '0'); } catch {}
+        applyScrollMode();
+        // Rebuild the body in the new mode. In scroll mode, land the
+        // student on the page they were reading.
+        repaginateFromScratch();
+        if (scrollMode) {
+          const tgt = document.querySelector(
+            `.wc-scroll-page[data-page="${pageIdx}"]`);
+          if (tgt) requestAnimationFrame(() =>
+            tgt.scrollIntoView({ block: 'start' }));
+        }
+      });
+    }
+
     // ── Record mode — reveals a per-sentence record button so the
     // student can record themselves reading. Session-only (default
     // off); leaving the mode aborts any take in progress.
@@ -3363,6 +3519,18 @@
     pageIdx = Math.max(0, Math.min(pages.length - 1, next));
     if (pageIdx === prev) return;
     saveProgress();
+    // Continuous-scroll mode — every page is already in the DOM, so
+    // a "page flip" just scrolls that page's block to the top
+    // instead of re-rendering with the slide animation.
+    if (scrollMode) {
+      singleIdx = globalStartOfPage(pageIdx);
+      refreshPageCounter();
+      refreshNavBoundary();
+      const tgt = document.querySelector(
+        `.wc-scroll-page[data-page="${pageIdx}"]`);
+      if (tgt) { try { tgt.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {} }
+      return;
+    }
     // In single-mode, flipping pages with ‹‹ / ›› should land the
     // student on THAT page's first sentence — not reset to the
     // global first sentence (which is what `singleIdx = 0` did, so

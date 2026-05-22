@@ -1522,6 +1522,10 @@
     });
     const hint = $('lessonModeHint');
     if (hint) hint.textContent = LESSON_MODE_HINTS[lessonMode] || '';
+    // The "스크롤로 이어 보기" option only makes sense for comic
+    // lessons — hide it for text / song.
+    const scrollField = $('comicScrollField');
+    if (scrollField) scrollField.classList.toggle('wc-hidden', lessonMode !== 'comic');
   }
   (function wireLessonModeTabs() {
     const tabs = document.getElementById('lessonModeTabs');
@@ -1550,6 +1554,11 @@
     $('lessonAnimalSet').value  = L.animal_set || 'animals';
     $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
     $('lessonHeadingsNewPage').checked = !!L.headings_start_new_page;
+    // Continuous-scroll default for comic lessons. Comic lessons
+    // scroll by default, so the box is CHECKED unless the teacher
+    // explicitly turned it off (default_scroll === false). Older
+    // comic lessons (NULL, pre-migration) stay checked.
+    $('lessonComicScroll').checked = L.default_scroll !== false;
     setLessonMode(L.mode || 'text');
     lessonAudioUrl       = L.audio_url || null;
     lessonAudioFile      = null;
@@ -1580,6 +1589,7 @@
     $('lessonAnimalSet').value = 'animals';
     $('lessonGiftLimit').value = 3;
     $('lessonHeadingsNewPage').checked = false;
+    $('lessonComicScroll').checked = true;   // comic lessons scroll by default
     setLessonMode('text');
     resetLessonAudio();
     resetImages();
@@ -3362,6 +3372,11 @@
       word_notes:  cleanedWordNotes,
       headings_start_new_page: !!$('lessonHeadingsNewPage').checked,
       mode: lessonMode,
+      // Continuous-scroll default — only meaningful for comic
+      // lessons; text / song lessons store NULL ("no preference"
+      // → the lesson page falls back to paginated).
+      default_scroll: lessonMode === 'comic'
+        ? !!$('lessonComicScroll').checked : null,
       audio_url: lessonAudioUrl || null,
       audio_segments: lessonAudioSegments,
     };
@@ -3390,6 +3405,7 @@
       $('lessonTitle').value = '';
       $('lessonBody').value = '';
       $('lessonHeadingsNewPage').checked = false;
+      $('lessonComicScroll').checked = true;   // comic lessons scroll by default
       setLessonMode('text');
       resetLessonAudio();
       resetImages();
