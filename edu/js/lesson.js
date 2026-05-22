@@ -2469,12 +2469,18 @@
       case 'Escape':     e.preventDefault(); clearWordFocus();      return;
     }
     // Level-picker shortcuts — same mapping as 또박또박:
-    //   0   → -1 (무시 / skip)
-    //   1-4 →  1..4
-    //   5, v, V → 5 (I know it!)
-    // Only fires when a word is currently focused (i.e. shown in the
-    // sidebar) — otherwise we have no target to grade.
-    if (focusedSentIdx == null || focusedWordIdx == null) return;
+    //   0 / ₩ → -1 (무시 / skip),  1-4 → 1..4,  5 / v → 5 (I know it!)
+    // Resolve the focused word — a BODY word (focusedSentIdx) OR a
+    // comic-bubble word (bubbleFocusEl). The bubble case was missing,
+    // so 1-5 / ₩ did nothing while a bubble word was selected.
+    let wordEl = null;
+    if (bubbleFocusEl && bubbleFocusEl.isConnected) {
+      wordEl = bubbleFocusEl;
+    } else if (focusedSentIdx != null && focusedWordIdx != null) {
+      const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
+      if (sentEl) wordEl = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx}"]`);
+    }
+    if (!wordEl) return;
     let st = null;
     if      (e.key === '0' || e.key === '₩')           st = -1;
     else if (e.key === '1')                            st = 1;
@@ -2484,13 +2490,7 @@
     else if (e.key === '5' || e.key === 'v' || e.key === 'V') st = 5;
     if (st === null) return;
     e.preventDefault();
-    const sentEl = document.querySelector(`.wc-sentence[data-idx="${focusedSentIdx}"]`);
-    if (!sentEl) return;
-    const wordEl = sentEl.querySelector(`.w[data-w-idx="${focusedWordIdx}"]`);
-    if (!wordEl) return;
-    const lower    = wordEl.dataset.word;
-    const original = wordEl.textContent;
-    window.WCLesson.setWordLevel(lower, st, original);
+    window.WCLesson.setWordLevel(wordEl.dataset.word, st, wordEl.textContent);
   }
 
   function navWord(dir) {
@@ -3140,6 +3140,15 @@
       hideEncounters = !lesson.default_animals;
     } else {
       hideEncounters = localStorage.getItem(HIDE_ENC_KEY) !== '0';
+    }
+    // Override the placeholder WCLesson.encountersHidden — it was set
+    // up top, BEFORE this let-scoped flag existed, so its arrow
+    // referenced an out-of-scope `hideEncounters` and THREW on every
+    // call. encounter.js calls it on every wc:level-up, so the throw
+    // aborted the handler and no quiz ever fired. Re-point it at the
+    // live flag the 🐾 chip toggles.
+    if (window.WCLesson) {
+      window.WCLesson.encountersHidden = () => hideEncounters;
     }
     function applyHideEncounters() {
       const btn = $('btnHideEncounters');
