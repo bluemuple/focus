@@ -966,6 +966,126 @@
     }, 2800);
   }
 
+  // ----------------------------------------------------------------
+  //  QUIZ PREWARM (📝) — pre-build the Korean animal-encounter quiz.
+  //
+  //  The quiz (quiz.js → buildKorMcqQuestions) needs, per sentence,
+  //  a Korean translation (cloze + unscramble question types) and,
+  //  for the comprehension type, one GPT batch over the passage.
+  //  Word meanings are already covered by the 🇰🇷 Kor Bar prewarm;
+  //  this button warms the translation + comprehension caches so the
+  //  first encounter quiz pops up instantly.
+  //
+  //  Comic lessons keep their dialogue in speech bubbles, not in
+  //  `body` — quizBodyKey / extractQuizSentences fold those in so a
+  //  comic lesson is prewarmed (and cache-tracked) correctly too.
+  // ----------------------------------------------------------------
+  function quizBodyKey(L) {
+    // Hash source for the ✓ cache pip — body PLUS every bubble's
+    // text, so editing comic dialogue invalidates the cache mark.
+    let extra = '';
+    if (L && Array.isArray(L.images)) {
+      L.images.forEach(im => {
+        if (im && Array.isArray(im.bubbles)) {
+          im.bubbles.forEach(b => {
+            if (b && typeof b.text === 'string') extra += '' + b.text;
+          });
+        }
+      });
+    }
+    return String((L && L.body) || '') + extra;
+  }
+  function extractQuizSentences(L) {
+    const out = extractPrewarmSentences((L && L.body) || '');
+    // Comic dialogue lives in image speech bubbles. Split each
+    // bubble crudely into sentences — best-effort: a cache miss just
+    // means the student waits a beat, never a broken quiz.
+    if (L && Array.isArray(L.images)) {
+      L.images.forEach(im => {
+        if (im && Array.isArray(im.bubbles)) {
+          im.bubbles.forEach(b => {
+            const t = (b && typeof b.text === 'string') ? b.text.trim() : '';
+            if (!t) return;
+            t.split(/(?<=[.!?])\s+/).forEach(s => {
+              const c = s.trim();
+              if (c) out.push(c);
+            });
+          });
+        }
+      });
+    }
+    return Array.from(new Set(out));
+  }
+  async function prewarmQuiz(lessonId, btn) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    if (btn.dataset.busy === '1') return;   // ignore double-clicks
+    btn.dataset.busy = '1';
+    const origLabel = btn.textContent;
+
+    // Cloze / unscramble need a sentence with ≥4 words; those are
+    // the ones whose translation is worth warming.
+    const longish = extractQuizSentences(L)
+      .filter(s => (s.match(/[A-Za-z]+/g) || []).length >= 4);
+    if (longish.length === 0) {
+      btn.textContent = '∅ Empty';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
+    }
+
+    const total = longish.length + 1;   // +1 for the comprehension call
+    let done = 0, ok = 0;
+    const updateLabel = () => { btn.textContent = `📝 ${done}/${total}`; };
+    updateLabel();
+
+    const URL  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const ANON = window.WC_SUPABASE.anon;
+    const headers = {
+      'Content-Type': 'application/json',
+      apikey: ANON,
+      Authorization: 'Bearer ' + ANON,
+    };
+    const FN = URL + '/functions/v1/wc-korbar-gpt';
+
+    // Per-sentence Korean translation.
+    await runInBatches(longish, 5, async (sent) => {
+      try {
+        const r = await fetch(FN, {
+          method: 'POST', headers,
+          body: JSON.stringify({ kind: 'translate', sentence: sent }),
+        });
+        if (r.ok) ok++;
+      } catch {}
+      done++; updateLabel();
+    });
+    // One comprehension batch over the whole-lesson passage (matches
+    // the quiz's scope once a student has read the full lesson).
+    try {
+      const passage = longish.join(' ').slice(0, 1500);
+      const r = await fetch(FN, {
+        method: 'POST', headers,
+        body: JSON.stringify({ kind: 'comprehension', passage }),
+      });
+      if (r.ok) ok++;
+    } catch {}
+    done++; updateLabel();
+
+    if (ok > 0) {
+      btn.textContent = '✓ Quiz ready';
+      try {
+        localStorage.setItem('wc.prewarm.quiz.' + lessonId, bodyHash(quizBodyKey(L)));
+      } catch {}
+    } else {
+      // wc-korbar-gpt not deployed yet — don't fake a ✓.
+      btn.textContent = '⚠ Not ready';
+    }
+    setTimeout(() => {
+      btn.textContent = origLabel;
+      btn.dataset.busy = '';
+      renderLessons();
+    }, 2800);
+  }
+
   // Cache-status helpers — used by renderLessons() to draw the ✓
   // pip next to the 🔥 / 🎵 buttons whenever the lesson's CURRENT
   // body matches the body that was prewarmed. Hash is a fast djb2
@@ -1389,6 +1509,9 @@
           <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'korbar') ? ' is-cached' : ''}"
                   data-prewarmkorbar="${L.id}"
                   title="Kor Bar: pre-fetch the Korean sidebar content shown when a student picks 'Kor Bar' on the lesson page. ✓ = cached for this body. (Needs the wc-korbar-gpt function deployed; shows 'Not ready' until then.)">🇰🇷</button>
+          <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, quizBodyKey(L), 'quiz') ? ' is-cached' : ''}"
+                  data-prewarmquiz="${L.id}"
+                  title="문제 만들기: pre-build the Korean quiz data — sentence translations + a comprehension batch — so the first animal-encounter quiz appears with no wait. Covers comic speech-bubble dialogue too. ✓ = cached for this lesson. (Needs the wc-korbar-gpt function deployed.)">📝</button>
           <!-- Per-lesson default toggles. Each click flips the
                column on wc_lessons; the lesson page reads these to
                set the INITIAL state of its 🔊/🐾 chips. Compact
@@ -1440,6 +1563,9 @@
     });
     list.querySelectorAll('[data-prewarmkorbar]').forEach(b => {
       b.addEventListener('click', () => prewarmKorBar(b.dataset.prewarmkorbar, b));
+    });
+    list.querySelectorAll('[data-prewarmquiz]').forEach(b => {
+      b.addEventListener('click', () => prewarmQuiz(b.dataset.prewarmquiz, b));
     });
     list.querySelectorAll('[data-toggle-chunkdefault]').forEach(b => {
       b.addEventListener('click', async () => {
@@ -3747,7 +3873,7 @@
       { key: 'hideStudentLessonUpload', label: 'Hide "student can upload their own lesson" feature', tip: 'Not built yet — placeholder for future.' },
       { key: 'hideVisualizationSidebar', label: 'Hide the "Imagine this!" sidebar section', tip: 'Students won\'t see the text input → teacher pipeline.' },
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
-      { key: 'hideDictionaryIframe',     label: 'Hide vocabulary.com iframe (new-tab only)', tip: 'In case of strict school content filters.' },
+      { key: 'lessonsAnimalsDefaultOff', label: 'New lessons start with Animals OFF', tip: 'Sets the default state of the 🐾 chip for any lesson that has no per-lesson Animals choice (the 🐾/🚫 mini-toggle in My Lessons). A student can still turn it on for that lesson. Default (unticked): lessons open with Animals on.' },
       { key: 'hideAnimalComments',       label: 'Hide comments on Animal Friends pages',     tip: 'Removes the comment thread + post box at the bottom of every animal-detail page. Existing comments are kept in the database — toggling back on restores them.' },
     ];
     // Compact home-page toggles — short labels. Each tick removes

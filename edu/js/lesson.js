@@ -3245,6 +3245,11 @@
     let hideEncounters;
     if (lesson && typeof lesson.default_animals === 'boolean') {
       hideEncounters = !lesson.default_animals;
+    } else if (classFlags && classFlags.lessonsAnimalsDefaultOff) {
+      // Class-wide default set by the teacher in Settings — applies
+      // to every lesson without its own 🐾/🚫 choice. The teacher's
+      // design wins over the per-device localStorage memory.
+      hideEncounters = true;
     } else {
       // Unset → Animals ON. Hidden only when the student explicitly
       // turned them off (stored '1').
