@@ -3134,12 +3134,14 @@
     // override (so the teacher's design wins when the student opens
     // a new lesson). Falls back to the per-device localStorage
     // value when the column is missing, then finally to the
-    // out-of-the-box HIDDEN default for brand-new sessions.
+    // out-of-the-box default — Animals ON for brand-new sessions.
     let hideEncounters;
     if (lesson && typeof lesson.default_animals === 'boolean') {
       hideEncounters = !lesson.default_animals;
     } else {
-      hideEncounters = localStorage.getItem(HIDE_ENC_KEY) !== '0';
+      // Unset → Animals ON. Hidden only when the student explicitly
+      // turned them off (stored '1').
+      hideEncounters = localStorage.getItem(HIDE_ENC_KEY) === '1';
     }
     // Override the placeholder WCLesson.encountersHidden — it was set
     // up top, BEFORE this let-scoped flag existed, so its arrow

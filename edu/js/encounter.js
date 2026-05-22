@@ -123,10 +123,10 @@
     // lesson.default_animals at toolbar wire-up time.
     if (window.WCLesson && typeof window.WCLesson.encountersHidden === 'function') {
       if (window.WCLesson.encountersHidden()) return;
-    } else if (localStorage.getItem('wc.hideEncounters.v1') !== '0') {
+    } else if (localStorage.getItem('wc.hideEncounters.v1') === '1') {
       // Belt-and-braces fallback for the brief window before
-      // lesson.js installs WCLesson — preserves the old localStorage
-      // gate so a very-early encounter still respects "Animals off".
+      // lesson.js installs WCLesson — encounters are ON by default,
+      // hidden only when the student explicitly turned them off.
       return;
     }
 
