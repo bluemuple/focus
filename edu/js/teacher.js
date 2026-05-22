@@ -1933,14 +1933,18 @@
         <button class="wc-popup-close" aria-label="Close">×</button>
         <h3 style="margin:0 0 4px;">Speech bubbles — [[IMG:${idx}]]</h3>
         <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
-          Put a box over each speech bubble and type what it says. The white box hides the
-          original lettering; the text you type becomes studyable — chunk underline, word
-          select, highlight and TTS all work on it. Drag a box to move it, drag its
-          corner dot to resize. Empty boxes are discarded on save.
+          <strong>Click a speech bubble</strong> in the image — a box snaps to fit its
+          shape automatically. Type what the bubble says: the white box hides the original
+          lettering and your text becomes studyable (chunk underline, word select,
+          highlight, TTS). Fine-tune by dragging a box, or its corner dot to resize.
+          “+ Add bubble” drops a manual box if auto-detect misses one. Boxes are numbered
+          in the order you add them — that is the reading order students follow with the
+          arrow keys. Empty boxes are discarded on save.
         </p>
         <div class="wc-be-toolbar">
           <button class="wc-btn" id="beAdd" type="button">+ Add bubble</button>
           <span class="wc-muted" id="beCount"></span>
+          <span class="wc-be-msg" id="beMsg"></span>
         </div>
         <div class="wc-be-stage-wrap">
           <div class="wc-be-stage" id="beStage"></div>
@@ -1956,15 +1960,116 @@
     const stage   = host.querySelector('#beStage');
     const countEl = host.querySelector('#beCount');
 
+    // Renumber every box's order badge from its DOM position. DOM
+    // order = the order boxes were added = the reading order students
+    // follow with the arrow keys. Runs on every add / delete / load.
+    function renumber() {
+      stage.querySelectorAll('.wc-be-box').forEach((box, i) => {
+        const o = box.querySelector('.wc-be-order');
+        if (o) o.textContent = String(i + 1);
+      });
+    }
     function refreshCount() {
+      renumber();
       const n = stage.querySelectorAll('.wc-be-box').length;
       countEl.textContent = n
-        ? `${n} bubble${n > 1 ? 's' : ''}`
-        : 'No bubbles yet — click “Add bubble”.';
+        ? `${n} bubble${n > 1 ? 's' : ''} — numbered in reading order`
+        : 'No bubbles yet — click a speech bubble in the image.';
+    }
+    // Transient status line — e.g. when auto-detect can't find a bubble.
+    let _msgT = null;
+    function flashMsg(text) {
+      const m = host.querySelector('#beMsg');
+      if (!m) return;
+      m.textContent = text;
+      clearTimeout(_msgT);
+      _msgT = setTimeout(() => { m.textContent = ''; }, 3400);
     }
 
-    // Draw the panel image into the stage at a fitted size, then lay
-    // out any saved bubble boxes on top of it.
+    // ---- speech-bubble auto-detect -------------------------------
+    //  A bubble interior is a light region fully enclosed by the dark
+    //  outline. Reading the panel's pixels into an offscreen canvas
+    //  once, a flood fill from the teacher's click point grows over
+    //  connected light pixels and stops at the outline — its bounding
+    //  box IS the bubble. The teacher only has to click roughly
+    //  inside; the fill finds the exact extent.
+    const LIGHT = 160;            // luminance ≥ this = bubble interior
+    let cW = 0, cH = 0;           // detect-canvas (= image) pixel size
+    let lightMask = null;         // Uint8Array, 1 = light pixel
+
+    function buildLightMask(imgEl) {
+      cW = imgEl.naturalWidth;
+      cH = imgEl.naturalHeight;
+      if (!cW || !cH) { lightMask = null; return; }
+      try {
+        const cv = document.createElement('canvas');
+        cv.width = cW; cv.height = cH;
+        const cx = cv.getContext('2d', { willReadFrequently: true });
+        cx.drawImage(imgEl, 0, 0);
+        const d = cx.getImageData(0, 0, cW, cH).data;
+        lightMask = new Uint8Array(cW * cH);
+        for (let p = 0, n = cW * cH; p < n; p++) {
+          const i = p * 4;
+          const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          lightMask[p] = lum >= LIGHT ? 1 : 0;
+        }
+      } catch (e) {
+        lightMask = null;   // tainted canvas etc. — fall back to manual
+      }
+    }
+
+    // Flood fill the enclosed light region containing fraction (fx,fy).
+    // Returns {x,y,w,h} fractions, or null if no bubble found there.
+    function detectBubbleAt(fx, fy) {
+      if (!lightMask) return null;
+      const W = cW, H = cH;
+      let sx = Math.max(0, Math.min(W - 1, Math.round(fx * W)));
+      let sy = Math.max(0, Math.min(H - 1, Math.round(fy * H)));
+      // Seed landed on dark ink (outline / a letter)? Nudge outward to
+      // the nearest light pixel so the fill starts inside the bubble.
+      if (!lightMask[sy * W + sx]) {
+        let found = false;
+        for (let r = 1; r <= 18 && !found; r++) {
+          for (let dy = -r; dy <= r && !found; dy++) {
+            for (let dx = -r; dx <= r && !found; dx++) {
+              const x = sx + dx, y = sy + dy;
+              if (x < 0 || y < 0 || x >= W || y >= H) continue;
+              if (lightMask[y * W + x]) { sx = x; sy = y; found = true; }
+            }
+          }
+        }
+        if (!found) return null;
+      }
+      const visited = new Uint8Array(W * H);
+      const start = sy * W + sx;
+      visited[start] = 1;
+      const stack = [start];
+      let minX = sx, maxX = sx, minY = sy, maxY = sy, count = 0;
+      while (stack.length) {
+        const p = stack.pop();
+        const x = p % W, y = (p / W) | 0;
+        count++;
+        if (x < minX) minX = x; else if (x > maxX) maxX = x;
+        if (y < minY) minY = y; else if (y > maxY) maxY = y;
+        // 4-connected — diagonals would leak through outline corners.
+        if (x + 1 < W) { const q = p + 1;  if (!visited[q]) { visited[q] = 1; if (lightMask[q]) stack.push(q); } }
+        if (x - 1 >= 0) { const q = p - 1; if (!visited[q]) { visited[q] = 1; if (lightMask[q]) stack.push(q); } }
+        if (y + 1 < H) { const q = p + W; if (!visited[q]) { visited[q] = 1; if (lightMask[q]) stack.push(q); } }
+        if (y - 1 >= 0) { const q = p - W; if (!visited[q]) { visited[q] = 1; if (lightMask[q]) stack.push(q); } }
+      }
+      // Region covering most of the image → the click escaped into the
+      // page background or an open (un-closed) bubble. Reject.
+      if (count / (W * H) > 0.55) return null;
+      return {
+        x: minX / W,
+        y: minY / H,
+        w: (maxX - minX + 1) / W,
+        h: (maxY - minY + 1) / H,
+      };
+    }
+
+    // Draw the panel image into the stage at a fitted size, build the
+    // detect mask, then lay out any saved bubble boxes on top.
     const probe = new Image();
     probe.onload = () => {
       const maxW = 700, maxH = 440;
@@ -1974,11 +2079,31 @@
       stage.style.width  = sw + 'px';
       stage.style.height = sh + 'px';
       stage.style.backgroundImage = `url("${im.data_url}")`;
+      buildLightMask(probe);
       im.bubbles.forEach(addBox);
       refreshCount();
     };
     probe.onerror = () => { stage.textContent = 'Could not load image.'; };
     probe.src = im.data_url;
+
+    // Click on bare stage (not on an existing box) → auto-detect the
+    // bubble under the cursor and snap a fitted box to it.
+    stage.addEventListener('click', (e) => {
+      if (e.target !== stage) return;       // clicked a box / textarea / handle
+      const rect = stage.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const fx = (e.clientX - rect.left) / rect.width;
+      const fy = (e.clientY - rect.top)  / rect.height;
+      const hit = detectBubbleAt(fx, fy);
+      if (!hit) {
+        flashMsg('No bubble found there — click nearer its centre, or use “+ Add bubble”.');
+        return;
+      }
+      const box = addBox({ x: hit.x, y: hit.y, w: hit.w, h: hit.h, text: '' });
+      refreshCount();
+      const ta = box.querySelector('.wc-be-text');
+      if (ta) ta.focus();
+    });
 
     function addBox(model) {
       const sw = stage.clientWidth, sh = stage.clientHeight;
@@ -1989,6 +2114,7 @@
       box.style.width  = (Math.max(0.05, clamp01(model.w)) * sw) + 'px';
       box.style.height = (Math.max(0.05, clamp01(model.h)) * sh) + 'px';
       box.innerHTML = `
+        <span class="wc-be-order" title="Reading order"></span>
         <textarea class="wc-be-text" placeholder="Type dialogue…">${escForTextarea(model.text)}</textarea>
         <div class="wc-be-handle" title="Resize"></div>
         <button class="wc-be-del" type="button" title="Delete bubble">×</button>

@@ -1140,18 +1140,25 @@
     return frag;
   }
 
-  // A bubble word was tapped. Same study reaction as a body word
-  // (onWordClick → applyFocus) but scoped to the overlay: clear any
-  // body selection, ring this word, fire wc:word-selected for the
+  // A bubble word gained focus — by tap (onBubbleWordClick) or by
+  // arrow-key step (navBubbleWord). Same study reaction as a body
+  // word (onWordClick → applyFocus) but scoped to the overlay: clear
+  // any body selection, ring this word, fire wc:word-selected for the
   // sidebar, then paint the chunk underline + speak the chunk.
-  function onBubbleWordClick(wordEl) {
-    const sentEl = wordEl.closest('.wc-bubble-sent');
+  let bubbleFocusEl = null;   // currently-focused bubble .w, or null
+
+  function focusBubbleWord(wordEl) {
+    const sentEl = wordEl && wordEl.closest('.wc-bubble-sent');
     if (!sentEl) return;
     // A bubble selection supersedes any body-word selection.
     focusedSentIdx = null;
     focusedWordIdx = null;
+    bubbleFocusEl  = wordEl;
     document.querySelectorAll('.w.focused').forEach(el => el.classList.remove('focused'));
     wordEl.classList.add('focused');
+    // Keep the focused word on-screen when arrow-stepping crosses
+    // panels — no-op when it's already visible.
+    try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
 
     const lower    = wordEl.dataset.word || '';
     const original = wordEl.textContent  || '';
@@ -1162,6 +1169,7 @@
 
     const wIdx = parseInt(wordEl.dataset.wIdx, 10) || 0;
     window.WCChunks.fetch(sentText).then(chunks => {
+      if (bubbleFocusEl !== wordEl) return;   // focus moved on during fetch
       const chunk = window.WCChunks.findChunkAt(chunks, wIdx);
       if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
       else       clearChunkUnderline();
@@ -1174,6 +1182,24 @@
           console.warn('[bubble-tts] failed', e && e.message));
       }
     }).catch(e => console.warn('[bubble-tts] chunks fetch failed', e && e.message));
+  }
+
+  function onBubbleWordClick(wordEl) { focusBubbleWord(wordEl); }
+
+  // Arrow-key navigation across the page's speech bubbles. The flat
+  // DOM order of `.wc-bubble .w` already IS the reading order — panels
+  // in body order, bubbles in the teacher's creation order, words in
+  // order — so stepping the flat list moves the last word of a bubble
+  // straight into the first word of the next bubble.
+  function navBubbleWord(dir) {
+    if (!bubbleFocusEl || !bubbleFocusEl.isConnected) { bubbleFocusEl = null; return; }
+    const words = Array.from(
+      document.querySelectorAll('#lessonBody .wc-bubble .w:not(.punct)'));
+    const i = words.indexOf(bubbleFocusEl);
+    if (i < 0) { bubbleFocusEl = null; return; }
+    const j = i + dir;
+    if (j < 0 || j >= words.length) return;   // first/last word on the page — stay put
+    focusBubbleWord(words[j]);
   }
 
   // Shrink each bubble's font until its text fits the box. Bubbles
@@ -1581,6 +1607,7 @@
 
   function focusWord(sIdx, wIdx, source = 'nav') {
     lastFocusSource = source;
+    bubbleFocusEl = null;   // a body-word selection supersedes any bubble focus
     focusedSentIdx = sIdx;
     focusedWordIdx = wIdx;
     applyFocus();
@@ -1595,6 +1622,7 @@
   function clearWordFocus() {
     focusedSentIdx = null;
     focusedWordIdx = null;
+    bubbleFocusEl  = null;
     document.querySelectorAll('.w.focused')
       .forEach(el => el.classList.remove('focused'));
     clearChunkUnderline();    // also resets currentChunkKey
@@ -1765,6 +1793,20 @@
   document.addEventListener('keydown', onKeyDown);
   function onKeyDown(e) {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    // Speech-bubble focus takes over the arrow keys: step through the
+    // page's bubbles in reading order (Right/Down = next word, and
+    // the last word of a bubble steps into the next bubble's first
+    // word; Left/Up = backward). Non-arrow keys still fall through to
+    // the switch below (▶ play, page-step, Esc, level grades).
+    if (bubbleFocusEl && !bubbleFocusEl.isConnected) bubbleFocusEl = null;
+    if (bubbleFocusEl) {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        e.preventDefault(); navBubbleWord(+1); return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault(); navBubbleWord(-1); return;
+      }
+    }
     switch (e.key) {
       case 'ArrowLeft':  e.preventDefault(); navWord(-1);  return;
       case 'ArrowRight': e.preventDefault(); navWord(+1);  return;
