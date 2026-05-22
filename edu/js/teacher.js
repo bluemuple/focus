@@ -1424,6 +1424,37 @@
   //  teacher can amend title/body/animal-set/gift-quota/images and
   //  PATCH the same row instead of creating a new one.
   // ----------------------------------------------------------------
+  // ---- Lesson mode tabs (일반 글 / 만화 / 팝송) ----------------
+  //  The chosen mode is saved on wc_lessons.mode; the lesson page
+  //  renders the body area accordingly. Comic mode reuses the
+  //  existing image / speech-bubble tools; song mode's mp3 + lyric
+  //  tooling arrives in a later phase.
+  let lessonMode = 'text';
+  const LESSON_MODE_HINTS = {
+    text:  '일반 글 — 문단 텍스트를 읽고 단어를 학습합니다. (지금까지의 방식)',
+    comic: '만화 — 컷 이미지를 올리고 (이미지 추가 → Comic panel) 말풍선마다 텍스트를 넣습니다.',
+    song:  '팝송 — 가사와 mp3를 올립니다. (mp3 자동 정렬·구간 재생은 다음 단계에서 추가됩니다.)',
+  };
+  function setLessonMode(mode) {
+    lessonMode = (mode === 'comic' || mode === 'song') ? mode : 'text';
+    document.querySelectorAll('#lessonModeTabs .wc-mode-tab').forEach(t => {
+      const on = t.dataset.mode === lessonMode;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const hint = $('lessonModeHint');
+    if (hint) hint.textContent = LESSON_MODE_HINTS[lessonMode] || '';
+  }
+  (function wireLessonModeTabs() {
+    const tabs = document.getElementById('lessonModeTabs');
+    if (!tabs) return;
+    tabs.addEventListener('click', (e) => {
+      const t = e.target.closest('.wc-mode-tab');
+      if (t && t.dataset.mode) setLessonMode(t.dataset.mode);
+    });
+    setLessonMode('text');
+  })();
+
   function startEditing(lessonId) {
     const L = lessons.find(x => x.id === lessonId);
     if (!L) return;
@@ -1441,6 +1472,7 @@
     $('lessonAnimalSet').value  = L.animal_set || 'animals';
     $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
     $('lessonHeadingsNewPage').checked = !!L.headings_start_new_page;
+    setLessonMode(L.mode || 'text');
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
     lessonWordImages = Array.isArray(L.word_images)
@@ -1464,6 +1496,7 @@
     $('lessonAnimalSet').value = 'animals';
     $('lessonGiftLimit').value = 3;
     $('lessonHeadingsNewPage').checked = false;
+    setLessonMode('text');
     resetImages();
     updateFormMode();
     // Return the form card to its default collapsed state.
@@ -2631,6 +2664,7 @@
       word_images: cleanedWordImages,
       word_notes:  cleanedWordNotes,
       headings_start_new_page: !!$('lessonHeadingsNewPage').checked,
+      mode: lessonMode,
     };
     try {
       // Stash the lesson id BEFORE resetting state below — we use it
@@ -2657,6 +2691,7 @@
       $('lessonTitle').value = '';
       $('lessonBody').value = '';
       $('lessonHeadingsNewPage').checked = false;
+      setLessonMode('text');
       resetImages();
       updateFormMode();
       // Collapse the form card back to its default closed state so

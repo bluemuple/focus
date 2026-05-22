@@ -2533,8 +2533,10 @@
       if (!btn) return;
       btn.classList.toggle('active', hideEncounters);
       btn.setAttribute('aria-pressed', hideEncounters ? 'true' : 'false');
-      if (ico) ico.textContent = hideEncounters ? '🚫' : '🐾';
-      if (lbl) lbl.textContent = hideEncounters ? 'Animals off' : 'Animals on';
+      // Icon stays the paw 🐾 in both states; the label (off / on)
+      // plus the .active class carry the state. "Animals" text dropped.
+      if (ico) ico.textContent = '🐾';
+      if (lbl) lbl.textContent = hideEncounters ? 'off' : 'on';
       try { localStorage.setItem(HIDE_ENC_KEY, hideEncounters ? '1' : '0'); } catch {}
     }
     applyHideEncounters();
@@ -2542,6 +2544,71 @@
       $('btnHideEncounters').addEventListener('click', () => {
         hideEncounters = !hideEncounters;
         applyHideEncounters();
+      });
+    }
+
+    // ── Header collapse (⌃ / ⌄ next to the title). Hides the whole
+    // toolbar so the reading text gets more room. Default = shown.
+    // Persists per device.
+    const HEAD_KEY = 'wc.headCollapsed.v1';
+    let headCollapsed = localStorage.getItem(HEAD_KEY) === '1';
+    function applyHeadCollapsed() {
+      document.body.classList.toggle('wc-head-collapsed', headCollapsed);
+      const b = $('btnHeadCollapse');
+      if (b) {
+        b.textContent = headCollapsed ? '⌄' : '⌃';
+        b.setAttribute('aria-expanded', headCollapsed ? 'false' : 'true');
+        b.title = headCollapsed ? 'Show the toolbar' : 'Hide the toolbar';
+      }
+      try { localStorage.setItem(HEAD_KEY, headCollapsed ? '1' : '0'); } catch {}
+    }
+    applyHeadCollapsed();
+    if ($('btnHeadCollapse')) {
+      $('btnHeadCollapse').addEventListener('click', () => {
+        headCollapsed = !headCollapsed;
+        applyHeadCollapsed();
+      });
+    }
+
+    // ── Aa — reveals / hides the text-size + line-spacing controls
+    // (A−/A+/↕−/↕+). Default = hidden, so only [Aa] shows. Per device.
+    const FZ_OPEN_KEY = 'wc.textOptsOpen.v1';
+    let fzOpen = localStorage.getItem(FZ_OPEN_KEY) === '1';
+    function applyFzOpen() {
+      document.body.classList.toggle('wc-fz-open', fzOpen);
+      const b = $('btnTextOpts');
+      if (b) {
+        b.classList.toggle('active', fzOpen);
+        b.setAttribute('aria-pressed', fzOpen ? 'true' : 'false');
+      }
+      try { localStorage.setItem(FZ_OPEN_KEY, fzOpen ? '1' : '0'); } catch {}
+    }
+    applyFzOpen();
+    if ($('btnTextOpts')) {
+      $('btnTextOpts').addEventListener('click', () => {
+        fzOpen = !fzOpen;
+        applyFzOpen();
+      });
+    }
+
+    // ── Kor Bar / Eng Bar — sidebar language toggle. Default = Kor.
+    // The Korean sidebar content arrives in a later phase; for now
+    // this persists the choice and flags <body> (wc-bar-kor /
+    // wc-bar-eng) so that phase can hook in.
+    const BAR_LANG_KEY = 'wc.barLang.v1';
+    let barLang = localStorage.getItem(BAR_LANG_KEY) === 'eng' ? 'eng' : 'kor';
+    function applyBarLang() {
+      document.body.classList.toggle('wc-bar-kor', barLang === 'kor');
+      document.body.classList.toggle('wc-bar-eng', barLang === 'eng');
+      const lbl = $('btnBarLangLabel');
+      if (lbl) lbl.textContent = barLang === 'kor' ? 'Kor Bar' : 'Eng Bar';
+      try { localStorage.setItem(BAR_LANG_KEY, barLang); } catch {}
+    }
+    applyBarLang();
+    if ($('btnBarLang')) {
+      $('btnBarLang').addEventListener('click', () => {
+        barLang = barLang === 'kor' ? 'eng' : 'kor';
+        applyBarLang();
       });
     }
 
