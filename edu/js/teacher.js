@@ -1857,7 +1857,7 @@
         : '';
       return `
         <div class="wc-img-chip">
-          <img src="${im.data_url}" alt="image ${i}"/>
+          <img src="${im.url || im.data_url}" alt="image ${i}"/>
           <div class="wc-img-chip-meta">
             <strong>[[IMG:${i}]]</strong>
             <span class="wc-muted">${cornerLabel(im.corner)} · ${pct}%${bubbleMeta}</span>
@@ -1900,6 +1900,55 @@
   }
 
   // ----------------------------------------------------------------
+  //  COMIC LESSON — Storage upload + bubble OCR helpers
+  // ----------------------------------------------------------------
+  // Move freshly-added panel images into Supabase Storage. An image
+  // that already has a `url` (loaded from a saved lesson, or uploaded
+  // earlier this session) is skipped. Best-effort: if Storage isn't
+  // set up yet the image keeps its inline data URL and still saves.
+  async function uploadLessonImagesToStorage() {
+    for (const im of lessonImages) {
+      if (!im || im.url || !im.data_url) continue;
+      try {
+        im.url = await window.WCDB.storage.uploadDataUrl(im.data_url);
+      } catch (e) {
+        console.warn('[lesson-save] panel image upload failed — keeping inline:',
+          e && e.message);
+      }
+    }
+  }
+  // Shape an image record for the DB. When the image lives in Storage
+  // we save only the small `url` and DROP the heavy base64 `data_url`;
+  // when upload failed we keep `data_url` so the lesson still renders.
+  function serializeLessonImage(im) {
+    const o = { corner: im.corner, scale: Number.isFinite(im.scale) ? im.scale : 1.0 };
+    if (Array.isArray(im.bubbles) && im.bubbles.length) o.bubbles = im.bubbles;
+    if (im.url) o.url = im.url;
+    else if (im.data_url) o.data_url = im.data_url;
+    return o;
+  }
+  // Ask the wc-ocr edge function to read a cropped bubble image
+  // (base64 JPEG, no data: prefix). Returns the recognised text.
+  async function ocrBubbleImage(imageB64) {
+    const sb = window.WC_SUPABASE || {};
+    if (!sb.url) throw new Error('Supabase not configured');
+    const fn = sb.url.replace(/\/+$/, '') + '/functions/v1/wc-ocr';
+    const r = await fetch(fn, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: sb.anon || '',
+        Authorization: 'Bearer ' + (sb.anon || ''),
+      },
+      body: JSON.stringify({ image_base64: imageB64 }),
+    });
+    if (!r.ok) throw new Error('wc-ocr ' + r.status);
+    const j = await r.json();
+    if (j && j.error) throw new Error(j.error);
+    return String((j && j.text) || '').trim();
+  }
+
+  // ----------------------------------------------------------------
   //  SPEECH-BUBBLE EDITOR  (comic-panel images)
   //
   //  The teacher lays a box over each speech bubble and types the
@@ -1934,12 +1983,13 @@
         <h3 style="margin:0 0 4px;">Speech bubbles — [[IMG:${idx}]]</h3>
         <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
           <strong>Click a speech bubble</strong> in the image — a box snaps to fit its
-          shape automatically. Type what the bubble says: the white box hides the original
-          lettering and your text becomes studyable (chunk underline, word select,
-          highlight, TTS). Fine-tune by dragging a box, or its corner dot to resize.
-          “+ Add bubble” drops a manual box if auto-detect misses one. Boxes are numbered
-          in the order you add them — that is the reading order students follow with the
-          arrow keys. Empty boxes are discarded on save.
+          shape, and its dialogue is auto-read in (proofread it). Type / correct what the
+          bubble says: the white box hides the original lettering and your text becomes
+          studyable (chunk underline, word select, highlight, TTS). Fine-tune by dragging
+          a box, or its corner dot to resize. “+ Add bubble” drops a manual box if
+          auto-detect misses one. Boxes are numbered in the order you add them — that is
+          the reading order students follow with the arrow keys. Empty boxes are
+          discarded on save.
         </p>
         <div class="wc-be-toolbar">
           <button class="wc-btn" id="beAdd" type="button">+ Add bubble</button>
@@ -1996,11 +2046,12 @@
     const LIGHT = 160;            // luminance ≥ this = bubble interior
     let cW = 0, cH = 0;           // detect-canvas (= image) pixel size
     let lightMask = null;         // Uint8Array, 1 = light pixel
+    let detectCanvas = null;      // image drawn at native res — for crop/OCR
 
     function buildLightMask(imgEl) {
       cW = imgEl.naturalWidth;
       cH = imgEl.naturalHeight;
-      if (!cW || !cH) { lightMask = null; return; }
+      if (!cW || !cH) { lightMask = null; detectCanvas = null; return; }
       try {
         const cv = document.createElement('canvas');
         cv.width = cW; cv.height = cH;
@@ -2013,8 +2064,40 @@
           const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
           lightMask[p] = lum >= LIGHT ? 1 : 0;
         }
+        detectCanvas = cv;   // kept so tryOcrInto can crop bubble regions
       } catch (e) {
-        lightMask = null;   // tainted canvas etc. — fall back to manual
+        lightMask = null;    // tainted canvas etc. — fall back to manual
+        detectCanvas = null;
+      }
+    }
+
+    // Best-effort OCR — crop the detected bubble out of the panel and
+    // ask the wc-ocr edge function to draft its dialogue into the box.
+    // If wc-ocr isn't deployed (or finds nothing) the box just stays
+    // empty for the teacher to type into.
+    async function tryOcrInto(box, region) {
+      const ta = box && box.querySelector('.wc-be-text');
+      if (!ta || !detectCanvas || ta.value.trim()) return;
+      ta.placeholder = 'Reading bubble text…';
+      box.classList.add('wc-be-ocr-busy');
+      try {
+        const sx = Math.max(0, Math.round(region.x * cW));
+        const sy = Math.max(0, Math.round(region.y * cH));
+        const sw = Math.max(1, Math.min(cW - sx, Math.round(region.w * cW)));
+        const sh = Math.max(1, Math.min(cH - sy, Math.round(region.h * cH)));
+        const crop = document.createElement('canvas');
+        crop.width = sw; crop.height = sh;
+        crop.getContext('2d').drawImage(detectCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        const b64 = crop.toDataURL('image/jpeg', 0.92).split(',')[1];
+        const text = await ocrBubbleImage(b64);
+        if (text && !ta.value.trim()) ta.value = text;
+        else if (!text) flashMsg('Auto-read found no text — type the dialogue in.');
+      } catch (e) {
+        console.warn('[bubble-ocr] failed', e && e.message);
+        // Silent — manual typing is the fallback.
+      } finally {
+        box.classList.remove('wc-be-ocr-busy');
+        ta.placeholder = 'Type dialogue…';
       }
     }
 
@@ -2078,13 +2161,17 @@
       const sh = Math.round(probe.naturalHeight * r);
       stage.style.width  = sw + 'px';
       stage.style.height = sh + 'px';
-      stage.style.backgroundImage = `url("${im.data_url}")`;
+      stage.style.backgroundImage = `url("${im.url || im.data_url}")`;
       buildLightMask(probe);
       im.bubbles.forEach(addBox);
       refreshCount();
     };
     probe.onerror = () => { stage.textContent = 'Could not load image.'; };
-    probe.src = im.data_url;
+    // crossOrigin lets the detect canvas read pixels from a Storage
+    // URL without tainting (Supabase Storage serves CORS headers);
+    // harmless for inline data URLs.
+    probe.crossOrigin = 'anonymous';
+    probe.src = im.url || im.data_url;
 
     // Click on bare stage (not on an existing box) → auto-detect the
     // bubble under the cursor and snap a fitted box to it.
@@ -2103,6 +2190,8 @@
       refreshCount();
       const ta = box.querySelector('.wc-be-text');
       if (ta) ta.focus();
+      // Auto-draft the dialogue from the cropped bubble (best-effort).
+      tryOcrInto(box, hit);
     });
 
     function addBox(model) {
@@ -2531,11 +2620,14 @@
         note: (wn.note || '').trim(),
       }))
       .filter(wn => wn.word && wn.note);
+    // Upload any freshly-added panel images to Supabase Storage so the
+    // lesson row stays small (inline base64 bloats every lesson fetch).
+    await uploadLessonImagesToStorage();
     const payload = {
       title, body,
       animal_set: $('lessonAnimalSet').value,
       gift_limit_per_day: parseInt($('lessonGiftLimit').value, 10) || 3,
-      images: lessonImages,
+      images: lessonImages.map(serializeLessonImage),
       word_images: cleanedWordImages,
       word_notes:  cleanedWordNotes,
       headings_start_new_page: !!$('lessonHeadingsNewPage').checked,

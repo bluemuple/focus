@@ -299,6 +299,76 @@
     },
   };
 
+  // ---------- lesson reading progress ----------
+  //  One row per (user, lesson) holding the last page index the
+  //  student viewed. lesson.js writes it on page change and reads
+  //  it on load to resume long lessons (e.g. multi-page comics).
+  //  Run edu/supabase-add-lesson-progress.sql once before use.
+  const progress = {
+    async get(userId, lessonId) {
+      if (!userId || !lessonId) return null;
+      const rows = await rGet('/wc_lesson_progress?select=*&user_id=eq.'
+        + encodeURIComponent(userId) + '&lesson_id=eq.'
+        + encodeURIComponent(lessonId) + '&limit=1');
+      return rows && rows[0] || null;
+    },
+    async save(userId, lessonId, page) {
+      if (!REST || !userId || !lessonId) return false;
+      const body = [{
+        user_id:    userId,
+        lesson_id:  lessonId,
+        page:       Math.max(0, page | 0),
+        updated_at: new Date().toISOString(),
+      }];
+      const r = await fetch(REST + '/wc_lesson_progress?on_conflict=user_id,lesson_id', {
+        method: 'POST',
+        headers: headers({ Prefer: 'resolution=merge-duplicates,return=minimal' }),
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) throw new Error('WCDB progress save ' + r.status);
+      return true;
+    },
+  };
+
+  // ---------- Storage (lesson / panel images) ----------
+  //  Panel images move out of the wc_lessons.images jsonb blob into
+  //  a public Storage bucket so the lesson row stays small and the
+  //  images get CDN caching. uploadDataUrl() takes a data: URL (the
+  //  shape teacher.js's downscaleImage already produces) and returns
+  //  the public URL to store on the image record.
+  //  Run edu/supabase-add-comic-storage.sql once before use.
+  const storage = {
+    BUCKET: 'wc-lesson-images',
+    async uploadDataUrl(dataUrl) {
+      if (!URL) throw new Error('Supabase not configured');
+      const m = /^data:([^;,]+)[^,]*,(.*)$/.exec(String(dataUrl || ''));
+      if (!m) throw new Error('not a data URL');
+      const mime = m[1] || 'image/jpeg';
+      const bin  = atob(m[2]);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const ext  = /png/i.test(mime) ? 'png' : (/webp/i.test(mime) ? 'webp' : 'jpg');
+      const path = 'panels/' + Date.now().toString(36) + '-'
+        + Math.random().toString(36).slice(2, 10) + '.' + ext;
+      const base = URL.replace(/\/+$/, '');
+      const r = await fetch(base + '/storage/v1/object/' + storage.BUCKET + '/' + path, {
+        method: 'POST',
+        headers: {
+          apikey:         ANON,
+          Authorization:  'Bearer ' + ANON,
+          'Content-Type': mime,
+          'x-upsert':     'true',
+        },
+        body: bytes,
+      });
+      if (!r.ok) {
+        throw new Error('WCDB storage upload ' + r.status + ' :: '
+          + (await r.text().catch(() => '')).slice(0, 200));
+      }
+      return base + '/storage/v1/object/public/' + storage.BUCKET + '/' + path;
+    },
+  };
+
   // ---------- realtime helpers ----------
   // Phase 4 wires student-side polling for new teacher replies. Phase
   // 7 will swap to Supabase Realtime channels — for now a 30-second
@@ -441,5 +511,5 @@
     },
   };
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions };
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage };
 })();

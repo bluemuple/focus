@@ -253,6 +253,17 @@
     sentences = tokeniseBody(lesson.body);
     pages     = paginate(sentences, lesson.body);
     pageIdx   = 0;
+    // Resume where the student left off last time. Skipped in preview
+    // mode — a teacher previewing always wants page 1. Best-effort:
+    // a missing wc_lesson_progress table just leaves pageIdx at 0.
+    if (!isPreview) {
+      try {
+        const prog = await window.WCDB.progress.get(me.id, lessonId);
+        if (prog && Number.isFinite(prog.page)) {
+          pageIdx = Math.max(0, Math.min(pages.length - 1, prog.page | 0));
+        }
+      } catch (e) { /* progress is best-effort */ }
+    }
     renderBody();
     wireToolbar();
     refreshPageCounter();
@@ -1004,20 +1015,28 @@
   //
   // A `panel` image that ALSO carries a `bubbles` array is rendered
   // as a full comic panel — see makeComicPanel.
+  // An image record carries EITHER a Storage URL (`url`, new lessons)
+  // OR an inline base64 `data_url` (legacy lessons saved before the
+  // Storage migration). Prefer the URL; fall back to inline data.
+  function imageSrc(rec) {
+    return (rec && (rec.url || rec.data_url)) || '';
+  }
+
   function makeFloatingImage(idx) {
     const list = Array.isArray(lesson?.images) ? lesson.images : [];
     const rec  = list[idx];
-    if (!rec || !rec.data_url) return null;
+    const src  = imageSrc(rec);
+    if (!rec || !src) return null;
     const scale = Number.isFinite(rec.scale) ? rec.scale : 1.0;
 
     // Comic panel WITH speech bubbles → positioned text-overlay panel.
     if (rec.corner === 'panel' && Array.isArray(rec.bubbles) && rec.bubbles.length) {
-      return makeComicPanel(rec, scale);
+      return makeComicPanel(rec, scale, src);
     }
 
     const img = document.createElement('img');
     img.className = 'wc-lesson-img wc-corner-' + (rec.corner || 'tr');
-    img.src = rec.data_url;
+    img.src = src;
     img.alt = '';
     img.draggable = false;
     if (scale !== 1.0) {
@@ -1062,7 +1081,7 @@
   // ============================================================
   let bubbleSentSeq = 0;   // unique-id source for .wc-bubble-sent
 
-  function makeComicPanel(rec, scale) {
+  function makeComicPanel(rec, scale, src) {
     const panel = document.createElement('span');
     panel.className = 'wc-panel';
     if (scale && scale !== 1.0) {
@@ -1070,7 +1089,7 @@
     }
     const img = document.createElement('img');
     img.className = 'wc-panel-img';
-    img.src = rec.data_url;
+    img.src = src || imageSrc(rec);
     img.alt = '';
     img.draggable = false;
     panel.appendChild(img);
@@ -2601,11 +2620,26 @@
     });
   }
 
+  // Persist the student's current page so the next visit resumes
+  // here. Debounced — fast page-flipping shouldn't spam the DB —
+  // and best-effort: a save failure (or missing table) is swallowed.
+  let _progressSaveT = null;
+  function saveProgress() {
+    if (isPreview) return;
+    clearTimeout(_progressSaveT);
+    _progressSaveT = setTimeout(() => {
+      Promise.resolve()
+        .then(() => window.WCDB.progress.save(me.id, lessonId, pageIdx))
+        .catch(() => { /* progress is best-effort */ });
+    }, 1200);
+  }
+
   function goPage(next) {
     if (!pages.length) return;
     const prev = pageIdx;
     pageIdx = Math.max(0, Math.min(pages.length - 1, next));
     if (pageIdx === prev) return;
+    saveProgress();
     // In single-mode, flipping pages with ‹‹ / ›› should land the
     // student on THAT page's first sentence — not reset to the
     // global first sentence (which is what `singleIdx = 0` did, so
