@@ -62,6 +62,9 @@
   let wordLevels  = new Map(); // lower → level (number)
   let singleMode  = false;
   let singleIdx   = 0;       // active sentence index when singleMode
+  // Song lessons render each lyric LINE as one tappable unit — set
+  // once the lesson loads, read by splitSentencesSafe.
+  let songMode    = false;
   // Pagination — body split into "pages" the bottom arrows step through.
   // For Phase-current scope we paginate by paragraph: each <p> = one page,
   // which matches 또박또박's per-paragraph rhythm well enough without a
@@ -93,6 +96,16 @@
     get lesson() { return lesson; },
     get wordLevels() { return wordLevels; },
     get classFlags() { return classFlags; },
+    // Sentences from the lesson start up to (and including) the
+    // sentence of the last word the student tapped — the scope the
+    // Korean quiz draws its questions from.
+    get quizSentences() {
+      try {
+        const flat = sentenceList().map(s => s.text);
+        const upto = Math.max(0, Math.min(flat.length - 1, lastSelectedSentenceIdx || 0));
+        return flat.slice(0, upto + 1);
+      } catch { return []; }
+    },
     // encounter.js polls this to decide whether to fire an animal
     // encounter. We expose a getter (not the variable) so external
     // callers see the LIVE value even as the student toggles 🐾.
@@ -155,6 +168,12 @@
     // Lesson mp3 — build the per-sentence segment map so makeSentenceWrap
     // can drop a 🔊 on every sentence the teacher synced.
     setupLessonAudio();
+
+    // Song lessons render each lyric LINE as one tappable unit (no
+    // sentence-splitting inside a line — "I have an apple. I want a
+    // banana." stays one line with one 🔊). Set before tokeniseBody.
+    songMode = !!(lesson && lesson.mode === 'song');
+    document.body.classList.toggle('wc-song-mode', songMode);
 
     // Preview banner — yellow strip at the very top of the page so
     // the teacher knows nothing they do here is being saved. Fades
@@ -272,6 +291,9 @@
     wireToolbar();
     refreshPageCounter();
     refreshNavBoundary();
+    // Restore the student's saved recordings (Record mode) — async,
+    // repaints the record UI when it lands.
+    loadRecordings();
     // After first render, walk every page and split anything that
     // overflows the card's visible height into a fresh page. This is
     // why #lessonBody has overflow:hidden (no scroll) — pagination is
@@ -454,6 +476,11 @@
   const SENTENCE_BOUNDARY_RE = /[^.!?]+[.!?]+["'’)\]]*/g;
   function splitSentencesSafe(text) {
     if (!text) return [];
+    // Song mode — a lyric line is ONE unit, never split on .!? so the
+    // whole line stays one tappable sentence (and one 🔊 / chunk).
+    if (songMode) {
+      return text.trim() ? [{ text, start: 0, end: text.length }] : [];
+    }
     const masked = maskAbbreviationsForSentenceSplit(text);
     const out = [];
     const re = new RegExp(SENTENCE_BOUNDARY_RE.source, 'g');
@@ -1107,12 +1134,37 @@
       bub.style.top    = pct(b.y);
       bub.style.width  = pct(b.w);
       bub.style.height = pct(b.h);
+      bub.dataset.text = String(b.text || '');
       // One inner wrapper = the single flex item, so the dialogue is
       // centred both ways and its words wrap within the box width.
       const inner = document.createElement('span');
       inner.className = 'wc-bubble-inner';
       inner.appendChild(makeBubbleSentences(String(b.text || '')));
       bub.appendChild(inner);
+      // mp3 slice synced for this bubble? a corner 🔊 plays just it.
+      if (audioSegMap) {
+        const seg = audioSegMap.get(normAudioKey(String(b.text || '')));
+        if (seg) {
+          const ab = document.createElement('button');
+          ab.className = 'wc-sent-audio wc-bubble-audio';
+          ab.type = 'button';
+          ab.textContent = '🔊';
+          ab.dataset.aStart = String(seg.start);
+          ab.dataset.aEnd   = String(seg.end);
+          ab.setAttribute('aria-label', 'Play this bubble');
+          bub.appendChild(ab);
+        }
+      }
+      // Record control — a 전체 / 문장별 mode toggle + a whole-bubble
+      // record button, pinned to the bubble's top-right (Record mode).
+      const recCtl = document.createElement('span');
+      recCtl.className = 'wc-bubble-rec';
+      if (hasTakes(normAudioKey(String(b.text || '')))) recCtl.classList.add('has-rec');
+      recCtl.innerHTML =
+        '<button class="wc-bub-mode" type="button" title="녹음 모드: 전체 / 문장별">전체</button>' +
+        '<button class="wc-rec-btn wc-bub-rec-btn" type="button" aria-label="말풍선 전체 녹음">' +
+          '<span class="wc-rec-dot"></span></button>';
+      bub.appendChild(recCtl);
       panel.appendChild(bub);
     });
 
@@ -1140,6 +1192,15 @@
       sent.className = 'wc-bubble-sent';
       sent.dataset.idx  = 'b' + (bubbleSentSeq++);   // unique chunk-key source
       sent.dataset.text = sentText;
+      // Record-mode controls — shown only in the bubble's 문장별 sub-mode.
+      const recGrp = document.createElement('span');
+      recGrp.className = 'wc-rec-grp';
+      if (hasTakes(normAudioKey(sentText))) recGrp.classList.add('has-rec');
+      recGrp.innerHTML =
+        '<button class="wc-rec-btn" type="button" aria-label="이 문장 녹음">' +
+          '<span class="wc-rec-dot"></span></button>' +
+        '<button class="wc-rec-play" type="button" aria-label="내 녹음 듣기">▶</button>';
+      sent.appendChild(recGrp);
       let wIdx = 0;
       extractWordTokens(sentText).forEach(tok => {
         if (tok.kind === 'glue') {
@@ -1196,6 +1257,9 @@
       const chunk = window.WCChunks.findChunkAt(chunks, wIdx);
       if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
       else       clearChunkUnderline();
+      window.dispatchEvent(new CustomEvent('wc:chunk-focused', {
+        detail: { chunk: chunk ? chunk.text : null, sentence: sentText },
+      }));
       if (chunkMuted) return;
       const speakText = (chunk && chunk.text) ? chunk.text : sentText;
       if (!speakText) return;
@@ -1296,6 +1360,452 @@
       lessonAudioEl.play().catch(() => {});
     } catch {}
   }
+
+  // ============================================================
+  //  SENTENCE RECORDING  (Record mode + recording bar)
+  //
+  //  The [Record] toolbar button reveals a round record button on
+  //  every sentence and swaps the bottom nav bar for the recording
+  //  bar. Each line keeps up to 3 takes ([1][2][3]); the small check
+  //  circle on a take marks it as the chosen one. Recordings are
+  //  held in memory for the page session.
+  // ============================================================
+  const recordings  = new Map();  // key → { takes:[{n,blob,url}], selectedN, seq }
+  let activeRec     = null;       // { mr, key } while a take is running
+  let recActiveKey  = null;       // line the recording bar targets
+  let recActiveText = '';         // its display text
+
+  // The line a record button belongs to — a body sentence, a comic
+  // bubble sentence, or (whole-bubble button) the bubble itself.
+  function recLineEl(btn) {
+    return btn.closest('.wc-sentence')
+        || btn.closest('.wc-bubble-sent')
+        || btn.closest('.wc-bubble');
+  }
+  function recKeyForBtn(btn) {
+    const s = recLineEl(btn);
+    return s ? normAudioKey(s.dataset.text || '') : '';
+  }
+  function recTextForBtn(btn) {
+    const s = recLineEl(btn);
+    return (s && s.dataset.text) || '';
+  }
+
+  // Append a take; keep at most 3, evicting the OLDEST un-checked one.
+  function addTake(key, blob) {
+    let rec = recordings.get(key);
+    if (!rec) { rec = { takes: [], selectedN: null, seq: 0 }; recordings.set(key, rec); }
+    rec.seq += 1;
+    const take = { n: rec.seq, blob, url: URL.createObjectURL(blob), rowId: null };
+    rec.takes.push(take);
+    while (rec.takes.length > 3) {
+      let i = rec.takes.findIndex(t => t.n !== rec.selectedN);
+      if (i < 0) i = 0;
+      const gone = rec.takes.splice(i, 1)[0];
+      if (gone) {
+        if (gone.blob && gone.url) { try { URL.revokeObjectURL(gone.url); } catch {} }
+        if (gone.rowId) { try { window.WCDB.recordingsDb.remove(gone.rowId); } catch {} }
+        if (gone.n === rec.selectedN) rec.selectedN = null;
+      }
+    }
+    persistTake(key, take, blob);   // best-effort: upload to Storage + DB row
+    return rec;
+  }
+
+  // Upload a take to Storage and record it in wc_recordings so it
+  // survives a reload. Best-effort — a failure just leaves the take
+  // session-only (its blob URL still plays for this visit).
+  async function persistTake(key, take, blob) {
+    if (isPreview || !me || !lessonId) return;
+    try {
+      const ext = (blob.type && blob.type.indexOf('mp4') >= 0) ? 'm4a' : 'webm';
+      const url = await window.WCDB.storage.uploadBlob(blob, ext, 'recordings');
+      const row = await window.WCDB.recordingsDb.add({
+        user_id: me.id, lesson_id: lessonId,
+        sentence_key: key, take_n: take.n, url, selected: false,
+      });
+      if (row && row.id) take.rowId = row.id;
+    } catch (e) {
+      console.warn('[recording] persist failed', e && e.message);
+    }
+  }
+
+  // Load this student's saved recordings for the lesson — fills the
+  // recordings map with Storage-URL takes (no blob). Best-effort.
+  async function loadRecordings() {
+    if (isPreview || !me || !lessonId) return;
+    let rows = [];
+    try { rows = await window.WCDB.recordingsDb.list(me.id, lessonId); }
+    catch (e) { return; }
+    rows.forEach(r => {
+      const key = String(r.sentence_key || '');
+      if (!key || !r.url) return;
+      let rec = recordings.get(key);
+      if (!rec) { rec = { takes: [], selectedN: null, seq: 0 }; recordings.set(key, rec); }
+      rec.takes.push({ n: r.take_n || (rec.takes.length + 1), url: r.url, rowId: r.id, blob: null });
+      rec.seq = Math.max(rec.seq, r.take_n || 0);
+      if (r.selected) rec.selectedN = r.take_n;
+    });
+    recordings.forEach(rec => {
+      rec.takes.sort((a, b) => a.n - b.n);
+      while (rec.takes.length > 3) rec.takes.shift();
+    });
+    refreshRecUi();
+  }
+  // The take used for playback: the checked one, else the most recent.
+  function activeTake(key) {
+    const rec = recordings.get(key);
+    if (!rec || !rec.takes.length) return null;
+    if (rec.selectedN != null) {
+      const sel = rec.takes.find(t => t.n === rec.selectedN);
+      if (sel) return sel;
+    }
+    return rec.takes[rec.takes.length - 1];
+  }
+  function hasTakes(key) {
+    const rec = recordings.get(key);
+    return !!(rec && rec.takes.length);
+  }
+
+  function stopActiveRecording() {
+    if (activeRec && activeRec.mr && activeRec.mr.state !== 'inactive') {
+      try { activeRec.mr.stop(); } catch {}
+    }
+  }
+  async function startRecording(key) {
+    if (activeRec || !key) return;
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+    catch (e) { alert('마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.'); return; }
+    let mr;
+    try { mr = new MediaRecorder(stream); }
+    catch (e) { stream.getTracks().forEach(t => t.stop()); return; }
+    const chunks = [];
+    mr.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+    mr.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      addTake(key, new Blob(chunks, { type: mr.mimeType || 'audio/webm' }));
+      activeRec = null;
+      refreshRecUi();
+    };
+    activeRec = { mr, key };
+    mr.start();
+    refreshRecUi();
+  }
+
+  function playTake(take) {
+    if (!take) return;
+    try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+    try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
+    const a = new Audio(take.url);
+    a.play().catch(() => {});
+  }
+
+  // ── "Play all my recordings" — the light-blue nav-bar button.
+  //    Plays every recorded sentence's chosen take in lesson order.
+  //    Hidden until at least one take exists (refreshRecUi toggles it).
+  let playAllBusy  = false;
+  let playAllAudio = null;
+  function playRecordingClip(take) {
+    return new Promise((resolve) => {
+      const a = new Audio(take.url);
+      playAllAudio = a;
+      const done = () => { if (playAllAudio === a) playAllAudio = null; resolve(); };
+      a.onended = a.onerror = a.onpause = done;
+      a.play().catch(done);
+    });
+  }
+  function stopPlayAll() {
+    playAllBusy = false;
+    if (playAllAudio) { try { playAllAudio.pause(); } catch {} playAllAudio = null; }
+    const btn = $('btnPlayRec');
+    if (btn) { btn.classList.remove('playing'); btn.textContent = '▶'; }
+  }
+  async function playAllRecordings() {
+    if (playAllBusy) return;
+    playAllBusy = true;
+    const btn = $('btnPlayRec');
+    if (btn) { btn.classList.add('playing'); btn.textContent = '⏸'; }
+    try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+    try {
+      const flat = sentenceList();   // ordered, whole lesson
+      for (const s of flat) {
+        if (!playAllBusy) break;
+        const take = activeTake(normAudioKey(s.text || ''));
+        if (take) await playRecordingClip(take);
+      }
+    } finally {
+      playAllBusy = false;
+      if (btn) { btn.classList.remove('playing'); btn.textContent = '▶'; }
+    }
+  }
+  function anyRecordings() {
+    let any = false;
+    recordings.forEach(r => { if (r && r.takes && r.takes.length) any = true; });
+    return any;
+  }
+
+  // ── Recording-bar playback options — TTS / repeat / speed / vs ──
+  const REC_SPEEDS = [1, 0.8, 0.6, 0.4, 1.6, 1.4, 1.2];
+  let recSpeedIdx  = 0;
+  let recTtsMode   = false;   // 줄반복 plays the line via TTS, not the mp3
+  let recRepeat    = false;   // 줄반복 loop running
+  let vsBusy       = false;
+
+  function recSpeed() { return REC_SPEEDS[recSpeedIdx]; }
+  // mp3 segment for the active line, or null.
+  function lineSeg() {
+    if (!audioSegMap || !recActiveText) return null;
+    return audioSegMap.get(normAudioKey(recActiveText)) || null;
+  }
+  // Speak the active line once via Google TTS; resolves when done.
+  function playLineTtsOnce(rate) {
+    if (!window.WCTTS || !recActiveText) return Promise.resolve();
+    try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
+    return window.WCTTS.speak(recActiveText, { rate: rate || 1 }).catch(() => {});
+  }
+  // Play the active line's mp3 slice once at `rate`; falls back to TTS
+  // when the line has no synced segment. Resolves when it ends.
+  function playLineMp3Once(rate) {
+    const seg = lineSeg();
+    if (!seg || !lessonAudioEl) return playLineTtsOnce(rate);
+    return new Promise((resolve) => {
+      try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+      audioStopAt = null;   // our own onTick handles the stop here
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        lessonAudioEl.removeEventListener('timeupdate', onTick);
+        lessonAudioEl.removeEventListener('pause', finish);
+        resolve();
+      };
+      const onTick = () => {
+        if (lessonAudioEl.currentTime >= seg.end) lessonAudioEl.pause();
+      };
+      lessonAudioEl.addEventListener('timeupdate', onTick);
+      lessonAudioEl.addEventListener('pause', finish);
+      lessonAudioEl.playbackRate = rate || 1;
+      try {
+        lessonAudioEl.pause();
+        lessonAudioEl.currentTime = Math.max(0, seg.start);
+        lessonAudioEl.play().catch(finish);
+      } catch { finish(); }
+    });
+  }
+  // Play the active line's chosen take once; resolves when it ends.
+  function playLineRecordingOnce(rate) {
+    const take = activeTake(recActiveKey);
+    if (!take) return Promise.resolve();
+    return new Promise((resolve) => {
+      const a = new Audio(take.url);
+      a.playbackRate = rate || 1;
+      a.onended = a.onerror = () => resolve();
+      a.play().catch(() => resolve());
+    });
+  }
+  function stopRecPlaybackAll() {
+    recRepeat = false;
+    try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+    try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
+  }
+  // 줄반복 — loop the active line until the toggle is switched off.
+  async function recRepeatLoop() {
+    while (recRepeat) {
+      const t0 = Date.now();
+      await (recTtsMode ? playLineTtsOnce(recSpeed()) : playLineMp3Once(recSpeed()));
+      if (!recRepeat) break;
+      // Guard a runaway loop if a playback resolves instantly (error).
+      if (Date.now() - t0 < 250) await new Promise(r => setTimeout(r, 400));
+    }
+  }
+  function toggleRecRepeat() {
+    recRepeat = !recRepeat;
+    if (recRepeat) recRepeatLoop();
+    else stopRecPlaybackAll();
+    renderRecBar();
+  }
+  function toggleRecTts() {
+    recTtsMode = !recTtsMode;
+    renderRecBar();
+    if (recTtsMode) playLineTtsOnce(recSpeed());   // preview the line once
+  }
+  function cycleRecSpeed() {
+    recSpeedIdx = (recSpeedIdx + 1) % REC_SPEEDS.length;
+    if (lessonAudioEl) { try { lessonAudioEl.playbackRate = recSpeed(); } catch {} }
+    renderRecBar();
+  }
+  // [vs] — play the line's mp3, then TTS, then the recorded take, once
+  // each, in order. mp3 / recording steps are skipped when absent.
+  async function playRecVs() {
+    if (vsBusy) return;
+    vsBusy = true;
+    renderRecBar();
+    try {
+      if (lineSeg())                   await playLineMp3Once(1);
+      await playLineTtsOnce(1);
+      if (activeTake(recActiveKey))    await playLineRecordingOnce(1);
+    } finally {
+      vsBusy = false;
+      renderRecBar();
+    }
+  }
+
+  function setActiveLine(key, text) {
+    // Switching lines stops a running repeat (it was line-specific).
+    if (recActiveKey !== (key || null)) stopRecPlaybackAll();
+    recActiveKey  = key || null;
+    recActiveText = text || '';
+    renderRecBar();
+  }
+
+  // per-sentence ⏺ — picks the active line and records a take.
+  function onRecButtonClick(btn) {
+    if (activeRec) { stopActiveRecording(); return; }
+    const key = recKeyForBtn(btn);
+    if (!key) return;
+    setActiveLine(key, recTextForBtn(btn));
+    startRecording(key);
+  }
+  // per-sentence ▶ — plays the line's active take.
+  function onRecPlayClick(btn) {
+    const key = recKeyForBtn(btn);
+    setActiveLine(key, recTextForBtn(btn));
+    playTake(activeTake(key));
+  }
+
+  // Repaint the per-sentence buttons + the recording bar.
+  function refreshRecUi() {
+    // every record button (per-sentence + per-bubble) shows its state
+    document.querySelectorAll('#lessonBody .wc-rec-btn').forEach(btn => {
+      const key = recKeyForBtn(btn);
+      btn.classList.toggle('recording', !!(activeRec && activeRec.key === key));
+    });
+    document.querySelectorAll('#lessonBody .wc-rec-grp').forEach(grp => {
+      const s   = grp.closest('.wc-sentence') || grp.closest('.wc-bubble-sent');
+      const key = s ? normAudioKey(s.dataset.text || '') : '';
+      grp.classList.toggle('has-rec', hasTakes(key));
+    });
+    // per-bubble whole-bubble record control
+    document.querySelectorAll('#lessonBody .wc-bubble-rec').forEach(br => {
+      const bub = br.closest('.wc-bubble');
+      const key = bub ? normAudioKey(bub.dataset.text || '') : '';
+      br.classList.toggle('has-rec', hasTakes(key));
+    });
+    const playRecBtn = $('btnPlayRec');
+    if (playRecBtn) playRecBtn.classList.toggle('wc-hidden', !anyRecordings());
+    renderRecBar();
+  }
+
+  // The recording bar — reflects the active line's takes.
+  function renderRecBar() {
+    const bar = $('wcRecBar');
+    if (!bar) return;
+    const recBtn  = bar.querySelector('#recRecBtn');
+    const playBtn = bar.querySelector('#recPlayBtn');
+    const ttsBtn  = bar.querySelector('#recTtsBtn');
+    const repBtn  = bar.querySelector('#recRepeatBtn');
+    const spdBtn  = bar.querySelector('#recSpeedBtn');
+    const vsBtn   = bar.querySelector('#recVsBtn');
+    const takesEl = bar.querySelector('#recTakes');
+    const hintEl  = bar.querySelector('#recHint');
+    const lineEl  = bar.querySelector('#recLineLabel');
+
+    recBtn.classList.toggle('recording', !!activeRec);
+    recBtn.textContent = activeRec ? '⏹' : '⏺';
+    if (spdBtn) spdBtn.textContent = recSpeed().toFixed(1) + '×';
+    if (ttsBtn) ttsBtn.classList.toggle('active', recTtsMode);
+    if (repBtn) repBtn.classList.toggle('active', recRepeat);
+
+    const hasLine = !!recActiveKey;
+    [recBtn, playBtn, ttsBtn, repBtn, spdBtn, vsBtn].forEach(b => {
+      if (b) b.disabled = !hasLine;
+    });
+
+    if (!hasLine) {
+      takesEl.innerHTML = '';
+      if (lineEl) lineEl.textContent = '';
+      hintEl.classList.remove('wc-hidden');
+      return;
+    }
+    hintEl.classList.add('wc-hidden');
+    if (lineEl) {
+      lineEl.textContent = recActiveText.length > 30
+        ? recActiveText.slice(0, 30) + '…' : recActiveText;
+    }
+    const rec   = recordings.get(recActiveKey);
+    const takes = rec ? rec.takes : [];
+    playBtn.disabled = !takes.length;
+    if (vsBtn) vsBtn.disabled = vsBusy;
+    takesEl.innerHTML = takes.map(t =>
+      '<span class="wc-take' + (rec.selectedN === t.n ? ' selected' : '') + '">' +
+        '<button class="wc-take-check" type="button" data-n="' + t.n + '" aria-label="선택"></button>' +
+        '<button class="wc-take-btn" type="button" data-n="' + t.n + '">' + t.n + '</button>' +
+      '</span>').join('');
+  }
+
+  // Wire the recording bar's controls (once — the bar element is
+  // stable, so a single delegated listener survives every render).
+  (function wireRecBar() {
+    // "Play all my recordings" — light-blue nav-bar button.
+    const playRecBtn = $('btnPlayRec');
+    if (playRecBtn) {
+      playRecBtn.addEventListener('click', () => {
+        if (playAllBusy) stopPlayAll();
+        else             playAllRecordings();
+      });
+    }
+    const bar = $('wcRecBar');
+    if (!bar) return;
+    bar.addEventListener('click', (e) => {
+      const t = e.target;
+      if (!t || !t.closest) return;
+      if (t.closest('#recRecBtn')) {
+        if (activeRec) stopActiveRecording();
+        else if (recActiveKey) startRecording(recActiveKey);
+        return;
+      }
+      if (t.closest('#recPlayBtn')) {
+        playTake(activeTake(recActiveKey));
+        return;
+      }
+      if (t.closest('#recTtsBtn'))    { toggleRecTts();    return; }
+      if (t.closest('#recRepeatBtn')) { toggleRecRepeat(); return; }
+      if (t.closest('#recSpeedBtn'))  { cycleRecSpeed();   return; }
+      if (t.closest('#recVsBtn'))     { playRecVs();       return; }
+      const chk = t.closest('.wc-take-check');
+      if (chk) {
+        const n   = parseInt(chk.dataset.n, 10);
+        const rec = recordings.get(recActiveKey);
+        if (rec) {
+          rec.selectedN = (rec.selectedN === n) ? null : n;
+          renderRecBar();
+          if (!isPreview && me && lessonId) {
+            try {
+              window.WCDB.recordingsDb.setSelected(me.id, lessonId, recActiveKey, rec.selectedN);
+            } catch {}
+          }
+        }
+        return;
+      }
+      const tb = t.closest('.wc-take-btn');
+      if (tb) {
+        const n    = parseInt(tb.dataset.n, 10);
+        const rec  = recordings.get(recActiveKey);
+        const take = rec && rec.takes.find(x => x.n === n);
+        if (!take) return;
+        // Light-green flash while the take plays.
+        bar.querySelectorAll('.wc-take.playing').forEach(s => s.classList.remove('playing'));
+        const span = tb.closest('.wc-take');
+        if (span) span.classList.add('playing');
+        try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+        try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
+        const a = new Audio(take.url);
+        a.onended = a.onerror = () => { if (span) span.classList.remove('playing'); };
+        a.play().catch(() => { if (span) span.classList.remove('playing'); });
+      }
+    });
+  })();
 
   // HTML body tokenisation. For every block-level element inside
   // `rootEl` (`<p>`, `<h1>`–`<h6>`, `<li>`, `<blockquote>`, table
@@ -1490,6 +2000,18 @@
         ab.setAttribute('aria-label', 'Play this sentence');
         wrap.appendChild(ab);
       }
+    }
+    // Record-mode controls — a round record button (+ a ▶ once a
+    // take exists). Hidden by CSS unless Record mode is on.
+    {
+      const grp = document.createElement('span');
+      grp.className = 'wc-rec-grp';
+      if (hasTakes(normAudioKey(p.text))) grp.classList.add('has-rec');
+      grp.innerHTML =
+        '<button class="wc-rec-btn" type="button" aria-label="이 문장 녹음">' +
+          '<span class="wc-rec-dot"></span></button>' +
+        '<button class="wc-rec-play" type="button" aria-label="내 녹음 듣기">▶</button>';
+      wrap.appendChild(grp);
     }
     let wIdx = 0;
     p.words.forEach(tok => {
@@ -1764,6 +2286,10 @@
       // away from the focused word.
       if (chunk) paintChunkUnderline(sentEl, chunk.indices[0], chunk.indices[1]);
       else       clearChunkUnderline();
+      // Tell the sidebar which chunk is focused (Kor Bar chunk card).
+      window.dispatchEvent(new CustomEvent('wc:chunk-focused', {
+        detail: { chunk: chunk ? chunk.text : null, sentence: sentText },
+      }));
 
       // Chunk-tap TTS. When "Play chunk" is on (chunk-muted = false),
       // read the chunk aloud once. If chunks aren't available (network
@@ -1861,6 +2387,20 @@
     body.addEventListener('click', (e) => {
       const t = e.target;
       if (!t || !t.closest) return;
+      // Record button on a sentence — start / stop a take.
+      const rb = t.closest('.wc-rec-btn');
+      if (rb) { e.stopPropagation(); onRecButtonClick(rb); return; }
+      // ▶ — play back the student's recorded take.
+      const rp = t.closest('.wc-rec-play');
+      if (rp) { e.stopPropagation(); onRecPlayClick(rp); return; }
+      // Comic bubble — 전체 / 문장별 record-mode toggle.
+      const bm = t.closest('.wc-bub-mode');
+      if (bm) {
+        e.stopPropagation();
+        const bub = bm.closest('.wc-bubble');
+        if (bub) bm.textContent = bub.classList.toggle('wc-bub-mode-sent') ? '문장' : '전체';
+        return;
+      }
       // 🔊 on a sentence — play that sentence's mp3 slice.
       const ab = t.closest('.wc-sent-audio');
       if (ab) {
@@ -2678,12 +3218,42 @@
       const lbl = $('btnBarLangLabel');
       if (lbl) lbl.textContent = barLang === 'kor' ? 'Kor Bar' : 'Eng Bar';
       try { localStorage.setItem(BAR_LANG_KEY, barLang); } catch {}
+      // Tell the sidebar to re-render the current word in the new
+      // language (sidebar.js listens — Phase 3 Kor Bar).
+      window.dispatchEvent(new CustomEvent('wc:bar-lang-changed',
+        { detail: { lang: barLang } }));
     }
     applyBarLang();
     if ($('btnBarLang')) {
       $('btnBarLang').addEventListener('click', () => {
         barLang = barLang === 'kor' ? 'eng' : 'kor';
         applyBarLang();
+      });
+    }
+
+    // ── Record mode — reveals a per-sentence record button so the
+    // student can record themselves reading. Session-only (default
+    // off); leaving the mode aborts any take in progress.
+    let recMode = false;
+    function applyRecMode() {
+      document.body.classList.toggle('wc-record-mode', recMode);
+      const b = $('btnRecord');
+      if (b) {
+        b.classList.toggle('active', recMode);
+        b.setAttribute('aria-pressed', recMode ? 'true' : 'false');
+      }
+      // The bottom nav bar swaps to the recording bar in record mode.
+      const recBar = $('wcRecBar'), navBar = $('lessonBar');
+      if (recBar) recBar.classList.toggle('wc-hidden', !recMode);
+      if (navBar) navBar.classList.toggle('wc-hidden', recMode);
+      if (!recMode) { stopActiveRecording(); stopRecPlaybackAll(); }
+      else renderRecBar();
+    }
+    applyRecMode();
+    if ($('btnRecord')) {
+      $('btnRecord').addEventListener('click', () => {
+        recMode = !recMode;
+        applyRecMode();
       });
     }
 

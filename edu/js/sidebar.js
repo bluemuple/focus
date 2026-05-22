@@ -36,12 +36,17 @@
   let lessonRef = null;
   let selectedWord = null;   // { word, lower, sentence } — last clicked
   let activeInfo   = null;   // most recent dictionary entry
+  let selectedChunk = null;  // { chunk, sentence } — focused chunk (Kor Bar)
+  // Per-word "I said it aloud" tap counts for the Kor Bar speaking-
+  // practice widget. Session-only — accumulates while the page is open.
+  const speakCounts = new Map();
+  const KOR_MSG_HINT = '보내면 시간 줄게 ⏰';
 
   function init(L) {
     lessonRef = L;
     const flags = L.classFlags || {};
 
-    renderWordCard(null);   // initial empty-state
+    renderCard(null);       // initial empty-state
     renderLevelBar();       // initial hidden state
 
     // The standalone "Imagine this!" + "From my teacher" panels are
@@ -70,35 +75,76 @@
       const d = e.detail || {};
       selectedWord = { word: d.word, lower: d.lower, sentence: d.sentence };
       activeInfo = null;        // wipe old info immediately
-      renderWordCard({ loading: true });
+      selectedChunk = null;     // chunk arrives via wc:chunk-focused
+      renderCard({ loading: true });
       renderLevelBar();
       const wantedLower    = d.lower;
       const wantedSentence = d.sentence || '';
-      window.WCWordInfo.fetch(d.word, d.sentence).then(info => {
-        // Bail if the user has since clicked another word OR even
-        // re-clicked the same word in a different sentence (sense
-        // disambiguation needs a fresh fetch for that case).
-        if (!selectedWord) return;
-        if (selectedWord.lower    !== wantedLower)    return;
-        if ((selectedWord.sentence || '') !== wantedSentence) return;
-        activeInfo = info;
-        renderWordCard({ info });
-      });
+      // Bail if the user has since clicked another word, re-clicked
+      // the same word in a different sentence, OR toggled the sidebar
+      // language while the fetch was in flight.
+      const stale = () => !selectedWord
+        || selectedWord.lower !== wantedLower
+        || (selectedWord.sentence || '') !== wantedSentence;
+      if (isKorBar()) {
+        window.WCKorBar.fetchWord(d.word, d.sentence).then(info => {
+          if (stale() || !isKorBar()) return;
+          activeInfo = info;
+          renderKorWordCard({ info });
+        });
+      } else {
+        window.WCWordInfo.fetch(d.word, d.sentence).then(info => {
+          if (stale() || isKorBar()) return;
+          activeInfo = info;
+          renderWordCard({ info });
+        });
+      }
     });
     // Esc — clear sidebar selection, revert to empty state.
     window.addEventListener('wc:word-deselected', () => {
       selectedWord = null;
       activeInfo   = null;
-      renderWordCard(null);
+      selectedChunk = null;
+      renderCard(null);
       renderLevelBar();
+    });
+    // Sidebar-language toggle (Kor Bar / Eng Bar) — re-fetch + re-render
+    // the current word in the new language.
+    window.addEventListener('wc:bar-lang-changed', () => {
+      if (selectedWord) {
+        window.dispatchEvent(new CustomEvent('wc:word-selected',
+          { detail: { ...selectedWord } }));
+      } else {
+        renderCard(null);
+      }
+    });
+    // Focused chunk changed (fired by lesson.js once chunk-gpt
+    // resolves) → refresh the Kor Bar chunk card.
+    window.addEventListener('wc:chunk-focused', (e) => {
+      const d = e.detail || {};
+      selectedChunk = (d && d.chunk)
+        ? { chunk: d.chunk, sentence: d.sentence || '' }
+        : null;
+      renderKorChunkSection();
     });
     // Level changes (from lesson.js or this sidebar) → refresh picker.
     L.onWordLevelChange(({ word }) => {
       if (selectedWord && word === selectedWord.lower) {
-        renderWordCard({ info: activeInfo });
+        renderCard({ info: activeInfo });
         renderLevelBar();
       }
     });
+  }
+
+  // Is the sidebar in Korean ("Kor Bar") mode? Driven by the
+  // wc-bar-kor body class the lesson-page toolbar toggle sets.
+  function isKorBar() {
+    return document.body.classList.contains('wc-bar-kor');
+  }
+  // Render the word card in whichever language the student picked.
+  function renderCard(state) {
+    if (isKorBar()) renderKorWordCard(state);
+    else            renderWordCard(state);
   }
 
   // ============================================================
@@ -329,6 +375,268 @@
     // Wire the message form unless we rendered it in disabled mode
     // (no real student session → no send + no thread fetch).
     if (!msgDisabled) wireWordMessageForm(w);
+  }
+
+  // ============================================================
+  //  PANEL 1 (Korean) — Kor Bar word card
+  //
+  //  Rendered instead of renderWordCard when the student picked
+  //  "Kor Bar". Built for a Korean child learning English. Sections,
+  //  top to bottom: the focused-chunk card (#wcKorChunk, filled by
+  //  renderKorChunkSection) + situation card · the word card (simple
+  //  English gloss with a [한글 뜻] reveal, word family folded behind
+  //  더 보기) · speaking practice · a Korean message form. The 1-5
+  //  level bar is shared with the English card.
+  // ============================================================
+  function renderKorWordCard(state) {
+    const wrap = $('sideWord');
+    if (!wrap) return;
+
+    // Empty state — Korean guide.
+    if (!state) {
+      wrap.innerHTML = `
+        <div class="wc-help">
+          <h3 class="wc-help-title">📖 단어를 눌러보세요</h3>
+          <p class="wc-side-hint" style="margin: 0;">
+            레슨에서 아무 단어나 누르면 뜻과 발음이 여기에 나와요.
+            아래 <strong>1~5</strong> 버튼으로 얼마나 아는지 표시할 수 있어요.
+          </p>
+        </div>
+      `;
+      return;
+    }
+
+    const w = selectedWord || {};
+    const info = state.info;
+    const isLoading = state.loading;
+    const headHtml = inflectionHtml(w.word || '', info?.lemma || '');
+    const img = findWordImage(w.lower);
+
+    const flags = (lessonRef && lessonRef.classFlags) || {};
+    const msgDisabled = !!lessonRef.isPreview || !!flags.hideVisualizationSidebar;
+
+    const sayWord    = (info && info.lemma) || w.word || w.lower || '';
+    const speakCount = speakCounts.get(w.lower) || 0;
+
+    // Word family / similar / opposite — folded behind the 더 보기
+    // button (the data is already loaded; the toggle just reveals it).
+    function extraHtml() {
+      const fam = Array.isArray(info.word_family) ? info.word_family : [];
+      const sim = Array.isArray(info.similar)     ? info.similar     : [];
+      const opp = Array.isArray(info.opposite)    ? info.opposite    : [];
+      const rows = [];
+      if (fam.length) rows.push(`<li><span class="wc-bullet-label">단어 가족:</span> ${fam.map(escapeHtml).join(' / ')}</li>`);
+      if (sim.length) rows.push(`<li><span class="wc-bullet-label">비슷한 말:</span> ${sim.map(escapeHtml).join(', ')}</li>`);
+      if (opp.length) rows.push(`<li><span class="wc-bullet-label">반대말:</span> ${opp.map(escapeHtml).join(', ')}</li>`);
+      return rows.length
+        ? `<ul class="wc-word-bullets">${rows.join('')}</ul>`
+        : `<p class="wc-side-hint" style="margin:0;">관련된 말이 없어요.</p>`;
+    }
+
+    wrap.innerHTML = `
+      <div class="wc-word-card wc-kor-card">
+        <!-- 1. 청크 섹션 — filled by renderKorChunkSection. -->
+        <div class="wc-kor-chunk" id="wcKorChunk"></div>
+        <div class="wc-word-head">
+          <div class="wc-word-text">
+            <h2>${headHtml}</h2>
+            ${info?.ipa ? `<div class="wc-word-ipa">${escapeHtml(info.ipa)}</div>` : ''}
+          </div>
+          <button class="wc-word-tts" id="wcWordTts" title="듣기">🔊</button>
+        </div>
+
+        ${isLoading
+          ? `<div class="wc-word-loading">불러오는 중…</div>`
+          : info
+            ? `
+              ${img ? `
+                <div class="wc-word-image-wrap">
+                  <img class="wc-word-image" src="${img}" alt="${escapeHtml(w.lower || '')}"/>
+                </div>
+              ` : ''}
+              <div class="wc-word-def">
+                ${escapeHtml(info.easy_en || '')}
+                <button class="wc-kor-toggle" id="wcKorToggle" type="button">한글 뜻</button>
+              </div>
+              <div class="wc-kor-meaning wc-hidden" id="wcKorMeaning">${escapeHtml(info.ko || '뜻을 찾지 못했어요.')}</div>
+              <button class="wc-kor-more" id="wcKorMore" type="button">📚 단어 가족 · 비슷한 말 더 보기</button>
+              <div class="wc-kor-extra wc-hidden" id="wcKorExtra">${extraHtml()}</div>
+
+              <!-- 3. 말하기 연습 — 듣고 따라 말하기 + 횟수 -->
+              <div class="wc-kor-speak">
+                <div class="wc-kor-speak-title">🗣 따라 말해보기</div>
+                <div class="wc-kor-speak-row">
+                  <button class="wc-word-tts" id="wcKorSpeakPlay" type="button" title="듣기">🔊</button>
+                  <button class="wc-kor-speak-btn" id="wcKorSpeakDid" type="button">따라 말했어요!</button>
+                  <span class="wc-kor-speak-count" id="wcKorSpeakCount">${escapeHtml(speakCountLabel(speakCount))}</span>
+                </div>
+              </div>
+            `
+            : `<div class="wc-muted">불러오지 못했어요. 다시 눌러보세요!</div>`
+        }
+
+        <!-- 4. 메시지 — 선생님에게 (실제 경험 적기) -->
+        <div class="wc-word-msg wc-kor-msg" id="wcWordMsg">
+          <div class="wc-use-it-title">💌 이 단어를 듣거나 써봤다면 적어줘!</div>
+          <textarea id="wcWordMsgInput"
+                    class="wc-word-msg-input wc-kor-msg-input"
+                    rows="3"
+                    placeholder="언제, 어디서 이 단어를 만났는지 적어보세요."
+                    ${msgDisabled ? 'disabled' : ''}></textarea>
+          <div id="wcWordMsgHint" class="wc-use-it-hint">${KOR_MSG_HINT}</div>
+          <button id="wcWordMsgSend" class="wc-word-msg-send" type="button"
+                  ${msgDisabled ? 'disabled title="Disabled in preview"' : ''}>보내기 📨</button>
+          <div id="wcWordMsgThread" class="wc-word-msg-thread"></div>
+        </div>
+      </div>
+    `;
+
+    const tts = $('wcWordTts');
+    if (tts) tts.addEventListener('click', () => {
+      if (window.WCTTS) window.WCTTS.speak(info?.lemma || w.word || '').catch(()=>{});
+    });
+    const korToggle = $('wcKorToggle');
+    if (korToggle) korToggle.addEventListener('click', () => {
+      const m = $('wcKorMeaning');
+      if (m) m.classList.toggle('wc-hidden');
+      korToggle.classList.toggle('active');
+    });
+    const korMore = $('wcKorMore');
+    if (korMore) korMore.addEventListener('click', () => {
+      const x = $('wcKorExtra');
+      if (x) x.classList.toggle('wc-hidden');
+      korMore.classList.toggle('active');
+    });
+    // Speaking practice — 🔊 hear it + an "I said it aloud" tap counter.
+    const speakPlay = $('wcKorSpeakPlay');
+    if (speakPlay) speakPlay.addEventListener('click', () => {
+      if (window.WCTTS) window.WCTTS.speak(sayWord).catch(()=>{});
+    });
+    const speakDid = $('wcKorSpeakDid');
+    if (speakDid) speakDid.addEventListener('click', () => {
+      const n = (speakCounts.get(w.lower) || 0) + 1;
+      speakCounts.set(w.lower, n);
+      const c = $('wcKorSpeakCount');
+      if (c) c.textContent = speakCountLabel(n);
+    });
+
+    if (!msgDisabled) wireKorMessageForm(w);
+    renderKorChunkSection();
+  }
+
+  // "N번 말했어요" label for the speaking-practice counter — a star
+  // appears once the student has said the word 3+ times.
+  function speakCountLabel(n) {
+    if (!n || n < 1) return '';
+    return (n >= 3 ? '⭐ ' : '') + n + '번 말했어요';
+  }
+
+  // ============================================================
+  //  Kor Bar — chunk card (the focused / underlined chunk)
+  //
+  //  Fills #wcKorChunk inside the Korean word card. Driven by the
+  //  wc:chunk-focused event lesson.js fires once chunk-gpt resolves
+  //  the chunk around the tapped word. Shows the chunk text + a 🔊
+  //  for the whole phrase, then (async) its easy English, a 한국어
+  //  reveal, and a "when do I say it?" situation card.
+  // ============================================================
+  function renderKorChunkSection() {
+    const host = $('wcKorChunk');
+    if (!host) return;                       // not in Kor Bar / no card
+    const sc = selectedChunk;
+    if (!isKorBar() || !sc || !sc.chunk) {   // single-word "chunk" → skip
+      host.innerHTML = '';
+      return;
+    }
+    const chunkText = sc.chunk;
+    host.innerHTML = `
+      <div class="wc-kor-chunk-card">
+        <div class="wc-kor-chunk-head">
+          <span class="wc-kor-chunk-text">${escapeHtml(chunkText)}</span>
+          <button class="wc-word-tts" id="wcKorChunkTts" type="button" title="청크 전체 듣기">🔊</button>
+        </div>
+        <div class="wc-kor-chunk-body" id="wcKorChunkBody">
+          <span class="wc-side-hint">뜻 불러오는 중…</span>
+        </div>
+      </div>
+    `;
+    const tts = $('wcKorChunkTts');
+    if (tts) tts.addEventListener('click', () => {
+      if (window.WCTTS) window.WCTTS.speak(chunkText).catch(()=>{});
+    });
+
+    const seenChunk = chunkText, seenSent = sc.sentence;
+    window.WCKorBar.fetchChunk(chunkText, sc.sentence).then(data => {
+      // Bail if the focused chunk changed while the fetch was in flight.
+      if (!selectedChunk || selectedChunk.chunk !== seenChunk
+          || selectedChunk.sentence !== seenSent || !isKorBar()) return;
+      const body = $('wcKorChunkBody');
+      if (!body) return;
+      if (!data) {
+        body.innerHTML = '<span class="wc-side-hint">뜻을 불러오지 못했어요.</span>';
+        return;
+      }
+      const sit = data.situation;
+      body.innerHTML = `
+        <div class="wc-kor-chunk-en">
+          ${escapeHtml(data.easy_en || '')}
+          <button class="wc-kor-toggle" id="wcKorChunkKoBtn" type="button">한국어 보기</button>
+        </div>
+        <div class="wc-kor-chunk-ko wc-hidden" id="wcKorChunkKo">${escapeHtml(data.ko || '')}</div>
+        ${sit && sit.say ? `
+          <div class="wc-kor-situation">
+            <div class="wc-kor-sit-label">💡 언제 써?</div>
+            <div class="wc-kor-sit-body">
+              <span class="wc-kor-sit-emoji">${escapeHtml(sit.emoji || '🗣')}</span>
+              ${escapeHtml(sit.ko || '')} → <strong>${escapeHtml(sit.say)}</strong>
+            </div>
+          </div>
+        ` : ''}
+      `;
+      const btn = $('wcKorChunkKoBtn');
+      if (btn) btn.addEventListener('click', () => {
+        const ko = $('wcKorChunkKo');
+        if (ko) ko.classList.toggle('wc-hidden');
+        btn.classList.toggle('active');
+      });
+    });
+  }
+
+  // Korean message form — simpler than the English ghost-frame form:
+  // a plain textarea where the student writes (in Korean or English)
+  // about meeting this word in real life. Sent to the teacher.
+  function wireKorMessageForm(w) {
+    const input = $('wcWordMsgInput');
+    const send  = $('wcWordMsgSend');
+    const hint  = $('wcWordMsgHint');
+    if (!input || !send) return;
+    function setHint(msg, kind) {
+      if (!hint) return;
+      hint.textContent = msg || KOR_MSG_HINT;
+      hint.className   = 'wc-use-it-hint' + (msg && kind ? ' wc-hint-' + kind : '');
+    }
+    send.addEventListener('click', async () => {
+      const text = (input.value || '').trim();
+      if (!text) { setHint('먼저 문장을 적어줘!', 'err'); return; }
+      send.disabled = true;
+      setHint('보내는 중… ✨', 'ok');
+      try {
+        await window.WCDB.viz.send(lessonRef.me.id, lessonRef.lesson.id, w.lower, text);
+        input.value = '';
+        setHint('잘했어요! 선생님이 곧 볼 거예요. ✨', 'ok');
+        renderWordMessages(w.lower);
+        window.dispatchEvent(new CustomEvent('wc:word-message-sent', { detail: { word: w.lower } }));
+        setTimeout(() => setHint('', ''), 6000);
+      } catch (e) {
+        setHint('보내지 못했어요. 다시 해봐요.', 'err');
+      } finally {
+        send.disabled = false;
+      }
+    });
+    input.addEventListener('input', () => {
+      if (hint && hint.classList.contains('wc-hint-err')) setHint('', '');
+    });
+    renderWordMessages(w.lower);
   }
 
   // ============================================================

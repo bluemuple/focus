@@ -894,6 +894,78 @@
     }, 2500);
   }
 
+  // ----------------------------------------------------------------
+  //  KOR-BAR PREWARM — pre-fetch the Korean sidebar content (the
+  //  word / chunk card shown when a student has "Kor Bar" selected
+  //  on the lesson page). Mirrors the 🔥 prewarm but targets the
+  //  Korean endpoint: chunk-level Korean per sentence + a Korean
+  //  word card per (word, sentence) pair.
+  //
+  //  The `wc-korbar-gpt` edge function ships together with the Kor
+  //  Bar sidebar itself (a later phase). Until it is deployed every
+  //  request 404s, so `ok` stays 0 and we show "Not ready" instead
+  //  of a misleading ✓ — and skip the localStorage cache mark. Once
+  //  the function exists this button works with no further change.
+  // ----------------------------------------------------------------
+  async function prewarmKorBar(lessonId, btn) {
+    const L = lessons.find(x => x.id === lessonId);
+    if (!L) return;
+    if (btn.dataset.busy === '1') return;   // ignore double-clicks
+    btn.dataset.busy = '1';
+    const origLabel = btn.textContent;
+
+    const sentences = extractPrewarmSentences(L.body || '');
+    const wordPairs = extractPrewarmWordPairs(sentences);
+    const total = wordPairs.length;
+    if (total === 0) {
+      btn.textContent = '∅ Empty';
+      setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
+      return;
+    }
+
+    let done = 0, ok = 0;
+    const updateLabel = () => { btn.textContent = `🇰🇷 ${done}/${total}`; };
+    updateLabel();
+
+    const URL  = window.WC_SUPABASE.url.replace(/\/+$/, '');
+    const ANON = window.WC_SUPABASE.anon;
+    const headers = {
+      'Content-Type': 'application/json',
+      apikey: ANON,
+      Authorization: 'Bearer ' + ANON,
+    };
+    const FN = URL + '/functions/v1/wc-korbar-gpt';
+
+    // Word-level Korean card — one POST per (word, sentence) pair.
+    // (Chunk Korean is fetched lazily on the lesson page — the chunk
+    // boundaries aren't known here without a chunk-gpt pass.)
+    await runInBatches(wordPairs, 5, async (pair) => {
+      try {
+        const r = await fetch(FN, {
+          method: 'POST', headers,
+          body: JSON.stringify({ kind: 'word', word: pair.word, sentence: pair.sentence }),
+        });
+        if (r.ok) ok++;
+      } catch {}
+      done++; updateLabel();
+    });
+
+    if (ok > 0) {
+      btn.textContent = '✓ Kor ready';
+      try {
+        localStorage.setItem('wc.prewarm.korbar.' + lessonId, bodyHash(L.body));
+      } catch {}
+    } else {
+      // wc-korbar-gpt not deployed yet — don't fake a ✓.
+      btn.textContent = '⚠ Not ready';
+    }
+    setTimeout(() => {
+      btn.textContent = origLabel;
+      btn.dataset.busy = '';
+      renderLessons();
+    }, 2800);
+  }
+
   // Cache-status helpers — used by renderLessons() to draw the ✓
   // pip next to the 🔥 / 🎵 buttons whenever the lesson's CURRENT
   // body matches the body that was prewarmed. Hash is a fast djb2
@@ -1314,6 +1386,9 @@
           <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'chunkaudio') ? ' is-cached' : ''}"
                   data-prewarmchunkaudio="${L.id}"
                   title="Chunk audio: cache TTS for each chunk (the short clip that plays when a student taps a word with Play chunk on). Different cache key than 🎵 — needed separately. ✓ = cached for this body.">🎶</button>
+          <button class="wc-btn ghost icon-only${isPrewarmCached(L.id, L.body, 'korbar') ? ' is-cached' : ''}"
+                  data-prewarmkorbar="${L.id}"
+                  title="Kor Bar: pre-fetch the Korean sidebar content shown when a student picks 'Kor Bar' on the lesson page. ✓ = cached for this body. (Needs the wc-korbar-gpt function deployed; shows 'Not ready' until then.)">🇰🇷</button>
           <!-- Per-lesson default toggles. Each click flips the
                column on wc_lessons; the lesson page reads these to
                set the INITIAL state of its 🔊/🐾 chips. Compact
@@ -1362,6 +1437,9 @@
     });
     list.querySelectorAll('[data-prewarmchunkaudio]').forEach(b => {
       b.addEventListener('click', () => prewarmChunkAudio(b.dataset.prewarmchunkaudio, b));
+    });
+    list.querySelectorAll('[data-prewarmkorbar]').forEach(b => {
+      b.addEventListener('click', () => prewarmKorBar(b.dataset.prewarmkorbar, b));
     });
     list.querySelectorAll('[data-toggle-chunkdefault]').forEach(b => {
       b.addEventListener('click', async () => {
@@ -2007,8 +2085,10 @@
   function refreshAudioUi() {
     const status  = $('lessonAudioStatus');
     const syncBtn = $('audioSyncBtn');
+    const waveBtn = $('audioWaveBtn');
     const has = !!audioPlaybackSrc();
     if (syncBtn) syncBtn.classList.toggle('wc-hidden', !has);
+    if (waveBtn) waveBtn.classList.toggle('wc-hidden', !has);
     if (status) {
       if (!has) {
         status.textContent = '';
@@ -2032,21 +2112,79 @@
     refreshAudioUi();
   }
 
-  // Split the body textarea into sentences for the sync editor. A
-  // light split (sentence-final punctuation, then newlines) — good
-  // enough; the lesson page matches segments to sentences BY TEXT,
-  // so a rare mis-split just means that one sentence shows no 🔊.
+  // Read a File as raw base64 (data: prefix stripped) — used to send
+  // the mp3 to the wc-align edge function.
+  function readFileAsBase64(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const s = String(fr.result || '');
+        const c = s.indexOf(',');
+        resolve(c >= 0 ? s.slice(c + 1) : s);
+      };
+      fr.onerror = () => reject(new Error('read failed'));
+      fr.readAsDataURL(file);
+    });
+  }
+
+  // Call the wc-align edge function — returns a per-line array of
+  // {start,end}|null. Shared by both audio editors (rows + waveform).
+  async function requestAutoAlign(lines) {
+    const payload = { lines };
+    if (lessonAudioFile)     payload.audio_base64 = await readFileAsBase64(lessonAudioFile);
+    else if (lessonAudioUrl) payload.audio_url    = lessonAudioUrl;
+    else throw new Error('no audio attached');
+    const sb = window.WC_SUPABASE || {};
+    const r = await fetch((sb.url || '').replace(/\/+$/, '') + '/functions/v1/wc-align', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: sb.anon || '',
+        Authorization: 'Bearer ' + (sb.anon || ''),
+      },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error('wc-align ' + r.status);
+    const j = await r.json();
+    if (j && j.error) throw new Error(j.error);
+    return Array.isArray(j.segments) ? j.segments : [];
+  }
+
+  // Split the body into the units the audio editors sync against.
+  //   song mode  → one unit per lyric line (newline-separated)
+  //   text/comic → one unit per sentence
+  // The lesson page matches segments to rendered text BY TEXT, so a
+  // rare mis-split just means that one line shows no 🔊.
   function splitBodyIntoLines(body) {
+    // Comic — the studyable text lives in the speech bubbles, not the
+    // body. Sync against every bubble's text, panel by panel, in order.
+    if (lessonMode === 'comic') {
+      const out = [];
+      lessonImages.forEach(im => {
+        (Array.isArray(im && im.bubbles) ? im.bubbles : []).forEach(b => {
+          const t = ((b && b.text) || '').trim();
+          if (t) out.push(t);
+        });
+      });
+      return out;
+    }
     const text = String(body || '')
       .replace(/\[\[IMG:\d+\]\]/g, ' ')
       .replace(/^#{1,6}\s*/gm, '')
       .replace(/^[-*]{3,}\s*$/gm, ' ');
     const out = [];
     text.split(/\n+/).forEach(para => {
-      para.split(/(?<=[.!?])\s+/).forEach(s => {
-        const t = s.trim();
-        if (t) out.push(t);
-      });
+      const line = para.trim();
+      if (!line) return;
+      if (lessonMode === 'song') {
+        // Lyrics — each newline-separated line is one unit.
+        out.push(line);
+      } else {
+        line.split(/(?<=[.!?])\s+/).forEach(s => {
+          const t = s.trim();
+          if (t) out.push(t);
+        });
+      }
     });
     return out;
   }
@@ -2069,6 +2207,8 @@
       });
     }
     if (syncBtn) syncBtn.addEventListener('click', openAudioSyncEditor);
+    const waveBtn = $('audioWaveBtn');
+    if (waveBtn) waveBtn.addEventListener('click', openWaveformSyncEditor);
   })();
 
   function openAudioSyncEditor() {
@@ -2094,12 +2234,17 @@
         <button class="wc-popup-close" aria-label="Close">×</button>
         <h3 style="margin:0 0 4px;">Audio sync</h3>
         <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
-          Play the mp3. For each sentence, pause at the right moment and click
-          <strong>⏱ start</strong> / <strong>⏱ end</strong> to capture the time (or type
-          seconds directly). ▶ previews that slice. On the lesson page students tap 🔊 on
-          a sentence to hear exactly that part. Sentences left blank get no 🔊.
+          <strong>✨ Auto-align</strong> drafts the timings by speech recognition — then
+          proofread. Or do it by hand: play the mp3, pause at the right moment and click
+          <strong>⏱ start</strong> / <strong>⏱ end</strong> on a sentence (or type seconds
+          directly). ▶ previews that slice. On the lesson page students tap 🔊 on a
+          sentence to hear exactly that part. Sentences left blank get no 🔊.
         </p>
         <audio id="asAudio" controls preload="metadata" src="${src}" style="width:100%;"></audio>
+        <div class="wc-as-toolbar">
+          <button class="wc-btn ghost" id="asAuto" type="button">✨ Auto-align</button>
+          <span class="wc-muted" id="asAutoStatus" style="font-size:12.5px;"></span>
+        </div>
         <div class="wc-as-rows" id="asRows"></div>
         <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
           <button class="wc-btn ghost" id="asCancel" type="button">Cancel</button>
@@ -2157,6 +2302,44 @@
       }
     });
 
+    // ── Auto-align — Google STT (via the wc-align edge function)
+    // drafts the timings; the teacher then proofreads. Best-effort:
+    // if wc-align isn't deployed, or recognition fails, the manual
+    // capture buttons are the fallback.
+    const autoBtn    = host.querySelector('#asAuto');
+    const autoStatus = host.querySelector('#asAutoStatus');
+    if (autoBtn) {
+      autoBtn.addEventListener('click', async () => {
+        if (autoBtn.dataset.busy === '1') return;
+        autoBtn.dataset.busy = '1';
+        const orig = autoBtn.textContent;
+        autoBtn.textContent = '⏳ Aligning…';
+        autoStatus.textContent = 'Recognising speech — this can take up to ~2 min for a long mp3.';
+        try {
+          const rowEls = [...rows.querySelectorAll('.wc-as-row')];
+          const segs = await requestAutoAlign(rowEls.map(r => r.dataset.text));
+          let filled = 0;
+          rowEls.forEach((row, i) => {
+            const seg = segs[i];
+            if (seg && Number.isFinite(seg.start) && Number.isFinite(seg.end)) {
+              row.querySelector('.wc-as-in[data-t="start"]').value = (+seg.start).toFixed(1);
+              row.querySelector('.wc-as-in[data-t="end"]').value   = (+seg.end).toFixed(1);
+              filled++;
+            }
+          });
+          autoStatus.textContent = filled
+            ? `Auto-filled ${filled} / ${rowEls.length} — check the timings, nudge any that are off, then Save.`
+            : 'No sentences matched the audio — sync them by hand.';
+        } catch (e) {
+          autoStatus.textContent = 'Auto-align unavailable (' + ((e && e.message) || e)
+            + ') — sync by hand below.';
+        } finally {
+          autoBtn.textContent = orig;
+          autoBtn.dataset.busy = '';
+        }
+      });
+    }
+
     function close() { try { audio.pause(); } catch {} host.remove(); }
     host.querySelector('.wc-popup-close').addEventListener('click', close);
     host.querySelector('#asCancel').addEventListener('click', close);
@@ -2174,6 +2357,301 @@
       lessonAudioSegments = out;
       refreshAudioUi();
       close();
+    });
+  }
+
+  // ----------------------------------------------------------------
+  //  WAVEFORM AUDIO-CORRECTION EDITOR
+  //
+  //  A visual, sentence-by-sentence sync tool — especially for songs.
+  //  The mp3 is decoded to a waveform; for each line the teacher
+  //  LEFT-clicks the start position and RIGHT-clicks the end. Auto-
+  //  align can pre-fill every line first, so this becomes a quick
+  //  "nudge the boundaries" correction pass over the waveform.
+  //    SPACE play/stop · Z play from the line's start · Enter next
+  // ----------------------------------------------------------------
+  function openWaveformSyncEditor() {
+    const src = audioPlaybackSrc();
+    if (!src) { alert('Attach an mp3 first.'); return; }
+    const lines = splitBodyIntoLines($('lessonBody').value);
+    if (!lines.length) { alert('Add the lesson body text first.'); return; }
+
+    const old = document.getElementById('waveSyncHost');
+    if (old) old.remove();
+
+    // Working timings, pre-filled from saved segments matched by text.
+    const segByText = new Map();
+    lessonAudioSegments.forEach(s => {
+      if (s && typeof s.text === 'string') segByText.set(s.text.trim(), s);
+    });
+    const work = lines.map(text => {
+      const s = segByText.get(text);
+      return {
+        start: s && Number.isFinite(s.start) ? s.start : null,
+        end:   s && Number.isFinite(s.end)   ? s.end   : null,
+      };
+    });
+    let idx = 0;
+
+    const host = document.createElement('div');
+    host.id = 'waveSyncHost';
+    host.className = 'wc-popup-backdrop';
+    host.innerHTML = `
+      <div class="wc-popup wc-wave-sync">
+        <button class="wc-popup-close" aria-label="Close">×</button>
+        <div class="wc-ws-head">
+          <h3 style="margin:0;">오디오 보정 — 문장별 구간</h3>
+          <div class="wc-ws-meta">
+            <label>재생속도
+              <select id="wsSpeed">
+                <option value="0.5">0.5×</option>
+                <option value="0.75">0.75×</option>
+                <option value="1" selected>1.0×</option>
+                <option value="1.25">1.25×</option>
+                <option value="1.5">1.5×</option>
+              </select>
+            </label>
+            <span>진행도 <strong id="wsProgress">1 / ${lines.length}</strong></span>
+          </div>
+        </div>
+        <p class="wc-ws-instr" id="wsInstr"></p>
+        <div class="wc-ws-stage">
+          <canvas id="wsCanvas"></canvas>
+          <div class="wc-ws-loading" id="wsLoading">파형 분석 중…</div>
+        </div>
+        <div class="wc-ws-sent" id="wsSent"></div>
+        <div class="wc-ws-foot">
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · Enter 다음 문장</span>
+          <span class="wc-ws-act">
+            <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
+            <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
+            <button class="wc-btn ghost" id="wsNext" type="button">다음 문장 ›</button>
+            <button class="wc-btn" id="wsSave" type="button">저장</button>
+          </span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(host);
+
+    const canvas  = host.querySelector('#wsCanvas');
+    const cx      = canvas.getContext('2d');
+    const stage   = host.querySelector('.wc-ws-stage');
+    const instrEl = host.querySelector('#wsInstr');
+    const sentEl  = host.querySelector('#wsSent');
+    const progEl  = host.querySelector('#wsProgress');
+    const loadEl  = host.querySelector('#wsLoading');
+
+    const audio = new Audio(src);
+    audio.preload = 'auto';
+
+    let peaks = null, duration = 0, cssW = 0;
+    const cssH = 170;
+    let rafId = null;
+
+    function layoutCanvas() {
+      cssW = Math.max(320, stage.clientWidth);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.style.width  = cssW + 'px';
+      canvas.style.height = cssH + 'px';
+      canvas.width  = Math.round(cssW * dpr);
+      canvas.height = Math.round(cssH * dpr);
+      cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function draw() {
+      if (!cssW) return;
+      cx.clearRect(0, 0, cssW, cssH);
+      cx.fillStyle = '#eef0f2';
+      cx.fillRect(0, 0, cssW, cssH);
+      if (!peaks || !duration) return;
+      const seg = work[idx];
+      const toX = (t) => Math.max(0, Math.min(cssW, (t / duration) * cssW));
+      // current line's marked region
+      if (seg.start != null && seg.end != null) {
+        const x1 = toX(Math.min(seg.start, seg.end));
+        const x2 = toX(Math.max(seg.start, seg.end));
+        const g = cx.createLinearGradient(x1, 0, x2, 0);
+        g.addColorStop(0, 'rgba(58,74,216,0.32)');
+        g.addColorStop(1, 'rgba(58,74,216,0.07)');
+        cx.fillStyle = g;
+        cx.fillRect(x1, 0, x2 - x1, cssH);
+      }
+      // waveform line
+      cx.beginPath();
+      const n = peaks.length;
+      for (let i = 0; i < n; i++) {
+        const x = (i / n) * cssW;
+        const y = cssH - peaks[i] * (cssH - 12) - 3;
+        if (i === 0) cx.moveTo(x, y); else cx.lineTo(x, y);
+      }
+      cx.strokeStyle = '#3a4ad8';
+      cx.lineWidth = 1.3;
+      cx.stroke();
+      // start / end markers + playhead
+      const vline = (x, color, w) => {
+        cx.strokeStyle = color; cx.lineWidth = w || 2;
+        cx.beginPath(); cx.moveTo(x, 0); cx.lineTo(x, cssH); cx.stroke();
+      };
+      if (seg.start != null) vline(toX(seg.start), '#1f9d4d');
+      if (seg.end   != null) vline(toX(seg.end),   '#d33');
+      if (!audio.paused)     vline(toX(audio.currentTime), 'rgba(0,0,0,.55)', 1.5);
+    }
+
+    function tick() {
+      draw();
+      if (!audio.paused) rafId = requestAnimationFrame(tick);
+    }
+
+    function refreshSentenceUi() {
+      instrEl.innerHTML =
+        `<strong>${idx + 1}번</strong> 문장의 시작 위치에 ` +
+        `<strong style="color:#1f9d4d;">좌클릭</strong>, 끝 위치에 ` +
+        `<strong style="color:#d33;">우클릭</strong>하세요.`;
+      sentEl.textContent = lines[idx] || '';
+      progEl.textContent = `${idx + 1} / ${lines.length}`;
+      host.querySelector('#wsPrev').disabled = idx <= 0;
+      host.querySelector('#wsNext').disabled = idx >= lines.length - 1;
+      draw();
+    }
+
+    // Decode the mp3 → amplitude peaks for the waveform.
+    (async () => {
+      try {
+        layoutCanvas();
+        const ab = await (await fetch(src)).arrayBuffer();
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const actx = new AC();
+        const audioBuf = await actx.decodeAudioData(ab);
+        try { actx.close(); } catch {}
+        duration = audioBuf.duration;
+        const ch = audioBuf.getChannelData(0);
+        const cols = Math.max(400, Math.round(cssW));
+        const per = Math.max(1, Math.floor(ch.length / cols));
+        peaks = new Float32Array(cols);
+        for (let c = 0; c < cols; c++) {
+          let mx = 0;
+          const s0 = c * per, e0 = Math.min(ch.length, s0 + per);
+          for (let i = s0; i < e0; i++) {
+            const v = Math.abs(ch[i]);
+            if (v > mx) mx = v;
+          }
+          peaks[c] = mx;
+        }
+        loadEl.style.display = 'none';
+        refreshSentenceUi();
+      } catch (e) {
+        loadEl.textContent = '파형을 그릴 수 없습니다 — 🎚 Audio sync(숫자 입력)를 쓰세요.';
+        console.warn('[waveform] decode failed', e && e.message);
+      }
+    })();
+
+    // Left-click = start, right-click = end of the current line.
+    canvas.addEventListener('click', (e) => {
+      if (!duration) return;
+      work[idx].start = +(e.offsetX / cssW * duration).toFixed(2);
+      draw();
+    });
+    canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      if (!duration) return;
+      work[idx].end = +(e.offsetX / cssW * duration).toFixed(2);
+      draw();
+    });
+
+    host.querySelector('#wsSpeed').addEventListener('change', (e) => {
+      audio.playbackRate = parseFloat(e.target.value) || 1;
+    });
+
+    function gotoSentence(n) {
+      idx = Math.max(0, Math.min(lines.length - 1, n));
+      try { audio.pause(); } catch {}
+      refreshSentenceUi();
+    }
+    host.querySelector('#wsPrev').addEventListener('click', () => gotoSentence(idx - 1));
+    host.querySelector('#wsNext').addEventListener('click', () => gotoSentence(idx + 1));
+
+    function togglePlay() {
+      if (audio.paused) { audio.play().catch(() => {}); tick(); }
+      else audio.pause();
+    }
+    function playFromStart() {
+      const s = work[idx].start;
+      try { audio.currentTime = Number.isFinite(s) ? s : 0; } catch {}
+      audio.play().catch(() => {});
+      tick();
+    }
+    // Stop at the current line's end while playing.
+    audio.addEventListener('timeupdate', () => {
+      const seg = work[idx];
+      if (!audio.paused && seg.end != null && audio.currentTime >= seg.end) audio.pause();
+    });
+    audio.addEventListener('pause', () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      draw();
+    });
+
+    function onKey(e) {
+      const tag = e.target && e.target.tagName;
+      if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
+      if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
+      else if (e.key === 'z' || e.key === 'Z')  { e.preventDefault(); playFromStart(); }
+      else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
+    }
+    document.addEventListener('keydown', onKey);
+
+    // Auto-align inside the waveform editor — fills every line, then
+    // the teacher just nudges the boundaries.
+    host.querySelector('#wsAuto').addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      if (btn.dataset.busy === '1') return;
+      btn.dataset.busy = '1';
+      const orig = btn.textContent;
+      btn.textContent = '⏳ Aligning…';
+      try {
+        const segs = await requestAutoAlign(lines);
+        let filled = 0;
+        segs.forEach((s, i) => {
+          if (s && Number.isFinite(s.start) && Number.isFinite(s.end) && work[i]) {
+            work[i].start = s.start;
+            work[i].end   = s.end;
+            filled++;
+          }
+        });
+        btn.textContent = filled ? `✓ ${filled} aligned` : '⚠ No match';
+        draw();
+      } catch (err) {
+        btn.textContent = '⚠ Failed';
+        console.warn('[waveform auto-align]', err && err.message);
+      } finally {
+        setTimeout(() => { btn.textContent = orig; btn.dataset.busy = ''; }, 2600);
+      }
+    });
+
+    function onResize() { layoutCanvas(); draw(); }
+    window.addEventListener('resize', onResize);
+
+    function cleanup() {
+      try { audio.pause(); } catch {}
+      if (rafId) cancelAnimationFrame(rafId);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('resize', onResize);
+      host.remove();
+    }
+    host.querySelector('.wc-popup-close').addEventListener('click', cleanup);
+    host.addEventListener('click', (e) => { if (e.target === host) cleanup(); });
+
+    host.querySelector('#wsSave').addEventListener('click', () => {
+      const out = [];
+      lines.forEach((text, i) => {
+        const w = work[i];
+        if (w && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start) {
+          out.push({ text, start: +w.start.toFixed(2), end: +w.end.toFixed(2) });
+        }
+      });
+      lessonAudioSegments = out;
+      refreshAudioUi();
+      cleanup();
     });
   }
 

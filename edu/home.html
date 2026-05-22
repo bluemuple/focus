@@ -67,6 +67,77 @@
     /* Slim top-right user chip — identity only. */
     #userChip { gap: 12px; }
     #userChip .sep { color: var(--line, #d1d5db); }
+
+    /* ⏰ earned-time chip + popup */
+    .wc-time-chip {
+      appearance: none; border: 0; background: transparent;
+      font: inherit; font-weight: 700; cursor: pointer;
+      color: var(--ink, #1d1d24); padding: 0;
+    }
+    .wc-time-chip:hover { text-decoration: underline; }
+    .wc-time-backdrop {
+      position: fixed; inset: 0; z-index: 9999;
+      background: rgba(0,0,0,.4);
+      display: flex; align-items: center; justify-content: center;
+      padding: 16px;
+    }
+    .wc-time-pop {
+      position: relative; background: #fff; border-radius: 16px;
+      padding: 20px 22px; width: 100%; max-width: 420px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.25);
+    }
+    .wc-time-close {
+      position: absolute; top: 8px; right: 12px;
+      border: 0; background: transparent; font-size: 22px;
+      color: #888; cursor: pointer; line-height: 1;
+    }
+    .wc-time-pop h3 { margin: 0 0 4px; }
+    .wc-time-balance { font-size: 15px; margin: 4px 0 14px; }
+    .wc-time-balance strong { font-size: 19px; color: #d63384; }
+    .wc-time-graph-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .wc-time-graph {
+      display: flex; align-items: flex-end; gap: 6px;
+      height: 96px; padding-top: 4px;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    .wc-time-gcol {
+      flex: 1; height: 100%;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-end; gap: 3px;
+    }
+    .wc-time-gbar {
+      width: 72%; min-height: 2px;
+      background: #f0a35e; border-radius: 4px 4px 0 0;
+    }
+    .wc-time-gbar.zero { background: #e5e7eb; }
+    .wc-time-gval   { font-size: 10px; color: #666; }
+    .wc-time-glabel { font-size: 10px; color: #999; }
+    .wc-time-log {
+      margin-top: 12px; max-height: 116px; overflow-y: auto;
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .wc-time-log-row {
+      display: flex; justify-content: space-between; gap: 8px;
+      font-size: 12px; color: #555;
+      padding: 4px 8px; background: #f6f7f8; border-radius: 6px;
+    }
+    .wc-time-log-row .mins { font-weight: 700; color: #c0392b; white-space: nowrap; }
+    .wc-time-log-empty { font-size: 12px; color: #999; padding: 4px 0; }
+    .wc-time-spend { margin-top: 14px; }
+    .wc-time-spend > label { font-weight: 700; font-size: 14px; }
+    .wc-time-spend-row {
+      display: flex; gap: 6px; align-items: center;
+      margin-top: 6px; flex-wrap: wrap;
+    }
+    .wc-time-spend-row input {
+      padding: 6px 8px; border: 1px solid #d1d5db;
+      border-radius: 8px; font: inherit;
+    }
+    .wc-time-spend-row input[type=number] { width: 64px; }
+    .wc-time-spend-row input[type=text]   { flex: 1; min-width: 130px; }
+    .wc-time-msg { font-size: 12px; margin-top: 6px; min-height: 1em; }
+    .wc-time-msg.err { color: #c0392b; }
+    .wc-time-msg.ok  { color: #2c8a4a; }
   </style>
 </head>
 <body>
@@ -76,6 +147,9 @@
       <div class="wc-user-chip" id="userChip">
         <span id="userName">…</span>
         <span class="coin" title="Coins">💰 <span id="userMoney">0</span></span>
+        <button type="button" class="wc-time-chip" id="timeChip" title="모은 시간 — 눌러서 자세히 보기">
+          ⏰ <span id="timeDisplay">0:00</span>
+        </button>
         <span class="sep">|</span>
         <a href="#" id="logoutBtn" style="color:var(--ink-soft);">Sign out</a>
       </div>
@@ -223,6 +297,148 @@
       window.WCAuth.logout();
       location.href = './index.html';
     });
+
+    // ===== Time economy — ⏰ chip + popup =====
+    //  Students earn screen-time minutes from the reward wheel and
+    //  spend them here. Balance = sum(earn) - sum(spend) over the
+    //  wc_time_entries ledger.
+    (function setupTimeChip() {
+      const chip = document.getElementById('timeChip');
+      if (!chip) return;
+      if (me.role !== 'student') { chip.style.display = 'none'; return; }
+
+      let entries = [];
+
+      const fmtHM = (min) => {
+        min = Math.max(0, Math.round(min || 0));
+        return Math.floor(min / 60) + ':' + String(min % 60).padStart(2, '0');
+      };
+      const balanceOf = (es) => {
+        let b = 0;
+        es.forEach(e => { b += (e.kind === 'spend' ? -1 : 1) * (e.minutes || 0); });
+        return Math.max(0, b);
+      };
+      const dayKey = (d) => {
+        const dt = new Date(d);
+        return dt.getFullYear() + '-' +
+          String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+          String(dt.getDate()).padStart(2, '0');
+      };
+      const renderChip = () => {
+        document.getElementById('timeDisplay').textContent = fmtHM(balanceOf(entries));
+      };
+
+      (async () => {
+        try { entries = await window.WCDB.time.list(me.id); } catch (e) {}
+        renderChip();
+      })();
+
+      chip.addEventListener('click', openPopup);
+
+      function openPopup() {
+        const old = document.getElementById('wcTimePopHost');
+        if (old) old.remove();
+        const host = document.createElement('div');
+        host.id = 'wcTimePopHost';
+        host.className = 'wc-time-backdrop';
+        host.innerHTML =
+          '<div class="wc-time-pop">' +
+            '<button class="wc-time-close" aria-label="닫기">×</button>' +
+            '<h3>⏰ 내 시간</h3>' +
+            '<div class="wc-time-balance">모은 시간: <strong id="wcTimeBal">0:00</strong></div>' +
+            '<div class="wc-time-graph-label">최근 7일 모은 시간</div>' +
+            '<div class="wc-time-graph" id="wcTimeGraph"></div>' +
+            '<div class="wc-time-log" id="wcTimeLog"></div>' +
+            '<div class="wc-time-spend">' +
+              '<label>시간 쓰기</label>' +
+              '<div class="wc-time-spend-row">' +
+                '<input type="number" id="wcSpendMin" min="1" placeholder="분"> 분' +
+                '<input type="text" id="wcSpendMemo" placeholder="메모 (어떤 게임을 했나요?)">' +
+                '<button class="wc-btn" id="wcSpendSave" type="button">저장</button>' +
+              '</div>' +
+              '<div class="wc-time-msg" id="wcSpendMsg"></div>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(host);
+        const close = () => host.remove();
+        host.querySelector('.wc-time-close').addEventListener('click', close);
+        host.addEventListener('click', e => { if (e.target === host) close(); });
+
+        function rerender() {
+          host.querySelector('#wcTimeBal').textContent = fmtHM(balanceOf(entries));
+          // weekly bar graph — earned minutes per day, last 7 days
+          const days = [];
+          const now = new Date();
+          for (let d = 6; d >= 0; d--) {
+            const dt = new Date(now); dt.setDate(now.getDate() - d);
+            days.push({ key: dayKey(dt), label: (dt.getMonth() + 1) + '/' + dt.getDate(), min: 0 });
+          }
+          const dmap = {}; days.forEach(d => { dmap[d.key] = d; });
+          entries.forEach(e => {
+            if (e.kind !== 'earn') return;
+            const d = dmap[dayKey(e.created_at)];
+            if (d) d.min += (e.minutes || 0);
+          });
+          const maxMin = Math.max(10, ...days.map(d => d.min));
+          host.querySelector('#wcTimeGraph').innerHTML = days.map(d =>
+            '<div class="wc-time-gcol">' +
+              '<span class="wc-time-gval">' + (d.min || '') + '</span>' +
+              '<div class="wc-time-gbar' + (d.min ? '' : ' zero') + '" style="height:' +
+                Math.round((d.min / maxMin) * 100) + '%"></div>' +
+              '<span class="wc-time-glabel">' + d.label + '</span>' +
+            '</div>').join('');
+          // spend log — date · memo · minutes (newest first)
+          const spends = entries.filter(e => e.kind === 'spend');
+          const logEl = host.querySelector('#wcTimeLog');
+          if (!spends.length) {
+            logEl.innerHTML = '<div class="wc-time-log-empty">아직 쓴 시간이 없어요.</div>';
+          } else {
+            logEl.innerHTML = spends.map(e => {
+              const dt = new Date(e.created_at);
+              const date = (dt.getMonth() + 1) + '/' + dt.getDate();
+              return '<div class="wc-time-log-row">' +
+                '<span>' + date + (e.memo ? ' · ' + escapeHtml(e.memo) : '') + '</span>' +
+                '<span class="mins">-' + (e.minutes || 0) + '분</span>' +
+              '</div>';
+            }).join('');
+          }
+        }
+        rerender();
+
+        host.querySelector('#wcSpendSave').addEventListener('click', async () => {
+          const minEl  = host.querySelector('#wcSpendMin');
+          const memoEl = host.querySelector('#wcSpendMemo');
+          const msg    = host.querySelector('#wcSpendMsg');
+          const save   = host.querySelector('#wcSpendSave');
+          const m   = parseInt(minEl.value, 10);
+          const bal = balanceOf(entries);
+          if (!Number.isFinite(m) || m < 1) {
+            msg.textContent = '쓸 시간을 분 단위로 적어줘.'; msg.className = 'wc-time-msg err'; return;
+          }
+          if (m > bal) {
+            msg.textContent = '모은 시간(' + fmtHM(bal) + ')보다 많이 쓸 수 없어요.';
+            msg.className = 'wc-time-msg err'; return;
+          }
+          save.disabled = true;
+          msg.textContent = '저장 중…'; msg.className = 'wc-time-msg';
+          try {
+            const row = await window.WCDB.time.add(me.id, 'spend', m, memoEl.value);
+            entries.unshift(row || {
+              kind: 'spend', minutes: m, memo: (memoEl.value || '').trim() || null,
+              created_at: new Date().toISOString(),
+            });
+            minEl.value = ''; memoEl.value = '';
+            msg.textContent = m + '분을 썼어요!'; msg.className = 'wc-time-msg ok';
+            rerender();
+            renderChip();
+          } catch (e) {
+            msg.textContent = '저장하지 못했어요. 다시 해봐요.'; msg.className = 'wc-time-msg err';
+          } finally {
+            save.disabled = false;
+          }
+        });
+      }
+    })();
 
     // Per-class hide-toggles. Fail-open so a transient network blip
     // never strips features the teacher meant to leave on.

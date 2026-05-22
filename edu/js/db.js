@@ -330,6 +330,60 @@
     },
   };
 
+  // ---------- time economy (reward wheel + ⏰ spending) ----------
+  //  A ledger of earn / spend rows. Balance is summed client-side.
+  //  Run edu/supabase-add-time-economy.sql once before use.
+  const time = {
+    async list(userId) {
+      if (!userId) return [];
+      return rGet('/wc_time_entries?select=*&user_id=eq.'
+        + encodeURIComponent(userId) + '&order=created_at.desc');
+    },
+    async add(userId, kind, minutes, memo) {
+      if (!REST || !userId) return null;
+      const rows = await rPost('/wc_time_entries', {
+        user_id: userId,
+        kind:    kind === 'spend' ? 'spend' : 'earn',
+        minutes: Math.max(0, Math.round(Number(minutes) || 0)),
+        memo:    (memo && String(memo).trim()) || null,
+      }, true);
+      return rows && rows[0];
+    },
+  };
+
+  // ---------- voice recordings (Record mode) ----------
+  //  One row per take; the audio blob lives in Storage. Run
+  //  edu/supabase-add-recordings.sql once before use.
+  const recordingsDb = {
+    async list(userId, lessonId) {
+      if (!userId || !lessonId) return [];
+      return rGet('/wc_recordings?select=*&user_id=eq.'
+        + encodeURIComponent(userId) + '&lesson_id=eq.'
+        + encodeURIComponent(lessonId) + '&order=created_at.asc');
+    },
+    async add(row) {
+      const rows = await rPost('/wc_recordings', row, true);
+      return rows && rows[0];
+    },
+    async remove(id) {
+      if (!id) return true;
+      return rDelete('/wc_recordings?id=eq.' + encodeURIComponent(id));
+    },
+    // Make take `takeN` the only selected take for this line (pass
+    // null to clear the selection entirely).
+    async setSelected(userId, lessonId, sentenceKey, takeN) {
+      if (!REST || !userId || !lessonId) return false;
+      const scope = '/wc_recordings?user_id=eq.' + encodeURIComponent(userId)
+        + '&lesson_id=eq.' + encodeURIComponent(lessonId)
+        + '&sentence_key=eq.' + encodeURIComponent(sentenceKey);
+      await rPatch(scope, { selected: false });
+      if (takeN != null) {
+        await rPatch(scope + '&take_n=eq.' + encodeURIComponent(takeN), { selected: true });
+      }
+      return true;
+    },
+  };
+
   // ---------- Storage (lesson / panel images) ----------
   //  Panel images move out of the wc_lessons.images jsonb blob into
   //  a public Storage bucket so the lesson row stays small and the
@@ -517,5 +571,5 @@
     },
   };
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage };
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage, time, recordingsDb };
 })();
