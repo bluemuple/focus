@@ -1777,6 +1777,7 @@
           <button data-corner="bl"><span>↙</span> Bottom-left</button>
           <button data-corner="br"><span>↘</span> Bottom-right</button>
           <button data-corner="cc"><span>＋</span> Center (centred on its own line)</button>
+          <button data-corner="panel"><span>🗔</span> Comic panel (full-width box — dialogue goes underneath)</button>
         </div>
         <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
           <button class="wc-btn ghost"  id="cpCancel"  type="button">Cancel</button>
@@ -1902,6 +1903,7 @@
       bl: 'bottom-left',
       br: 'bottom-right',
       cc: 'centre',
+      panel: 'comic panel',
     })[c] || c;
   }
   function removeImage(idx) {

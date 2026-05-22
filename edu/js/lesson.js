@@ -993,8 +993,9 @@
   }
 
   // Build a floated <img> for the Nth image attached to this lesson.
-  // `corner` decides which side the float sits on (tl/tr/bl/br);
-  // `scale` (defaults to 1.0) scales the base 22 %-of-card width by
+  // `corner` decides placement: tl/tr/bl/br float in a corner, cc
+  // centres on its own line, and `panel` renders a full-width comic
+  // "네모" box. `scale` (defaults to 1.0) scales the base width by
   // 5 %-step adjustments the teacher made in the chip preview.
   function makeFloatingImage(idx) {
     const list = Array.isArray(lesson?.images) ? lesson.images : [];
@@ -1007,12 +1008,21 @@
     img.draggable = false;
     const scale = Number.isFinite(rec.scale) ? rec.scale : 1.0;
     if (scale !== 1.0) {
-      // The base width comes from the CSS rule (22 % / min 120 / max 220).
-      // We override BOTH width and max-width together so the size moves
-      // proportionally on both narrow and wide viewports.
-      img.style.width    = (22 * scale).toFixed(1) + '%';
-      img.style.maxWidth = Math.round(220 * scale) + 'px';
-      img.style.minWidth = Math.round(120 * scale) + 'px';
+      if (rec.corner === 'panel') {
+        // Comic panel — the CSS base width is 88 % of the card (a big
+        // block "네모"), not the 22 % float base. Scale that 88 %
+        // directly and cap at 100 % so a grown panel never overflows
+        // the white card.
+        img.style.width    = Math.min(100, 88 * scale).toFixed(1) + '%';
+        img.style.maxWidth = '100%';
+      } else {
+        // The base width comes from the CSS rule (22 % / min 120 / max 220).
+        // We override BOTH width and max-width together so the size moves
+        // proportionally on both narrow and wide viewports.
+        img.style.width    = (22 * scale).toFixed(1) + '%';
+        img.style.maxWidth = Math.round(220 * scale) + 'px';
+        img.style.minWidth = Math.round(120 * scale) + 'px';
+      }
     }
     return img;
   }
