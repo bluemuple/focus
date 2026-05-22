@@ -339,8 +339,31 @@
   //  Run edu/supabase-add-comic-storage.sql once before use.
   const storage = {
     BUCKET: 'wc-lesson-images',
-    async uploadDataUrl(dataUrl) {
+    // Upload any Blob (panel image, mp3, …) to the bucket and return
+    // its public URL. `folder` namespaces the object (panels / audio).
+    async uploadBlob(blob, ext, folder) {
       if (!URL) throw new Error('Supabase not configured');
+      const base = URL.replace(/\/+$/, '');
+      const path = (folder || 'panels') + '/' + Date.now().toString(36) + '-'
+        + Math.random().toString(36).slice(2, 10) + '.' + (ext || 'bin');
+      const r = await fetch(base + '/storage/v1/object/' + storage.BUCKET + '/' + path, {
+        method: 'POST',
+        headers: {
+          apikey:         ANON,
+          Authorization:  'Bearer ' + ANON,
+          'Content-Type': blob.type || 'application/octet-stream',
+          'x-upsert':     'true',
+        },
+        body: blob,
+      });
+      if (!r.ok) {
+        throw new Error('WCDB storage upload ' + r.status + ' :: '
+          + (await r.text().catch(() => '')).slice(0, 200));
+      }
+      return base + '/storage/v1/object/public/' + storage.BUCKET + '/' + path;
+    },
+    // Convenience: decode a data: URL to a Blob and upload it.
+    async uploadDataUrl(dataUrl) {
       const m = /^data:([^;,]+)[^,]*,(.*)$/.exec(String(dataUrl || ''));
       if (!m) throw new Error('not a data URL');
       const mime = m[1] || 'image/jpeg';
@@ -348,24 +371,7 @@
       const bytes = new Uint8Array(bin.length);
       for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
       const ext  = /png/i.test(mime) ? 'png' : (/webp/i.test(mime) ? 'webp' : 'jpg');
-      const path = 'panels/' + Date.now().toString(36) + '-'
-        + Math.random().toString(36).slice(2, 10) + '.' + ext;
-      const base = URL.replace(/\/+$/, '');
-      const r = await fetch(base + '/storage/v1/object/' + storage.BUCKET + '/' + path, {
-        method: 'POST',
-        headers: {
-          apikey:         ANON,
-          Authorization:  'Bearer ' + ANON,
-          'Content-Type': mime,
-          'x-upsert':     'true',
-        },
-        body: bytes,
-      });
-      if (!r.ok) {
-        throw new Error('WCDB storage upload ' + r.status + ' :: '
-          + (await r.text().catch(() => '')).slice(0, 200));
-      }
-      return base + '/storage/v1/object/public/' + storage.BUCKET + '/' + path;
+      return storage.uploadBlob(new Blob([bytes], { type: mime }), ext, 'panels');
     },
   };
 

@@ -152,6 +152,10 @@
     }
     $('lessonTitle').textContent = lesson.title;
 
+    // Lesson mp3 — build the per-sentence segment map so makeSentenceWrap
+    // can drop a 🔊 on every sentence the teacher synced.
+    setupLessonAudio();
+
     // Preview banner — yellow strip at the very top of the page so
     // the teacher knows nothing they do here is being saved. Fades
     // away after 3s so it doesn't permanently steal vertical space
@@ -1244,6 +1248,55 @@
     }
   }
 
+  // ============================================================
+  //  LESSON AUDIO  — per-sentence mp3 playback
+  //
+  //  When the lesson carries an mp3 (audio_url) + audio_segments,
+  //  every sentence whose text matches a segment gets a 🔊 button
+  //  (added in makeSentenceWrap). Tapping it plays just that slice
+  //  of the recording. The 🔊 click is caught by the #lessonBody
+  //  delegated listener so it survives re-render / repagination.
+  // ============================================================
+  let lessonAudioEl = null;   // <audio> element for the lesson mp3
+  let audioSegMap   = null;   // Map<normalisedText, {start,end}>
+  let audioStopAt   = null;   // pause the clip once playback reaches this
+
+  function normAudioKey(s) {
+    return String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+  function setupLessonAudio() {
+    const url  = lesson && lesson.audio_url;
+    const segs = (lesson && Array.isArray(lesson.audio_segments)) ? lesson.audio_segments : [];
+    if (!url || !segs.length) return;
+    audioSegMap = new Map();
+    segs.forEach(s => {
+      if (!s || typeof s.text !== 'string') return;
+      const a = Number(s.start), b = Number(s.end);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return;
+      audioSegMap.set(normAudioKey(s.text), { start: a, end: b });
+    });
+    if (!audioSegMap.size) { audioSegMap = null; return; }
+    lessonAudioEl = new Audio(url);
+    lessonAudioEl.preload = 'metadata';
+    lessonAudioEl.addEventListener('timeupdate', () => {
+      if (audioStopAt != null && lessonAudioEl.currentTime >= audioStopAt) {
+        lessonAudioEl.pause();
+        audioStopAt = null;
+      }
+    });
+  }
+  function playLessonSegment(start, end) {
+    if (!lessonAudioEl) return;
+    // The recorded voice and the TTS shouldn't talk over each other.
+    try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+    audioStopAt = (Number.isFinite(end) && end > start) ? end : null;
+    try {
+      lessonAudioEl.pause();
+      lessonAudioEl.currentTime = Math.max(0, start || 0);
+      lessonAudioEl.play().catch(() => {});
+    } catch {}
+  }
+
   // HTML body tokenisation. For every block-level element inside
   // `rootEl` (`<p>`, `<h1>`–`<h6>`, `<li>`, `<blockquote>`, table
   // cells, etc.) we replace its children with a fragment of
@@ -1423,6 +1476,21 @@
     wrap.className = 'wc-sentence';
     wrap.dataset.idx = String(idx);
     wrap.dataset.text = p.text;   // used to fetch chunks by sentence text
+    // mp3 slice for this sentence? prepend a 🔊 the student taps to
+    // hear just this sentence read from the lesson recording.
+    if (audioSegMap) {
+      const seg = audioSegMap.get(normAudioKey(p.text));
+      if (seg) {
+        const ab = document.createElement('button');
+        ab.className = 'wc-sent-audio';
+        ab.type = 'button';
+        ab.textContent = '🔊';
+        ab.dataset.aStart = String(seg.start);
+        ab.dataset.aEnd   = String(seg.end);
+        ab.setAttribute('aria-label', 'Play this sentence');
+        wrap.appendChild(ab);
+      }
+    }
     let wIdx = 0;
     p.words.forEach(tok => {
       if (tok.kind === 'glue') {
@@ -1793,6 +1861,13 @@
     body.addEventListener('click', (e) => {
       const t = e.target;
       if (!t || !t.closest) return;
+      // 🔊 on a sentence — play that sentence's mp3 slice.
+      const ab = t.closest('.wc-sent-audio');
+      if (ab) {
+        e.stopPropagation();
+        playLessonSegment(parseFloat(ab.dataset.aStart), parseFloat(ab.dataset.aEnd));
+        return;
+      }
       const w = t.closest('.wc-bubble .w');
       if (!w || w.classList.contains('punct')) return;
       onBubbleWordClick(w);

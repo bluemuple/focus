@@ -1473,6 +1473,12 @@
     $('lessonGiftLimit').value  = L.gift_limit_per_day || 3;
     $('lessonHeadingsNewPage').checked = !!L.headings_start_new_page;
     setLessonMode(L.mode || 'text');
+    lessonAudioUrl       = L.audio_url || null;
+    lessonAudioFile      = null;
+    lessonAudioObjectUrl = null;
+    lessonAudioSegments  = Array.isArray(L.audio_segments)
+      ? L.audio_segments.map(s => ({ ...s })) : [];
+    refreshAudioUi();
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
     lessonWordImages = Array.isArray(L.word_images)
@@ -1497,6 +1503,7 @@
     $('lessonGiftLimit').value = 3;
     $('lessonHeadingsNewPage').checked = false;
     setLessonMode('text');
+    resetLessonAudio();
     resetImages();
     updateFormMode();
     // Return the form card to its default collapsed state.
@@ -1979,6 +1986,195 @@
     const j = await r.json();
     if (j && j.error) throw new Error(j.error);
     return String((j && j.text) || '').trim();
+  }
+
+  // ----------------------------------------------------------------
+  //  LESSON AUDIO (mp3) — attach + per-sentence sync editor
+  //
+  //  The teacher attaches an mp3 of the text read aloud, then marks
+  //  which slice of audio each sentence is. Saved as wc_lessons
+  //  .audio_url + .audio_segments [{text,start,end}]. On the lesson
+  //  page each matching sentence gets a 🔊 that plays just its slice.
+  // ----------------------------------------------------------------
+  let lessonAudioUrl       = null;   // Storage URL (loaded from a saved lesson)
+  let lessonAudioFile      = null;   // freshly-picked File, pending upload
+  let lessonAudioObjectUrl = null;   // object URL — for in-editor playback
+  let lessonAudioSegments  = [];     // [{text,start,end}]
+
+  function audioPlaybackSrc() {
+    return lessonAudioObjectUrl || lessonAudioUrl || '';
+  }
+  function refreshAudioUi() {
+    const status  = $('lessonAudioStatus');
+    const syncBtn = $('audioSyncBtn');
+    const has = !!audioPlaybackSrc();
+    if (syncBtn) syncBtn.classList.toggle('wc-hidden', !has);
+    if (status) {
+      if (!has) {
+        status.textContent = '';
+      } else {
+        const n = lessonAudioSegments.length;
+        const synced = `${n} sentence${n !== 1 ? 's' : ''} synced`;
+        status.textContent = lessonAudioFile
+          ? `${lessonAudioFile.name} · ${synced}`
+          : `mp3 attached · ${synced}`;
+      }
+    }
+  }
+  function resetLessonAudio() {
+    lessonAudioUrl = null;
+    lessonAudioFile = null;
+    if (lessonAudioObjectUrl) { try { URL.revokeObjectURL(lessonAudioObjectUrl); } catch {} }
+    lessonAudioObjectUrl = null;
+    lessonAudioSegments = [];
+    const fi = $('addAudioFile');
+    if (fi) fi.value = '';
+    refreshAudioUi();
+  }
+
+  // Split the body textarea into sentences for the sync editor. A
+  // light split (sentence-final punctuation, then newlines) — good
+  // enough; the lesson page matches segments to sentences BY TEXT,
+  // so a rare mis-split just means that one sentence shows no 🔊.
+  function splitBodyIntoLines(body) {
+    const text = String(body || '')
+      .replace(/\[\[IMG:\d+\]\]/g, ' ')
+      .replace(/^#{1,6}\s*/gm, '')
+      .replace(/^[-*]{3,}\s*$/gm, ' ');
+    const out = [];
+    text.split(/\n+/).forEach(para => {
+      para.split(/(?<=[.!?])\s+/).forEach(s => {
+        const t = s.trim();
+        if (t) out.push(t);
+      });
+    });
+    return out;
+  }
+
+  (function wireLessonAudio() {
+    const addBtn  = $('addAudioBtn');
+    const fileInp = $('addAudioFile');
+    const syncBtn = $('audioSyncBtn');
+    if (addBtn && fileInp) {
+      addBtn.addEventListener('click', () => fileInp.click());
+      fileInp.addEventListener('change', () => {
+        const f = fileInp.files && fileInp.files[0];
+        if (!f) return;
+        if (lessonAudioObjectUrl) { try { URL.revokeObjectURL(lessonAudioObjectUrl); } catch {} }
+        lessonAudioFile      = f;
+        lessonAudioObjectUrl = URL.createObjectURL(f);
+        lessonAudioUrl       = null;   // a new file supersedes any saved URL
+        lessonAudioSegments  = [];     // old timings belong to the old audio
+        refreshAudioUi();
+      });
+    }
+    if (syncBtn) syncBtn.addEventListener('click', openAudioSyncEditor);
+  })();
+
+  function openAudioSyncEditor() {
+    const src = audioPlaybackSrc();
+    if (!src) { alert('Attach an mp3 first.'); return; }
+    const lines = splitBodyIntoLines($('lessonBody').value);
+    if (!lines.length) { alert('Add the lesson body text first.'); return; }
+
+    const old = document.getElementById('audioSyncHost');
+    if (old) old.remove();
+
+    // Pre-fill from any saved segments, matched by sentence text.
+    const segByText = new Map();
+    lessonAudioSegments.forEach(s => {
+      if (s && typeof s.text === 'string') segByText.set(s.text.trim(), s);
+    });
+
+    const host = document.createElement('div');
+    host.id = 'audioSyncHost';
+    host.className = 'wc-popup-backdrop';
+    host.innerHTML = `
+      <div class="wc-popup wc-audio-sync">
+        <button class="wc-popup-close" aria-label="Close">×</button>
+        <h3 style="margin:0 0 4px;">Audio sync</h3>
+        <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
+          Play the mp3. For each sentence, pause at the right moment and click
+          <strong>⏱ start</strong> / <strong>⏱ end</strong> to capture the time (or type
+          seconds directly). ▶ previews that slice. On the lesson page students tap 🔊 on
+          a sentence to hear exactly that part. Sentences left blank get no 🔊.
+        </p>
+        <audio id="asAudio" controls preload="metadata" src="${src}" style="width:100%;"></audio>
+        <div class="wc-as-rows" id="asRows"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px;">
+          <button class="wc-btn ghost" id="asCancel" type="button">Cancel</button>
+          <button class="wc-btn" id="asSave" type="button">Save timings</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(host);
+    const audio = host.querySelector('#asAudio');
+    const rows  = host.querySelector('#asRows');
+
+    lines.forEach((text, i) => {
+      const seg = segByText.get(text);
+      const row = document.createElement('div');
+      row.className = 'wc-as-row';
+      row.dataset.text = text;
+      row.innerHTML = `
+        <span class="wc-as-num">${i + 1}</span>
+        <span class="wc-as-text">${escForTextarea(text)}</span>
+        <span class="wc-as-ctl">
+          <button type="button" class="wc-btn ghost wc-as-cap" data-cap="start">⏱ start</button>
+          <input class="wc-as-in" data-t="start" type="number" step="0.1" min="0"
+                 value="${seg && Number.isFinite(seg.start) ? seg.start : ''}">
+          <button type="button" class="wc-btn ghost wc-as-cap" data-cap="end">⏱ end</button>
+          <input class="wc-as-in" data-t="end" type="number" step="0.1" min="0"
+                 value="${seg && Number.isFinite(seg.end) ? seg.end : ''}">
+          <button type="button" class="wc-btn ghost wc-as-play" title="Preview this slice">▶</button>
+        </span>
+      `;
+      rows.appendChild(row);
+    });
+
+    // Preview playback — stop at the row's end time.
+    let stopAt = null;
+    audio.addEventListener('timeupdate', () => {
+      if (stopAt != null && audio.currentTime >= stopAt) { audio.pause(); stopAt = null; }
+    });
+
+    rows.addEventListener('click', (e) => {
+      const row = e.target.closest('.wc-as-row');
+      if (!row) return;
+      const cap = e.target.closest('.wc-as-cap');
+      if (cap) {
+        const inp = row.querySelector(`.wc-as-in[data-t="${cap.dataset.cap}"]`);
+        if (inp) inp.value = audio.currentTime.toFixed(1);
+        return;
+      }
+      if (e.target.closest('.wc-as-play')) {
+        const a = parseFloat(row.querySelector('.wc-as-in[data-t="start"]').value);
+        const b = parseFloat(row.querySelector('.wc-as-in[data-t="end"]').value);
+        if (!Number.isFinite(a)) return;
+        stopAt = (Number.isFinite(b) && b > a) ? b : null;
+        audio.currentTime = Math.max(0, a);
+        audio.play().catch(() => {});
+      }
+    });
+
+    function close() { try { audio.pause(); } catch {} host.remove(); }
+    host.querySelector('.wc-popup-close').addEventListener('click', close);
+    host.querySelector('#asCancel').addEventListener('click', close);
+    host.addEventListener('click', (e) => { if (e.target === host) close(); });
+
+    host.querySelector('#asSave').addEventListener('click', () => {
+      const out = [];
+      rows.querySelectorAll('.wc-as-row').forEach(row => {
+        const a = parseFloat(row.querySelector('.wc-as-in[data-t="start"]').value);
+        const b = parseFloat(row.querySelector('.wc-as-in[data-t="end"]').value);
+        if (Number.isFinite(a) && Number.isFinite(b) && b > a) {
+          out.push({ text: row.dataset.text, start: +a.toFixed(2), end: +b.toFixed(2) });
+        }
+      });
+      lessonAudioSegments = out;
+      refreshAudioUi();
+      close();
+    });
   }
 
   // ----------------------------------------------------------------
@@ -2656,6 +2852,18 @@
     // Upload any freshly-added panel images to Supabase Storage so the
     // lesson row stays small (inline base64 bloats every lesson fetch).
     await uploadLessonImagesToStorage();
+    // Upload a freshly-attached mp3 (best-effort — a failure just
+    // leaves the lesson without audio rather than blocking the save).
+    if (lessonAudioFile && !lessonAudioUrl) {
+      try {
+        const raw = (lessonAudioFile.name.split('.').pop() || 'mp3').toLowerCase();
+        const ext = /^(mp3|mpeg|m4a|wav|ogg)$/.test(raw)
+          ? raw.replace('mpeg', 'mp3') : 'mp3';
+        lessonAudioUrl = await window.WCDB.storage.uploadBlob(lessonAudioFile, ext, 'audio');
+      } catch (e) {
+        console.warn('[lesson-save] audio upload failed:', e && e.message);
+      }
+    }
     const payload = {
       title, body,
       animal_set: $('lessonAnimalSet').value,
@@ -2665,6 +2873,8 @@
       word_notes:  cleanedWordNotes,
       headings_start_new_page: !!$('lessonHeadingsNewPage').checked,
       mode: lessonMode,
+      audio_url: lessonAudioUrl || null,
+      audio_segments: lessonAudioSegments,
     };
     try {
       // Stash the lesson id BEFORE resetting state below — we use it
@@ -2692,6 +2902,7 @@
       $('lessonBody').value = '';
       $('lessonHeadingsNewPage').checked = false;
       setLessonMode('text');
+      resetLessonAudio();
       resetImages();
       updateFormMode();
       // Collapse the form card back to its default closed state so
