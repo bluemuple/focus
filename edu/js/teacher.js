@@ -3521,8 +3521,16 @@
   // ============================================================
   //  TAB 4 — MESSAGES (visualization inbox + animal gift reply)
   // ============================================================
-  function renderMessages() {
+  async function renderMessages() {
     const wrap = $('messagesBody');
+    // Re-fetch on open — messages a student sends AFTER the dashboard
+    // first loaded would otherwise stay invisible until a full page
+    // reload (refreshAll only runs on load / class switch).
+    if (currentClass && lessons.length) {
+      try {
+        messages = await window.WCDB.viz.forLessons(lessons.map(L => L.id));
+      } catch (e) { /* network blip — keep the cached list */ }
+    }
     if (!messages.length) {
       wrap.innerHTML = '<p class="wc-muted wc-center">No student messages yet.</p>';
       return;
