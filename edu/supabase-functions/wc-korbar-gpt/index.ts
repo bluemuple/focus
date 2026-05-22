@@ -5,7 +5,7 @@
 //   child (age 7-9) learning English. Two request kinds:
 //
 //     { kind: "word", word, sentence }
-//       → { lemma, ipa, easy_en, ko, word_family[], similar[],
+//       → { lemma, pronunciation, easy_en, ko, word_family[], similar[],
 //           opposite[] }
 //
 //     { kind: "chunks", sentence }
@@ -73,7 +73,20 @@ const WORD_SYS = [
   "English word as it is used in a sentence. Reply with JSON only.",
   "Keys:",
   "- lemma (string): the dictionary base form of the word.",
-  "- ipa (string): a short IPA pronunciation wrapped in /slashes/.",
+  "- pronunciation (string): UFLI Foundations notation, NOT IPA.",
+  "  Slashes around the whole thing; hyphens between syllables for",
+  "  multi-syllable words. Use ONLY the UFLI symbol palette below.",
+  "  SHORT VOWELS  /ă/ cat  /ĕ/ bed  /ĭ/ sit  /ŏ/ hot  /ŭ/ cup",
+  "  LONG VOWELS   /ā/ cake /ē/ bee /ī/ bike /ō/ go /ū/ blue(oo) /yū/ cute",
+  "  DIPHTHONGS    /aw/ saw  /ow/ cow  /oi/ boy  /ə/ schwa (about)",
+  "  R-CONTROLLED  /ar/ car  /er/ her  /or/ for  /air/ care  /ear/ ear",
+  "  CONSONANTS    /b/ /p/ /d/ /t/ /g/ /k/ /m/ /n/ /f/ /v/ /s/ /z/ /h/",
+  "                /l/ /r/ /w/ /y/ /j/ (jet, gem, judge)",
+  "  DIGRAPHS      /ng/ /nk/ /sh/ /zh/ vision /th/ (thin & this) /ch/",
+  "  Concatenate symbols inside ONE pair of slashes; hyphenate syllables.",
+  "  Examples: kiwi → /kē-wē/  children → /chĭl-drən/  nation → /nā-shən/",
+  "  teacher → /tē-chər/  bird → /bĕrd/  cute → /kyūt/  school → /skūl/",
+  "  Do NOT use IPA symbols (ˈ kiː ə ʃ ɔː etc.) — UFLI symbols ONLY.",
   "- easy_en (string): the meaning in VERY simple English — beginner",
   "  level, 8 words or fewer, only words a young learner knows. It must",
   "  match how the word is used in the GIVEN sentence.",
@@ -118,11 +131,17 @@ const COMP_SYS = [
 
 const CHUNK_SYS = [
   "You help a Korean child (age 7-9) learning English understand ONE",
-  "chunk (a short phrase) of an English sentence. Reply with JSON only.",
-  "Keys:",
-  "- ko (string): the chunk's natural Korean meaning (short).",
+  "chunk (a short phrase) of an English sentence. You are GIVEN the",
+  "WHOLE sentence — you MUST use it. Reply with JSON only. Keys:",
+  "- ko (string): the chunk's Korean meaning AS THE CHUNK FUNCTIONS",
+  "  WITHIN THE GIVEN SENTENCE — keep the grammatical role it plays.",
+  "  If the chunk is a to-infinitive / -ing complement, an object, a",
+  "  subordinate phrase, etc., the Korean MUST reflect that role, not",
+  "  the bare dictionary form. Example: sentence \"We can all help",
+  "  plan it.\", chunk \"plan it\" → \"그것을 계획하는 것을\" (NOT",
+  "  \"계획하다\"). Keep it short and natural.",
   "- easy_en (string): the chunk's meaning in very simple English,",
-  "  8 words or fewer, beginner level.",
+  "  8 words or fewer, beginner level — also fitting the sentence.",
   "- situation (object or null): IF this chunk is a useful spoken",
   "  expression a beginner could SAY in real life, return",
   "  { emoji, ko, say } where `ko` is the situation described in",
@@ -235,7 +254,7 @@ Deno.serve(async (req) => {
       // One specific chunk, translated in the sentence's context.
       const text = String(body?.text || "").trim();
       if (!text) return json({ error: "text required" }, 400);
-      const ck = "korbar:v1:chunk:" + await senseHash(text + "|" + sentence);
+      const ck = "korbar:v2:chunk:" + await senseHash(text + "|" + sentence);
       const cached = await readCache(ck);
       if (cached) return json({ ...(cached as object), cached: true });
       if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
@@ -258,7 +277,7 @@ Deno.serve(async (req) => {
     // kind === "word"
     const word = String(body?.word || "").trim();
     if (!word) return json({ error: "word required" }, 400);
-    const ck = "korbar:v1:word:" + word.toLowerCase() + ":"
+    const ck = "korbar:v2:word:" + word.toLowerCase() + ":"
              + (sentence ? await senseHash(sentence) : "_");
     const cached = await readCache(ck);
     if (cached) return json({ ...(cached as object), cached: true });
@@ -269,9 +288,9 @@ Deno.serve(async (req) => {
       : `Word: ${JSON.stringify(word)}`;
     const parsed = await callOpenAI(apiKey, WORD_SYS, user, 360);
     const out = {
-      lemma:       String(parsed?.lemma || word),
-      ipa:         String(parsed?.ipa || ""),
-      easy_en:     String(parsed?.easy_en || ""),
+      lemma:         String(parsed?.lemma || word),
+      pronunciation: String(parsed?.pronunciation || parsed?.ipa || ""),
+      easy_en:       String(parsed?.easy_en || ""),
       ko:          String(parsed?.ko || ""),
       word_family: Array.isArray(parsed?.word_family) ? parsed.word_family.slice(0, 5).map(String) : [],
       similar:     Array.isArray(parsed?.similar)     ? parsed.similar.slice(0, 3).map(String)     : [],

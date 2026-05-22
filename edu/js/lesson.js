@@ -77,6 +77,15 @@
   // wireToolbar(); declared here so renderBody / repaginateOverflow
   // (module-scope functions) can branch on it.
   let scrollMode  = false;
+  // Highest global sentence index the student has reached — by a
+  // page turn OR a word tap. The Korean quiz scopes its questions to
+  // sentences 0..maxSentReached, so a page-boundary-triggered quiz
+  // still has material even when the student tapped no word.
+  let maxSentReached  = 0;
+  // Highest page index already announced via wc:page-advanced.
+  // Dedupes the event so re-reading a page (or jittery scrolling)
+  // never double-counts toward the encounter trigger.
+  let lastAdvancedPage = 0;
   // Subscribers (sidebar) that want to react to word-level changes.
   const levelChangeListeners = [];
   function notifyLevelChange(detail) {
@@ -114,7 +123,12 @@
     get quizSentences() {
       try {
         const flat = sentenceList().map(s => s.text);
-        const upto = Math.max(0, Math.min(flat.length - 1, lastSelectedSentenceIdx || 0));
+        // Scope = start … furthest point read. "Furthest" is the
+        // later of (a) the last word the student tapped and (b) the
+        // furthest page they have turned to — so a page-triggered
+        // quiz works even with no word selected.
+        const reach = Math.max(lastSelectedSentenceIdx || 0, maxSentReached || 0);
+        const upto = Math.max(0, Math.min(flat.length - 1, reach));
         let scope = flat.slice(0, upto + 1);
         const bubbleEls = Array.from(
           document.querySelectorAll('#lessonBody .wc-bubble-sent'));
@@ -138,6 +152,14 @@
     // encounter. We expose a getter (not the variable) so external
     // callers see the LIVE value even as the student toggles 🐾.
     encountersHidden: () => hideEncounters,
+    // SDT reward fade — 1.0 (full rewards) → 0.25 (sparse) based on
+    // the student's cumulative pages read + the class fade preset.
+    // encounter.js / quiz.js read this to thin quizzes / coins / the
+    // reward wheel as reading becomes a habit.
+    get rewardIntensity() {
+      try { return window.WCDB.rewardIntensity(me && me.total_pages_read, classFlags); }
+      catch { return 1; }
+    },
     onWordLevelChange(cb) { if (typeof cb === 'function') levelChangeListeners.push(cb); },
     // Mutators sidebar.js calls when the ice-cream picker fires.
     setWordLevel: async function (lower, next, originalWord) {
@@ -315,6 +337,11 @@
         }
       } catch (e) { /* progress is best-effort */ }
     }
+    // Seed the page-advance watermark + quiz read-scope from the
+    // resume point — a resumed lesson must neither mis-fire an
+    // encounter for pages already read nor leave the quiz empty.
+    lastAdvancedPage = pageIdx;
+    maxSentReached   = lastSentOfPage(pageIdx);
     renderBody();
     wireToolbar();
     refreshPageCounter();
@@ -1205,6 +1232,10 @@
       if (!b) return;
       const bub = document.createElement('span');
       bub.className = 'wc-bubble';
+      // Bubble shape — 'rect' renders a slightly-rounded rectangle;
+      // anything else (incl. legacy bubbles with no shape) keeps the
+      // default rounded-oval outline.
+      if (b.shape === 'rect') bub.classList.add('wc-bub-rect');
       bub.style.left   = pct(b.x);
       bub.style.top    = pct(b.y);
       bub.style.width  = pct(b.w);
@@ -1305,7 +1336,30 @@
   // any body selection, ring this word, fire wc:word-selected for the
   // sidebar, then paint the chunk underline + speak the chunk.
   let bubbleFocusEl = null;   // currently-focused bubble .w, or null
-  let lastBubblePanel = null; // .wc-panel the focus last sat in (scroll mode)
+
+  // Keep the focused bubble in the reading view. In scroll mode, once
+  // reading reaches the SECOND (or later) currently-visible speech
+  // bubble, pull that bubble up to the top of the view so the line
+  // being read stays near the top. Otherwise just nudge the word in.
+  function scrollFocusedBubbleIntoReading(wordEl) {
+    const body   = $('lessonBody');
+    const bubble = wordEl && wordEl.closest('.wc-bubble');
+    if (!scrollMode || !body || !bubble) {
+      try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+      return;
+    }
+    const bodyRect = body.getBoundingClientRect();
+    const visible = Array.from(document.querySelectorAll('#lessonBody .wc-bubble'))
+      .map(b => ({ b, r: b.getBoundingClientRect() }))
+      .filter(o => o.r.bottom > bodyRect.top + 1 && o.r.top < bodyRect.bottom - 1)
+      .sort((a, b) => a.r.top - b.r.top);
+    const idx = visible.findIndex(o => o.b === bubble);
+    if (idx >= 1) {
+      try { bubble.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
+    } else {
+      try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
+    }
+  }
 
   function focusBubbleWord(wordEl) {
     const sentEl = wordEl && wordEl.closest('.wc-bubble-sent');
@@ -1316,18 +1370,7 @@
     bubbleFocusEl  = wordEl;
     document.querySelectorAll('.w.focused').forEach(el => el.classList.remove('focused'));
     wordEl.classList.add('focused');
-    // Keep the focused word on-screen when arrow-stepping crosses
-    // panels. In scroll mode, stepping into a NEW comic panel pulls
-    // that whole panel up to the top of the view (teacher spec:
-    // "다음 컷의 만화가 맨 위로 올라가도록"); otherwise just nudge
-    // the word into view with block:'nearest'.
-    const panel = wordEl.closest('.wc-panel');
-    if (scrollMode && panel && panel !== lastBubblePanel) {
-      try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
-    } else {
-      try { wordEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch {}
-    }
-    lastBubblePanel = panel || null;
+    scrollFocusedBubbleIntoReading(wordEl);
 
     const lower    = wordEl.dataset.word || '';
     const original = wordEl.textContent  || '';
@@ -1374,6 +1417,40 @@
     focusBubbleWord(words[j]);
   }
 
+  // Visual vertical nav for comic-bubble words — ↑/↓ pick the word
+  // directly above / below the focused one by screen geometry,
+  // crossing bubble boundaries. So ↓ from a word steps to whatever
+  // word sits straight below it, even if that word lives in the next
+  // speech bubble down.
+  function navBubbleVertical(dir) {
+    if (!bubbleFocusEl || !bubbleFocusEl.isConnected) { bubbleFocusEl = null; return; }
+    const cur   = bubbleFocusEl.getBoundingClientRect();
+    const curCx = cur.left + cur.width / 2;
+    const cands = [];
+    document.querySelectorAll('#lessonBody .wc-bubble .w:not(.punct)').forEach(w => {
+      if (w === bubbleFocusEl) return;
+      const r = w.getBoundingClientRect();
+      // Keep only words on a different line in the chosen direction.
+      if (dir > 0) { if (r.top    < cur.bottom - 1) return; }
+      else         { if (r.bottom > cur.top    + 1) return; }
+      cands.push({ w, r });
+    });
+    if (!cands.length) return;
+    const gap = (c) => dir > 0 ? c.r.top - cur.bottom : cur.top - c.r.bottom;
+    cands.sort((a, b) => gap(a) - gap(b));
+    const nearest = gap(cands[0]);
+    const tol = Math.max(4, cur.height * 0.6);
+    // Among the nearest line, pick the word closest in X to the
+    // current one — i.e. the word straight below / above.
+    const sameLine = cands.filter(c => gap(c) - nearest <= tol);
+    sameLine.sort((a, b) => {
+      const ax = a.r.left + a.r.width / 2;
+      const bx = b.r.left + b.r.width / 2;
+      return Math.abs(ax - curCx) - Math.abs(bx - curCx);
+    });
+    focusBubbleWord(sameLine[0].w);
+  }
+
   // Shrink each bubble's font until its text fits the box. Bubbles
   // are %-sized so this re-runs on image load, render and resize.
   function fitBubblesIn(panelEl) {
@@ -1385,11 +1462,13 @@
   function fitOneBubble(bub) {
     bub.style.fontSize = '';
     // Seed proportional to box height so a big panel reads large and
-    // a tiny bubble starts small, then shrink to fit.
-    let size = Math.max(7, Math.min(22, bub.clientHeight * 0.4));
+    // a tiny bubble starts small, then shrink to fit. A small bubble
+    // crammed with text shrinks all the way down to a 5px floor so
+    // the dialogue still fits rather than overflowing the box.
+    let size = Math.max(6, Math.min(22, bub.clientHeight * 0.4));
     bub.style.fontSize = size + 'px';
-    let guard = 30;
-    while (guard-- > 0 && size > 6 &&
+    let guard = 40;
+    while (guard-- > 0 && size > 5 &&
            (bub.scrollHeight > bub.clientHeight + 1 ||
             bub.scrollWidth  > bub.clientWidth  + 1)) {
       size -= 1;
@@ -2529,12 +2608,12 @@
     // the switch below (▶ play, page-step, Esc, level grades).
     if (bubbleFocusEl && !bubbleFocusEl.isConnected) bubbleFocusEl = null;
     if (bubbleFocusEl) {
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
-        e.preventDefault(); navBubbleWord(+1); return;
-      }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault(); navBubbleWord(-1); return;
-      }
+      // ←/→ step the reading order; ↑/↓ move visually up/down,
+      // crossing into whatever bubble sits straight above/below.
+      if (e.key === 'ArrowRight') { e.preventDefault(); navBubbleWord(+1); return; }
+      if (e.key === 'ArrowLeft')  { e.preventDefault(); navBubbleWord(-1); return; }
+      if (e.key === 'ArrowDown')  { e.preventDefault(); navBubbleVertical(+1); return; }
+      if (e.key === 'ArrowUp')    { e.preventDefault(); navBubbleVertical(-1); return; }
     }
     switch (e.key) {
       case 'ArrowLeft':  e.preventDefault(); navWord(-1);  return;
@@ -3381,6 +3460,10 @@
       if (lbl) lbl.textContent = scrollMode ? 'on' : 'off';
     }
     applyScrollMode();
+    // Watch the body scroll so scroll mode can flip pageIdx + fire
+    // wc:page-advanced as the student scrolls (no-op when paginated).
+    const scrollWatchEl = $('lessonBody');
+    if (scrollWatchEl) scrollWatchEl.addEventListener('scroll', onBodyScroll);
     // The first renderBody() (init, before wireToolbar) drew the
     // paginated layout — rebuild as the scroll column now if that is
     // the resolved default. repaginateFromScratch re-tokenises and
@@ -3518,6 +3601,116 @@
     }, 1200);
   }
 
+  // Highest global sentence index belonging to page `pi`.
+  function lastSentOfPage(pi) {
+    const total = sentenceList().length;
+    if (!total) return 0;
+    if (pi + 1 >= pages.length) return total - 1;
+    return Math.max(0, globalStartOfPage(pi + 1) - 1);
+  }
+
+  // Announce that the student has moved FORWARD onto page `pi`.
+  // encounter.js counts these to decide when an animal quiz appears
+  // (page-boundary trigger — keeps the reading flow unbroken). Fires
+  // once per newly-reached page; moving back never fires. TTS
+  // auto-advance is excluded — a quiz must not talk over the reader.
+  function notifyPageAdvance(pi) {
+    if (!Number.isFinite(pi)) return;
+    // Always extend the read-scope watermark, even on a backward
+    // move or during TTS — the student HAS seen this far.
+    maxSentReached = Math.max(maxSentReached, lastSentOfPage(pi));
+    if (pi <= lastAdvancedPage) return;       // not a new forward page
+    lastAdvancedPage = pi;
+    // Cumulative reading odometer for the SDT reward fade — counts
+    // every forward page, including TTS auto-advance (the student is
+    // still reading along).
+    bumpPagesRead();
+    if (ttsPlaying) return;                   // don't interrupt playback
+    window.dispatchEvent(new CustomEvent('wc:page-advanced', {
+      detail: { page: pi, total: pages.length },
+    }));
+  }
+
+  // Bump wc_users.total_pages_read — the reward-fade odometer. Keeps
+  // the cached session in sync (so home.html's daily grant sees the
+  // new total) and debounce-persists. Best-effort; mirrors
+  // saveProgress / encounter.js bumpCoins. Skipped in preview mode.
+  let _pagesReadSaveT = null;
+  function bumpPagesRead() {
+    if (isPreview || !me) return;
+    me.total_pages_read = (me.total_pages_read || 0) + 1;
+    try {
+      const raw = localStorage.getItem('wc.session.v1');
+      if (raw) {
+        const u = JSON.parse(raw);
+        u.total_pages_read = me.total_pages_read;
+        localStorage.setItem('wc.session.v1', JSON.stringify(u));
+      }
+    } catch {}
+    clearTimeout(_pagesReadSaveT);
+    _pagesReadSaveT = setTimeout(() => {
+      Promise.resolve()
+        .then(() => window.WCDB.users.update(me.id, { total_pages_read: me.total_pages_read }))
+        .catch(() => { /* odometer is best-effort */ });
+    }, 1200);
+  }
+
+  // Continuous-scroll mode — which page block currently fills the
+  // top of the reading viewport (highest page whose top edge has
+  // scrolled to/above the viewport top). Drives the bottom counter.
+  function currentScrollPageIdx() {
+    const body = $('lessonBody');
+    if (!body) return pageIdx;
+    const els = body.querySelectorAll('.wc-scroll-page');
+    if (!els.length) return pageIdx;
+    const bodyTop = body.getBoundingClientRect().top;
+    let idx = 0;
+    els.forEach(el => {
+      if (el.getBoundingClientRect().top - bodyTop <= 12) {
+        const p = parseInt(el.dataset.page, 10);
+        if (Number.isFinite(p)) idx = p;
+      }
+    });
+    return idx;
+  }
+  // Which "reading unit" the student has scrolled into — the page-turn
+  // unit for the encounter trigger. For a COMIC lesson each panel
+  // image counts as one page (teacher spec: "이미지 1개 = 1페이지"),
+  // so we step over `.wc-panel`; otherwise over `.wc-scroll-page`.
+  function currentAdvanceIdx() {
+    const body = $('lessonBody');
+    if (!body) return pageIdx;
+    let units = body.querySelectorAll('.wc-panel');
+    if (!units.length) units = body.querySelectorAll('.wc-scroll-page');
+    if (!units.length) return pageIdx;
+    const bodyTop = body.getBoundingClientRect().top;
+    let idx = 0;
+    units.forEach((el, n) => {
+      if (el.getBoundingClientRect().top - bodyTop <= 12) idx = n;
+    });
+    return idx;
+  }
+  // Scroll handler (scroll mode only) — keeps pageIdx + the counter
+  // in sync as the student scrolls, and fires wc:page-advanced when
+  // they reach a new page. rAF-throttled so a scroll burst is cheap.
+  let _scrollRaf = 0;
+  function onBodyScroll() {
+    if (!scrollMode || _scrollRaf) return;
+    _scrollRaf = requestAnimationFrame(() => {
+      _scrollRaf = 0;
+      const idx = currentScrollPageIdx();
+      if (idx !== pageIdx) {
+        pageIdx = idx;
+        saveProgress();
+        refreshPageCounter();
+        refreshNavBoundary();
+      }
+      // Encounter trigger steps per reading unit — per comic panel,
+      // or per scroll-page for prose.
+      notifyPageAdvance(currentAdvanceIdx());
+    });
+  }
+
   function goPage(next) {
     if (!pages.length) return;
     const prev = pageIdx;
@@ -3526,7 +3719,9 @@
     saveProgress();
     // Continuous-scroll mode — every page is already in the DOM, so
     // a "page flip" just scrolls that page's block to the top
-    // instead of re-rendering with the slide animation.
+    // instead of re-rendering with the slide animation. The scroll
+    // listener (onBodyScroll) fires wc:page-advanced for scroll mode,
+    // so goPage does NOT fire it here — that would double-count.
     if (scrollMode) {
       singleIdx = globalStartOfPage(pageIdx);
       refreshPageCounter();
@@ -3544,6 +3739,8 @@
     singleIdx = globalStartOfPage(pageIdx);
     // Update the counter NOW (don't wait for the 180-ms slide).
     refreshPageCounter();
+    // Paginated mode — a goPage IS the page turn (no scroll listener).
+    notifyPageAdvance(pageIdx);
     slideRender(pageIdx > prev ? 'forward' : 'back');
   }
 
@@ -3602,6 +3799,10 @@
     singleIdx = clamp(next, 0, flat.length - 1);
     if (singleIdx === prev) return;
     refreshPageCounter();
+    // 1-Sentence mode has no page chrome, but crossing into a new
+    // page still counts as a page turn for the encounter trigger.
+    const pg = pageForGlobalSent(singleIdx);
+    if (pg != null) notifyPageAdvance(pg);
     slideRender(singleIdx > prev ? 'forward' : 'back');
   }
 

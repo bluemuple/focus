@@ -1,24 +1,27 @@
 // =============================================================
 //  WordCatch — animal encounter system
 //
-//  Listens to wc:level-up events from lesson.js. Each event is
-//  filtered through two throttles (per-word + global), then bumps
-//  the persistent counter in wc_encounter_counters. When the
-//  counter hits the threshold for the student's encounter_level
-//  (see js/levels.js), an encounter is triggered: quiz modal,
-//  catch or fail.
+//  Two inputs from lesson.js:
+//    wc:level-up      — a word was marked. Earns +1 coin and feeds
+//                       the "words studied" splash stat. Does NOT
+//                       trigger an encounter.
+//    wc:page-advanced — the student turned forward onto a new page
+//                       (or scrolled into one; for comics each
+//                       panel image is one page). THIS is the
+//                       encounter trigger: every N pages an animal
+//                       quiz appears — at the page boundary, a
+//                       natural pause, so the reading flow is never
+//                       cut mid-sentence (SDT: protect flow).
 //
-//  Throttle rationale
-//    - per-word (60s): clicking the same word over and over (kids
-//      will) shouldn't farm encounters. They want a *variety* of
-//      words to count.
-//    - global (5s): rapid clicks across different words within a
-//      few seconds are usually accidental / curiosity-burst and
-//      shouldn't count either.
+//  N (pages per quiz) is teacher-set in Settings → stored on the
+//  class hide_features JSONB as `quizEveryNPages` (default 1).
+//
+//  Throttle rationale (wc:level-up coins only)
+//    - per-word (60s): re-marking the same word can't farm coins.
+//    - global (5s): a curiosity-burst of clicks counts once.
 //
 //  Reward rationale
-//    - +1 coin per qualifying click (the cheap reward — frequent
-//      and predictable).
+//    - +1 coin per qualifying word mark (the cheap reward).
 //    - +50 × encounter_level coins per catch (the big payout).
 //    - 0 coins per failed catch (encouraging effort, not gaming).
 //
@@ -44,10 +47,10 @@
   // the purpose of the dismiss. 60s ≈ catch cooldown × 2 reads as
   // "I'm reading right now, leave me alone for a bit."
   const COOLDOWN_AFTER_SKIP_MS  = 60 * 1000;   // 60s
-  // Per-level probabilities now live in window.WCLevels.probability(lvl).
-  // Lv 1 starts at 20% and scales up to 65% at Lv 10 — beginners get
-  // breathing room, advanced readers get the challenge they're
-  // climbing towards.
+  // The encounter trigger is page-based (every N page turns, set by
+  // the teacher in Settings → quizEveryNPages). The cooldowns above
+  // still apply on top — breathing room so a fail isn't immediately
+  // followed by another animal on the very next page.
   let cooldownUntil = 0;   // ms timestamp; before this, encounters skip.
 
   // Tiny stopword list — words a Year-4 reader has long since mastered
@@ -103,82 +106,123 @@
     // teacher should see the lesson chrome cleanly without random
     // animals popping up.
     if (lessonState.isPreview) return;
+    // Two listeners:
+    //   wc:level-up      → small +1-coin reward (word-mark)
+    //   wc:page-advanced → the encounter trigger (page boundary)
     window.addEventListener('wc:level-up', onLevelUp);
+    window.addEventListener('wc:page-advanced', onPageAdvanced);
+  }
+
+  // Live "quiet reading" gate — reads the 🐾 flag from lesson.js so
+  // toggling the chip (or the per-lesson / class default) takes
+  // effect immediately. Falls back to localStorage for the brief
+  // window before lesson.js installs WCLesson.
+  function encountersHidden() {
+    if (window.WCLesson && typeof window.WCLesson.encountersHidden === 'function') {
+      return !!window.WCLesson.encountersHidden();
+    }
+    return localStorage.getItem('wc.hideEncounters.v1') === '1';
+  }
+
+  // Stats accumulated since the last encounter — shown on the
+  // pre-quiz splash so the interruption reads as a celebration of
+  // what the student just did (SDT: informational, not controlling).
+  let pagesSinceEncounter = 0;
+  let wordsSinceEncounter = 0;
+  let coinsSinceEncounter = 0;
+
+  // Pages between quizzes — teacher-set in Settings, stored on the
+  // class's hide_features JSONB. Default 1: a quiz on every page
+  // turn (for comic lessons one panel image counts as one page).
+  // Live SDT reward intensity (1.0 → 0.25), or 1.0 before WCLesson
+  // installs its getter / when the class has no fade preset.
+  function rewardIntensity() {
+    const v = lessonState && lessonState.rewardIntensity;
+    return (typeof v === 'number' && isFinite(v) && v > 0) ? v : 1;
+  }
+
+  function quizEveryNPages() {
+    const f = lessonState && lessonState.classFlags;
+    const n = f ? Number(f.quizEveryNPages) : NaN;
+    const baseN = (Number.isFinite(n) && n >= 1) ? Math.floor(n) : 1;
+    // Reward fade — as cumulative reading grows the intensity drops
+    // and quizzes get proportionally rarer (intensity 0.25 → 4× N).
+    return Math.max(baseN, Math.round(baseN / rewardIntensity()));
   }
 
   // ----------------------------------------------------------------
-  //  Level-up handler — the heart of the encounter system.
+  //  Word-mark handler — the small, frequent reward.
+  //
+  //  Marking a word earns +1 coin and counts toward the splash's
+  //  "words studied" stat. It no longer triggers encounters — those
+  //  fire on page turns (onPageAdvanced) so a quiz never breaks the
+  //  reading flow mid-sentence.
   // ----------------------------------------------------------------
   async function onLevelUp(ev) {
     const detail = ev.detail || {};
     const word   = detail.word;
     if (!word) return;
     if (window.WCEncounter?.busy) return;   // ignore clicks during an active encounter
-
-    // "Quiet reading" gate. Reads the LIVE flag from lesson.js
-    // (via the WCLesson.encountersHidden() getter) so flipping the
-    // 🐾 chip takes effect on the very next marked word, and so
-    // the per-lesson default the teacher set in My Lessons is
-    // honoured automatically — lesson.js seeds the flag from
-    // lesson.default_animals at toolbar wire-up time.
-    if (window.WCLesson && typeof window.WCLesson.encountersHidden === 'function') {
-      if (window.WCLesson.encountersHidden()) return;
-    } else if (localStorage.getItem('wc.hideEncounters.v1') === '1') {
-      // Belt-and-braces fallback for the brief window before
-      // lesson.js installs WCLesson — encounters are ON by default,
-      // hidden only when the student explicitly turned them off.
-      return;
-    }
+    if (encountersHidden()) return;         // quiet reading
 
     const now = Date.now();
-
-    // throttle 1: per-word
+    // throttle 1: per-word — re-marking the same word can't farm coins
     const lastForThisWord = lastWordBump.get(word) || 0;
     if (now - lastForThisWord < PER_WORD_THROTTLE_MS) return;
-
-    // throttle 2: global
+    // throttle 2: global — a curiosity-burst of clicks counts once
     if (now - lastAnyBump < GLOBAL_THROTTLE_MS) return;
-
     lastWordBump.set(word, now);
     lastAnyBump = now;
 
-    // Coin reward always — independent of whether the dice roll a
-    // quiz. Marking a word always earns the small reward.
-    bumpCoins(1);
+    // Small reward, faded by reward intensity — at full intensity
+    // every word mark earns a coin, later only some do (and it stays
+    // unpredictable, which SDT prefers over a fixed schedule). The
+    // "words studied" stat is NOT faded — it is competence feedback.
+    if (Math.random() < rewardIntensity()) {
+      bumpCoins(1);
+      coinsSinceEncounter += 1;
+    }
+    wordsSinceEncounter += 1;
 
-    // We still bump the per-lesson counter (for class analytics &
-    // sidebar progress events) but do NOT key the encounter on it
-    // anymore. The trigger is now purely probability-based so quizzes
-    // feel surprising, not earned by grinding.
+    // Bump the per-lesson counter for class analytics + sidebar
+    // progress events (the encounter no longer keys off it).
     window.WCDB.encounters.bump(lessonState.me.id, lessonState.lesson.id).catch(() => {});
+  }
 
-    // Cooldown gate — after an encounter (especially a fail) we wait
-    // a bit before another animal can spawn so the student can keep
-    // reading without immediate interruption.
-    if (now < cooldownUntil) return;
+  // ----------------------------------------------------------------
+  //  Page-advance handler — the encounter trigger.
+  //
+  //  lesson.js fires wc:page-advanced whenever the student turns
+  //  forward onto a new page (or scrolls into one). Every N pages an
+  //  animal quiz appears — at the page boundary, a natural pause, so
+  //  the reading flow is never cut mid-thought.
+  // ----------------------------------------------------------------
+  async function onPageAdvanced() {
+    if (window.WCEncounter?.busy) return;        // already in an encounter
+    pagesSinceEncounter += 1;
+    if (encountersHidden()) return;              // quiet reading
+    if (Date.now() < cooldownUntil) return;      // breathing room after one
+    if (pagesSinceEncounter < quizEveryNPages()) return;
 
-    // Per-level probability gate. Defaults from WCLevels (20% at
-    // Lv 1 → 65% at Lv 10), but the class teacher can override the
-    // whole table via wc_classes.level_probabilities (a 10-element
-    // array of 0..1). Per-level null/undefined entries fall through
-    // to the WCLevels default.
-    const lvl  = lessonState.me.encounter_level || 1;
-    const ov   = (window.WCLesson && Array.isArray(window.WCLesson.levelProbabilities))
-                  ? window.WCLesson.levelProbabilities[lvl - 1]
-                  : null;
-    const prob = (typeof ov === 'number' && isFinite(ov) && ov >= 0 && ov <= 1)
-                  ? ov
-                  : window.WCLevels.probability(lvl);
-    if (Math.random() >= prob) return;
+    // Snapshot the "since last quiz" stats for the splash, then zero
+    // them so the next streak starts fresh.
+    const readStats = {
+      pages: pagesSinceEncounter,
+      words: wordsSinceEncounter,
+      coins: coinsSinceEncounter,
+    };
+    pagesSinceEncounter = 0;
+    wordsSinceEncounter = 0;
+    coinsSinceEncounter = 0;
 
-    try { await runEncounter(detail); }
+    try { await runEncounter({}, readStats); }
     catch (e) { console.error('encounter run', e); }
   }
 
   // ----------------------------------------------------------------
   //  Encounter — pick animal, run quiz, branch on outcome.
   // ----------------------------------------------------------------
-  async function runEncounter(triggerDetail) {
+  async function runEncounter(triggerDetail, readStats) {
     window.WCEncounter = window.WCEncounter || {};
     window.WCEncounter.busy = true;
 
@@ -222,6 +266,8 @@
         word:        quizWord,
         sentence,
         passage,
+        // Competence feedback for the pre-quiz splash (D).
+        readStats:   readStats || null,
       });
       await onEncounterEnd(outcome, setName, animalIdx, lvl);
     } finally {

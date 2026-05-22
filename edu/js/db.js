@@ -56,6 +56,35 @@
     if (!r.ok) throw new Error('WCDB DELETE ' + r.status + ' ' + path);
     return true;
   }
+  // PostgREST write (POST/PATCH) that survives a schema that's behind:
+  // when a 400 names a column PostgREST can't find (a migration the
+  // teacher hasn't run yet), strip that column from the payload and
+  // retry — so an un-run migration degrades gracefully (the feature
+  // simply isn't saved) instead of 400-ing the entire lesson save.
+  async function writeResilient(method, path, body) {
+    if (!REST) throw new Error('Supabase not configured');
+    const payload = { ...body };
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const r = await fetch(REST + path, {
+        method,
+        headers: headers({ Prefer: 'return=representation' }),
+        body: JSON.stringify(payload),
+      });
+      if (r.ok) return r.json();
+      const txt = await r.text().catch(() => '');
+      // e.g. "Could not find the 'default_scroll' column of 'wc_lessons'…"
+      const m = r.status === 400 && txt.match(/'([A-Za-z_][\w]*)' column/);
+      if (m && Object.prototype.hasOwnProperty.call(payload, m[1])) {
+        console.warn('[WCDB] column "' + m[1] + '" missing — run the matching '
+          + 'migration; saving without it for now.');
+        delete payload[m[1]];
+        continue;
+      }
+      throw new Error('WCDB ' + method + ' ' + r.status + ' ' + path
+        + ' :: ' + txt.slice(0, 200));
+    }
+    throw new Error('WCDB ' + method + ' ' + path + ' — too many missing columns');
+  }
 
   // ---------- classes ----------
   const classes = {
@@ -139,11 +168,14 @@
       return rows && rows[0] || null;
     },
     async create(row) {
-      const rows = await rPost('/wc_lessons', row, true);
+      // Resilient — a lesson save must not 400 just because a recent
+      // column migration hasn't been run yet.
+      const rows = await writeResilient('POST', '/wc_lessons', row);
       return rows && rows[0];
     },
     async update(id, patch) {
-      const rows = await rPatch('/wc_lessons?id=eq.' + encodeURIComponent(id), patch);
+      const rows = await writeResilient(
+        'PATCH', '/wc_lessons?id=eq.' + encodeURIComponent(id), patch);
       return rows && rows[0];
     },
     async delete(id) {
@@ -571,5 +603,22 @@
     },
   };
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage, time, recordingsDb };
+  // ---------- reward fade (SDT internalization) ----------
+  //  Maps a student's cumulative pages-read to a 0.25–1.0 "reward
+  //  intensity". 1.0 = full rewards (habit-forming phase); it decays
+  //  linearly over `span` pages to a 0.25 floor so extrinsic rewards
+  //  (quiz frequency, word coins, the screen-time wheel) thin out —
+  //  but never vanish — as reading becomes a habit. `flags` is the
+  //  class hide_features JSONB; `rewardFade` is the teacher preset
+  //  (off/slow/normal/fast). Unset / 'off' → no fade (always 1.0),
+  //  so existing classes behave exactly as before until opted in.
+  function rewardIntensity(totalPages, flags) {
+    const span = { slow: 600, normal: 300, fast: 150 }[flags && flags.rewardFade] || 0;
+    if (!span) return 1;
+    const FLOOR = 0.25;
+    const p = Math.max(0, Number(totalPages) || 0);
+    return Math.max(FLOOR, Math.min(1, 1 - p / span));
+  }
+
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage, time, recordingsDb, rewardIntensity };
 })();

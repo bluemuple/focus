@@ -147,7 +147,7 @@
       <div class="wc-user-chip" id="userChip">
         <span id="userName">…</span>
         <span class="coin" title="Coins">💰 <span id="userMoney">0</span></span>
-        <button type="button" class="wc-time-chip" id="timeChip" title="모은 시간 — 눌러서 자세히 보기">
+        <button type="button" class="wc-time-chip" id="timeChip" title="내 쉬는 시간 — 눌러서 보기">
           ⏰ <span id="timeDisplay">0:00</span>
         </button>
         <span class="sep">|</span>
@@ -275,7 +275,7 @@
   </div>
 
   <script src="./js/supabase-config.js"></script>
-  <script src="./js/db.js"></script>
+  <script src="./js/db.js?v=comic-kor-1"></script>
   <script src="./js/auth.js"></script>
   <script>
   (async () => {
@@ -328,8 +328,41 @@
         document.getElementById('timeDisplay').textContent = fmtHM(balanceOf(entries));
       };
 
+      // (c-1) Decouple game time from reading. As the SDT reward fade
+      // lowers a student's intensity, the animal wheel hands out
+      // rest-time minutes less often — so a fixed daily grant fades
+      // IN to replace them: grant = dailyRestMinutes × (1 − intensity).
+      // intensity 1.0 → 0 (all time still from the wheel — today's
+      // behaviour); low intensity → most rest time arrives here, with
+      // no strings attached. Added at most once per day (memo + day).
+      async function ensureDailyRestGrant() {
+        try {
+          let flags = {};
+          if (me.class_id) {
+            const cls = await window.WCDB.classes.byId(me.class_id);
+            flags = (cls && cls.hide_features) || {};
+          }
+          const baseDaily = Math.max(0, Number(flags.dailyRestMinutes) || 0);
+          if (!baseDaily) return;
+          const intensity = window.WCDB.rewardIntensity(me.total_pages_read, flags);
+          const grant = Math.round(baseDaily * (1 - intensity));
+          if (grant <= 0) return;
+          const MEMO  = '매일 쉬는 시간';
+          const today = dayKey(new Date());
+          const already = entries.some(e =>
+            e.kind === 'earn' && e.memo === MEMO && dayKey(e.created_at) === today);
+          if (already) return;
+          const row = await window.WCDB.time.add(me.id, 'earn', grant, MEMO);
+          entries.unshift(row || {
+            kind: 'earn', minutes: grant, memo: MEMO,
+            created_at: new Date().toISOString(),
+          });
+        } catch (e) { /* daily grant is best-effort */ }
+      }
+
       (async () => {
         try { entries = await window.WCDB.time.list(me.id); } catch (e) {}
+        await ensureDailyRestGrant();
         renderChip();
       })();
 
@@ -344,16 +377,18 @@
         host.innerHTML =
           '<div class="wc-time-pop">' +
             '<button class="wc-time-close" aria-label="닫기">×</button>' +
-            '<h3>⏰ 내 시간</h3>' +
-            '<div class="wc-time-balance">모은 시간: <strong id="wcTimeBal">0:00</strong></div>' +
-            '<div class="wc-time-graph-label">최근 7일 모은 시간</div>' +
+            '<h3>⏰ 내 쉬는 시간</h3>' +
+            '<p style="font-size:12px;color:#888;margin:2px 0 12px;line-height:1.5;">' +
+              '열심히 읽은 뒤엔 쉬는 게 좋아요 — 언제 쉴지는 네가 정해요. 🌳</p>' +
+            '<div class="wc-time-balance">받은 쉬는 시간: <strong id="wcTimeBal">0:00</strong></div>' +
+            '<div class="wc-time-graph-label">최근 7일 받은 쉬는 시간</div>' +
             '<div class="wc-time-graph" id="wcTimeGraph"></div>' +
             '<div class="wc-time-log" id="wcTimeLog"></div>' +
             '<div class="wc-time-spend">' +
-              '<label>시간 쓰기</label>' +
+              '<label>쉬는 시간 쓰기</label>' +
               '<div class="wc-time-spend-row">' +
                 '<input type="number" id="wcSpendMin" min="1" placeholder="분"> 분' +
-                '<input type="text" id="wcSpendMemo" placeholder="메모 (어떤 게임을 했나요?)">' +
+                '<input type="text" id="wcSpendMemo" placeholder="메모 (무엇을 하며 쉬었나요?)">' +
                 '<button class="wc-btn" id="wcSpendSave" type="button">저장</button>' +
               '</div>' +
               '<div class="wc-time-msg" id="wcSpendMsg"></div>' +

@@ -76,8 +76,8 @@
     ensureHost();
     return new Promise((resolve) => {
       outcomeResolve = resolve;
-      const { animalSet, animalIndex, level, questionCount, word, sentence, passage } = opts;
-      stageSplash(animalSet, animalIndex, level, async () => {
+      const { animalSet, animalIndex, level, questionCount, word, sentence, passage, readStats } = opts;
+      stageSplash(animalSet, animalIndex, level, readStats, async () => {
         // Kor Bar mode → the Korean quiz (cloze / word ↔ meaning),
         // built client-side from the lesson's Korean data.
         if (isKorBar()) {
@@ -111,7 +111,7 @@
   // ----------------------------------------------------------------
   //  Stage 1 — silhouette splash with "Start" button
   // ----------------------------------------------------------------
-  function stageSplash(animalSet, animalIndex, level, onStart) {
+  function stageSplash(animalSet, animalIndex, level, readStats, onStart) {
     // Reset modal regions from any previous encounter (e.g. the wheel).
     host.querySelector('.wc-enc-wheel').classList.add('wc-hidden');
     host.querySelector('.wc-enc-stage').classList.remove('wc-hidden');
@@ -119,16 +119,40 @@
     host.querySelector('.wc-enc-sprite').src = sprite;
     host.querySelector('.wc-enc-sprite').className = 'wc-enc-sprite wobble';
     host.querySelector('.wc-enc-burst').classList.add('wc-hidden');
-    host.querySelector('.wc-enc-title').textContent = 'Something appeared!';
-    host.querySelector('.wc-enc-sub').textContent =
-      `It’s a level ${level} mystery animal. Answer ${level === 1 ? 'two questions' : 'a few questions'} to catch it!`;
+
+    // (D) Informational framing — open with what the student JUST
+    // achieved (pages read, words studied, coins) so the quiz feels
+    // like a celebration of their reading, not an interruption. The
+    // page-boundary trigger means this splash always lands at a
+    // natural pause. Falls back to the plain prompt when no stats.
+    const titleEl = host.querySelector('.wc-enc-title');
+    const subEl   = host.querySelector('.wc-enc-sub');
+    const p = readStats ? Math.max(0, readStats.pages | 0) : 0;
+    const w = readStats ? Math.max(0, readStats.words | 0) : 0;
+    const c = readStats ? Math.max(0, readStats.coins | 0) : 0;
+    if (p || w || c) {
+      titleEl.textContent = p > 0
+        ? `📖 ${p}페이지를 읽었어요!`
+        : '잘 읽고 있어요!';
+      const chips = [];
+      if (p) chips.push(`<span class="wc-enc-stat">📖 ${p}쪽</span>`);
+      if (w) chips.push(`<span class="wc-enc-stat">✨ 단어 ${w}개</span>`);
+      if (c) chips.push(`<span class="wc-enc-stat">🪙 ${c}코인</span>`);
+      subEl.innerHTML =
+        `<span class="wc-enc-stats">${chips.join('')}</span>` +
+        `<span class="wc-enc-invite">동물 친구가 구경하러 왔어요 — 퀴즈로 실력을 보여줄까요?</span>`;
+    } else {
+      titleEl.textContent = 'Something appeared!';
+      subEl.textContent =
+        `It’s a level ${level} mystery animal. Answer ${level === 1 ? 'two questions' : 'a few questions'} to catch it!`;
+    }
     host.querySelector('.wc-enc-quiz').classList.add('wc-hidden');
 
     const actions = host.querySelector('.wc-enc-actions');
     actions.innerHTML = '';
     const start = document.createElement('button');
     start.className = 'wc-btn lg';
-    start.textContent = 'Start the quiz! 🎯';
+    start.textContent = (p || w || c) ? '퀴즈 풀기 🎯' : 'Start the quiz! 🎯';
     start.onclick = () => {
       actions.innerHTML = '';
       onStart();
@@ -239,14 +263,32 @@
     host.querySelector('.wc-enc-burst').classList.remove('wc-hidden');
     host.querySelector('.wc-enc-title').textContent = `Caught a ${label}! 🎉`;
     host.querySelector('.wc-enc-sub').textContent   = `${sub} +${reward} coins · level up!`;
-    // Catching earns a spin of the reward wheel (screen-time minutes).
+    // Catching can earn a spin of the reward wheel (rest-time
+    // minutes) — but the wheel is faded by the SDT reward intensity:
+    // at full intensity it always appears, later it shows only some
+    // of the time (a surprise), and the lost minutes are replaced by
+    // home.html's daily rest grant. The catch itself — coins,
+    // level-up, pet — is never affected by the fade.
     const actions = host.querySelector('.wc-enc-actions');
     actions.innerHTML = '';
-    const spin = document.createElement('button');
-    spin.className = 'wc-btn lg';
-    spin.textContent = '🎡 돌림판 돌리기!';
-    spin.onclick = () => runRewardWheel();
-    actions.appendChild(spin);
+    let intensity = 1;
+    try {
+      const v = window.WCLesson && window.WCLesson.rewardIntensity;
+      if (typeof v === 'number' && isFinite(v) && v > 0) intensity = v;
+    } catch {}
+    if (Math.random() < intensity) {
+      const spin = document.createElement('button');
+      spin.className = 'wc-btn lg';
+      spin.textContent = '🎡 돌림판 돌리기!';
+      spin.onclick = () => runRewardWheel();
+      actions.appendChild(spin);
+    } else {
+      const ok = document.createElement('button');
+      ok.className = 'wc-btn lg';
+      ok.textContent = '읽기로 돌아가기';
+      ok.onclick = () => { hide(); finishWith('caught'); };
+      actions.appendChild(ok);
+    }
   }
 
   // ----------------------------------------------------------------
@@ -303,7 +345,7 @@
     host.querySelector('.wc-enc-quiz').classList.add('wc-hidden');
     wheelEl.classList.remove('wc-hidden');
     host.querySelector('.wc-enc-title').textContent = '돌림판 찬스! 🎡';
-    host.querySelector('.wc-enc-sub').textContent   = '돌림판을 돌려 시간을 받으세요.';
+    host.querySelector('.wc-enc-sub').textContent   = '열심히 읽었으니, 쉬는 시간을 받아요.';
     drawWheel(canvas);
     canvas.style.transition = 'none';
     canvas.style.transform  = 'rotate(0deg)';
@@ -340,11 +382,11 @@
     const titleEl = host.querySelector('.wc-enc-title');
     const subEl   = host.querySelector('.wc-enc-sub');
     if (seg.min > 0) {
-      titleEl.textContent = `⏰ ${seg.min}분 획득! 🎉`;
-      subEl.textContent   = '모은 시간은 홈 화면에서 확인할 수 있어요.';
+      titleEl.textContent = `⏰ 쉬는 시간 ${seg.min}분! 🎉`;
+      subEl.textContent   = '푹 쉬어도 좋아요 — 언제 쉴지는 네가 정해요.';
       try {
         const uid = window.WCLesson && window.WCLesson.me && window.WCLesson.me.id;
-        if (uid) await window.WCDB.time.add(uid, 'earn', seg.min, '동물 포획 보상');
+        if (uid) await window.WCDB.time.add(uid, 'earn', seg.min, '열심히 읽고 받은 쉬는 시간');
       } catch (e) { console.warn('time earn write failed', e); }
     } else {
       titleEl.textContent = '꽝! 😅';

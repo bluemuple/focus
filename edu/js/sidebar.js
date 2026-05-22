@@ -417,6 +417,9 @@
 
     const sayWord    = (info && info.lemma) || w.word || w.lower || '';
     const speakCount = speakCounts.get(w.lower) || 0;
+    // UFLI Foundations phonics notation — same field the Eng Bar
+    // shows; fall back to a legacy `ipa` cache row.
+    const pron       = (info && (info.pronunciation || info.ipa)) || '';
 
     // Word family / similar / opposite — folded behind the 더 보기
     // button (the data is already loaded; the toggle just reveals it).
@@ -440,7 +443,7 @@
         <div class="wc-word-head">
           <div class="wc-word-text">
             <h2>${headHtml}</h2>
-            ${info?.ipa ? `<div class="wc-word-ipa">${escapeHtml(info.ipa)}</div>` : ''}
+            ${pron ? `<div class="wc-word-ipa">${escapeHtml(pron)}</div>` : ''}
           </div>
           <button class="wc-word-tts" id="wcWordTts" title="듣기">🔊</button>
         </div>
@@ -454,12 +457,8 @@
                   <img class="wc-word-image" src="${img}" alt="${escapeHtml(w.lower || '')}"/>
                 </div>
               ` : ''}
-              <div class="wc-word-def">
-                ${escapeHtml(info.easy_en || '')}
-                <button class="wc-kor-toggle" id="wcKorToggle" type="button">한글 뜻</button>
-              </div>
-              <div class="wc-kor-meaning wc-hidden" id="wcKorMeaning">${escapeHtml(info.ko || '뜻을 찾지 못했어요.')}</div>
-              <button class="wc-kor-more" id="wcKorMore" type="button">📚 단어 가족 · 비슷한 말 더 보기</button>
+              <div class="wc-kor-meaning-main">${escapeHtml(info.ko || '뜻을 찾지 못했어요.')}</div>
+              <button class="wc-kor-more" id="wcKorMore" type="button">📚 단어 더 보기</button>
               <div class="wc-kor-extra wc-hidden" id="wcKorExtra">${extraHtml()}</div>
 
               <!-- 3. 말하기 연습 — 듣고 따라 말하기 + 횟수 -->
@@ -494,12 +493,6 @@
     const tts = $('wcWordTts');
     if (tts) tts.addEventListener('click', () => {
       if (window.WCTTS) window.WCTTS.speak(info?.lemma || w.word || '').catch(()=>{});
-    });
-    const korToggle = $('wcKorToggle');
-    if (korToggle) korToggle.addEventListener('click', () => {
-      const m = $('wcKorMeaning');
-      if (m) m.classList.toggle('wc-hidden');
-      korToggle.classList.toggle('active');
     });
     const korMore = $('wcKorMore');
     if (korMore) korMore.addEventListener('click', () => {
@@ -577,12 +570,10 @@
         return;
       }
       const sit = data.situation;
+      // The chunk's Korean meaning — translated in the context of the
+      // whole sentence — shown directly (no English gloss, no toggle).
       body.innerHTML = `
-        <div class="wc-kor-chunk-en">
-          ${escapeHtml(data.easy_en || '')}
-          <button class="wc-kor-toggle" id="wcKorChunkKoBtn" type="button">한국어 보기</button>
-        </div>
-        <div class="wc-kor-chunk-ko wc-hidden" id="wcKorChunkKo">${escapeHtml(data.ko || '')}</div>
+        <div class="wc-kor-chunk-ko-main">${escapeHtml(data.ko || '뜻을 찾지 못했어요.')}</div>
         ${sit && sit.say ? `
           <div class="wc-kor-situation">
             <div class="wc-kor-sit-label">💡 언제 써?</div>
@@ -593,12 +584,6 @@
           </div>
         ` : ''}
       `;
-      const btn = $('wcKorChunkKoBtn');
-      if (btn) btn.addEventListener('click', () => {
-        const ko = $('wcKorChunkKo');
-        if (ko) ko.classList.toggle('wc-hidden');
-        btn.classList.toggle('active');
-      });
     });
   }
 

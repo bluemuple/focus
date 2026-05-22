@@ -549,10 +549,18 @@
       return;
     }
     $('studentEmpty').classList.add('wc-hidden');
+    // Reward-fade visibility — show each student's cumulative pages
+    // read, plus their current reward intensity when fade is active.
+    const sFlags  = (currentClass && currentClass.hide_features) || {};
+    const fadeOn  = ['slow', 'normal', 'fast'].includes(sFlags.rewardFade);
     students.forEach(s => {
       const row = document.createElement('div');
       row.className = 'wc-list-item';
       const seen = s.last_seen_at ? new Date(s.last_seen_at).toLocaleDateString('en-NZ') : 'never';
+      const pagesRead = s.total_pages_read || 0;
+      const intensityChip = fadeOn
+        ? ` · 🌱 강도 ${window.WCDB.rewardIntensity(pagesRead, sFlags).toFixed(2)}`
+        : '';
       row.innerHTML = `
         <div>
           <div class="title">${escapeHtml(s.real_name)}</div>
@@ -561,6 +569,7 @@
             · code <strong style="letter-spacing:3px;font-family:monospace;">${s.login_code || '—'}</strong>
             · 💰 ${s.money || 0}
             · ⭐ Lv ${s.encounter_level || 1}
+            · 📖 ${pagesRead}p${intensityChip}
             · seen ${seen}
           </div>
         </div>
@@ -2834,19 +2843,10 @@
     host.innerHTML = `
       <div class="wc-popup wc-bubble-editor">
         <button class="wc-popup-close" aria-label="Close">×</button>
-        <h3 style="margin:0 0 4px;">Speech bubbles — [[IMG:${idx}]]</h3>
-        <p class="wc-muted" style="margin:0 0 10px;font-size:13px;line-height:1.5;">
-          <strong>Click a speech bubble</strong> in the image — a box snaps to fit its
-          shape, and its dialogue is auto-read in (proofread it). Type / correct what the
-          bubble says: the white box hides the original lettering and your text becomes
-          studyable (chunk underline, word select, highlight, TTS). Fine-tune by dragging
-          a box, or its corner dot to resize. “+ Add bubble” drops a manual box if
-          auto-detect misses one. Boxes are numbered in the order you add them — that is
-          the reading order students follow with the arrow keys. Empty boxes are
-          discarded on save.
-        </p>
+        <h3 style="margin:0 0 8px;">Speech bubbles — [[IMG:${idx}]]</h3>
         <div class="wc-be-toolbar">
-          <button class="wc-btn" id="beAdd" type="button">+ Add bubble</button>
+          <button class="wc-btn" id="beAddRect" type="button">+ Add rectangle</button>
+          <button class="wc-btn" id="beAddCircle" type="button">+ Add circle</button>
           <span class="wc-muted" id="beCount"></span>
           <span class="wc-be-msg" id="beMsg"></span>
         </div>
@@ -2935,14 +2935,25 @@
       ta.placeholder = 'Reading bubble text…';
       box.classList.add('wc-be-ocr-busy');
       try {
-        const sx = Math.max(0, Math.round(region.x * cW));
-        const sy = Math.max(0, Math.round(region.y * cH));
-        const sw = Math.max(1, Math.min(cW - sx, Math.round(region.w * cW)));
-        const sh = Math.max(1, Math.min(cH - sy, Math.round(region.h * cH)));
+        // Pad the detected region ~12% each way — the flood-fill bbox
+        // hugs the light interior and can clip handwriting that
+        // touches the bubble outline.
+        const padX = region.w * 0.12, padY = region.h * 0.12;
+        const sx = Math.max(0, Math.round((region.x - padX) * cW));
+        const sy = Math.max(0, Math.round((region.y - padY) * cH));
+        const sw = Math.max(1, Math.min(cW - sx, Math.round((region.w + padX * 2) * cW)));
+        const sh = Math.max(1, Math.min(cH - sy, Math.round((region.h + padY * 2) * cH)));
+        // Upscale small crops — Cloud Vision reads handwriting far more
+        // reliably on a larger image. Push the long side toward 1000px.
+        const scale = Math.min(4, Math.max(1, 1000 / Math.max(sw, sh)));
         const crop = document.createElement('canvas');
-        crop.width = sw; crop.height = sh;
-        crop.getContext('2d').drawImage(detectCanvas, sx, sy, sw, sh, 0, 0, sw, sh);
-        const b64 = crop.toDataURL('image/jpeg', 0.92).split(',')[1];
+        crop.width  = Math.round(sw * scale);
+        crop.height = Math.round(sh * scale);
+        const cx = crop.getContext('2d');
+        cx.imageSmoothingEnabled = true;
+        cx.imageSmoothingQuality = 'high';
+        cx.drawImage(detectCanvas, sx, sy, sw, sh, 0, 0, crop.width, crop.height);
+        const b64 = crop.toDataURL('image/jpeg', 0.95).split(',')[1];
         const text = await ocrBubbleImage(b64);
         if (text && !ta.value.trim()) ta.value = text;
         else if (!text) flashMsg('Auto-read found no text — type the dialogue in.');
@@ -3051,7 +3062,12 @@
     function addBox(model) {
       const sw = stage.clientWidth, sh = stage.clientHeight;
       const box = document.createElement('div');
-      box.className = 'wc-be-box';
+      // Bubble shape — 'rect' (slightly-rounded rectangle) or 'circle'
+      // (rounded oval, the default). Saved with the bubble; the lesson
+      // page renders the matching outline.
+      const shape = model.shape === 'rect' ? 'rect' : 'circle';
+      box.className = 'wc-be-box wc-be-' + shape;
+      box.dataset.shape = shape;
       box.style.left   = (clamp01(model.x) * sw) + 'px';
       box.style.top    = (clamp01(model.y) * sh) + 'px';
       box.style.width  = (Math.max(0.05, clamp01(model.w)) * sw) + 'px';
@@ -3085,6 +3101,7 @@
       const handle = box.querySelector('.wc-be-handle');
       const del    = box.querySelector('.wc-be-del');
       const ta     = box.querySelector('.wc-be-text');
+      const order  = box.querySelector('.wc-be-order');
 
       del.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -3092,15 +3109,26 @@
         refreshCount();
       });
 
-      // Move — mousedown on the box body (ignore textarea/handle/del).
-      box.addEventListener('mousedown', (e) => {
-        if (e.target === ta || e.target === handle || e.target === del) return;
+      // Move the box. `startMove` is shared by two grips: the box
+      // body, and the top-left order-number badge (so the badge —
+      // which overhangs the box corner — is also a drag handle).
+      function startMove(e) {
         const sw = stage.clientWidth, sh = stage.clientHeight;
         const x0 = box.offsetLeft, y0 = box.offsetTop;
         startDrag(e, (dx, dy) => {
           box.style.left = Math.max(0, Math.min(sw - box.offsetWidth,  x0 + dx)) + 'px';
           box.style.top  = Math.max(0, Math.min(sh - box.offsetHeight, y0 + dy)) + 'px';
         });
+      }
+      // Move — mousedown on the box body (ignore textarea/handle/del).
+      box.addEventListener('mousedown', (e) => {
+        if (e.target === ta || e.target === handle || e.target === del) return;
+        startMove(e);
+      });
+      // Move — mousedown on the order-number badge.
+      if (order) order.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        startMove(e);
       });
 
       // Resize — drag the corner handle.
@@ -3115,11 +3143,15 @@
       });
     }
 
-    host.querySelector('#beAdd').addEventListener('click', () => {
+    function addManualBubble(shape) {
       if (!stage.clientWidth) return;   // image not loaded yet
-      addBox({ x: 0.34, y: 0.36, w: 0.32, h: 0.2, text: '' });
+      addBox({ x: 0.34, y: 0.36, w: 0.32, h: 0.2, text: '', shape });
       refreshCount();
-    });
+    }
+    host.querySelector('#beAddRect').addEventListener('click',
+      () => addManualBubble('rect'));
+    host.querySelector('#beAddCircle').addEventListener('click',
+      () => addManualBubble('circle'));
 
     function close() { host.remove(); }
     host.querySelector('.wc-popup-close').addEventListener('click', close);
@@ -3138,6 +3170,7 @@
             y: +(box.offsetTop    / sh).toFixed(4),
             w: +(box.offsetWidth  / sw).toFixed(4),
             h: +(box.offsetHeight / sh).toFixed(4),
+            shape: box.dataset.shape === 'rect' ? 'rect' : 'circle',
             text,
           });
         });
@@ -3893,41 +3926,22 @@
       { key: 'hideAnimals',        label: 'Animals' },
     ];
 
-    // Per-level encounter probabilities. Start from whatever is saved
-    // on the class row; if a slot is null/missing, fall back to the
-    // global default (20 → 65%). Sliders write back to the array in
-    // memory and Save persists the whole 10-element array.
-    const savedProbs = Array.isArray(currentClass.level_probabilities)
-      ? currentClass.level_probabilities : [];
-    const defaultsByLv = (window.WCLevels && window.WCLevels.all) ? window.WCLevels.all() : [];
-    function defaultFor(lv) {
-      const d = defaultsByLv[lv];
-      return d && typeof d.probability === 'number' ? d.probability : 0.5;
-    }
-    function effectiveProb(lv) {
-      const v = savedProbs[lv - 1];
-      return (typeof v === 'number' && isFinite(v) && v >= 0 && v <= 1) ? v : defaultFor(lv);
-    }
-    let probDraft = [];
-    for (let lv = 1; lv <= 10; lv++) probDraft.push(effectiveProb(lv));
+    // Pages-per-quiz — how many forward page turns between animal
+    // quizzes. Stored on the class's hide_features JSONB (a plain
+    // number alongside the boolean flags — no schema column needed).
+    // Default 1 = a quiz on every page turn.
+    let nPagesPerQuiz = Number(flags.quizEveryNPages);
+    if (!Number.isFinite(nPagesPerQuiz) || nPagesPerQuiz < 1) nPagesPerQuiz = 1;
+    nPagesPerQuiz = Math.min(20, Math.floor(nPagesPerQuiz));
 
-    function probRowsHtml() {
-      let html = '';
-      for (let lv = 1; lv <= 10; lv++) {
-        const pct = Math.round(probDraft[lv - 1] * 100);
-        const def = Math.round(defaultFor(lv) * 100);
-        html += `
-          <div class="wc-prob-row" data-lv="${lv}">
-            <span class="wc-prob-label">Lv ${lv}</span>
-            <input type="range" class="wc-prob-slider"
-                   min="0" max="100" step="5" value="${pct}" />
-            <span class="wc-prob-value" id="probVal${lv}">${pct}%</span>
-            <span class="wc-prob-default">(default ${def}%)</span>
-          </div>
-        `;
-      }
-      return html;
-    }
+    // Reward fade (SDT): preset → how fast extrinsic rewards thin out
+    // as a student's cumulative reading grows; daily rest minutes →
+    // the fixed game-time grant that fades IN to replace the wheel.
+    const fadePreset = ['off', 'slow', 'normal', 'fast'].includes(flags.rewardFade)
+      ? flags.rewardFade : 'off';
+    let nDaily = Number(flags.dailyRestMinutes);
+    if (!Number.isFinite(nDaily) || nDaily < 0) nDaily = 20;
+    nDaily = Math.min(120, Math.floor(nDaily));
 
     wrap.innerHTML = `
       <p class="wc-muted" style="margin: 0 0 16px;">
@@ -3956,56 +3970,81 @@
         `).join('')}
       </div>
 
-      <h3 style="margin: 28px 0 6px;">🐾 Animal-encounter probability</h3>
+      <h3 style="margin: 28px 0 6px;">🐾 Animal quiz frequency</h3>
       <p class="wc-muted" style="margin: 0 0 12px;">
-        Each time a student marks a word, this is the chance they meet
-        an animal — different per encounter level. Lower numbers = calmer
-        reading flow.
+        An animal quiz appears every time the student turns this many
+        pages — at the page boundary, so it never breaks the reading
+        flow mid-sentence. <strong>1</strong> = a quiz on every page
+        turn. For comic lessons, one panel image counts as one page.
       </p>
-      <div id="probRows">${probRowsHtml()}</div>
-      <div style="margin-top: 8px;">
-        <button id="probResetBtn" class="wc-btn ghost" type="button">Reset to defaults</button>
+      <div class="wc-field" style="max-width: 240px;">
+        <label for="quizEveryNPages">Pages per quiz</label>
+        <input id="quizEveryNPages" class="wc-input" type="number"
+               min="1" max="20" step="1" value="${nPagesPerQuiz}">
       </div>
+
+      <h3 style="margin: 28px 0 6px;">🌱 Reward fade</h3>
+      <p class="wc-muted" style="margin: 0 0 12px;">
+        As a student reads more (cumulative pages, all lessons), the
+        extrinsic rewards — quiz frequency, word-mark coins, the
+        reward wheel — automatically thin out, so reading becomes its
+        own reward. The wheel's lost game-time is replaced by a fixed
+        daily grant. <strong>Off</strong> keeps every reward at full
+        strength (today's behaviour).
+      </p>
+      <div class="wc-field" style="max-width: 280px;">
+        <label for="rewardFade">Fade speed</label>
+        <select id="rewardFade" class="wc-select">
+          <option value="off">끄기 — 페이드 없음 (기본)</option>
+          <option value="slow">느림 (~600 페이지에 걸쳐)</option>
+          <option value="normal">보통 (~300 페이지에 걸쳐)</option>
+          <option value="fast">빠름 (~150 페이지에 걸쳐)</option>
+        </select>
+      </div>
+      <div class="wc-field" style="max-width: 280px;">
+        <label for="dailyRestMinutes">Daily rest minutes (게임 시간)</label>
+        <input id="dailyRestMinutes" class="wc-input" type="number"
+               min="0" max="120" step="5" value="${nDaily}">
+      </div>
+      <p class="wc-muted" style="margin: -2px 0 0; font-size: 12px;">
+        As the wheel fades, up to this many game-time minutes are
+        granted automatically each day instead — so reading stops
+        being the price of play. Only active when fade is on.
+      </p>
 
       <button id="saveSettingsBtn" class="wc-btn wc-mt-24">Save settings</button>
       <span id="settingsStatus" class="wc-muted" style="margin-left:10px;"></span>
     `;
 
-    // Wire sliders — live update of the "%" label as the teacher drags.
-    wrap.querySelectorAll('.wc-prob-slider').forEach(slider => {
-      const row = slider.closest('.wc-prob-row');
-      const lv  = parseInt(row.dataset.lv, 10);
-      slider.addEventListener('input', () => {
-        const pct = parseInt(slider.value, 10);
-        probDraft[lv - 1] = pct / 100;
-        const valEl = row.querySelector('.wc-prob-value');
-        if (valEl) valEl.textContent = pct + '%';
-      });
-    });
-
-    $('probResetBtn').addEventListener('click', () => {
-      probDraft = [];
-      for (let lv = 1; lv <= 10; lv++) probDraft.push(defaultFor(lv));
-      wrap.querySelectorAll('.wc-prob-row').forEach(row => {
-        const lv  = parseInt(row.dataset.lv, 10);
-        const pct = Math.round(probDraft[lv - 1] * 100);
-        row.querySelector('.wc-prob-slider').value = pct;
-        row.querySelector('.wc-prob-value').textContent = pct + '%';
-      });
-    });
+    // <select> can't carry a selected value via the template string
+    // cleanly — set it after render.
+    const fadeSel = $('rewardFade');
+    if (fadeSel) fadeSel.value = fadePreset;
 
     $('saveSettingsBtn').addEventListener('click', async () => {
       const next = {};
       wrap.querySelectorAll('[data-flag]').forEach(cb => {
         if (cb.checked) next[cb.dataset.flag] = true;
       });
+      // Pages-per-quiz rides along in the same hide_features JSONB
+      // as a plain number next to the boolean flags.
+      let np = parseInt(($('quizEveryNPages') || {}).value, 10);
+      if (!Number.isFinite(np) || np < 1) np = 1;
+      if (np > 20) np = 20;
+      next.quizEveryNPages = np;
+      // Reward fade — preset + daily rest minutes. 'off' is stored as
+      // absent so rewardIntensity() reads unset === off.
+      const fv = ($('rewardFade') || {}).value;
+      if (['slow', 'normal', 'fast'].includes(fv)) next.rewardFade = fv;
+      let nd = parseInt(($('dailyRestMinutes') || {}).value, 10);
+      if (!Number.isFinite(nd) || nd < 0) nd = 20;
+      if (nd > 120) nd = 120;
+      next.dailyRestMinutes = nd;
       try {
         await window.WCDB.classes.update(currentClass.id, {
           hide_features: next,
-          level_probabilities: probDraft.slice(),
         });
         currentClass.hide_features = next;
-        currentClass.level_probabilities = probDraft.slice();
         $('settingsStatus').textContent = 'Saved ✓';
         $('settingsStatus').style.color = 'var(--good)';
         setTimeout(() => { $('settingsStatus').textContent = ''; }, 2500);
