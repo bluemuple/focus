@@ -2421,7 +2421,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · Enter 다음 문장</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 위치 · → 끝 위치 · Enter 다음 문장</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2506,7 +2506,9 @@
       instrEl.innerHTML =
         `<strong>${idx + 1}번</strong> 문장의 시작 위치에 ` +
         `<strong style="color:#1f9d4d;">좌클릭</strong>, 끝 위치에 ` +
-        `<strong style="color:#d33;">우클릭</strong>하세요.`;
+        `<strong style="color:#d33;">우클릭</strong>하세요. ` +
+        `<span style="color:#888;">재생하며 시작에서 <strong>←</strong>, ` +
+        `끝에서 <strong>→</strong> 를 눌러도 됩니다.</span>`;
       sentEl.textContent = lines[idx] || '';
       progEl.textContent = `${idx + 1} / ${lines.length}`;
       host.querySelector('#wsPrev').disabled = idx <= 0;
@@ -2591,11 +2593,20 @@
       draw();
     });
 
+    // Capture the current playhead time as this sentence's start /
+    // end — the keyboard equivalent of left-/right-clicking the wave.
+    function setEdgeAtPlayhead(which) {
+      if (!duration) return;
+      work[idx][which] = +Math.max(0, Math.min(duration, audio.currentTime)).toFixed(2);
+      draw();
+    }
     function onKey(e) {
       const tag = e.target && e.target.tagName;
       if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'z' || e.key === 'Z')  { e.preventDefault(); playFromStart(); }
+      else if (e.key === 'ArrowLeft')           { e.preventDefault(); setEdgeAtPlayhead('start'); }
+      else if (e.key === 'ArrowRight')          { e.preventDefault(); setEdgeAtPlayhead('end'); }
       else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
     }
     document.addEventListener('keydown', onKey);
