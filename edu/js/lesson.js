@@ -193,6 +193,50 @@
         root.innerHTML = savedHtml;
       }
     },
+    // Word-coverage stats for a paged-mode lesson page. Used by
+    // encounter.js to gate the animal-quiz trigger: the encounter
+    // only fires when the student has changed the color of ≥40 %
+    // of the unique words on the page they just left. Returns
+    //   { total, colored, ratio }
+    // — `total`   = unique word count on the page (lowercase tokens,
+    //               length > 1, [a-z][a-z'-]+),
+    //   `colored` = unique words that have a non-null, non-zero
+    //               level in `wordLevels` (level 1-5 OR ignore -1
+    //               both count — anything the student touched),
+    //   `ratio`   = colored / total (1 when total = 0 so empty
+    //               pages don't accidentally block the encounter).
+    // In single / scroll modes the concept of "the page they just
+    // left" is fluid, so we return a permissive { ratio: 1 } that
+    // never blocks.
+    pageWordStats(pi) {
+      if (singleMode || scrollMode) {
+        return { total: 0, colored: 0, ratio: 1 };
+      }
+      if (!Array.isArray(pages) || pi < 0 || pi >= pages.length) {
+        return { total: 0, colored: 0, ratio: 1 };
+      }
+      const parts = pages[pi] || [];
+      const text  = parts.map(p => {
+        if (p.kind === 'sent') return p.text || '';
+        if (p.kind === 'gap')  return p.text || '';
+        if (p.kind === 'html') return String(p.html || '').replace(/<[^>]+>/g, ' ');
+        return '';
+      }).join(' ');
+      const unique = new Set();
+      (text.toLowerCase().match(/[a-z][a-z'-]+/g) || []).forEach(w => {
+        if (w.length > 1) unique.add(w);
+      });
+      const total = unique.size;
+      if (!total) return { total: 0, colored: 0, ratio: 1 };
+      let colored = 0;
+      unique.forEach(w => {
+        if (wordLevels.has(w)) {
+          const lvl = wordLevels.get(w);
+          if (lvl != null && lvl !== 0) colored++;
+        }
+      });
+      return { total, colored, ratio: colored / total };
+    },
     // Apply a page change without the existing slideRender CSS
     // animation. The swipe manager already animated the transition
     // visually; we just need to mount the new page's real DOM

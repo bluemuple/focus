@@ -196,12 +196,44 @@
   //  animal quiz appears — at the page boundary, a natural pause, so
   //  the reading flow is never cut mid-thought.
   // ----------------------------------------------------------------
-  async function onPageAdvanced() {
+  // Minimum fraction of unique words on a page the student must have
+  // "color-changed" (set any level 1-5 or ignore) before that page
+  // can pay out an animal encounter. Without this gate, students who
+  // never tap any words still get animals on every page-N turn — so
+  // the encounter has no relationship to actual reading interaction.
+  // 40 % per the spec; tweak here if the teacher wants a different
+  // target. We check the PREVIOUS page (the one the student just
+  // left), since that's the page they actually "finished reading".
+  const PAGE_COLOR_THRESHOLD = 0.4;
+
+  async function onPageAdvanced(ev) {
     if (window.WCEncounter?.busy) return;        // already in an encounter
     pagesSinceEncounter += 1;
     if (encountersHidden()) return;              // quiet reading
     if (Date.now() < cooldownUntil) return;      // breathing room after one
     if (pagesSinceEncounter < quizEveryNPages()) return;
+
+    // Gate: ≥40 % of the unique words on the page the student just
+    // left must have been color-changed. If the threshold isn't met,
+    // we DON'T fire the encounter AND we DON'T reset the counter —
+    // so the encounter can still fire on a later page once the
+    // student catches up. Empty / no-text pages return ratio=1
+    // (always passes), so a comic-only or image-only page never
+    // blocks. Single / scroll modes also return ratio=1.
+    const newPi = (ev && ev.detail && typeof ev.detail.page === 'number')
+      ? ev.detail.page : null;
+    if (newPi != null && window.WCLesson
+        && typeof window.WCLesson.pageWordStats === 'function') {
+      const prevPi = newPi - 1;
+      if (prevPi >= 0) {
+        const stats = window.WCLesson.pageWordStats(prevPi);
+        if (stats && stats.total > 0 && stats.ratio < PAGE_COLOR_THRESHOLD) {
+          // Below threshold — skip this trigger. Counter stays
+          // elevated; the next page advance will re-check.
+          return;
+        }
+      }
+    }
 
     // Snapshot the "since last quiz" stats for the splash, then zero
     // them so the next streak starts fresh.
