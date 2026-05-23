@@ -2946,8 +2946,23 @@
         return;
       }
       const w = t.closest('.wc-bubble .w');
-      if (!w || w.classList.contains('punct')) return;
-      onBubbleWordClick(w);
+      if (w && !w.classList.contains('punct')) {
+        onBubbleWordClick(w);
+        return;
+      }
+      // Nothing interactive matched AND the click didn't land on
+      // any word span — empty white area inside the lesson body.
+      // Clear the currently-focused word: removes the .focused
+      // ring, clears the chunk underline, fires wc:word-deselected
+      // (which closes the desktop sidebar word-card AND the mobile
+      // bottom sheet, dropping the push-up so the body slides back
+      // to its natural position). The .w skip-check covers BOTH
+      // bubble words and plain-text words — plain words have their
+      // own per-span click handler that runs before this delegation,
+      // and we don't want to undo what they just did.
+      if (!t.closest('.w')) {
+        clearWordFocus();
+      }
     });
   })();
   // Bubble boxes are %-sized, so a viewport resize changes their
