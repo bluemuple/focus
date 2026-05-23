@@ -1723,27 +1723,47 @@
   function preparedRecordingAudio(url) {
     return new Promise((resolve) => {
       const a = new Audio(url);
+      a.preload = 'auto';
       let settled = false;
-      const finish = () => { if (!settled) { settled = true; resolve(a); } };
+      const finish = (why) => {
+        if (settled) return;
+        settled = true;
+        console.log('[rec-prep] resolve (', why, ') duration=', a.duration);
+        resolve(a);
+      };
+
       a.addEventListener('loadedmetadata', () => {
-        if (a.duration === Infinity) {
-          a.currentTime = 1e101;
-          const fix = () => {
-            a.removeEventListener('timeupdate', fix);
-            a.currentTime = 0;
-            finish();
-          };
-          a.addEventListener('timeupdate', fix);
-        } else {
-          finish();
+        console.log('[rec-prep] loadedmetadata duration=', a.duration);
+        if (a.duration !== Infinity && !isNaN(a.duration) && a.duration > 0) {
+          finish('native duration');
+          return;
         }
+        // Force Chromium to scan the WebM trailer by seeking past
+        // any plausible recording length. Listen for ANY of the three
+        // events a browser might fire as it discovers the real length.
+        const onAny = (evt) => {
+          a.removeEventListener('seeked',        onAny);
+          a.removeEventListener('timeupdate',    onAny);
+          a.removeEventListener('durationchange', onAny);
+          console.log('[rec-prep] discovered via', evt && evt.type,
+            'duration=', a.duration);
+          // Reset to start; small tick for the engine to settle.
+          a.currentTime = 0;
+          setTimeout(() => finish('fixed'), 40);
+        };
+        a.addEventListener('seeked',        onAny);
+        a.addEventListener('timeupdate',    onAny);
+        a.addEventListener('durationchange', onAny);
+        // 1e6 s ≈ 11 days — past any sane reading recording, but
+        // small enough that Edge doesn't reject the seek as nonsense.
+        try { a.currentTime = 1e6; }
+        catch (e) { console.warn('[rec-prep] seek failed', e && e.message); finish('seek-throw'); }
       }, { once: true });
-      a.addEventListener('error', finish, { once: true });
-      // Hard fallback — if loadedmetadata never fires (shouldn't,
-      // but safety net), resolve unfixed after 800 ms so playback
-      // at least attempts. Native-duration formats (mp4, recorded
-      // mp3) skip the fix branch entirely.
-      setTimeout(finish, 800);
+      a.addEventListener('error', () => {
+        console.warn('[rec-prep] error', a.error && a.error.message);
+        finish('error');
+      }, { once: true });
+      setTimeout(() => finish('timeout'), 1500);
     });
   }
 
