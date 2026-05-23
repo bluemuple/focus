@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=collapse-icon-1">
+  <link rel="stylesheet" href="./css/styles.css?v=mobsh-2">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -223,6 +223,67 @@
     </button>
   </div>
 
+  <!-- ============================================================
+       MOBILE WORD SHEET + ACTION BAR (≤900px only — CSS-gated).
+       Sheet (with × + 3 carousel pages) sits ABOVE an always-
+       visible 8-button word-action bar. Empty until a word is
+       tapped; sheet height animates per visible page. -->
+  <div class="wc-mobsh" id="wcMobSh" aria-hidden="true">
+    <div class="wc-mobsh-sheet" id="wcMobShSheet">
+      <button class="wc-mobsh-close" id="wcMobShClose"
+              type="button" aria-label="닫기">×</button>
+      <div class="wc-mobsh-pages" id="wcMobShPages">
+        <!-- Page 1 — 뜻: selected word + Korean meaning,
+             chunk underline EN + Korean translation. -->
+        <div class="wc-mobsh-page" data-page="meaning">
+          <div class="wc-mobsh-headline" id="wcMobShHeadline">
+            <span class="wc-mobsh-empty wc-muted">단어를 눌러보세요</span>
+          </div>
+          <div class="wc-mobsh-chunk" id="wcMobShChunk" hidden>
+            <div class="wc-mobsh-chunk-en" id="wcMobShChunkEn"></div>
+            <div class="wc-mobsh-chunk-ko" id="wcMobShChunkKo"></div>
+          </div>
+        </div>
+        <!-- Page 2 — 단어 더보기: family / similar / opposite. -->
+        <div class="wc-mobsh-page" data-page="more">
+          <div class="wc-mobsh-more" id="wcMobShMore">
+            <span class="wc-mobsh-more-empty">단어를 누르면 가족·비슷한·반대말이 보여요.</span>
+          </div>
+        </div>
+        <!-- Page 3 — 메시지: 이 단어를 듣거나 써봤다면 적어줘. -->
+        <div class="wc-mobsh-page" data-page="msg">
+          <div class="wc-mobsh-msg-title">💌 이 단어를 듣거나 써봤다면 적어줘!</div>
+          <textarea class="wc-mobsh-msg-input" id="wcMobShMsgInput"
+                    rows="3" placeholder="언제, 어디서 이 단어를 만났는지 적어보세요."></textarea>
+          <div class="wc-mobsh-msg-actions">
+            <span class="wc-mobsh-msg-status" id="wcMobShMsgStatus"></span>
+            <button class="wc-mobsh-msg-send" id="wcMobShMsgSend"
+                    type="button" disabled>보내기 📨</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Always-visible 8-button word-action bar. -->
+    <div class="wc-mobsh-bar" id="wcMobShBar">
+      <button class="wc-mobsh-circ is-tts" id="wcMobShTts"
+              type="button" aria-label="TTS 재생" title="TTS 재생">▶</button>
+      <button class="wc-mobsh-circ" id="wcMobShPrevWord"
+              type="button" aria-label="이전 단어" title="이전 단어">‹</button>
+      <button class="wc-mobsh-circ is-lvl" data-lvl="1"
+              type="button" aria-label="단계 1" title="잘 몰라요">1</button>
+      <button class="wc-mobsh-circ is-lvl" data-lvl="2"
+              type="button" aria-label="단계 2" title="조금 알아요">2</button>
+      <button class="wc-mobsh-circ is-lvl" data-lvl="3"
+              type="button" aria-label="단계 3" title="알아요">3</button>
+      <button class="wc-mobsh-circ is-lvl" data-lvl="4"
+              type="button" aria-label="단계 4" title="잘 알아요">4</button>
+      <button class="wc-mobsh-circ is-lvl" data-lvl="5"
+              type="button" aria-label="완전히 알아요" title="완전히 알아요">✓</button>
+      <button class="wc-mobsh-circ" id="wcMobShNextWord"
+              type="button" aria-label="다음 단어" title="다음 단어">›</button>
+    </div>
+  </div>
+
   <!-- Recording bar — replaces the nav bar while Record mode is on.
        Acts on the "active line" (the last sentence whose ⏺ was used).
        [▶ play] [⏺ record] [1][2][3] takes. -->
@@ -261,229 +322,433 @@
   <script src="./js/word-info.js"></script>
   <script src="./js/wc-korbar.js"></script>
   <script src="./js/chunks.js"></script>
-  <script src="./js/lesson.js?v=collapse-icon-1"></script>
+  <script src="./js/lesson.js?v=mobsh-2"></script>
   <script src="./js/sidebar.js?v=viz-time-1"></script>
   <script src="./js/quiz.js?v=profile-xp-1"></script>
   <script src="./js/encounter.js?v=rec-flow-2"></script>
   <script>
     // ============================================================
-    //  Sidebar collapse toggle (tablet/mobile).
-    //  - Desktop / wide tablet (>900 px): the ⟩/⟨ chevron collapses
-    //    the sidebar column to free reading space — historical
-    //    behavior, untouched.
-    //  - Mobile (≤900 px): the sidebar is a fixed-bottom sheet
-    //    (CSS — body.wc-sheet-open shows it). The same button now
-    //    closes the sheet (× icon, styled in CSS) instead of the
-    //    desktop chevron collapse.
+    //  Sidebar collapse toggle — DESKTOP ONLY now. On mobile the
+    //  desktop sidebar is hidden (CSS) and the new .wc-mobsh
+    //  module below owns the word-detail surface. The chevron
+    //  still flips the desktop column.
     // ============================================================
     (function () {
       const btn  = document.getElementById('sideToggle');
       const root = document.body;
-      const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+      if (!btn) return;
       btn.addEventListener('click', () => {
-        if (isMobile()) {
-          root.classList.remove('wc-sheet-open');
-          return;
-        }
         const collapsed = root.classList.toggle('wc-sidebar-collapsed');
         btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         btn.textContent = collapsed ? '⟨' : '⟩';
       });
-      // The button text doubles as icon — on mobile we want ×,
-      // on desktop the chevron. Resize listener keeps it correct
-      // when the viewport crosses 900 px (e.g. orientation flip).
-      function syncBtnIcon() {
-        btn.textContent = isMobile()
-          ? '×'
-          : (root.classList.contains('wc-sidebar-collapsed') ? '⟨' : '⟩');
-      }
-      syncBtnIcon();
-      window.addEventListener('resize', syncBtnIcon);
     })();
 
     // ============================================================
-    //  MOBILE BOTTOM SHEET — modeled on focus/english/lesson.html.
-    //  Word tap → sheet slides up. Inside the sheet, the existing
-    //  #sideWord card's contents are wrapped into logical groups
-    //  (chunk · word details · speak · message) that act as a
-    //  horizontal scroll-snap carousel — swipe LEFT to reveal the
-    //  next sidebar feature from the right.
-    //
-    //  Driven entirely by events sidebar.js already dispatches:
-    //   - wc:word-selected   → open sheet, jump to page 0
-    //   - wc:word-deselected → close sheet
-    //  After every render the card's children re-flow, so we also
-    //  observe #sideWord mutations and re-wrap on change.
+    //  MOBILE WORD SHEET + ACTION BAR — independent of the desktop
+    //  sidebar (which is display:none on mobile). This module:
+    //   1. Listens for wc:word-selected / wc:chunk-focused.
+    //   2. Independently fetches data via WCKorBar (cached server
+    //      side, so the duplicate cost is essentially zero).
+    //   3. Renders into its own DOM:
+    //        Page 1 (뜻)   — "Word: 한글뜻" headline + gray box
+    //                        with chunk EN + chunk KO translation
+    //        Page 2 (더보기) — 단어 가족 / 비슷한 말 / 반댓말
+    //        Page 3 (메시지) — textarea + 보내기 (WCDB.viz.send)
+    //   4. Sheet height ANIMATES smoothly between page heights as
+    //      the user swipes (native scroll-snap-x for the gesture +
+    //      a scroll listener that interpolates sheet height per
+    //      scroll progress; CSS transition lerps the snap-settle).
+    //   5. Bottom 8-button bar is ALWAYS visible:
+    //        ▶ TTS · ‹ prev word · 1 2 3 4 ✓ · › next word
+    //      — wired to existing WCTTS / WCLesson / btnPrev / btnNext.
     // ============================================================
     (function () {
-      const root = document.body;
-      const sidebar = document.querySelector('.wc-sidebar');
-      const sideWord = document.getElementById('sideWord');
-      if (!sidebar || !sideWord) return;
-
-      const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
-
-      // ── Inject the handle + dots indicator once (mobile-only DOM,
-      //    CSS hides them on desktop via the media query). ──
-      let handle = sidebar.querySelector('.wc-sheet-handle');
-      if (!handle) {
-        handle = document.createElement('div');
-        handle.className = 'wc-sheet-handle';
-        handle.setAttribute('aria-hidden', 'true');
-        sidebar.insertBefore(handle, sidebar.firstChild);
+      if (!window.matchMedia('(max-width: 900px)').matches) {
+        // Desktop — leave the .wc-mobsh element inert. We still
+        // attach the resize listener at the very end so flipping
+        // to mobile (rotation, devtools) re-initialises.
       }
-      let dots = sidebar.querySelector('.wc-sheet-dots');
-      if (!dots) {
-        dots = document.createElement('div');
-        dots.className = 'wc-sheet-dots';
-        sidebar.insertBefore(dots, sidebar.firstChild);
-      }
+      const root  = document.documentElement;
+      const host  = document.getElementById('wcMobSh');
+      const sheet = document.getElementById('wcMobShSheet');
+      const pages = document.getElementById('wcMobShPages');
+      if (!host || !sheet || !pages) return;
 
-      // ── Carousel page boundaries ──
-      //  Walk direct children of .wc-word-card and group consecutive
-      //  ones into "pages" that map to a meaningful sidebar feature.
-      //  A new page starts on each "page break" selector below; small
-      //  adjacent items (word-head + image + meaning + 더 보기) all
-      //  collapse into a single page so swipes land on a real chunk
-      //  of content, not a 30-px sliver.
-      // Only two real "page breaks" — the speaking practice block and
-      // the message form. Everything BEFORE the speaking block (chunk
-      // underline + word head + image + Korean meaning + 더 보기 +
-      // extra) collapses into page 1 so the "단어 선택 시 밑줄 한글
-      // 뜻 바로 나오기" requirement is satisfied — the user sees the
-      // chunk underline AND the word's Korean meaning together on the
-      // first page, and swipes left to reveal speak → message.
-      //   Eng Bar mode: only break on .wc-word-msg → 2 pages
-      //   Kor Bar mode: break on .wc-kor-speak + .wc-word-msg → 3 pages
-      const PAGE_BREAK_SELECTORS = [
-        '.wc-kor-speak',         // page 2 (Kor mode only): speaking practice
-        '.wc-word-msg',          // last page: message form + thread
-      ];
-      function isPageBreak(el) {
-        if (!(el instanceof Element)) return false;
-        return PAGE_BREAK_SELECTORS.some(sel => el.matches(sel));
+      const elHeadline = document.getElementById('wcMobShHeadline');
+      const elChunk    = document.getElementById('wcMobShChunk');
+      const elChunkEn  = document.getElementById('wcMobShChunkEn');
+      const elChunkKo  = document.getElementById('wcMobShChunkKo');
+      const elMore     = document.getElementById('wcMobShMore');
+      const elMsgIn    = document.getElementById('wcMobShMsgInput');
+      const elMsgBtn   = document.getElementById('wcMobShMsgSend');
+      const elMsgStat  = document.getElementById('wcMobShMsgStatus');
+      const btnClose   = document.getElementById('wcMobShClose');
+      const btnTts     = document.getElementById('wcMobShTts');
+      const btnPrev    = document.getElementById('wcMobShPrevWord');
+      const btnNext    = document.getElementById('wcMobShNextWord');
+      const lvlBtns    = host.querySelectorAll('.wc-mobsh-circ.is-lvl');
+
+      // ── State ──
+      let currentWord     = null;     // { word, lower, sentence }
+      let currentChunk    = null;     // { chunk, sentence }
+      let currentInfo     = null;     // resolved word info
+      let isOpen          = false;
+      let lessonRef       = null;     // captured from WCLesson init payload
+      let pageHeights     = [80, 80, 130];
+      let scrollAnimRaf   = 0;
+
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+          ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
       }
-      function wrapCardIntoPages() {
-        if (!isMobile()) return;
-        const card = sideWord.querySelector('.wc-word-card');
-        if (!card) return;
-        // Skip if already wrapped (re-renders re-build the card from
-        // scratch, so the marker is gone after each sidebar.js render).
-        if (card.dataset.sheetWrapped === '1') return;
-        const kids = Array.from(card.children);
-        // Build groups.
-        const groups = [];
-        let current = null;
-        kids.forEach(el => {
-          if (!current || isPageBreak(el)) {
-            current = [];
-            groups.push(current);
+      function setSheetHeight(px) {
+        sheet.style.height = Math.max(0, px) + 'px';
+      }
+      // Measure each page's natural content height by temporarily
+      // freeing the page from the carousel constraints. Cached per
+      // current word render so we can interpolate during swipes.
+      function measurePages() {
+        const arr = [];
+        pages.querySelectorAll('.wc-mobsh-page').forEach(p => {
+          // Natural content height + page's own vertical padding.
+          // scrollHeight gives content + padding (without borders) —
+          // close enough for the dynamic height target.
+          arr.push(p.scrollHeight);
+        });
+        pageHeights = arr.length ? arr : [80];
+        return pageHeights;
+      }
+      // Apply the height of whichever page is currently snapped.
+      function syncHeightToCurrent() {
+        if (!isOpen) { setSheetHeight(0); return; }
+        const w = pages.clientWidth || 1;
+        const idx = Math.round(pages.scrollLeft / w);
+        const h = pageHeights[idx] || 100;
+        setSheetHeight(h);
+      }
+      // During an active swipe, interpolate height between current
+      // and next page so the sheet's top edge slides with the finger.
+      function onPagesScroll() {
+        if (scrollAnimRaf) return;
+        scrollAnimRaf = requestAnimationFrame(() => {
+          scrollAnimRaf = 0;
+          if (!isOpen) return;
+          const w = pages.clientWidth || 1;
+          const raw = pages.scrollLeft / w;
+          const i0  = Math.floor(raw);
+          const i1  = Math.min(pageHeights.length - 1, i0 + 1);
+          const t   = Math.max(0, Math.min(1, raw - i0));
+          const h0  = pageHeights[i0] || 100;
+          const h1  = pageHeights[i1] || h0;
+          const h   = h0 + (h1 - h0) * t;
+          // Suppress the CSS transition while the finger is moving —
+          // tracking the scroll position 1:1 looks crisper than a
+          // 250 ms ease lagging behind the touch.
+          sheet.style.transition = 'none';
+          setSheetHeight(h);
+        });
+      }
+      // After scroll settles, restore the CSS transition for the
+      // next programmatic jump (carousel loop, page reset, etc.).
+      let scrollIdleT = 0;
+      pages.addEventListener('scroll', () => {
+        onPagesScroll();
+        clearTimeout(scrollIdleT);
+        scrollIdleT = setTimeout(() => {
+          sheet.style.transition = '';
+          measurePages();
+          syncHeightToCurrent();
+        }, 120);
+      }, { passive: true });
+
+      // ── Looping carousel: swiping past either edge wraps around.
+      //    Native scroll-snap clamps at the ends (it won't overshoot),
+      //    so we detect "the user clearly tried to swipe further but
+      //    didn't move" and JS-scroll to the opposite end. Threshold
+      //    40 px keeps small accidental drags from triggering a loop.
+      let touchX0 = null;
+      let touchStartIdx = null;
+      pages.addEventListener('touchstart', (e) => {
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        touchX0 = t.clientX;
+        const w = pages.clientWidth || 1;
+        touchStartIdx = Math.round(pages.scrollLeft / w);
+      }, { passive: true });
+      pages.addEventListener('touchend', (e) => {
+        if (touchX0 == null) return;
+        const t = (e.changedTouches && e.changedTouches[0]);
+        if (!t) { touchX0 = null; return; }
+        const dx = t.clientX - touchX0;
+        const startIdx = touchStartIdx;
+        touchX0 = null;
+        touchStartIdx = null;
+        // Wait for the scroll-snap to settle, then check whether the
+        // browser actually moved. If not AND the gesture was a clear
+        // swipe past the boundary, jump to the opposite end.
+        setTimeout(() => {
+          const w  = pages.clientWidth || 1;
+          const N  = pages.querySelectorAll('.wc-mobsh-page').length;
+          const idx = Math.round(pages.scrollLeft / w);
+          if (idx !== startIdx) return;          // normal snap happened
+          const SWIPE_MIN = 40;
+          if (dx <= -SWIPE_MIN && idx === N - 1) {
+            // Left swipe at last page → wrap to first.
+            pages.scrollTo({ left: 0, behavior: 'smooth' });
+          } else if (dx >= SWIPE_MIN && idx === 0) {
+            // Right swipe at first page → wrap to last.
+            pages.scrollTo({ left: (N - 1) * w, behavior: 'smooth' });
           }
-          current.push(el);
+        }, 160);
+      }, { passive: true });
+
+      // ── Open / close ──
+      function openSheet() {
+        if (isOpen) return;
+        isOpen = true;
+        host.classList.add('is-open');
+        host.setAttribute('aria-hidden', 'false');
+        // Always reset to page 1 on open per spec.
+        pages.scrollTo({ left: 0, behavior: 'auto' });
+        requestAnimationFrame(() => {
+          measurePages();
+          syncHeightToCurrent();
         });
-        // Drop empty leading groups (happens when a page-break selector
-        // matches the very first child).
-        const realGroups = groups.filter(g => g && g.length);
-        // Re-build the card with wrapper pages.
-        const frag = document.createDocumentFragment();
-        realGroups.forEach(group => {
-          const page = document.createElement('div');
-          page.className = 'wc-sheet-page';
-          group.forEach(el => page.appendChild(el));
-          frag.appendChild(page);
-        });
-        card.appendChild(frag);
-        card.dataset.sheetWrapped = '1';
-        // Rebuild the dots indicator to match the new page count.
-        renderDots(realGroups.length, 0);
-        // Snap back to first page so a new word always opens on the
-        // chunk meaning (the "단어 선택 시 한글 뜻 바로 나오기" spec).
-        card.scrollLeft = 0;
       }
-      function renderDots(n, active) {
-        dots.innerHTML = '';
-        if (n <= 1) return;       // single page → hide the indicator
-        for (let i = 0; i < n; i++) {
-          const dot = document.createElement('span');
-          if (i === active) dot.classList.add('active');
-          dots.appendChild(dot);
+      function closeSheet() {
+        if (!isOpen) return;
+        isOpen = false;
+        host.classList.remove('is-open');
+        host.setAttribute('aria-hidden', 'true');
+        setSheetHeight(0);
+      }
+      btnClose.addEventListener('click', closeSheet);
+
+      // ── Page rendering ──
+      function renderHeadline() {
+        if (!currentWord) {
+          elHeadline.innerHTML = '<span class="wc-muted">단어를 눌러보세요</span>';
+          return;
         }
+        const w  = currentWord.word || '';
+        const ko = (currentInfo && currentInfo.ko) || '…';
+        elHeadline.innerHTML =
+          '<span class="wc-mobsh-en">' + esc(w) + ':</span>' +
+          '<span class="wc-mobsh-ko">' + esc(ko) + '</span>';
       }
-      // Track horizontal scroll → update active dot.
-      let scrollRaf = 0;
-      function onCardScroll() {
-        if (scrollRaf) return;
-        scrollRaf = requestAnimationFrame(() => {
-          scrollRaf = 0;
-          const card = sideWord.querySelector('.wc-word-card');
-          if (!card) return;
-          const w = card.clientWidth || 1;
-          const idx = Math.round(card.scrollLeft / w);
-          dots.querySelectorAll('span').forEach((d, i) => {
-            d.classList.toggle('active', i === idx);
+      function renderChunk(en, ko, mark) {
+        if (!en && !ko) {
+          elChunk.hidden = true;
+          return;
+        }
+        elChunk.hidden = false;
+        // Underline the chunk fragment that contains the selected
+        // word inside the EN line. If mark not found, render plain.
+        const markLower = (mark || '').toLowerCase();
+        if (markLower && en) {
+          const lower = en.toLowerCase();
+          const idx = lower.indexOf(markLower);
+          if (idx >= 0) {
+            const before = en.slice(0, idx);
+            const hit    = en.slice(idx, idx + markLower.length);
+            const after  = en.slice(idx + markLower.length);
+            elChunkEn.innerHTML = esc(before)
+              + '<span class="wc-mobsh-chunk-mark">' + esc(hit) + '</span>'
+              + esc(after);
+          } else {
+            elChunkEn.textContent = en;
+          }
+        } else {
+          elChunkEn.textContent = en || '';
+        }
+        elChunkKo.textContent = ko || '';
+      }
+      function renderMore(info) {
+        if (!info) {
+          elMore.innerHTML = '<span class="wc-mobsh-more-empty">불러오는 중…</span>';
+          return;
+        }
+        const fam = Array.isArray(info.word_family) ? info.word_family : [];
+        const sim = Array.isArray(info.similar)     ? info.similar     : [];
+        const opp = Array.isArray(info.opposite)    ? info.opposite    : [];
+        const rows = [];
+        if (fam.length) rows.push(
+          '<div class="wc-mobsh-more-row">' +
+            '<span class="wc-mobsh-more-label">단어 가족</span>' +
+            '<span class="wc-mobsh-more-val">' + esc(fam.join(' / ')) + '</span>' +
+          '</div>');
+        if (sim.length) rows.push(
+          '<div class="wc-mobsh-more-row">' +
+            '<span class="wc-mobsh-more-label">비슷한 말</span>' +
+            '<span class="wc-mobsh-more-val">' + esc(sim.join(', ')) + '</span>' +
+          '</div>');
+        if (opp.length) rows.push(
+          '<div class="wc-mobsh-more-row">' +
+            '<span class="wc-mobsh-more-label">반댓말</span>' +
+            '<span class="wc-mobsh-more-val">' + esc(opp.join(', ')) + '</span>' +
+          '</div>');
+        elMore.innerHTML = rows.length
+          ? rows.join('')
+          : '<span class="wc-mobsh-more-empty">관련된 말이 없어요.</span>';
+      }
+
+      // ── Data flow: hook into sidebar.js events ──
+      window.addEventListener('wc:word-selected', (e) => {
+        const d = e.detail || {};
+        currentWord  = { word: d.word, lower: d.lower, sentence: d.sentence };
+        currentChunk = null;
+        currentInfo  = null;
+        // Reset UI to loading state.
+        renderHeadline();
+        renderChunk('', '', '');
+        renderMore(null);
+        if (elMsgIn) elMsgIn.value = '';
+        if (elMsgBtn) elMsgBtn.disabled = true;
+        if (elMsgStat) elMsgStat.textContent = '';
+        refreshLevelButtons();
+        openSheet();
+        // Independently fetch the word info — same call sidebar.js
+        // makes, so the server cache hit is shared.
+        if (!window.WCKorBar) return;
+        const wantedLower = d.lower;
+        window.WCKorBar.fetchWord(d.word, d.sentence).then(info => {
+          // Bail if the user has tapped another word since.
+          if (!currentWord || currentWord.lower !== wantedLower) return;
+          currentInfo = info || null;
+          renderHeadline();
+          renderMore(info);
+          requestAnimationFrame(() => {
+            measurePages();
+            syncHeightToCurrent();
           });
+        }).catch(() => {});
+      });
+      window.addEventListener('wc:word-deselected', closeSheet);
+      window.addEventListener('wc:chunk-focused', (e) => {
+        const d = e.detail || {};
+        // Only render a real multi-word chunk — a single-word "chunk"
+        // would just duplicate the headline.
+        const chunkText = d.chunk;
+        if (!chunkText || !d.sentence) {
+          currentChunk = null;
+          renderChunk('', '', '');
+          return;
+        }
+        currentChunk = { chunk: chunkText, sentence: d.sentence };
+        // Show the EN immediately; fetch KO lazily.
+        renderChunk(chunkText, '', currentWord ? currentWord.word : '');
+        requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+        if (!window.WCKorBar) return;
+        const seenChunk = chunkText, seenSent = d.sentence;
+        window.WCKorBar.fetchChunk(chunkText, d.sentence).then(data => {
+          if (!currentChunk
+              || currentChunk.chunk    !== seenChunk
+              || currentChunk.sentence !== seenSent) return;
+          const ko = (data && data.ko) || '';
+          renderChunk(chunkText, ko, currentWord ? currentWord.word : '');
+          requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+        }).catch(() => {});
+      });
+
+      // ── Bottom bar: word actions ──
+      // TTS — speak the current word (falls back to lemma if known).
+      btnTts.addEventListener('click', () => {
+        if (!currentWord || !window.WCTTS) return;
+        const sayIt = (currentInfo && currentInfo.lemma) || currentWord.word;
+        window.WCTTS.speak(sayIt).catch(() => {});
+      });
+      // Prev / Next WORD — delegate to lesson.js's existing buttons
+      // so all the nav logic (chunk-focused, page boundary, etc.)
+      // stays in one place. Clicking #btnPrev/#btnNext programatically
+      // is identical to the user tapping them on desktop.
+      btnPrev.addEventListener('click', () => {
+        const b = document.getElementById('btnPrev');
+        if (b) b.click();
+      });
+      btnNext.addEventListener('click', () => {
+        const b = document.getElementById('btnNext');
+        if (b) b.click();
+      });
+      // Level 1-5 — same code path as desktop's sidebar level-bar.
+      lvlBtns.forEach(b => {
+        b.addEventListener('click', () => {
+          if (!currentWord) return;
+          const lvl = parseInt(b.dataset.lvl, 10);
+          if (!Number.isFinite(lvl)) return;
+          if (window.WCLesson && typeof window.WCLesson.setWordLevel === 'function') {
+            window.WCLesson.setWordLevel(currentWord.lower, lvl, currentWord.word);
+          }
+          refreshLevelButtons(lvl);
+        });
+      });
+      // Reflect the active level on the bar — reads the current
+      // word's stored level from WCLesson.wordLevels (the same map
+      // the desktop sidebar's level-bar reads).
+      function refreshLevelButtons(activeLvl) {
+        if (activeLvl == null) {
+          const lvls = window.WCLesson && window.WCLesson.wordLevels;
+          const cw   = currentWord && currentWord.lower;
+          activeLvl  = (lvls && cw && lvls.has(cw)) ? lvls.get(cw) : 0;
+        }
+        lvlBtns.forEach(b => {
+          const l = parseInt(b.dataset.lvl, 10);
+          b.classList.toggle('active', l === activeLvl);
         });
       }
-      // Delegated listener — the card element is re-created on every
-      // render, so we listen on sideWord and let scroll events bubble.
-      sideWord.addEventListener('scroll', (e) => {
-        if (e.target && e.target.classList
-          && e.target.classList.contains('wc-word-card')) onCardScroll();
-      }, true);
-
-      // ── Open/close hooks driven by sidebar.js events ──
-      window.addEventListener('wc:word-selected', () => {
-        if (!isMobile()) return;
-        root.classList.add('wc-sheet-open');
-        // The actual card mutation happens inside sidebar.js's render
-        // calls (which run AFTER this event handler). Defer the wrap
-        // by a tick so the new DOM exists.
-        setTimeout(wrapCardIntoPages, 0);
-      });
-      window.addEventListener('wc:word-deselected', () => {
-        root.classList.remove('wc-sheet-open');
-      });
-
-      // MutationObserver — sidebar.js re-renders #sideWord on every
-      // info-fetch resolution. Each render wipes the wrap markers, so
-      // we re-wrap whenever the subtree changes.
-      const mo = new MutationObserver(() => {
-        if (isMobile()) wrapCardIntoPages();
-      });
-      mo.observe(sideWord, { childList: true, subtree: true });
-
-      // ── Swipe-down on the handle closes the sheet ──
-      let dragY0 = null;
-      function onHandleDown(e) {
-        const t = e.touches ? e.touches[0] : e;
-        dragY0 = t.clientY;
-        sidebar.style.transition = 'none';
+      // Subscribe to WCLesson's level-change pump so the bar's active
+      // dot updates the instant a level changes (whether the change
+      // came from this bar, the desktop level-bar, or anywhere else).
+      if (window.WCLesson && typeof window.WCLesson.onWordLevelChange === 'function') {
+        window.WCLesson.onWordLevelChange((d) => {
+          if (currentWord && d && d.word === currentWord.lower) {
+            refreshLevelButtons(d.next);
+          }
+        });
       }
-      function onHandleMove(e) {
-        if (dragY0 == null) return;
-        const t = e.touches ? e.touches[0] : e;
-        const dy = Math.max(0, t.clientY - dragY0);
-        sidebar.style.transform = 'translateY(' + dy + 'px)';
-      }
-      function onHandleUp(e) {
-        if (dragY0 == null) return;
-        const t = (e.changedTouches && e.changedTouches[0]) || e;
-        const dy = Math.max(0, t.clientY - dragY0);
-        dragY0 = null;
-        sidebar.style.transition = '';
-        sidebar.style.transform = '';
-        if (dy > 60) root.classList.remove('wc-sheet-open');
-      }
-      handle.addEventListener('touchstart', onHandleDown, { passive: true });
-      handle.addEventListener('touchmove',  onHandleMove, { passive: true });
-      handle.addEventListener('touchend',   onHandleUp);
-      handle.addEventListener('mousedown',  onHandleDown);
-      window.addEventListener('mousemove',  onHandleMove);
-      window.addEventListener('mouseup',    onHandleUp);
+      window.addEventListener('wc:word-selected', () => setTimeout(refreshLevelButtons, 50));
 
-      // Initial wrap (in case a word is already selected at load —
-      // unlikely, but cheap).
-      setTimeout(wrapCardIntoPages, 50);
+      // ── Message form (page 3) ──
+      if (elMsgIn) {
+        elMsgIn.addEventListener('input', () => {
+          elMsgBtn.disabled = !currentWord || !elMsgIn.value.trim();
+        });
+      }
+      if (elMsgBtn) {
+        elMsgBtn.addEventListener('click', async () => {
+          if (!currentWord) return;
+          const text = (elMsgIn.value || '').trim();
+          if (!text) return;
+          // The lesson + student ids live on the desktop lessonRef
+          // sidebar.js init payload. We don't have direct access here
+          // — but WCLesson exposes them.
+          const me = window.WCLesson && window.WCLesson.me;
+          const lessonId = window.WCLesson && window.WCLesson.lessonId;
+          if (!me || !lessonId) {
+            elMsgStat.textContent = '미리보기 모드에선 보낼 수 없어요.';
+            return;
+          }
+          elMsgBtn.disabled = true;
+          elMsgStat.textContent = '보내는 중…';
+          try {
+            await window.WCDB.viz.send(me.id, lessonId, currentWord.lower, text);
+            elMsgStat.textContent = '잘 보냈어요! ✓';
+            elMsgIn.value = '';
+            setTimeout(() => { elMsgStat.textContent = ''; }, 1800);
+          } catch (e) {
+            elMsgStat.textContent = '보내지 못했어요.';
+            elMsgBtn.disabled = false;
+          }
+        });
+      }
+
+      // Initial state — closed, height 0.
+      setSheetHeight(0);
+      // Re-measure on resize (keyboard pop, rotation).
+      window.addEventListener('resize', () => {
+        if (!isOpen) return;
+        requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+      });
     })();
 
   </script>

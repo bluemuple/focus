@@ -108,6 +108,7 @@
   window.WCLesson = {
     me,
     isPreview,
+    lessonId,
     get lesson() { return lesson; },
     get wordLevels() { return wordLevels; },
     get classFlags() { return classFlags; },
