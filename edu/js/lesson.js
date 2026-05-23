@@ -1180,6 +1180,12 @@
         // the white card.
         img.style.width    = Math.min(100, 88 * scale).toFixed(1) + '%';
         img.style.maxWidth = '100%';
+      } else if (rec.corner === 'cs') {
+        // Small-centred image — base max-width is 140 px (CSS rule).
+        // Scale that max so resizing keeps it deliberately small,
+        // independent of the 22 % corner-float base.
+        img.style.maxWidth = Math.round(140 * scale) + 'px';
+        img.style.minWidth = '0';
       } else {
         // The base width comes from the CSS rule (22 % / min 120 / max 220).
         // We override BOTH width and max-width together so the size moves

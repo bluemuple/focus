@@ -107,16 +107,10 @@
     const pool  = list.length ? list : DEFAULT_ENCS;
     const enc   = pool[Math.floor(Math.random() * pool.length)];
 
-    // Portrait: filename = login_code (unique per student). 404 →
-    // onerror swaps in the empty-state class for a neutral placeholder.
-    const code = me.login_code || me.id || '';
-    const portrait = './images/profile-portraits/'
-      + encodeURIComponent(code) + '.png';
-
     wrap.innerHTML = `
       <div class="wc-profile-hero-row">
         <div class="wc-profile-portrait">
-          <img src="${portrait}" alt="${escapeHtml(me.real_name || '')}"
+          <img src="${levelImg}" alt="Level ${xpInfo.level}"
                onerror="this.parentNode.classList.add('wc-profile-portrait-empty'); this.style.display='none';" />
         </div>
         <div class="wc-profile-info">
@@ -131,9 +125,6 @@
               </div>
               <div class="wc-profile-xpbar"><div class="wc-profile-xpbar-fill" style="width:${xpInfo.progressPct}%"></div></div>
             </div>
-            <img class="wc-profile-levelimg" src="${levelImg}"
-                 alt="Level ${xpInfo.level}"
-                 onerror="this.style.display='none';" />
           </div>
           <p class="wc-profile-enc">${escapeHtml(enc)}</p>
         </div>

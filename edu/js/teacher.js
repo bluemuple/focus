@@ -2040,6 +2040,7 @@
           <button data-corner="bl"><span>↙</span> Bottom-left</button>
           <button data-corner="br"><span>↘</span> Bottom-right</button>
           <button data-corner="cc"><span>＋</span> Center (centred on its own line)</button>
+          <button data-corner="cs"><span>▫</span> Small center (small, own line — no text beside)</button>
           <button data-corner="panel"><span>🗔</span> Comic panel (full-width box — dialogue goes underneath)</button>
         </div>
         <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px;">
@@ -3200,6 +3201,7 @@
       bl: 'bottom-left',
       br: 'bottom-right',
       cc: 'centre',
+      cs: 'small centre',
       panel: 'comic panel',
     })[c] || c;
   }
