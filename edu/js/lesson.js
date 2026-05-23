@@ -1712,11 +1712,46 @@
     refreshRecUi();
   }
 
-  function playTake(take) {
+  // Chromium MediaRecorder writes WebM blobs without the duration in
+  // the header → on Chrome/Edge the <audio> element reports
+  // duration = Infinity and fires `ended` the instant we hit play(),
+  // producing silence (a long-standing Chromium bug). Workaround:
+  // force a seek past the end so Chromium reads the actual length
+  // from the WebM trailer, then reset currentTime to 0. Returns a
+  // Promise resolving to the prepared <audio>; callers attach
+  // handlers + call .play() on it.
+  function preparedRecordingAudio(url) {
+    return new Promise((resolve) => {
+      const a = new Audio(url);
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; resolve(a); } };
+      a.addEventListener('loadedmetadata', () => {
+        if (a.duration === Infinity) {
+          a.currentTime = 1e101;
+          const fix = () => {
+            a.removeEventListener('timeupdate', fix);
+            a.currentTime = 0;
+            finish();
+          };
+          a.addEventListener('timeupdate', fix);
+        } else {
+          finish();
+        }
+      }, { once: true });
+      a.addEventListener('error', finish, { once: true });
+      // Hard fallback — if loadedmetadata never fires (shouldn't,
+      // but safety net), resolve unfixed after 800 ms so playback
+      // at least attempts. Native-duration formats (mp4, recorded
+      // mp3) skip the fix branch entirely.
+      setTimeout(finish, 800);
+    });
+  }
+
+  async function playTake(take) {
     if (!take) return;
     try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
     try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
-    const a = new Audio(take.url);
+    const a = await preparedRecordingAudio(take.url);
     a.play().catch(e =>
       console.warn('[recording] playback failed', e && e.message));
   }
@@ -1727,13 +1762,12 @@
   let playAllBusy  = false;
   let playAllAudio = null;
   function playRecordingClip(take) {
-    return new Promise((resolve) => {
-      const a = new Audio(take.url);
+    return preparedRecordingAudio(take.url).then(a => new Promise((resolve) => {
       playAllAudio = a;
       const done = () => { if (playAllAudio === a) playAllAudio = null; resolve(); };
       a.onended = a.onerror = a.onpause = done;
       a.play().catch(done);
-    });
+    }));
   }
   function stopPlayAll() {
     playAllBusy = false;
@@ -1827,12 +1861,11 @@
   function playLineRecordingOnce(rate) {
     const take = activeTake(recActiveKey);
     if (!take) return Promise.resolve();
-    return new Promise((resolve) => {
-      const a = new Audio(take.url);
+    return preparedRecordingAudio(take.url).then(a => new Promise((resolve) => {
       a.playbackRate = rate || 1;
       a.onended = a.onerror = () => resolve();
       a.play().catch(() => resolve());
-    });
+    }));
   }
   function stopRecPlaybackAll() {
     recRepeat = false;
@@ -2030,9 +2063,10 @@
         if (span) span.classList.add('playing');
         try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
         try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
-        const a = new Audio(take.url);
-        a.onended = a.onerror = () => { if (span) span.classList.remove('playing'); };
-        a.play().catch(() => { if (span) span.classList.remove('playing'); });
+        preparedRecordingAudio(take.url).then(a => {
+          a.onended = a.onerror = () => { if (span) span.classList.remove('playing'); };
+          a.play().catch(() => { if (span) span.classList.remove('playing'); });
+        });
       }
     });
   })();
