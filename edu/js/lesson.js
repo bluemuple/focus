@@ -3726,7 +3726,14 @@
     // toolbar so the reading text gets more room. Default = shown.
     // Persists per device.
     const HEAD_KEY = 'wc.headCollapsed.v1';
-    let headCollapsed = localStorage.getItem(HEAD_KEY) === '1';
+    // On mobile, ALWAYS start with the toolbar collapsed — the student
+    // sees just the title + ⌃ expand button, with the reading body
+    // taking up the full viewport. Tapping ⌃ opens the toolbar for the
+    // session; next lesson load goes back to collapsed.  Desktop
+    // respects the stored per-device preference as before.
+    let headCollapsed = window.matchMedia('(max-width: 900px)').matches
+      ? true
+      : (localStorage.getItem(HEAD_KEY) === '1');
     function applyHeadCollapsed() {
       document.body.classList.toggle('wc-head-collapsed', headCollapsed);
       const b = $('btnHeadCollapse');
