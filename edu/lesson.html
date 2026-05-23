@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=lvlup-parts-1">
+  <link rel="stylesheet" href="./css/styles.css?v=mobile-sheet-1">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -211,6 +211,20 @@
     <span class="wc-recbar-hint" id="recHint">문장의 ⏺ 버튼을 눌러 녹음을 시작하세요</span>
   </div>
 
+  <!-- Pre-set the toolbar-collapsed preference for first mobile load —
+       MUST run BEFORE lesson.js reads localStorage, otherwise lesson.js
+       sees the empty key, defaults headCollapsed=false, and writes '0',
+       overriding our intent on this and every future load. -->
+  <script>
+    (function () {
+      try {
+        const HEAD_KEY = 'wc.headCollapsed.v1';
+        if (localStorage.getItem(HEAD_KEY) !== null) return;
+        if (!window.matchMedia('(max-width: 900px)').matches) return;
+        localStorage.setItem(HEAD_KEY, '1');
+      } catch {}
+    })();
+  </script>
   <script src="./js/supabase-config.js"></script>
   <script src="./js/db.js?v=viz-time-1"></script>
   <script src="./js/auth.js"></script>
@@ -220,21 +234,231 @@
   <script src="./js/word-info.js"></script>
   <script src="./js/wc-korbar.js"></script>
   <script src="./js/chunks.js"></script>
-  <script src="./js/lesson.js?v=anim-default-1"></script>
+  <script src="./js/lesson.js?v=rec-flow-2"></script>
   <script src="./js/sidebar.js?v=viz-time-1"></script>
   <script src="./js/quiz.js?v=profile-xp-1"></script>
-  <script src="./js/encounter.js?v=lvlup-parts-1"></script>
+  <script src="./js/encounter.js?v=rec-flow-2"></script>
   <script>
-    // Sidebar collapse toggle (tablet/mobile).
+    // ============================================================
+    //  Sidebar collapse toggle (tablet/mobile).
+    //  - Desktop / wide tablet (>900 px): the ⟩/⟨ chevron collapses
+    //    the sidebar column to free reading space — historical
+    //    behavior, untouched.
+    //  - Mobile (≤900 px): the sidebar is a fixed-bottom sheet
+    //    (CSS — body.wc-sheet-open shows it). The same button now
+    //    closes the sheet (× icon, styled in CSS) instead of the
+    //    desktop chevron collapse.
+    // ============================================================
     (function () {
       const btn  = document.getElementById('sideToggle');
       const root = document.body;
+      const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
       btn.addEventListener('click', () => {
+        if (isMobile()) {
+          root.classList.remove('wc-sheet-open');
+          return;
+        }
         const collapsed = root.classList.toggle('wc-sidebar-collapsed');
         btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
         btn.textContent = collapsed ? '⟨' : '⟩';
       });
+      // The button text doubles as icon — on mobile we want ×,
+      // on desktop the chevron. Resize listener keeps it correct
+      // when the viewport crosses 900 px (e.g. orientation flip).
+      function syncBtnIcon() {
+        btn.textContent = isMobile()
+          ? '×'
+          : (root.classList.contains('wc-sidebar-collapsed') ? '⟨' : '⟩');
+      }
+      syncBtnIcon();
+      window.addEventListener('resize', syncBtnIcon);
     })();
+
+    // ============================================================
+    //  MOBILE BOTTOM SHEET — modeled on focus/english/lesson.html.
+    //  Word tap → sheet slides up. Inside the sheet, the existing
+    //  #sideWord card's contents are wrapped into logical groups
+    //  (chunk · word details · speak · message) that act as a
+    //  horizontal scroll-snap carousel — swipe LEFT to reveal the
+    //  next sidebar feature from the right.
+    //
+    //  Driven entirely by events sidebar.js already dispatches:
+    //   - wc:word-selected   → open sheet, jump to page 0
+    //   - wc:word-deselected → close sheet
+    //  After every render the card's children re-flow, so we also
+    //  observe #sideWord mutations and re-wrap on change.
+    // ============================================================
+    (function () {
+      const root = document.body;
+      const sidebar = document.querySelector('.wc-sidebar');
+      const sideWord = document.getElementById('sideWord');
+      if (!sidebar || !sideWord) return;
+
+      const isMobile = () => window.matchMedia('(max-width: 900px)').matches;
+
+      // ── Inject the handle + dots indicator once (mobile-only DOM,
+      //    CSS hides them on desktop via the media query). ──
+      let handle = sidebar.querySelector('.wc-sheet-handle');
+      if (!handle) {
+        handle = document.createElement('div');
+        handle.className = 'wc-sheet-handle';
+        handle.setAttribute('aria-hidden', 'true');
+        sidebar.insertBefore(handle, sidebar.firstChild);
+      }
+      let dots = sidebar.querySelector('.wc-sheet-dots');
+      if (!dots) {
+        dots = document.createElement('div');
+        dots.className = 'wc-sheet-dots';
+        sidebar.insertBefore(dots, sidebar.firstChild);
+      }
+
+      // ── Carousel page boundaries ──
+      //  Walk direct children of .wc-word-card and group consecutive
+      //  ones into "pages" that map to a meaningful sidebar feature.
+      //  A new page starts on each "page break" selector below; small
+      //  adjacent items (word-head + image + meaning + 더 보기) all
+      //  collapse into a single page so swipes land on a real chunk
+      //  of content, not a 30-px sliver.
+      // Only two real "page breaks" — the speaking practice block and
+      // the message form. Everything BEFORE the speaking block (chunk
+      // underline + word head + image + Korean meaning + 더 보기 +
+      // extra) collapses into page 1 so the "단어 선택 시 밑줄 한글
+      // 뜻 바로 나오기" requirement is satisfied — the user sees the
+      // chunk underline AND the word's Korean meaning together on the
+      // first page, and swipes left to reveal speak → message.
+      //   Eng Bar mode: only break on .wc-word-msg → 2 pages
+      //   Kor Bar mode: break on .wc-kor-speak + .wc-word-msg → 3 pages
+      const PAGE_BREAK_SELECTORS = [
+        '.wc-kor-speak',         // page 2 (Kor mode only): speaking practice
+        '.wc-word-msg',          // last page: message form + thread
+      ];
+      function isPageBreak(el) {
+        if (!(el instanceof Element)) return false;
+        return PAGE_BREAK_SELECTORS.some(sel => el.matches(sel));
+      }
+      function wrapCardIntoPages() {
+        if (!isMobile()) return;
+        const card = sideWord.querySelector('.wc-word-card');
+        if (!card) return;
+        // Skip if already wrapped (re-renders re-build the card from
+        // scratch, so the marker is gone after each sidebar.js render).
+        if (card.dataset.sheetWrapped === '1') return;
+        const kids = Array.from(card.children);
+        // Build groups.
+        const groups = [];
+        let current = null;
+        kids.forEach(el => {
+          if (!current || isPageBreak(el)) {
+            current = [];
+            groups.push(current);
+          }
+          current.push(el);
+        });
+        // Drop empty leading groups (happens when a page-break selector
+        // matches the very first child).
+        const realGroups = groups.filter(g => g && g.length);
+        // Re-build the card with wrapper pages.
+        const frag = document.createDocumentFragment();
+        realGroups.forEach(group => {
+          const page = document.createElement('div');
+          page.className = 'wc-sheet-page';
+          group.forEach(el => page.appendChild(el));
+          frag.appendChild(page);
+        });
+        card.appendChild(frag);
+        card.dataset.sheetWrapped = '1';
+        // Rebuild the dots indicator to match the new page count.
+        renderDots(realGroups.length, 0);
+        // Snap back to first page so a new word always opens on the
+        // chunk meaning (the "단어 선택 시 한글 뜻 바로 나오기" spec).
+        card.scrollLeft = 0;
+      }
+      function renderDots(n, active) {
+        dots.innerHTML = '';
+        if (n <= 1) return;       // single page → hide the indicator
+        for (let i = 0; i < n; i++) {
+          const dot = document.createElement('span');
+          if (i === active) dot.classList.add('active');
+          dots.appendChild(dot);
+        }
+      }
+      // Track horizontal scroll → update active dot.
+      let scrollRaf = 0;
+      function onCardScroll() {
+        if (scrollRaf) return;
+        scrollRaf = requestAnimationFrame(() => {
+          scrollRaf = 0;
+          const card = sideWord.querySelector('.wc-word-card');
+          if (!card) return;
+          const w = card.clientWidth || 1;
+          const idx = Math.round(card.scrollLeft / w);
+          dots.querySelectorAll('span').forEach((d, i) => {
+            d.classList.toggle('active', i === idx);
+          });
+        });
+      }
+      // Delegated listener — the card element is re-created on every
+      // render, so we listen on sideWord and let scroll events bubble.
+      sideWord.addEventListener('scroll', (e) => {
+        if (e.target && e.target.classList
+          && e.target.classList.contains('wc-word-card')) onCardScroll();
+      }, true);
+
+      // ── Open/close hooks driven by sidebar.js events ──
+      window.addEventListener('wc:word-selected', () => {
+        if (!isMobile()) return;
+        root.classList.add('wc-sheet-open');
+        // The actual card mutation happens inside sidebar.js's render
+        // calls (which run AFTER this event handler). Defer the wrap
+        // by a tick so the new DOM exists.
+        setTimeout(wrapCardIntoPages, 0);
+      });
+      window.addEventListener('wc:word-deselected', () => {
+        root.classList.remove('wc-sheet-open');
+      });
+
+      // MutationObserver — sidebar.js re-renders #sideWord on every
+      // info-fetch resolution. Each render wipes the wrap markers, so
+      // we re-wrap whenever the subtree changes.
+      const mo = new MutationObserver(() => {
+        if (isMobile()) wrapCardIntoPages();
+      });
+      mo.observe(sideWord, { childList: true, subtree: true });
+
+      // ── Swipe-down on the handle closes the sheet ──
+      let dragY0 = null;
+      function onHandleDown(e) {
+        const t = e.touches ? e.touches[0] : e;
+        dragY0 = t.clientY;
+        sidebar.style.transition = 'none';
+      }
+      function onHandleMove(e) {
+        if (dragY0 == null) return;
+        const t = e.touches ? e.touches[0] : e;
+        const dy = Math.max(0, t.clientY - dragY0);
+        sidebar.style.transform = 'translateY(' + dy + 'px)';
+      }
+      function onHandleUp(e) {
+        if (dragY0 == null) return;
+        const t = (e.changedTouches && e.changedTouches[0]) || e;
+        const dy = Math.max(0, t.clientY - dragY0);
+        dragY0 = null;
+        sidebar.style.transition = '';
+        sidebar.style.transform = '';
+        if (dy > 60) root.classList.remove('wc-sheet-open');
+      }
+      handle.addEventListener('touchstart', onHandleDown, { passive: true });
+      handle.addEventListener('touchmove',  onHandleMove, { passive: true });
+      handle.addEventListener('touchend',   onHandleUp);
+      handle.addEventListener('mousedown',  onHandleDown);
+      window.addEventListener('mousemove',  onHandleMove);
+      window.addEventListener('mouseup',    onHandleUp);
+
+      // Initial wrap (in case a word is already selected at load —
+      // unlikely, but cheap).
+      setTimeout(wrapCardIntoPages, 50);
+    })();
+
   </script>
 </body>
 </html>

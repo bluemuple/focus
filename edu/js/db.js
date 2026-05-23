@@ -229,9 +229,16 @@
 
   // ---------- visualization messages ----------
   const viz = {
-    async send(studentId, lessonId, word, prompt) {
-      const rows = await rPost('/wc_visualization_messages',
-        { student_id: studentId, lesson_id: lessonId, word, prompt }, true);
+    async send(studentId, lessonId, word, prompt, recordingUrls) {
+      const row = { student_id: studentId, lesson_id: lessonId, word, prompt };
+      // Optional Storage URLs from the post-recording flow. Only
+      // attached when non-empty so an older DB without the column
+      // doesn't 400 every send. Run supabase-add-viz-recordings.sql
+      // to enable.
+      if (Array.isArray(recordingUrls) && recordingUrls.length) {
+        row.recording_urls = recordingUrls.filter(u => typeof u === 'string' && u);
+      }
+      const rows = await rPost('/wc_visualization_messages', row, true);
       return rows && rows[0];
     },
     async forStudent(studentId) {

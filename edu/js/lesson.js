@@ -1311,6 +1311,7 @@
       recGrp.innerHTML =
         '<button class="wc-rec-btn" type="button" aria-label="이 문장 녹음">' +
           '<span class="wc-rec-dot"></span></button>' +
+        '<button class="wc-rec-tts" type="button" aria-label="이 문장 듣기" title="TTS로 듣기">🔊</button>' +
         '<button class="wc-rec-play" type="button" aria-label="내 녹음 듣기">▶</button>';
       sent.appendChild(recGrp);
       let wIdx = 0;
@@ -1595,6 +1596,11 @@
         sentence_key: key, take_n: take.n, url, selected: false,
       });
       if (row && row.id) take.rowId = row.id;
+      // Stash the persistent Storage URL on the take. The local
+      // `take.url` is a session-only blob: URL (from
+      // URL.createObjectURL); the post-recording message popup needs
+      // the Storage URL to send the teacher a link that survives.
+      take.storageUrl = url;
     } catch (e) {
       console.warn('[recording] persist failed', e && e.message);
     }
@@ -1799,33 +1805,152 @@
     if (btn) { btn.classList.remove('playing'); btn.textContent = '▶'; }
   }
   async function playAllRecordings() {
-    if (playAllBusy) return;
+    if (playAllBusy) return null;
     playAllBusy = true;
     const btn = $('btnPlayRec');
     if (btn) { btn.classList.add('playing'); btn.textContent = '⏸'; }
     try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
+    let interrupted = false;
     try {
-      const flat = sentenceList();   // ordered, whole lesson
-      for (let i = 0; i < flat.length; i++) {
-        if (!playAllBusy) break;
-        const s = flat[i];
-        const take = activeTake(normAudioKey((s && s.text) || ''));
+      // Page-scoped — only the sentences the student is looking at.
+      // In paginated mode that's the rendered page; in scroll mode we
+      // narrow to the .wc-scroll-page wrapper for the current pageIdx.
+      const sentEls = currentPageSentenceEls();
+      for (const span of sentEls) {
+        if (!playAllBusy) { interrupted = true; break; }
+        const key = normAudioKey(span.dataset.text || span.textContent || '');
+        const take = activeTake(key);
         if (!take) continue;
-        // Highlight + centre the sentence being played — in scroll
-        // mode this keeps the spoken line in the middle of the view.
-        const span = document.querySelector(`.wc-sentence[data-idx="${i}"]`);
-        if (span) {
-          span.classList.add('wc-tts-reading');
-          try { span.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
-        }
+        span.classList.add('wc-tts-reading');
+        try { span.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch {}
         await playRecordingClip(take);
-        if (span) span.classList.remove('wc-tts-reading');
+        span.classList.remove('wc-tts-reading');
       }
     } finally {
       playAllBusy = false;
       if (btn) { btn.classList.remove('playing'); btn.textContent = '▶'; }
     }
+    return interrupted ? 'stopped' : 'done';
   }
+
+  // Sentence elements on the current page — DOM-based so it works
+  // for both paginated and continuous-scroll layouts. In scroll mode
+  // we narrow to the page block matching the current pageIdx so the
+  // "all recorded?" check + page-scoped playback only consider the
+  // page the student is on.
+  function currentPageSentenceEls() {
+    const body = $('lessonBody');
+    if (!body) return [];
+    const scoped = body.querySelector(
+      `.wc-scroll-page[data-page="${pageIdx}"]`);
+    const root = scoped || body;
+    return Array.from(root.querySelectorAll('.wc-sentence'));
+  }
+  // True when every sentence on the current page has at least one
+  // saved recording — drives the play-all-recordings button colour.
+  function allRecordedThisPage() {
+    const sentEls = currentPageSentenceEls();
+    if (!sentEls.length) return false;
+    return sentEls.every(el => {
+      const key = normAudioKey(el.dataset.text || el.textContent || '');
+      return hasTakes(key);
+    });
+  }
+  // After a "complete green button" playback, run a forced encounter
+  // (no probability gate, no page-advance counter — the student
+  // earned this one by recording every sentence), then surface the
+  // "녹음하면서 어려웠던 단어 적어줘" message popup so the teacher
+  // gets the page's recordings + a note in the Visualisation inbox.
+  async function runPostRecordingFlow() {
+    if (window.WCEncounter && typeof window.WCEncounter.runForPage === 'function') {
+      const stats = { pages: 1, words: 0, xp: 0 };
+      try { await window.WCEncounter.runForPage(stats); }
+      catch (e) { console.warn('[post-rec] encounter run failed', e && e.message); }
+    }
+    // Always end with the message popup — even if the encounter was
+    // skipped / failed, we still want the teacher to receive the page's
+    // recordings + the student's reflection.
+    showRecordingMessagePopup();
+  }
+
+  // Collect persistent Storage URLs of the current page's recordings
+  // in DOM order — used by the post-recording message popup.
+  function collectPageRecordingUrls() {
+    const urls = [];
+    currentPageSentenceEls().forEach(el => {
+      const key  = normAudioKey(el.dataset.text || el.textContent || '');
+      const take = activeTake(key);
+      if (!take) return;
+      // Freshly-recorded → take.storageUrl was set by persistTake.
+      // Loaded-from-DB → take.url IS the Storage URL.
+      // Anything still on a blob: URL is session-only and not
+      // forwardable to the teacher, so skip it.
+      let url = take.storageUrl
+        || (take.url && !String(take.url).startsWith('blob:') ? take.url : null);
+      if (url) urls.push(url);
+    });
+    return urls;
+  }
+
+  // Modal: "녹음하면서 어려웠던 단어 적어줘." Student types a quick
+  // note; we POST it to wc_visualization_messages with the page's
+  // recording URLs attached. Teacher reads + replies in the Messages
+  // tab (where the audio players render under the prompt).
+  function showRecordingMessagePopup() {
+    const old = document.getElementById('wcRecMsgHost');
+    if (old) old.remove();
+    const host = document.createElement('div');
+    host.id = 'wcRecMsgHost';
+    host.className = 'wc-popup-backdrop';
+    host.innerHTML =
+      '<div class="wc-popup wc-rec-msg-pop" role="dialog" aria-modal="true">' +
+        '<button class="wc-popup-close" aria-label="Close">×</button>' +
+        '<h3 style="margin:0 0 4px;">📝 녹음을 마쳤어요!</h3>' +
+        '<p class="wc-muted" style="margin:0 0 10px;">내가 가장 잘 말한 단어나 표현은 뭐야? 녹음하면서 어려웠던 단어도 적어줘.</p>' +
+        '<textarea id="wcRecMsgInput" rows="4" class="wc-input"' +
+          ' style="width:100%;font:inherit;line-height:1.5;"' +
+          ' placeholder="예) plan it 부분이 어려웠어요"></textarea>' +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">' +
+          '<button class="wc-btn ghost" id="wcRecMsgSkip" type="button">나중에</button>' +
+          '<button class="wc-btn" id="wcRecMsgSend" type="button">보내기 📨</button>' +
+        '</div>' +
+        '<div id="wcRecMsgStatus" class="wc-muted"' +
+          ' style="font-size:12px;margin-top:6px;min-height:1em;"></div>' +
+      '</div>';
+    document.body.appendChild(host);
+    const close = () => host.remove();
+    host.querySelector('.wc-popup-close').addEventListener('click', close);
+    host.querySelector('#wcRecMsgSkip').addEventListener('click', close);
+    host.addEventListener('click', e => { if (e.target === host) close(); });
+    host.querySelector('#wcRecMsgSend').addEventListener('click', async () => {
+      const ta     = document.getElementById('wcRecMsgInput');
+      const status = document.getElementById('wcRecMsgStatus');
+      const send   = document.getElementById('wcRecMsgSend');
+      const text = (ta.value || '').trim();
+      if (!text) { status.textContent = '메시지를 적어줘.'; return; }
+      if (isPreview || !me || !lessonId) {
+        status.textContent = '미리보기 모드에선 보낼 수 없어요.';
+        return;
+      }
+      send.disabled = true;
+      status.textContent = '보내는 중…';
+      try {
+        const urls = collectPageRecordingUrls();
+        await window.WCDB.viz.send(me.id, lessonId, '__recording__', text, urls);
+        status.textContent = '잘 보냈어요! ✓';
+        setTimeout(close, 1200);
+      } catch (e) {
+        status.textContent = '보내지 못했어요: ' + (e && e.message || e);
+        send.disabled = false;
+      }
+    });
+    // Focus the textarea so the student can start typing right away.
+    setTimeout(() => {
+      const ta = document.getElementById('wcRecMsgInput');
+      if (ta) ta.focus();
+    }, 50);
+  }
+
   function anyRecordings() {
     let any = false;
     recordings.forEach(r => { if (r && r.takes && r.takes.length) any = true; });
@@ -1959,6 +2084,17 @@
     setActiveLine(key, recTextForBtn(btn));
     playTake(activeTake(key));
   }
+  // per-sentence 🔊 — TTS-reads the sentence text (always visible in
+  // Record mode so the student can hear the model before recording).
+  function onRecTtsClick(btn) {
+    const sentEl = btn.closest('.wc-sentence') || btn.closest('.wc-bubble-sent');
+    if (!sentEl) return;
+    const text = sentEl.dataset.text || sentEl.textContent || '';
+    if (!text || !window.WCTTS) return;
+    try { window.WCTTS.stop(); } catch {}
+    window.WCTTS.speak(text).catch(e =>
+      console.warn('[rec-tts] failed', e && e.message));
+  }
 
   // Repaint the per-sentence buttons + the recording bar.
   function refreshRecUi() {
@@ -1979,7 +2115,14 @@
       br.classList.toggle('has-rec', hasTakes(key));
     });
     const playRecBtn = $('btnPlayRec');
-    if (playRecBtn) playRecBtn.classList.toggle('wc-hidden', !anyRecordings());
+    if (playRecBtn) {
+      const any = anyRecordings();
+      playRecBtn.classList.toggle('wc-hidden', !any);
+      // Green when every sentence on the current page is recorded —
+      // a click then also triggers the post-recording flow.
+      playRecBtn.classList.toggle('wc-playrec-complete',
+        any && allRecordedThisPage());
+    }
     renderRecBar();
   }
 
@@ -2033,12 +2176,21 @@
   // Wire the recording bar's controls (once — the bar element is
   // stable, so a single delegated listener survives every render).
   (function wireRecBar() {
-    // "Play all my recordings" — light-blue nav-bar button.
+    // "Play all my recordings" — nav-bar button. Light blue while
+    // the current page is partially recorded → just plays what's
+    // there. Green once every sentence on the page has a take →
+    // playback ends with an encounter + reward-wheel + the
+    // "녹음하면서 어려웠던 단어 적어줘" message popup.
     const playRecBtn = $('btnPlayRec');
     if (playRecBtn) {
-      playRecBtn.addEventListener('click', () => {
-        if (playAllBusy) stopPlayAll();
-        else             playAllRecordings();
+      playRecBtn.addEventListener('click', async () => {
+        if (playAllBusy) { stopPlayAll(); return; }
+        const wasComplete = playRecBtn.classList.contains('wc-playrec-complete');
+        const result = await playAllRecordings();
+        if (wasComplete && result === 'done') {
+          try { await runPostRecordingFlow(); }
+          catch (e) { console.warn('[post-rec] flow failed', e && e.message); }
+        }
       });
     }
     const bar = $('wcRecBar');
@@ -2297,6 +2449,7 @@
       grp.innerHTML =
         '<button class="wc-rec-btn" type="button" aria-label="이 문장 녹음">' +
           '<span class="wc-rec-dot"></span></button>' +
+        '<button class="wc-rec-tts" type="button" aria-label="이 문장 듣기" title="TTS로 듣기">🔊</button>' +
         '<button class="wc-rec-play" type="button" aria-label="내 녹음 듣기">▶</button>';
       wrap.appendChild(grp);
     }
@@ -2680,6 +2833,9 @@
       // ▶ — play back the student's recorded take.
       const rp = t.closest('.wc-rec-play');
       if (rp) { e.stopPropagation(); onRecPlayClick(rp); return; }
+      // 🔊 — TTS-read this sentence (always available in Record mode).
+      const rt = t.closest('.wc-rec-tts');
+      if (rt) { e.stopPropagation(); onRecTtsClick(rt); return; }
       // Comic bubble — 전체 / 문장별 record-mode toggle.
       const bm = t.closest('.wc-bub-mode');
       if (bm) {
@@ -3428,24 +3584,16 @@
     // reads the flag fresh on every level-up event so this button
     // takes effect immediately without a page reload.
     const HIDE_ENC_KEY = 'wc.hideEncounters.v1';
-    // Initial state — resolution order:
-    //   1. per-lesson `default_animals` (teacher's choice in My Lessons)
-    //   2. class-level "New lessons start with Animals OFF" toggle
-    //      (Settings) — ticked = OFF for every lesson without (1).
-    //   3. ALWAYS-ON default.
-    // The per-device localStorage is NOT consulted on init — without
-    // this, a student who once toggled 🐾 off would stay OFF forever
-    // even after the teacher unticks the class flag expecting ON to
-    // be the default. The 🐾 chip still toggles live within the
-    // session; the next lesson load re-reads the teacher's defaults.
-    let hideEncounters;
-    if (lesson && typeof lesson.default_animals === 'boolean') {
-      hideEncounters = !lesson.default_animals;
-    } else if (classFlags && classFlags.lessonsAnimalsDefaultOff) {
-      hideEncounters = true;
-    } else {
-      hideEncounters = false;   // class default ON
-    }
+    // Initial state — the class-level "Start with Animals [On/Off]"
+    // toggle (Settings) is now the SINGLE source of truth for every
+    // lesson, new or already-studied. Per-lesson `default_animals`
+    // is intentionally ignored: the teacher's class toggle should
+    // flip every lesson's default in one click. The per-device
+    // localStorage is also NOT consulted on init — without that,
+    // a student who once toggled 🐾 off would stay OFF forever
+    // even after the teacher flips the class toggle. The 🐾 chip
+    // still toggles live within the session.
+    let hideEncounters = !!(classFlags && classFlags.lessonsAnimalsDefaultOff);
     // Override the placeholder WCLesson.encountersHidden — it was set
     // up top, BEFORE this let-scoped flag existed, so its arrow
     // referenced an out-of-scope `hideEncounters` and THREW on every
@@ -3820,6 +3968,9 @@
         saveProgress();
         refreshPageCounter();
         refreshNavBoundary();
+        // Page-scoped state — repaint the play-all button so its
+        // green-when-fully-recorded colour recalculates per page.
+        try { refreshRecUi(); } catch {}
       }
       // Encounter trigger steps per reading unit — per comic panel,
       // or per scroll-page for prose.
@@ -3842,6 +3993,8 @@
       singleIdx = globalStartOfPage(pageIdx);
       refreshPageCounter();
       refreshNavBoundary();
+      // Page changed → repaint the play-all button (green/blue).
+      try { refreshRecUi(); } catch {}
       const tgt = document.querySelector(
         `.wc-scroll-page[data-page="${pageIdx}"]`);
       if (tgt) { try { tgt.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {} }
@@ -3855,6 +4008,8 @@
     singleIdx = globalStartOfPage(pageIdx);
     // Update the counter NOW (don't wait for the 180-ms slide).
     refreshPageCounter();
+    // Page changed → repaint the play-all button (green/blue).
+    try { refreshRecUi(); } catch {}
     // Paginated mode — a goPage IS the page turn (no scroll listener).
     notifyPageAdvance(pageIdx);
     slideRender(pageIdx > prev ? 'forward' : 'back');

@@ -274,6 +274,7 @@
         readStats:   readStats || null,
       });
       await onEncounterEnd(outcome, setName, animalIdx, lvl);
+      return outcome;
     } finally {
       window.WCEncounter.busy = false;
     }
@@ -473,4 +474,21 @@
   // teacher-gift path. Kept as a no-op so any stale caller doesn't
   // throw; nothing inside encounter.js calls it any more.
   window.WCEncounter.bumpCoins = function () {};
+
+  // Forced encounter — invoked by lesson.js after the student finishes
+  // playing back every recording on a page (the green play-all button).
+  // Bypasses the encounter cooldown + pages-per-quiz gate + Animals OFF
+  // toggle so the post-recording flow always runs the quiz → animal →
+  // wheel sequence. Resolves to the same `outcome` object runEncounter
+  // resolves to (or null if anything threw / no level info).
+  window.WCEncounter.runForPage = async function runForPage(readStats) {
+    if (window.WCEncounter.busy) return null;
+    if (!lessonState || !lessonState.me || !lessonState.lesson) return null;
+    try {
+      return await runEncounter({}, readStats || { pages: 1, words: 0, xp: 0 });
+    } catch (e) {
+      console.error('runForPage', e);
+      return null;
+    }
+  };
 })();

@@ -1483,8 +1483,16 @@
       // a new tab as a student would see it. Avoids a separate
       // Preview button, which was crowding the action row.
       const previewHref = './lesson.html?id=' + encodeURIComponent(L.id) + '&preview=1';
+      const coverThumb = L.cover_image_url
+        ? `<img src="${escapeHtml(L.cover_image_url)}" alt=""
+             style="width:36px;height:48px;object-fit:contain;
+                    border:1px solid var(--line,#d1d5db);border-radius:4px;
+                    background:#f8fafc;vertical-align:middle;margin-right:8px;" />`
+        : '';
       row.innerHTML = `
-        <div>
+        <div style="display:flex;align-items:center;">
+          ${coverThumb}
+          <div>
           <div class="title">
             <a href="${previewHref}" target="_blank" rel="noopener"
                title="Open this lesson in a new tab, as a student would see it"
@@ -1496,7 +1504,9 @@
             ${escapeHtml(L.animal_set)} ·
             🎁 ${todaySent} / ${L.gift_limit_per_day} sent today
             ${imgCount ? ' · 📷 ' + imgCount : ''}
+            ${L.cover_image_url ? ' · 📕 cover' : ''}
             · ${new Date(L.created_at).toLocaleDateString('en-NZ')}
+          </div>
           </div>
         </div>
         <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -1701,6 +1711,16 @@
     lessonAudioSegments  = Array.isArray(L.audio_segments)
       ? L.audio_segments.map(s => ({ ...s })) : [];
     refreshAudioUi();
+    // Cover image — load the saved URL into the preview. A teacher
+    // editing a lesson sees the existing cover; picking a new file
+    // supersedes it (the change handler nulls lessonCoverUrl).
+    lessonCoverUrl       = L.cover_image_url || null;
+    lessonCoverFile      = null;
+    if (lessonCoverObjectUrl) { try { URL.revokeObjectURL(lessonCoverObjectUrl); } catch {} }
+    lessonCoverObjectUrl = null;
+    const coverFi = $('addCoverFile');
+    if (coverFi) coverFi.value = '';
+    refreshCoverUi();
     lessonImages = Array.isArray(L.images) ? L.images.map(im => ({ ...im })) : [];
     renderImagesPreview();
     lessonWordImages = Array.isArray(L.word_images)
@@ -1727,6 +1747,7 @@
     $('lessonComicScroll').checked = true;   // comic lessons scroll by default
     setLessonMode('text');
     resetLessonAudio();
+    resetLessonCover();
     resetImages();
     updateFormMode();
     // Return the form card to its default collapsed state.
@@ -2257,6 +2278,67 @@
     if (fi) fi.value = '';
     refreshAudioUi();
   }
+
+  // ----------------------------------------------------------------
+  //  Cover image — the book / song-CD cover the teacher picks.
+  //  Stored on wc_lessons.cover_image_url (Storage public URL).
+  //  Shown on the student home page library view next to the title.
+  //  Aspect ratio is preserved in both the editor preview and the
+  //  student-side library (object-fit: contain).
+  // ----------------------------------------------------------------
+  let lessonCoverUrl       = null;   // saved Storage URL
+  let lessonCoverFile      = null;   // freshly-picked File, pending upload
+  let lessonCoverObjectUrl = null;   // object: URL for in-editor preview
+
+  function refreshCoverUi() {
+    const prev   = $('lessonCoverPreview');
+    const status = $('lessonCoverStatus');
+    const rmBtn  = $('removeCoverBtn');
+    if (!prev) return;
+    const src = lessonCoverObjectUrl || lessonCoverUrl || '';
+    if (src) {
+      prev.innerHTML = `<img src="${src}" alt="cover preview"
+        style="max-width:100%; max-height:100%; object-fit:contain; display:block;" />`;
+      if (rmBtn) rmBtn.classList.remove('wc-hidden');
+      if (status) status.textContent = lessonCoverFile
+        ? `${lessonCoverFile.name} (저장 시 업로드)`
+        : '저장된 커버';
+    } else {
+      prev.innerHTML = '<span class="wc-muted" style="font-size:11px;">No cover</span>';
+      if (rmBtn) rmBtn.classList.add('wc-hidden');
+      if (status) status.textContent = '';
+    }
+  }
+  function resetLessonCover() {
+    lessonCoverUrl  = null;
+    lessonCoverFile = null;
+    if (lessonCoverObjectUrl) { try { URL.revokeObjectURL(lessonCoverObjectUrl); } catch {} }
+    lessonCoverObjectUrl = null;
+    const fi = $('addCoverFile');
+    if (fi) fi.value = '';
+    refreshCoverUi();
+  }
+  // Wire the cover picker — click → file dialog → set preview.
+  (function wireCoverPicker() {
+    const btn  = $('addCoverBtn');
+    const file = $('addCoverFile');
+    const rm   = $('removeCoverBtn');
+    if (!btn || !file) return;
+    btn.addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const f = file.files && file.files[0];
+      if (!f) return;
+      // Drop any older object: URL so we don't leak it.
+      if (lessonCoverObjectUrl) { try { URL.revokeObjectURL(lessonCoverObjectUrl); } catch {} }
+      lessonCoverFile      = f;
+      lessonCoverObjectUrl = URL.createObjectURL(f);
+      // New file supersedes any saved URL — the save handler will
+      // upload the fresh file, then store the new public URL.
+      lessonCoverUrl = null;
+      refreshCoverUi();
+    });
+    if (rm) rm.addEventListener('click', () => resetLessonCover());
+  })();
 
   // Read a File as raw base64 (data: prefix stripped) — used to send
   // the mp3 to the wc-align edge function.
@@ -3525,6 +3607,19 @@
         console.warn('[lesson-save] audio upload failed:', e && e.message);
       }
     }
+    // Upload a freshly-picked cover image (best-effort — a failure
+    // leaves the lesson without a cover but still saves the rest).
+    if (lessonCoverFile && !lessonCoverUrl) {
+      try {
+        const raw = (lessonCoverFile.name.split('.').pop() || 'jpg').toLowerCase();
+        const ext = /^(jpg|jpeg|png|webp|gif|avif)$/.test(raw)
+          ? raw.replace('jpeg', 'jpg') : 'jpg';
+        lessonCoverUrl = await window.WCDB.storage.uploadBlob(
+          lessonCoverFile, ext, 'covers');
+      } catch (e) {
+        console.warn('[lesson-save] cover upload failed:', e && e.message);
+      }
+    }
     const payload = {
       title, body,
       animal_set: $('lessonAnimalSet').value,
@@ -3541,6 +3636,9 @@
         ? !!$('lessonComicScroll').checked : null,
       audio_url: lessonAudioUrl || null,
       audio_segments: lessonAudioSegments,
+      // Book / song-CD cover. writeResilient strips it server-side
+      // if the column hasn't been migrated yet.
+      cover_image_url: lessonCoverUrl || null,
     };
     try {
       // Stash the lesson id BEFORE resetting state below — we use it
@@ -3570,6 +3668,7 @@
       $('lessonComicScroll').checked = true;   // comic lessons scroll by default
       setLessonMode('text');
       resetLessonAudio();
+      resetLessonCover();
       resetImages();
       updateFormMode();
       // Collapse the form card back to its default closed state so
@@ -3746,16 +3845,43 @@
     const quotaMax   = lesson ? lesson.gift_limit_per_day : 0;
     const quotaLeft  = Math.max(0, quotaMax - quotaToday);
 
+    // Recording-message marker: lesson.js posts these with the special
+    // word '__recording__' + an array of page recording URLs. Render
+    // them as inline <audio controls> so the teacher can listen right
+    // here in the inbox. Filter to http(s) URLs only — blob: URLs are
+    // session-only and would 404 in the teacher's browser.
+    const recUrls = Array.isArray(m.recording_urls)
+      ? m.recording_urls.filter(u => typeof u === 'string' && /^https?:\/\//.test(u))
+      : [];
+    const recBlock = recUrls.length ? `
+      <div class="wc-tmsg-recs" style="margin:8px 0;display:flex;flex-direction:column;gap:6px;">
+        <div class="wc-muted" style="font-size:12px;">
+          🎙️ 학생 녹음 (${recUrls.length}개) — 페이지 순서대로 재생
+        </div>
+        ${recUrls.map((u, i) => `
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span class="wc-muted" style="font-size:12px;min-width:1.5em;">${i + 1}.</span>
+            <audio controls preload="none" src="${escapeHtml(u)}"
+                   style="flex:1;max-width:380px;height:32px;"></audio>
+          </div>`).join('')}
+      </div>` : '';
+    // Word label — hide the internal '__recording__' marker; instead
+    // show a friendly "🎙️ 녹음 메시지" tag.
+    const wordLabel = m.word === '__recording__'
+      ? ` · <span class="wc-muted">🎙️ 녹음 메시지</span>`
+      : (m.word ? ` · re: <em>${escapeHtml(m.word)}</em>` : '');
+
     card.innerHTML = `
       <div class="wc-tmsg-header">
         <div>
           <strong>${escapeHtml(student?.real_name || 'Unknown student')}</strong>
-          ${m.word ? ` · re: <em>${escapeHtml(m.word)}</em>` : ''}
+          ${wordLabel}
         </div>
         <div class="wc-muted" style="font-size:13px;">
           ${lesson ? escapeHtml(lesson.title) + ' · ' : ''}${new Date(m.sent_at).toLocaleString('en-NZ')}
         </div>
       </div>
+      ${recBlock}
       <div class="wc-tmsg-prompt">${escapeHtml(m.prompt)}</div>
       ${editable ? `
         <div class="wc-tmsg-reply">
@@ -3935,7 +4061,6 @@
       { key: 'hideStudentLessonUpload', label: 'Hide "student can upload their own lesson" feature', tip: 'Not built yet — placeholder for future.' },
       { key: 'hideVisualizationSidebar', label: 'Hide the "Imagine this!" sidebar section', tip: 'Students won\'t see the text input → teacher pipeline.' },
       { key: 'hideEncounters',           label: 'Disable animal encounters entirely', tip: 'Some teachers may want plain reading without the game layer.' },
-      { key: 'lessonsAnimalsDefaultOff', label: 'New lessons start with Animals OFF', tip: 'Sets the default state of the 🐾 chip for any lesson that has no per-lesson Animals choice (the 🐾/🚫 mini-toggle in My Lessons). A student can still turn it on for that lesson. Default (unticked): lessons open with Animals on.' },
       { key: 'hideAnimalComments',       label: 'Hide comments on Animal Friends pages',     tip: 'Removes the comment thread + post box at the bottom of every animal-detail page. Existing comments are kept in the database — toggling back on restores them.' },
     ];
     // Compact home-page toggles — short labels. Each tick removes
@@ -3991,6 +4116,31 @@
             <span><strong>${t.label}</strong><br><small class="wc-muted">${t.tip}</small></span>
           </label>
         `).join('')}
+
+        <!-- Animals default toggle — single source of truth for every
+             lesson's initial 🐾 state. Click flips On ↔ Off. The flag
+             stored under hide_features.lessonsAnimalsDefaultOff stays
+             the same key the lesson page reads. -->
+        <div class="wc-toggle" style="cursor:default;">
+          <span style="flex:1;">
+            <strong>
+              Start with Animals
+              <button id="animalsDefaultBtn" type="button"
+                      class="wc-btn icon-only wc-mini-toggle ${flags.lessonsAnimalsDefaultOff ? '' : 'on'}"
+                      data-state="${flags.lessonsAnimalsDefaultOff ? 'off' : 'on'}"
+                      aria-pressed="${flags.lessonsAnimalsDefaultOff ? 'false' : 'true'}"
+                      style="margin-left:6px;min-width:54px;">
+                ${flags.lessonsAnimalsDefaultOff ? '[Off]' : '[On]'}
+              </button>
+            </strong>
+            <br><small class="wc-muted">
+              Sets the default state of the 🐾 chip for <strong>every</strong>
+              lesson (new or already studied). A student can still toggle
+              the 🐾 chip live within a session — the next lesson opens
+              with the state you pick here.
+            </small>
+          </span>
+        </div>
       </div>
 
       <h3 style="margin: 28px 0 6px;">🏠 Student home — buttons</h3>
@@ -4068,11 +4218,29 @@
     const fadeSel = $('rewardFade');
     if (fadeSel) fadeSel.value = fadePreset;
 
+    // Animals default toggle — click flips state + repaints the label
+    // and the .on class. State is read by the save handler below.
+    const animalsBtn = $('animalsDefaultBtn');
+    if (animalsBtn) {
+      animalsBtn.addEventListener('click', () => {
+        const nextOff = animalsBtn.dataset.state !== 'off';
+        animalsBtn.dataset.state = nextOff ? 'off' : 'on';
+        animalsBtn.classList.toggle('on', !nextOff);
+        animalsBtn.setAttribute('aria-pressed', nextOff ? 'false' : 'true');
+        animalsBtn.textContent = nextOff ? '[Off]' : '[On]';
+      });
+    }
+
     $('saveSettingsBtn').addEventListener('click', async () => {
       const next = {};
       wrap.querySelectorAll('[data-flag]').forEach(cb => {
         if (cb.checked) next[cb.dataset.flag] = true;
       });
+      // Animals default — read the dedicated toggle button; [Off]
+      // → stored true (= hideEncounters by default), [On] → unset.
+      if (animalsBtn && animalsBtn.dataset.state === 'off') {
+        next.lessonsAnimalsDefaultOff = true;
+      }
       // Pages-per-quiz rides along in the same hide_features JSONB
       // as a plain number next to the boolean flags.
       let np = parseInt(($('quizEveryNPages') || {}).value, 10);

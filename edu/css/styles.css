@@ -2544,6 +2544,19 @@ body.wc-lesson-layout .wc-rec-play {
   vertical-align: baseline;
 }
 body.wc-lesson-layout .wc-rec-grp.has-rec .wc-rec-play { display: inline-flex; }
+/* TTS preview button — always visible in record mode so the student
+   can hear the model sentence before recording themselves. */
+body.wc-lesson-layout .wc-rec-tts {
+  display: inline-flex;
+  width: 1.35em; height: 1.35em; padding: 0;
+  align-items: center; justify-content: center;
+  border: 0; border-radius: 50%;
+  background: var(--tobok-accent-s, #fde9d2);
+  font-size: 0.66em; cursor: pointer;
+  vertical-align: baseline;
+  margin-left: 2px;
+}
+body.wc-lesson-layout .wc-rec-tts:hover { background: var(--tobok-accent, #f0a35e); }
 
 /* ── Comic bubble recording — corner control + 전체/문장별 토글 ──── */
 body.wc-lesson-layout .wc-bubble-rec { display: none; }
@@ -2611,6 +2624,14 @@ body.wc-record-mode .wc-bubble.wc-bub-mode-sent .wc-bub-rec-btn { display: none;
 }
 .wc-lesson-bar .wc-playrec:hover   { background: #46a8f0; }
 .wc-lesson-bar .wc-playrec.playing { background: #2d8fe0; }
+/* Green when every sentence on the current page has at least one
+   recording — clicking now plays them in order AND triggers the
+   post-recording flow (quiz → animal → wheel → message popup). */
+.wc-lesson-bar .wc-playrec.wc-playrec-complete {
+  background: #46a87f;
+  box-shadow: 0 0 0 2px rgba(70, 168, 127, 0.4);
+}
+.wc-lesson-bar .wc-playrec.wc-playrec-complete:hover { background: #2c8e60; }
 .wc-lesson-bar .wc-playrec.wc-hidden { display: none; }
 
 /* ── Reward wheel (after a catch) ─────────────────────────────── */
@@ -4097,3 +4118,231 @@ body.wc-single-mode .wc-lesson-img { display: none; }
 .wc-prob-slider  { width: 100%; accent-color: var(--brand, #4c8bf5); }
 .wc-prob-value   { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
 .wc-prob-default { font-size: 12px; color: var(--ink-soft, #6b7280); }
+
+/* =============================================================
+   MOBILE — lesson page bottom sheet (modeled on
+   focus/english/lesson.html .word-sheet)
+
+   On phones / narrow tablets the sticky desktop sidebar is too
+   tall for the viewport, so it morphs into a fixed-bottom sheet
+   that pops up the moment a word is tapped (wc:word-selected
+   event). Inside the sheet the existing #sideWord card's direct
+   children become a horizontal scroll-snap carousel — first
+   "page" is the chunk underline + Korean meaning (the user's
+   "단어 선택 시 밑줄 한글 뜻 바로 나오고" requirement); swiping
+   left reveals the next sidebar feature (word details → speak →
+   message) one by one from the right.
+   ============================================================= */
+@media (max-width: 900px) {
+  /* Single-column layout: the article fills the row, the sidebar
+     reappears as a bottom sheet below (fixed-position). */
+  body.wc-lesson-layout .wc-lesson-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+
+  /* Toolbar collapse button — bigger tap target on touch. */
+  body.wc-lesson-layout .wc-lesson-titlerow .ht-collapse {
+    width: 38px; height: 38px;
+    font-size: 18px;
+    background: var(--tobok-accent-s, #e6f4ec);
+    border-color: var(--tobok-accent, #3aa776);
+    color: var(--tobok-accent-i, #1f7a52);
+  }
+  /* When the toolbar IS collapsed, dim the button slightly so the
+     student sees it's "off" — re-tap restores. */
+  body.wc-lesson-layout.wc-head-collapsed .wc-lesson-titlerow .ht-collapse {
+    background: #fff;
+    color: var(--tobok-ink);
+  }
+
+  /* ----- The bottom sheet itself ----- */
+  body.wc-lesson-layout .wc-sidebar {
+    position: fixed;
+    left: 0; right: 0;
+    /* Sit just above the floating .wc-lesson-bar (which on mobile is
+       centered at bottom: 12px and is roughly 56 px tall, including
+       its own padding). Adding 12 px breathing room. */
+    bottom: 76px;
+    top: auto;
+    z-index: 60;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 62vh;
+    margin: 0;
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -8px 24px rgba(15, 20, 28, 0.16);
+    border-top: 1px solid var(--tobok-line);
+    border-left: 0; border-right: 0; border-bottom: 0;
+    /* Hidden by default — slide-up reveal driven by body.wc-sheet-open. */
+    transform: translateY(120%);
+    transition: transform .24s cubic-bezier(.22,.6,.36,1);
+    overflow: hidden;        /* let inner pieces own scrolling */
+  }
+  body.wc-lesson-layout.wc-sheet-open .wc-sidebar {
+    transform: translateY(0);
+  }
+
+  /* The little drag-handle pill at the top of the sheet — gives
+     the user a touch target to swipe down (close) AND a visual cue
+     that this is a sheet, not a stuck panel. Injected by JS so it
+     only appears on mobile. */
+  .wc-sheet-handle {
+    position: absolute;
+    top: 6px; left: 50%;
+    transform: translateX(-50%);
+    width: 44px; height: 5px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    z-index: 2;
+    cursor: grab;
+  }
+  /* Top-right × that reuses the existing #sideToggle button — on
+     mobile we restyle it as a circular close button instead of the
+     chevron sidebar-collapse it is on desktop. */
+  body.wc-lesson-layout .wc-side-toggle {
+    position: absolute;
+    top: 6px; right: 10px;
+    width: 30px; height: 30px;
+    border-radius: 999px;
+    border: 1px solid var(--tobok-line);
+    background: #fff;
+    font-size: 18px; font-weight: 700;
+    line-height: 1;
+    color: var(--tobok-ink);
+    display: grid; place-items: center;
+    z-index: 3;
+    cursor: pointer;
+    padding: 0;
+  }
+
+  /* Dot indicator under the handle — one dot per carousel page,
+     filled dot = current page. JS owns the .active class. */
+  .wc-sheet-dots {
+    position: absolute;
+    top: 16px; left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 5px;
+    z-index: 2;
+    pointer-events: none;
+  }
+  .wc-sheet-dots span {
+    width: 6px; height: 6px;
+    border-radius: 999px;
+    background: #cbd5e1;
+    transition: background .15s ease, transform .15s ease;
+  }
+  .wc-sheet-dots span.active {
+    background: var(--tobok-accent, #3aa776);
+    transform: scale(1.35);
+  }
+
+  /* Scroll container — was a vertical flex of sections. On mobile
+     we still let it own the scroll for the inner card chrome, but
+     the section itself (.wc-side-word) becomes the carousel. */
+  body.wc-lesson-layout .wc-sidebar-scroll {
+    padding: 28px 0 12px;      /* room for handle + dots above */
+    gap: 0;
+    overflow: hidden;
+  }
+  body.wc-lesson-layout .wc-sidebar-scroll > .wc-side-section {
+    border-top: 0;
+    padding-top: 0;
+  }
+
+  /* ----- Carousel: each direct child of .wc-word-card becomes a
+     full-width snap page. Native scroll-snap gives us iOS-style
+     finger-follow without a custom touch handler. ----- */
+  body.wc-lesson-layout .wc-side-word .wc-word-card {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-snap-stop: always;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    margin: 0;
+    padding: 0;
+  }
+  body.wc-lesson-layout .wc-side-word .wc-word-card::-webkit-scrollbar {
+    display: none;
+  }
+  /* Each top-level child of the card = one carousel page. JS wraps
+     consecutive small siblings (word-head + image + meaning + more)
+     into a single .wc-sheet-page so each swipe lands on a meaningful
+     group instead of a 30-px sliver. */
+  body.wc-lesson-layout .wc-side-word .wc-word-card > .wc-sheet-page {
+    flex: 0 0 100%;
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+    scroll-snap-align: start;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 4px 16px 12px;
+    max-height: calc(62vh - 88px);
+    box-sizing: border-box;
+  }
+  /* Inside a page, drop the outer margins the card used to add. */
+  body.wc-lesson-layout .wc-side-word .wc-word-card > .wc-sheet-page > * {
+    margin-left: 0; margin-right: 0;
+  }
+  /* Empty-state help card — wrap it in a single page so the dots
+     don't show "1/1" weirdly. */
+  body.wc-lesson-layout .wc-side-word > .wc-help {
+    padding: 4px 16px 12px;
+  }
+
+  /* Level bar — keep it pinned to the bottom of the sheet so it's
+     always reachable regardless of which page is showing. */
+  body.wc-lesson-layout .wc-side-bottom-fixed {
+    height: 56px;
+    border-radius: 0;
+  }
+
+  /* On mobile, the lesson bar slims down so the sheet has room. */
+  body.wc-lesson-layout.wc-sheet-open .wc-lesson-bar {
+    /* Sheet is above the bar — keep the bar in place, the sheet
+       just lifts above it (see .wc-sidebar { bottom: 76px } above). */
+  }
+
+  /* ----- Lesson-grid sidebar reset — on mobile the sidebar lives
+     fixed-bottom, so it shouldn't take grid space. ----- */
+  body.wc-lesson-layout .wc-lesson-grid > .wc-sidebar { display: flex; }
+  body.wc-lesson-layout .wc-sidebar-collapsed .wc-sidebar { display: flex; }
+}
+
+/* Very narrow phones — keep the sheet readable. */
+@media (max-width: 480px) {
+  body.wc-lesson-layout .wc-side-word .wc-word-card > .wc-sheet-page {
+    padding: 4px 12px 12px;
+  }
+  body.wc-lesson-layout .wc-sidebar { max-height: 66vh; bottom: 72px; }
+}
+
+/* =============================================================
+   MOBILE — home library view tightening
+   The bookshelf grid already uses auto-fill, so it adapts to
+   narrow widths automatically (~2 columns on 360 px). We just
+   trim padding + cover height so the cards don't feel cramped.
+   ============================================================= */
+@media (max-width: 600px) {
+  .wc-library {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 14px 10px;
+    background-size: 100% 200px;
+    background-position: 0 198px;
+  }
+  .wc-lib-cover { height: 170px; }
+  .wc-lib-title { font-size: 13px; }
+}
+@media (max-width: 380px) {
+  .wc-library {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 8px;
+  }
+  .wc-lib-cover { height: 158px; }
+}
