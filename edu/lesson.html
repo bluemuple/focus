@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=lib-overlay-1">
+  <link rel="stylesheet" href="./css/styles.css?v=flush-bar-1">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -652,12 +652,30 @@
       });
 
       // ── Bottom bar: word actions ──
-      // TTS — speak the current word (falls back to lemma if known).
+      // ▶ TTS — plays the WHOLE current page (not the single word).
+      // Delegates to the existing #btnPlay handler so play/pause +
+      // sentence-by-sentence scrolling logic stays in one place.
+      // Re-tap → pause (same toggle behavior the desktop ▶ has).
       btnTts.addEventListener('click', () => {
-        if (!currentWord || !window.WCTTS) return;
-        const sayIt = (currentInfo && currentInfo.lemma) || currentWord.word;
-        window.WCTTS.speak(sayIt).catch(() => {});
+        const playBtn = document.getElementById('btnPlay');
+        if (playBtn) playBtn.click();
       });
+      // Mirror the play/paused state on this bar so the icon swaps to
+      // ⏸ while reading. lesson.js sets #btnPlay.textContent = '⏸/▶'
+      // and toggles a .playing class — observe the class.
+      (function () {
+        const playBtn = document.getElementById('btnPlay');
+        if (!playBtn) return;
+        const syncTtsBtn = () => {
+          const playing = playBtn.classList.contains('playing');
+          btnTts.textContent = playing ? '⏸' : '▶';
+          btnTts.classList.toggle('playing', playing);
+          btnTts.setAttribute('aria-label', playing ? '읽기 정지' : '페이지 전체 읽기');
+        };
+        new MutationObserver(syncTtsBtn).observe(playBtn,
+          { attributes: true, attributeFilter: ['class'] });
+        syncTtsBtn();
+      })();
       // Prev / Next WORD — delegate to lesson.js's existing buttons
       // so all the nav logic (chunk-focused, page boundary, etc.)
       // stays in one place. Clicking #btnPrev/#btnNext programatically
