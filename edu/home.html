@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Home</title>
-  <link rel="stylesheet" href="./css/styles.css?v=mobsh-2">
+  <link rel="stylesheet" href="./css/styles.css?v=lib-overlay-1">
   <style>
     /* Layout — top bar, then Reading section, then Maths section
        (Maths Game / Subtraction quiz row / Fraction Friend), then
@@ -139,138 +139,156 @@
     .wc-time-msg.err { color: #c0392b; }
     .wc-time-msg.ok  { color: #2c8a4a; }
 
-    /* ===== Reading — library / bookshelf view =====
-       Each lesson is a "book on a shelf": cover image (aspect-ratio
-       preserved), title, then a progress gauge showing how many of
-       the unique words in the lesson body the student has clicked.
-       The grid uses auto-fit so it stays comfortable from phone (~2
-       per row) up to wide desktop (5+ per row). */
+    /* ===== Reading — library view =====
+       Each lesson is a card with a cover image. All covers have the
+       SAME height; widths vary by image aspect ratio. The word-click
+       gauge OVERLAYS the cover at the bottom 10% region, 90% wide. */
     .wc-library {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
       gap: 18px 14px;
       padding: 6px 0 8px;
-      /* The "shelf" — a wood-tone bar under each row. Pure decoration. */
-      background-image:
-        linear-gradient(to top, rgba(120, 78, 38, .12) 0, rgba(120, 78, 38, .12) 6px, transparent 6px);
-      background-size: 100% 220px;   /* cover (188px) + gap → bar repeats per row */
-      background-position: 0 218px;
     }
     .wc-lib-card {
-      display: flex; flex-direction: column;
-      text-decoration: none; color: inherit;
+      display: inline-flex;
+      flex-direction: column;
       gap: 6px;
-      position: relative;
+      text-decoration: none;
+      color: inherit;
+      /* Card sizes to its cover width (image-driven) rather than to
+         a fixed grid cell — keeps every cover at its natural ratio. */
+      width: auto;
+      max-width: 100%;
     }
     .wc-lib-card:hover .wc-lib-cover { transform: translateY(-2px); }
+
+    /* The cover is the visible image box. Fixed height (= every cover
+       lines up by its bottom edge), width AUTO (= sized to whatever
+       width the image's aspect ratio produces at this height). */
     .wc-lib-cover {
-      width: 100%;
-      height: 188px;            /* book-tall slot — covers contain inside */
-      display: flex; align-items: flex-end; justify-content: center;
-      background: transparent;
+      position: relative;
+      height: 220px;
+      width: auto;
+      max-width: 100%;
+      display: block;
+      border-radius: 3px;
+      overflow: hidden;
+      box-shadow: 0 4px 10px rgba(0,0,0,.18), 1px 0 0 rgba(0,0,0,.08);
       transition: transform .12s ease;
+      background: #f8fafc;
     }
     .wc-lib-cover img {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      box-shadow: 0 4px 10px rgba(0,0,0,.18), 1px 0 0 rgba(0,0,0,.08);
-      border-radius: 3px;
+      height: 100%;
+      width: auto;
       display: block;
+      object-fit: cover;
     }
-    /* Default book — only shown when the lesson has no cover_image_url.
-       A simple coloured rectangle with the title baked in. The CSS
-       sets the colour; the title text is injected by JS. */
+    /* Default tile (no cover_image_url) — fixed 150 px wide, same
+       height as the real covers; title baked in. */
     .wc-lib-cover.default {
-      align-items: center;
+      width: 150px;
       padding: 14px 10px;
       background: linear-gradient(135deg, #fde68a 0%, #fbbf24 100%);
       border-radius: 3px 7px 7px 3px;
-      box-shadow: 0 4px 10px rgba(0,0,0,.18), 1px 0 0 rgba(0,0,0,.08);
       color: #422006;
       font-weight: 800;
       font-size: 14px;
       text-align: center;
       line-height: 1.3;
-      overflow: hidden;
       word-break: keep-all;
-      max-height: 188px;
+      display: flex; align-items: center; justify-content: center;
+      box-sizing: border-box;
     }
+    /* Title below the cover. */
     .wc-lib-title {
       font-weight: 700;
       font-size: 14px;
       line-height: 1.3;
       color: var(--ink, #1d1d24);
-      /* clamp to 2 lines so long titles don't push the bar around */
+      max-width: 220px;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+
+    /* Gauge + meta block, OVERLAID on the cover image.
+        - 90 % of the cover's width, centered (5 % side gutter)
+        - Anchored at 10 % from the cover's bottom edge → block bottom
+          rests at "10 % up", so the gauge floats above a comfortable
+          breathing strip rather than hugging the cover edge. */
+    .wc-lib-gauge-overlay {
+      position: absolute;
+      left: 5%;
+      width: 90%;
+      bottom: 10%;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      pointer-events: none;
+    }
     .wc-lib-gauge {
-      height: 8px;
-      background: #e5e7eb;
+      height: 6px;
+      background: rgba(0, 0, 0, .38);
       border-radius: 999px;
       overflow: hidden;
-      position: relative;
+      box-shadow: 0 1px 2px rgba(0,0,0,.25);
     }
     .wc-lib-gauge > span {
       display: block;
       height: 100%;
-      background: linear-gradient(90deg, #34d399 0%, #10b981 100%);
+      background: linear-gradient(90deg, #5ee9b2 0%, #10b981 100%);
       transition: width .25s ease;
+      border-radius: 999px;
     }
     .wc-lib-meta {
       display: flex; justify-content: space-between;
-      font-size: 11px; color: #6b7280;
+      font-size: 11px;
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 1px 3px rgba(0,0,0,.65), 0 0 2px rgba(0,0,0,.5);
+      line-height: 1;
     }
-    /* Teacher / guest extras — Edit button overlays the card top-right. */
+
+    /* Teacher Edit chip — overlays the cover, top-right. */
     .wc-lib-edit {
       position: absolute;
-      top: 4px; right: 4px;
+      top: 6px; right: 6px;
       padding: 3px 8px;
       font-size: 11px;
       background: rgba(255,255,255,.92);
       border: 1px solid var(--line, #d1d5db);
       border-radius: 6px;
       cursor: pointer;
-      z-index: 2;
+      z-index: 3;
     }
     .wc-lib-hidden-badge {
       position: absolute;
-      top: 4px; left: 4px;
+      top: 6px; left: 6px;
       padding: 2px 6px;
       font-size: 10px; font-weight: 800;
       letter-spacing: .4px; text-transform: uppercase;
       background: #fee2e2; color: #991b1b;
       border-radius: 6px;
+      z-index: 3;
     }
 
-    /* ----- Mobile / narrow tablet — library tightening -----
-       inline (not external) so it overrides any earlier rule in
-       styles.css at equal specificity. */
+    /* ----- Mobile tightening — keeps the layout tidy on phones. ----- */
     @media (max-width: 600px) {
       .section-h { font-size: 21px; margin: 14px 0 8px; }
-      .wc-library {
-        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-        gap: 14px 10px;
-        background-size: 100% 200px;
-        background-position: 0 198px;
-      }
-      .wc-lib-cover { height: 170px; }
-      .wc-lib-title { font-size: 13px; }
+      .wc-library { gap: 14px 10px; }
+      .wc-lib-cover { height: 200px; }
+      .wc-lib-cover.default { width: 138px; }
+      .wc-lib-title { font-size: 13px; max-width: 200px; }
       .wc-lib-meta  { font-size: 10px; }
       .wc-lib-edit  { padding: 4px 10px; font-size: 12px; }
     }
     @media (max-width: 380px) {
-      .wc-library {
-        grid-template-columns: repeat(2, 1fr);
-        gap: 12px 8px;
-        background-size: 100% 188px;
-        background-position: 0 186px;
-      }
-      .wc-lib-cover { height: 158px; }
-      .wc-lib-title { font-size: 12px; line-height: 1.25; }
+      .wc-library { gap: 12px 8px; }
+      .wc-lib-cover { height: 180px; }
+      .wc-lib-cover.default { width: 124px; }
+      .wc-lib-title { font-size: 12px; line-height: 1.25; max-width: 180px; }
     }
   </style>
 </head>
@@ -892,44 +910,52 @@
             const card = document.createElement('a');
             card.href = './lesson.html?id=' + encodeURIComponent(L.id);
             card.className = 'wc-lib-card';
-            // Cover: image if available, otherwise a default coloured
-            // tile with the title baked in.
-            const coverHtml = L.cover_image_url
-              ? '<div class="wc-lib-cover"><img src="' + escapeHtml(L.cover_image_url) +
-                '" alt="" loading="lazy" /></div>'
-              : '<div class="wc-lib-cover default">' + escapeHtml(L.title) + '</div>';
-            // Progress gauge — % of unique words in this lesson the
-            // student has clicked at least once (i.e., has a level>0
-            // word-state row). Hidden for teachers / guests.
-            let gaugeHtml = '';
+            // Build the gauge overlay first — it lives INSIDE the
+            // cover so it can position against the cover's box (90%
+            // of the cover's width, 10% from its bottom edge).
+            // Hidden for teachers / guests (they get a date stamp).
+            let overlayHtml = '';
             if (wordSet) {
               const uniq = uniqueWords(L.body);
               const total   = uniq.size;
               let clicked = 0;
               uniq.forEach(w => { if (wordSet.has(w)) clicked++; });
               const pct = total ? Math.round((clicked / total) * 100) : 0;
-              gaugeHtml =
-                '<div class="wc-lib-gauge" aria-label="단어 클릭 진행도 ' + pct + '%">' +
-                  '<span style="width:' + pct + '%"></span>' +
-                '</div>' +
-                '<div class="wc-lib-meta">' +
-                  '<span>단어 ' + clicked + ' / ' + total + '</span>' +
-                  '<span>' + pct + '%</span>' +
+              overlayHtml =
+                '<div class="wc-lib-gauge-overlay">' +
+                  '<div class="wc-lib-gauge" aria-label="단어 클릭 진행도 ' + pct + '%">' +
+                    '<span style="width:' + pct + '%"></span>' +
+                  '</div>' +
+                  '<div class="wc-lib-meta">' +
+                    '<span>단어 ' + clicked + ' / ' + total + '</span>' +
+                    '<span>' + pct + '%</span>' +
+                  '</div>' +
                 '</div>';
-            } else {
-              gaugeHtml = '<div class="wc-lib-meta"><span></span><span>' +
-                new Date(L.created_at).toLocaleDateString('en-NZ') + '</span></div>';
             }
+            // Teacher Edit chip — also inside the cover so it overlays
+            // the top-right corner of the actual image.
             const editHtml = isTeacher
               ? '<button type="button" class="wc-lib-edit lesson-edit" data-edit="' +
                 encodeURIComponent(L.id) +
                 '" title="Open this lesson in the teacher dashboard">✏️</button>'
               : '';
+            // Cover: image if available, otherwise a default coloured
+            // tile with the title baked in. Both variants now host the
+            // gauge overlay + (teacher) edit chip as children.
+            const coverInner = L.cover_image_url
+              ? ('<img src="' + escapeHtml(L.cover_image_url) +
+                 '" alt="" loading="lazy" />')
+              : escapeHtml(L.title);
+            const coverClass = 'wc-lib-cover' + (L.cover_image_url ? '' : ' default');
+            const coverHtml =
+              '<div class="' + coverClass + '">' +
+                coverInner +
+                editHtml +
+                overlayHtml +
+              '</div>';
             card.innerHTML =
-              editHtml +
               coverHtml +
-              '<div class="wc-lib-title">' + escapeHtml(L.title) + '</div>' +
-              gaugeHtml;
+              '<div class="wc-lib-title">' + escapeHtml(L.title) + '</div>';
             list.appendChild(card);
           });
           // Wire the Edit buttons — preventDefault + stopPropagation
