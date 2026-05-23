@@ -362,6 +362,36 @@
     },
   };
 
+  // ---------- money ledger (reward wheel + 💰 spending) ----------
+  //  Dollar money is stored as integer CENTS. wc_users.money is the
+  //  authoritative balance; this ledger keeps the history (weekly
+  //  earn graph + spend log) the home 💰 popup renders.
+  //  Run edu/supabase-add-xp-and-money-ledger.sql once before use.
+  const money = {
+    async list(userId) {
+      if (!userId) return [];
+      return rGet('/wc_money_entries?select=*&user_id=eq.'
+        + encodeURIComponent(userId) + '&order=created_at.desc');
+    },
+    async add(userId, kind, cents, memo) {
+      if (!REST || !userId) return null;
+      const rows = await rPost('/wc_money_entries', {
+        user_id: userId,
+        kind:    kind === 'spend' ? 'spend' : 'earn',
+        cents:   Math.max(0, Math.round(Number(cents) || 0)),
+        memo:    (memo && String(memo).trim()) || null,
+      }, true);
+      return rows && rows[0];
+    },
+  };
+  // "$X.XX" formatter. Stored cents → display string. Negative cents
+  // (e.g. a spend row shown directly) clamps to 0 — the popup that
+  // displays a spend already prints its own "-" prefix.
+  function fmtDollars(cents) {
+    const c = Math.max(0, Math.round(Number(cents) || 0));
+    return '$' + (c / 100).toFixed(2);
+  }
+
   // ---------- time economy (reward wheel + ⏰ spending) ----------
   //  A ledger of earn / spend rows. Balance is summed client-side.
   //  Run edu/supabase-add-time-economy.sql once before use.
@@ -620,5 +650,5 @@
     return Math.max(FLOOR, Math.min(1, 1 - p / span));
   }
 
-  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage, time, recordingsDb, rewardIntensity };
+  window.WCDB = { classes, users, lessons, wordStates, pets, viz, encounters, realtime, insights, animalHearts, animalComments, animalContributions, progress, storage, time, money, fmtDollars, recordingsDb, rewardIntensity };
 })();

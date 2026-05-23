@@ -129,15 +129,15 @@
     const subEl   = host.querySelector('.wc-enc-sub');
     const p = readStats ? Math.max(0, readStats.pages | 0) : 0;
     const w = readStats ? Math.max(0, readStats.words | 0) : 0;
-    const c = readStats ? Math.max(0, readStats.coins | 0) : 0;
-    if (p || w || c) {
+    const xp = readStats ? Math.max(0, readStats.xp | 0) : 0;
+    if (p || w || xp) {
       titleEl.textContent = p > 0
         ? `📖 ${p}페이지를 읽었어요!`
         : '잘 읽고 있어요!';
       const chips = [];
-      if (p) chips.push(`<span class="wc-enc-stat">📖 ${p}쪽</span>`);
-      if (w) chips.push(`<span class="wc-enc-stat">✨ 단어 ${w}개</span>`);
-      if (c) chips.push(`<span class="wc-enc-stat">🪙 ${c}코인</span>`);
+      if (p)  chips.push(`<span class="wc-enc-stat">📖 ${p}쪽</span>`);
+      if (w)  chips.push(`<span class="wc-enc-stat">✨ 단어 ${w}개</span>`);
+      if (xp) chips.push(`<span class="wc-enc-stat">🌟 +${xp} XP</span>`);
       subEl.innerHTML =
         `<span class="wc-enc-stats">${chips.join('')}</span>` +
         `<span class="wc-enc-invite">동물 친구가 구경하러 왔어요 — 퀴즈로 실력을 보여줄까요?</span>`;
@@ -292,17 +292,22 @@
   }
 
   // ----------------------------------------------------------------
-  //  Reward wheel — spun after a catch. 5-10 minutes of screen time
-  //  or 꽝 (nothing). A winning spin writes an 'earn' time entry.
+  //  Reward wheel — spun after a catch. Mix of screen-time minutes
+  //  and dollar money slices; "꽝" is the no-prize segment. Each seg
+  //  carries `kind` ('time' | 'money' | 'miss') + `amount` (minutes
+  //  for time, integer cents for money) so onWheelResult can route
+  //  to the right ledger (wc_time_entries vs wc_money_entries).
   // ----------------------------------------------------------------
   const WHEEL_SEGS = [
-    { label: '5분',  min: 5,  color: '#ff8a3d' },
-    { label: '6분',  min: 6,  color: '#5cb8ff' },
-    { label: '7분',  min: 7,  color: '#6db33a' },
-    { label: '8분',  min: 8,  color: '#f0a35e' },
-    { label: '9분',  min: 9,  color: '#9b6ef0' },
-    { label: '10분', min: 10, color: '#e8527a' },
-    { label: '꽝',   min: 0,  color: '#9aa3ad' },
+    { label: '5분',   kind: 'time',  amount: 5,   color: '#ff8a3d' },
+    { label: '50¢',   kind: 'money', amount: 50,  color: '#7ad17a' },
+    { label: '7분',   kind: 'time',  amount: 7,   color: '#5cb8ff' },
+    { label: '$1',    kind: 'money', amount: 100, color: '#46a87f' },
+    { label: '9분',   kind: 'time',  amount: 9,   color: '#9b6ef0' },
+    { label: '$1.50', kind: 'money', amount: 150, color: '#2c8e60' },
+    { label: '10분',  kind: 'time',  amount: 10,  color: '#e8527a' },
+    { label: '$2',    kind: 'money', amount: 200, color: '#1f7a4e' },
+    { label: '꽝',    kind: 'miss',  amount: 0,   color: '#9aa3ad' },
   ];
 
   function drawWheel(canvas) {
@@ -381,13 +386,41 @@
   async function onWheelResult(seg) {
     const titleEl = host.querySelector('.wc-enc-title');
     const subEl   = host.querySelector('.wc-enc-sub');
-    if (seg.min > 0) {
-      titleEl.textContent = `⏰ 쉬는 시간 ${seg.min}분! 🎉`;
+    const uid = window.WCLesson && window.WCLesson.me && window.WCLesson.me.id;
+    if (seg.kind === 'time' && seg.amount > 0) {
+      titleEl.textContent = `⏰ 쉬는 시간 ${seg.amount}분! 🎉`;
       subEl.textContent   = '푹 쉬어도 좋아요 — 언제 쉴지는 네가 정해요.';
       try {
-        const uid = window.WCLesson && window.WCLesson.me && window.WCLesson.me.id;
-        if (uid) await window.WCDB.time.add(uid, 'earn', seg.min, '열심히 읽고 받은 쉬는 시간');
+        if (uid) await window.WCDB.time.add(uid, 'earn', seg.amount,
+          '열심히 읽고 받은 쉬는 시간');
       } catch (e) { console.warn('time earn write failed', e); }
+    } else if (seg.kind === 'money' && seg.amount > 0) {
+      const dollars = (window.WCDB && window.WCDB.fmtDollars)
+        ? window.WCDB.fmtDollars(seg.amount)
+        : ('$' + (seg.amount / 100).toFixed(2));
+      titleEl.textContent = `💰 ${dollars} 획득! 🎉`;
+      subEl.textContent   = '잘 모아서 원할 때 쓰세요.';
+      try {
+        if (uid) {
+          await window.WCDB.money.add(uid, 'earn', seg.amount,
+            '동물 포획 룰렛 보상');
+          // Mirror the new balance onto wc_users.money + the cached
+          // session so the chip + profile update without a reload.
+          const before = (window.WCLesson.me.money || 0);
+          const after  = before + seg.amount;
+          window.WCLesson.me.money = after;
+          await window.WCDB.users.update(uid, { money: after });
+          try {
+            const raw = localStorage.getItem('wc.session.v1');
+            if (raw) {
+              const u = JSON.parse(raw); u.money = after;
+              localStorage.setItem('wc.session.v1', JSON.stringify(u));
+            }
+          } catch {}
+          const el = document.getElementById('userMoney');
+          if (el && window.WCDB.fmtDollars) el.textContent = window.WCDB.fmtDollars(after);
+        }
+      } catch (e) { console.warn('money earn write failed', e); }
     } else {
       titleEl.textContent = '꽝! 😅';
       subEl.textContent   = '아쉬워요 — 다음에 또 도전해요!';

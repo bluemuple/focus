@@ -1051,13 +1051,22 @@
     const after  = Math.max(0, before + delta);
     L.me.money = after;
     const el = document.getElementById('userMoney');
-    if (el) el.textContent = String(after);
+    if (el) {
+      el.textContent = (window.WCDB && window.WCDB.fmtDollars)
+        ? window.WCDB.fmtDollars(after)
+        : String(after);
+    }
     try {
       await window.WCDB.users.update(L.me.id, { money: after });
       const raw = localStorage.getItem('wc.session.v1');
       if (raw) {
         const u = JSON.parse(raw); u.money = after;
         localStorage.setItem('wc.session.v1', JSON.stringify(u));
+      }
+      // Mirror the gift into the money ledger so it shows in the
+      // home 💰 popup's weekly-earned graph + spend log timeline.
+      if (window.WCDB.money && delta > 0) {
+        await window.WCDB.money.add(L.me.id, 'earn', delta, '선생님 보너스');
       }
     } catch (e) {
       console.warn('money gift credit failed', e);

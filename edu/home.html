@@ -146,7 +146,7 @@
       <div class="wc-logo" onclick="location.href='./home.html'">A<span class="catch">ko</span></div>
       <div class="wc-user-chip" id="userChip">
         <span id="userName">…</span>
-        <span class="coin" title="Coins">💰 <span id="userMoney">0</span></span>
+        <button type="button" class="wc-time-chip" id="moneyChip" title="내 돈 — 눌러서 보기">💰 <span id="userMoney">$0.00</span></button>
         <button type="button" class="wc-time-chip" id="timeChip" title="내 쉬는 시간 — 눌러서 보기">
           ⏰ <span id="timeDisplay">0:00</span>
         </button>
@@ -275,7 +275,7 @@
   </div>
 
   <script src="./js/supabase-config.js"></script>
-  <script src="./js/db.js?v=comic-kor-1"></script>
+  <script src="./js/db.js?v=profile-xp-1"></script>
   <script src="./js/auth.js"></script>
   <script>
   (async () => {
@@ -288,7 +288,8 @@
     }
 
     document.getElementById('userName').textContent  = me.real_name;
-    document.getElementById('userMoney').textContent = me.money || 0;
+    document.getElementById('userMoney').textContent =
+      window.WCDB.fmtDollars(me.money || 0);
     if (me.role === 'teacher') {
       document.getElementById('navSettings').style.display = '';
     }
@@ -468,6 +469,150 @@
             renderChip();
           } catch (e) {
             msg.textContent = '저장하지 못했어요. 다시 해봐요.'; msg.className = 'wc-time-msg err';
+          } finally {
+            save.disabled = false;
+          }
+        });
+      }
+    })();
+
+    // ===== Money — 💰 chip + popup (mirrors the ⏰ time chip) =====
+    //  Earned via the reward wheel + teacher gifts; spent here.
+    //  Balance lives on wc_users.money (in cents); the ledger
+    //  (wc_money_entries) feeds the weekly graph + spend log.
+    (function setupMoneyChip() {
+      const chip = document.getElementById('moneyChip');
+      if (!chip) return;
+      if (me.role !== 'student') { chip.style.display = 'none'; return; }
+      let entries = [];
+      const balance = () => Math.max(0, Number(me.money) || 0);
+      const renderChip = () => {
+        document.getElementById('userMoney').textContent =
+          window.WCDB.fmtDollars(balance());
+      };
+      const dayKey = (d) => {
+        const dt = new Date(d);
+        return dt.getFullYear() + '-' +
+          String(dt.getMonth() + 1).padStart(2, '0') + '-' +
+          String(dt.getDate()).padStart(2, '0');
+      };
+      (async () => {
+        try { entries = await window.WCDB.money.list(me.id); } catch (e) {}
+        renderChip();
+      })();
+      chip.addEventListener('click', openPopup);
+
+      function openPopup() {
+        const old = document.getElementById('wcMoneyPopHost');
+        if (old) old.remove();
+        const host = document.createElement('div');
+        host.id = 'wcMoneyPopHost';
+        host.className = 'wc-time-backdrop';
+        host.innerHTML =
+          '<div class="wc-time-pop">' +
+            '<button class="wc-time-close" aria-label="닫기">×</button>' +
+            '<h3>💰 내 돈</h3>' +
+            '<p style="font-size:12px;color:#888;margin:2px 0 12px;line-height:1.5;">' +
+              '잘 모았어요! 무엇을 사고 싶은지 메모하며 자유롭게 써요.</p>' +
+            '<div class="wc-time-balance">잔액: <strong id="wcMoneyBal">$0.00</strong></div>' +
+            '<div class="wc-time-graph-label">최근 7일 번 돈</div>' +
+            '<div class="wc-time-graph" id="wcMoneyGraph"></div>' +
+            '<div class="wc-time-log" id="wcMoneyLog"></div>' +
+            '<div class="wc-time-spend">' +
+              '<label>돈 쓰기</label>' +
+              '<div class="wc-time-spend-row">' +
+                '<input type="number" id="wcSpendDollar" min="0" step="0.5" placeholder="달러"> $' +
+                '<input type="text" id="wcSpendMemo2" placeholder="메모 (무엇을 샀나요?)">' +
+                '<button class="wc-btn" id="wcSpendSave2" type="button">저장</button>' +
+              '</div>' +
+              '<div class="wc-time-msg" id="wcSpendMsg2"></div>' +
+            '</div>' +
+          '</div>';
+        document.body.appendChild(host);
+        const close = () => host.remove();
+        host.querySelector('.wc-time-close').addEventListener('click', close);
+        host.addEventListener('click', e => { if (e.target === host) close(); });
+
+        function rerender() {
+          host.querySelector('#wcMoneyBal').textContent = window.WCDB.fmtDollars(balance());
+          const days = [];
+          const now = new Date();
+          for (let d = 6; d >= 0; d--) {
+            const dt = new Date(now); dt.setDate(now.getDate() - d);
+            days.push({ key: dayKey(dt), label: (dt.getMonth() + 1) + '/' + dt.getDate(), cents: 0 });
+          }
+          const dmap = {}; days.forEach(d => { dmap[d.key] = d; });
+          entries.forEach(e => {
+            if (e.kind !== 'earn') return;
+            const d = dmap[dayKey(e.created_at)];
+            if (d) d.cents += (e.cents || 0);
+          });
+          const maxCents = Math.max(100, ...days.map(d => d.cents));
+          host.querySelector('#wcMoneyGraph').innerHTML = days.map(d =>
+            '<div class="wc-time-gcol">' +
+              '<span class="wc-time-gval">' + (d.cents ? window.WCDB.fmtDollars(d.cents) : '') + '</span>' +
+              '<div class="wc-time-gbar' + (d.cents ? '' : ' zero') + '" style="height:' +
+                Math.round((d.cents / maxCents) * 100) + '%"></div>' +
+              '<span class="wc-time-glabel">' + d.label + '</span>' +
+            '</div>').join('');
+          const spends = entries.filter(e => e.kind === 'spend');
+          const logEl = host.querySelector('#wcMoneyLog');
+          if (!spends.length) {
+            logEl.innerHTML = '<div class="wc-time-log-empty">아직 쓴 돈이 없어요.</div>';
+          } else {
+            logEl.innerHTML = spends.map(e => {
+              const dt = new Date(e.created_at);
+              const date = (dt.getMonth() + 1) + '/' + dt.getDate();
+              return '<div class="wc-time-log-row">' +
+                '<span>' + date + (e.memo ? ' · ' + escapeHtml(e.memo) : '') + '</span>' +
+                '<span class="mins">-' + window.WCDB.fmtDollars(e.cents || 0) + '</span>' +
+              '</div>';
+            }).join('');
+          }
+        }
+        rerender();
+
+        host.querySelector('#wcSpendSave2').addEventListener('click', async () => {
+          const amtEl  = host.querySelector('#wcSpendDollar');
+          const memoEl = host.querySelector('#wcSpendMemo2');
+          const msg    = host.querySelector('#wcSpendMsg2');
+          const save   = host.querySelector('#wcSpendSave2');
+          const dollars = parseFloat(amtEl.value);
+          if (!isFinite(dollars) || dollars <= 0) {
+            msg.textContent = '얼마 쓸지 적어줘.'; msg.className = 'wc-time-msg err'; return;
+          }
+          const cents = Math.round(dollars * 100);
+          const bal = balance();
+          if (cents > bal) {
+            msg.textContent = '잔액(' + window.WCDB.fmtDollars(bal) + ')보다 많이 쓸 수 없어요.';
+            msg.className = 'wc-time-msg err'; return;
+          }
+          save.disabled = true;
+          msg.textContent = '저장 중…'; msg.className = 'wc-time-msg';
+          try {
+            const row = await window.WCDB.money.add(me.id, 'spend', cents, memoEl.value);
+            const after = Math.max(0, bal - cents);
+            me.money = after;
+            try {
+              const raw = localStorage.getItem('wc.session.v1');
+              if (raw) {
+                const u = JSON.parse(raw); u.money = after;
+                localStorage.setItem('wc.session.v1', JSON.stringify(u));
+              }
+            } catch {}
+            try { await window.WCDB.users.update(me.id, { money: after }); } catch {}
+            entries.unshift(row || {
+              kind: 'spend', cents, memo: (memoEl.value || '').trim() || null,
+              created_at: new Date().toISOString(),
+            });
+            amtEl.value = ''; memoEl.value = '';
+            msg.textContent = window.WCDB.fmtDollars(cents) + '을 썼어요!';
+            msg.className = 'wc-time-msg ok';
+            rerender();
+            renderChip();
+          } catch (e) {
+            msg.textContent = '저장하지 못했어요. 다시 해봐요.';
+            msg.className = 'wc-time-msg err';
           } finally {
             save.disabled = false;
           }

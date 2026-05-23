@@ -129,7 +129,7 @@
   // what the student just did (SDT: informational, not controlling).
   let pagesSinceEncounter = 0;
   let wordsSinceEncounter = 0;
-  let coinsSinceEncounter = 0;
+  let xpSinceEncounter    = 0;
 
   // Pages between quizzes — teacher-set in Settings, stored on the
   // class's hide_features JSONB. Default 1: a quiz on every page
@@ -151,12 +151,13 @@
   }
 
   // ----------------------------------------------------------------
-  //  Word-mark handler — the small, frequent reward.
+  //  Word-mark handler — small, frequent XP reward.
   //
-  //  Marking a word earns +1 coin and counts toward the splash's
-  //  "words studied" stat. It no longer triggers encounters — those
-  //  fire on page turns (onPageAdvanced) so a quiz never breaks the
-  //  reading flow mid-sentence.
+  //  Marking a word earns +1 XP (faded by reward intensity to keep
+  //  the predictable-task-contingent reward from crowding out the
+  //  intrinsic side per SDT) and counts toward the splash's "words
+  //  studied" stat. It no longer triggers encounters or pays coins —
+  //  money lives on the reward wheel now.
   // ----------------------------------------------------------------
   async function onLevelUp(ev) {
     const detail = ev.detail || {};
@@ -166,7 +167,7 @@
     if (encountersHidden()) return;         // quiet reading
 
     const now = Date.now();
-    // throttle 1: per-word — re-marking the same word can't farm coins
+    // throttle 1: per-word — re-marking the same word can't farm XP
     const lastForThisWord = lastWordBump.get(word) || 0;
     if (now - lastForThisWord < PER_WORD_THROTTLE_MS) return;
     // throttle 2: global — a curiosity-burst of clicks counts once
@@ -174,13 +175,11 @@
     lastWordBump.set(word, now);
     lastAnyBump = now;
 
-    // Small reward, faded by reward intensity — at full intensity
-    // every word mark earns a coin, later only some do (and it stays
-    // unpredictable, which SDT prefers over a fixed schedule). The
-    // "words studied" stat is NOT faded — it is competence feedback.
+    // Small XP reward, faded by reward intensity so it stays
+    // unpredictable (SDT) and tapers as reading becomes a habit.
     if (Math.random() < rewardIntensity()) {
-      bumpCoins(1);
-      coinsSinceEncounter += 1;
+      bumpXp(1);
+      xpSinceEncounter += 1;
     }
     wordsSinceEncounter += 1;
 
@@ -209,11 +208,11 @@
     const readStats = {
       pages: pagesSinceEncounter,
       words: wordsSinceEncounter,
-      coins: coinsSinceEncounter,
+      xp:    xpSinceEncounter,
     };
     pagesSinceEncounter = 0;
     wordsSinceEncounter = 0;
-    coinsSinceEncounter = 0;
+    xpSinceEncounter    = 0;
 
     try { await runEncounter({}, readStats); }
     catch (e) { console.error('encounter run', e); }
@@ -231,14 +230,19 @@
     window.dispatchEvent(new CustomEvent('wc:counter-changed',
       { detail: { count: 0, threshold: 0, remain: 0 } }));
 
-    // The student's current ceiling level. We use this as both the
-    // quiz difficulty AND the upper bound on which animal can show up.
-    const ceiling   = lessonState.me.encounter_level || 1;
-    // Roll for which animal actually appears. 70% of the time we show
-    // the ceiling-level animal (the next one to catch), 30% of the
-    // time we pick a UNIFORMLY-random LOWER level so the student can
-    // collect duplicates of earlier animals. At Lv 1 there's no
-    // "lower" pool so it always shows Lv 1.
+    // Pick the animal tier. The catcher level (1..28) comes from XP;
+    // the animal tier is capped at 10 (the top of every animal set).
+    // So a Lv-20 catcher keeps facing top-tier animals — the catcher
+    // level still climbs via XP, the animal climax just doesn't get
+    // harder past 10.
+    const catcherLvl = (window.WCLevels && typeof window.WCLevels.levelForXp === 'function')
+      ? window.WCLevels.levelForXp(lessonState.me.xp || 0)
+      : 1;
+    const ceiling = window.WCLevels.animalLevelFor(catcherLvl);
+    // 70% of the time we show the ceiling-level animal (the next
+    // one to catch), 30% of the time we pick a UNIFORMLY-random LOWER
+    // level so the student can collect duplicates of earlier animals.
+    // At Lv 1 there's no "lower" pool so it always shows Lv 1.
     let encounterLvl = ceiling;
     if (ceiling > 1 && Math.random() < 0.3) {
       // 1 .. ceiling-1 inclusive
@@ -357,94 +361,62 @@
   }
 
   // ----------------------------------------------------------------
-  //  Outcome — catch (level up + pet + coins) or fail (level down).
+  //  Outcome — catch (pet + big XP), fail (small XP), skip (no XP).
+  //
+  //  Catcher level is now XP-derived: catching adds XP and the level
+  //  may climb; failing adds a small participation XP but never
+  //  takes anything away. Money is no longer awarded here — it
+  //  arrives via the reward wheel (with money slices) after a catch.
   // ----------------------------------------------------------------
   async function onEncounterEnd(outcome, setName, animalIdx, level) {
-    // `level` here is the LEVEL OF THE ANIMAL the student just faced
-    // — which may be lower than their ceiling (30% bonus picks). The
-    // ceiling only moves when the student catches/fails an animal AT
-    // their current ceiling. Lower-level animals are pure bonus
-    // collectibles: catch = pet + coins, fail = no progression hit.
-    const ceiling = lessonState.me.encounter_level || 1;
-    const isCeilingEncounter = (level >= ceiling);
     if (outcome === 'caught') {
-      // pet row — always insert, so duplicates of the same animal
-      // pile up in the collection.
+      // Pet row — always insert, so duplicates pile up in the
+      // collection. XP bumps the catcher level (no money here —
+      // the reward wheel handles that).
       try {
         await window.WCDB.pets.catch_(lessonState.me.id, setName, animalIdx, level);
       } catch (e) { console.warn('pets.catch_', e); }
-      // Coins scale with the animal's level (a Lv 1 mouse caught as
-      // a bonus pays 50 coins, a ceiling Lv 5 catch pays 250).
-      await bumpCoins(50 * level);
-      // Ceiling only bumps when the student caught the animal that
-      // matched their ceiling. Bonus catches give pet + coins but
-      // don't push them to the next tier.
-      if (isCeilingEncounter) {
-        const next = Math.min(window.WCLevels.MAX, ceiling + 1);
-        await setEncounterLevel(next);
-      }
-      // Short breathing room after a catch — keeps the loop snappy
-      // for a student on a hot streak.
+      await bumpXp(30);
       cooldownUntil = Date.now() + COOLDOWN_AFTER_CATCH_MS;
     } else if (outcome === 'failed') {
-      // Ceiling only drops on a ceiling fail. Failing a bonus Lv 1
-      // animal at ceiling Lv 5 isn't fair grounds to demote them.
-      if (isCeilingEncounter) {
-        const next = Math.max(window.WCLevels.MIN, ceiling - 1);
-        await setEncounterLevel(next);
-      }
-      // Longer cooldown after a fail — getting questions wrong then
-      // immediately seeing another animal feels punishing. Give the
-      // student 90 seconds to read freely and recover.
+      // Participation XP — trying matters, and SDT prefers no
+      // punishment for honest attempts. The 90 s cooldown still
+      // protects flow from an immediate re-pop.
+      await bumpXp(5);
       cooldownUntil = Date.now() + COOLDOWN_AFTER_FAIL_MS;
     } else if (outcome === 'skipped') {
-      // Student tapped ✕ — no pet, no coins, no ceiling change. Just
-      // pause the encounter system for a minute so the next marked
-      // word doesn't immediately re-pop another animal.
+      // Student tapped ✕ — no pet, no XP. 60 s cooldown so the
+      // next page-advance doesn't immediately re-pop another animal.
       cooldownUntil = Date.now() + COOLDOWN_AFTER_SKIP_MS;
     }
-    // either way, sidebar progress panel should refresh — it reads
-    // the live counter (already reset) and encounter_level.
     window.dispatchEvent(new CustomEvent('wc:encounter-end', {
       detail: { outcome, setName, animalIdx, level },
     }));
   }
 
   // ----------------------------------------------------------------
-  //  Persistent user updates (coins, encounter_level).
+  //  Persistent user updates — XP odometer. (Money lives on the
+  //  reward wheel + sidebar teacher-gift now; both write the ledger
+  //  + the wc_users.money mirror directly.)
   // ----------------------------------------------------------------
-  async function bumpCoins(delta) {
+  async function bumpXp(delta) {
     if (!delta) return;
-    const before = lessonState.me.money || 0;
+    const before = lessonState.me.xp || 0;
     const after  = Math.max(0, before + delta);
-    lessonState.me.money = after;
-    // Optimistic UI update.
-    const el = document.getElementById('userMoney');
-    if (el) el.textContent = String(after);
+    lessonState.me.xp = after;
     try {
-      await window.WCDB.users.update(lessonState.me.id, { money: after });
-      // refresh cached session so other tabs (profile etc.) see it
+      await window.WCDB.users.update(lessonState.me.id, { xp: after });
       const raw = localStorage.getItem('wc.session.v1');
       if (raw) {
-        const u = JSON.parse(raw); u.money = after;
+        const u = JSON.parse(raw); u.xp = after;
         localStorage.setItem('wc.session.v1', JSON.stringify(u));
       }
-    } catch (e) { console.warn('money update failed', e); }
-  }
-
-  async function setEncounterLevel(next) {
-    if (next === lessonState.me.encounter_level) return;
-    lessonState.me.encounter_level = next;
-    try {
-      await window.WCDB.users.update(lessonState.me.id, { encounter_level: next });
-      const raw = localStorage.getItem('wc.session.v1');
-      if (raw) {
-        const u = JSON.parse(raw); u.encounter_level = next;
-        localStorage.setItem('wc.session.v1', JSON.stringify(u));
-      }
-    } catch (e) { console.warn('encounter_level update failed', e); }
+    } catch (e) { console.warn('xp update failed', e); }
   }
 
   window.WCEncounter = window.WCEncounter || {};
-  window.WCEncounter.bumpCoins = bumpCoins;
+  // Legacy export — coins now arrive via the reward wheel + sidebar
+  // teacher-gift path. Kept as a no-op so any stale caller doesn't
+  // throw; nothing inside encounter.js calls it any more.
+  window.WCEncounter.bumpCoins = function () {};
 })();

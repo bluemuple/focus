@@ -3944,6 +3944,14 @@
     if (!Number.isFinite(nDaily) || nDaily < 0) nDaily = 20;
     nDaily = Math.min(120, Math.floor(nDaily));
 
+    // Encouragement lines — one per textarea row. The profile page
+    // picks one at random. Empty → profile uses its built-in Korean
+    // defaults so the box is never blank.
+    const encsArr = Array.isArray(flags.encouragements)
+      ? flags.encouragements.filter(s => typeof s === 'string' && s.trim())
+      : [];
+    const encsText = encsArr.join('\n');
+
     wrap.innerHTML = `
       <p class="wc-muted" style="margin: 0 0 16px;">
         These flags apply to <strong>${escapeHtml(currentClass.name)}</strong>. They take effect the next time a student opens a lesson.
@@ -4013,6 +4021,16 @@
         being the price of play. Only active when fade is on.
       </p>
 
+      <h3 style="margin: 28px 0 6px;">💝 격려 문구 (학생 프로필)</h3>
+      <p class="wc-muted" style="margin: 0 0 8px;">
+        한 줄에 하나씩 적으면, 학생의 프로필 화면에 매번 무작위로
+        한 문장이 나타납니다. (비워두면 기본 한글 문구 5개가 자동
+        표시돼요 — 한 줄이라도 적으면 그쪽만 보입니다.)
+      </p>
+      <textarea id="encouragementsTextarea" class="wc-input"
+                style="min-height: 120px; font-family: inherit; line-height: 1.5;"
+                placeholder="예) 잘하고 있어! 한 걸음씩 가자. 🌱">${escapeHtml(encsText)}</textarea>
+
       <button id="saveSettingsBtn" class="wc-btn wc-mt-24">Save settings</button>
       <span id="settingsStatus" class="wc-muted" style="margin-left:10px;"></span>
     `;
@@ -4041,6 +4059,13 @@
       if (!Number.isFinite(nd) || nd < 0) nd = 20;
       if (nd > 120) nd = 120;
       next.dailyRestMinutes = nd;
+      // Encouragements — one per line, trim, drop empties. Empty
+      // array drops the key so the profile falls back to defaults.
+      const encsEl = $('encouragementsTextarea');
+      const encsClean = encsEl
+        ? encsEl.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+        : [];
+      if (encsClean.length) next.encouragements = encsClean;
       try {
         await window.WCDB.classes.update(currentClass.id, {
           hide_features: next,

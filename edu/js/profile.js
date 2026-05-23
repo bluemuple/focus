@@ -35,9 +35,20 @@
     init();
   })();
 
+  // Five Korean default encouragement lines — used when the teacher
+  // hasn't written any in Settings yet. The teacher can add more (one
+  // per line) and they'll show up here in the random rotation.
+  const DEFAULT_ENCS = [
+    '잘하고 있어! 한 걸음씩 가자. 🌱',
+    '꾸준한 네가 진짜 멋져. 💪',
+    '오늘 읽은 만큼 네 안의 영어가 자라요. 📚',
+    '틀려도 괜찮아 — 도전하는 게 진짜 실력이야. ✨',
+    '천천히, 즐겁게 — 내가 응원할게! 🌟',
+  ];
+
   // Wire shared header bits.
   $('userName').textContent  = me.real_name;
-  $('userMoney').textContent = me.money || 0;
+  $('userMoney').textContent = window.WCDB.fmtDollars(me.money || 0);
   $('logoutBtn').addEventListener('click', e => {
     e.preventDefault();
     window.WCAuth.logout();
@@ -45,37 +56,86 @@
   });
 
   async function init() {
-    const [pets, wordRows, msgs] = await Promise.all([
+    const [pets, wordRows, msgs, timeEntries, classRow] = await Promise.all([
       window.WCDB.pets.forUser(me.id).catch(() => []),
       window.WCDB.wordStates.forUser(me.id).catch(() => []),
       window.WCDB.viz.forStudent(me.id).catch(() => []),
+      window.WCDB.time.list(me.id).catch(() => []),
+      (me.class_id ? window.WCDB.classes.byId(me.class_id) : Promise.resolve(null))
+        .catch(() => null),
     ]);
-    renderHero(pets);
+    renderHero(timeEntries, classRow);
     renderCollection(pets);
     renderWordStats(wordRows);
     renderMessages(msgs.filter(m => m.responded_at));
   }
 
   // ============================================================
-  //  HERO — name, coin total, encounter level, total catches
+  //  HERO — portrait + Name / Time / Money / XP gauge / encouragement
   // ============================================================
-  function renderHero(pets) {
+  function renderHero(timeEntries, classRow) {
     const wrap = $('hero');
-    const totalSets = window.WCAssets.allSetNames.length * 10;
-    const uniqueCaught = uniqueKey(pets).size;
+    // Time balance (sum earn − spend, clamped ≥ 0).
+    let timeMin = 0;
+    (timeEntries || []).forEach(e => {
+      timeMin += (e.kind === 'spend' ? -1 : 1) * (e.minutes || 0);
+    });
+    timeMin = Math.max(0, timeMin);
+    const tH = Math.floor(timeMin / 60), tM = timeMin % 60;
+    const timeStr = tH + ':' + String(tM).padStart(2, '0');
+
+    // Money — wc_users.money is the authoritative balance in cents.
+    const moneyStr = window.WCDB.fmtDollars(me.money || 0);
+
+    // XP → catcher level (1..28) + a gauge of progress to next level.
+    const xpInfo = (window.WCLevels && window.WCLevels.xpToNext)
+      ? window.WCLevels.xpToNext(me.xp || 0)
+      : { level: 1, xpInLevel: 0, xpNeeded: 8, progressPct: 0, max: false };
+    // Current level's badge image — files were resized + renamed to
+    // level-01.png … level-28.png in /edu/images/lesson-levels/. The
+    // image already prints its level number in the bottom-right, so
+    // it doubles as a visible "I am Lv N" badge.
+    const lvlPad = String(xpInfo.level).padStart(2, '0');
+    const levelImg = `./images/lesson-levels/level-${lvlPad}.png`;
+
+    // Encouragement — random pick from the class pool (teacher Settings),
+    // falling back to the built-in Korean defaults.
+    const flags = (classRow && classRow.hide_features) || {};
+    const list  = Array.isArray(flags.encouragements)
+      ? flags.encouragements.filter(s => typeof s === 'string' && s.trim())
+      : [];
+    const pool  = list.length ? list : DEFAULT_ENCS;
+    const enc   = pool[Math.floor(Math.random() * pool.length)];
+
+    // Portrait: filename = login_code (unique per student). 404 →
+    // onerror swaps in the empty-state class for a neutral placeholder.
+    const code = me.login_code || me.id || '';
+    const portrait = './images/profile-portraits/'
+      + encodeURIComponent(code) + '.png';
+
     wrap.innerHTML = `
-      <div class="wc-hero-row">
-        <div class="wc-hero-block">
-          <div class="wc-hero-label">Coins</div>
-          <div class="wc-hero-val">💰 ${me.money || 0}</div>
+      <div class="wc-profile-hero-row">
+        <div class="wc-profile-portrait">
+          <img src="${portrait}" alt="${escapeHtml(me.real_name || '')}"
+               onerror="this.parentNode.classList.add('wc-profile-portrait-empty'); this.style.display='none';" />
         </div>
-        <div class="wc-hero-block">
-          <div class="wc-hero-label">Catcher level</div>
-          <div class="wc-hero-val">⭐ ${me.encounter_level || 1}</div>
-        </div>
-        <div class="wc-hero-block">
-          <div class="wc-hero-label">Animals caught</div>
-          <div class="wc-hero-val">🐾 ${uniqueCaught} / ${totalSets}</div>
+        <div class="wc-profile-info">
+          <div class="wc-profile-row"><span class="wc-profile-label">Name:</span> <span class="wc-profile-val">${escapeHtml(me.real_name || '')}</span></div>
+          <div class="wc-profile-row"><span class="wc-profile-label">Time:</span> <span class="wc-profile-val">${timeStr}</span></div>
+          <div class="wc-profile-row"><span class="wc-profile-label">Money:</span> <span class="wc-profile-val">${moneyStr}</span></div>
+          <div class="wc-profile-row wc-profile-xprow">
+            <div class="wc-profile-xp-gauge">
+              <div class="wc-profile-xphdr">
+                <span class="wc-profile-label">Ex. needed for the next Level</span>
+                <span class="wc-profile-xpnum">Lv ${xpInfo.level}${xpInfo.max ? ' · MAX' : ' · ' + xpInfo.xpInLevel + ' / ' + xpInfo.xpNeeded + ' XP'}</span>
+              </div>
+              <div class="wc-profile-xpbar"><div class="wc-profile-xpbar-fill" style="width:${xpInfo.progressPct}%"></div></div>
+            </div>
+            <img class="wc-profile-levelimg" src="${levelImg}"
+                 alt="Level ${xpInfo.level}"
+                 onerror="this.style.display='none';" />
+          </div>
+          <p class="wc-profile-enc">${escapeHtml(enc)}</p>
         </div>
       </div>
     `;
