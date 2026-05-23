@@ -1660,15 +1660,18 @@
       alert('마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.');
       return;
     }
-    // Pick a mimeType the recorder AND the <audio> element will both
-    // accept. The default differs by browser (and a known Windows Edge
-    // build emits silent blobs unless the type is pinned) — opus-in-
-    // webm covers Chrome/Edge/Firefox; mp4/aac covers Safari.
+    // Prefer mp4/AAC — its container writes the duration in the
+    // header (so no Chromium `duration=Infinity` bug on playback)
+    // AND Windows Edge plays MediaRecorder-produced mp4 reliably
+    // where it sometimes outputs silent audio for webm/opus blobs
+    // (the `<audio>` element thinks it's playing — currentTime
+    // advances — but no sound reaches the speakers). Firefox doesn't
+    // support mp4 in MediaRecorder, so webm/opus stays as fallback.
     const candidates = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
       'audio/mp4;codecs=mp4a.40.2',
       'audio/mp4',
+      'audio/webm;codecs=opus',
+      'audio/webm',
     ];
     let chosenType = '';
     if (typeof MediaRecorder !== 'undefined'
