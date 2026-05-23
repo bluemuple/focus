@@ -3637,7 +3637,11 @@
       document.body.classList.toggle('wc-head-collapsed', headCollapsed);
       const b = $('btnHeadCollapse');
       if (b) {
-        b.textContent = headCollapsed ? '⌄' : '⌃';
+        // NOTE: do NOT touch b.textContent — the button holds two
+        // inline SVG icons (.ht-coll-open / .ht-coll-closed) and CSS
+        // swaps which is visible based on body.wc-head-collapsed.
+        // Overwriting textContent would wipe both SVGs and leave the
+        // button blank.
         b.setAttribute('aria-expanded', headCollapsed ? 'false' : 'true');
         b.title = headCollapsed ? 'Show the toolbar' : 'Hide the toolbar';
       }
