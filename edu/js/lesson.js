@@ -162,6 +162,55 @@
       catch { return 1; }
     },
     onWordLevelChange(cb) { if (typeof cb === 'function') levelChangeListeners.push(cb); },
+    // --- iPhone-home-screen-style page swipe support (mobile) ---
+    // The swipe manager in lesson.html needs to (a) know what page
+    // we're on + how many there are + which paged mode we're in,
+    // (b) snapshot a neighbor page's rendered HTML to slide it in
+    // behind the finger, and (c) commit the page change WITHOUT
+    // the existing slideRender CSS animation (the swipe already
+    // animated the transition).
+    get singleMode()   { return singleMode; },
+    get scrollMode()   { return scrollMode; },
+    get pageIdx()      { return pageIdx; },
+    get pagesLength()  { return pages.length; },
+    // Render a target page's HTML without disturbing the current
+    // DOM. Implemented as a state-swap snapshot — synchronous JS
+    // means no browser paint sneaks in between mutations, so the
+    // user never sees the briefly-rendered other page.
+    renderPageHtml(pi) {
+      if (singleMode || scrollMode) return '';
+      if (!Array.isArray(pages) || pi < 0 || pi >= pages.length) return '';
+      const root = $('lessonBody');
+      if (!root) return '';
+      const savedHtml = root.innerHTML;
+      const savedPi   = pageIdx;
+      try {
+        pageIdx = pi;
+        renderBody();
+        return root.innerHTML;
+      } finally {
+        pageIdx = savedPi;
+        root.innerHTML = savedHtml;
+      }
+    },
+    // Apply a page change without the existing slideRender CSS
+    // animation. The swipe manager already animated the transition
+    // visually; we just need to mount the new page's real DOM
+    // (word spans, click handlers, etc.) at the end.
+    swipeCommitPage(targetIdx) {
+      if (singleMode || scrollMode) return;
+      if (!Array.isArray(pages) || !pages.length) return;
+      const ti = Math.max(0, Math.min(pages.length - 1, targetIdx));
+      if (ti === pageIdx) return;
+      pageIdx = ti;
+      saveProgress();
+      try { refreshRecUi(); } catch {}
+      notifyPageAdvance(pageIdx);
+      renderBody();
+      refreshPageCounter();
+      refreshNavBoundary();
+      applyFocus();
+    },
     // Mutators sidebar.js calls when the ice-cream picker fires.
     setWordLevel: async function (lower, next, originalWord) {
       const prev = wordLevels.has(lower) ? wordLevels.get(lower) : null;

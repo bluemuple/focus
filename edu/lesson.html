@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=flush-bar-1">
+  <link rel="stylesheet" href="./css/styles.css?v=swipe-pages-1">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -322,7 +322,7 @@
   <script src="./js/word-info.js"></script>
   <script src="./js/wc-korbar.js"></script>
   <script src="./js/chunks.js"></script>
-  <script src="./js/lesson.js?v=mobsh-2"></script>
+  <script src="./js/lesson.js?v=swipe-pages-1"></script>
   <script src="./js/sidebar.js?v=viz-time-1"></script>
   <script src="./js/quiz.js?v=profile-xp-1"></script>
   <script src="./js/encounter.js?v=rec-flow-2"></script>
@@ -767,6 +767,230 @@
         if (!isOpen) return;
         requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
       });
+    })();
+
+    // ============================================================
+    //  MOBILE PAGE SWIPE — iPhone-home-screen style page turning.
+    //  Touch anywhere on the lesson body and drag horizontally;
+    //  the current page follows the finger while the neighbor
+    //  page slides in from the opposite side. Pausing the finger
+    //  pauses the animation; releasing past ~25% of the viewport
+    //  width commits the page change, otherwise it rolls back.
+    //
+    //  Only active in paginated mode (NOT singleMode / scrollMode)
+    //  with at least 2 pages. Vertical drags are passed through to
+    //  the page scroll. Taps + word selections still work — the
+    //  swipe machinery only engages once the user moves a few
+    //  pixels horizontally past a dead zone.
+    // ============================================================
+    (function () {
+      if (!window.matchMedia('(max-width: 900px)').matches) return;
+      const body = document.getElementById('lessonBody');
+      if (!body) return;
+      const wrap = body.parentElement;     // .wc-lesson-text-wrap
+      if (!wrap) return;
+
+      // Stash the original transform so we can restore on rollback.
+      let drag = null;
+
+      function shouldSwipe() {
+        const L = window.WCLesson;
+        if (!L) return false;
+        if (L.singleMode || L.scrollMode) return false;
+        return (L.pagesLength || 0) > 1;
+      }
+      // Skip swipe if the touch lands on an interactive element —
+      // word click, sentence record button, TTS, sidebar toggle, etc.
+      // We deliberately leave .w (word spans) NOT in the skip list so
+      // students can start a swipe from anywhere in the text; a single
+      // tap (no horizontal movement) still selects the word.
+      function isInteractive(target) {
+        if (!target || target === body) return false;
+        return !!target.closest(
+          'button, a, input, textarea, select, ' +
+          '.wc-rec-btn, .wc-rec-tts, .wc-bubble-rec, ' +
+          '.wc-take, .wc-mobsh, .wc-rec-bar'
+        );
+      }
+
+      function makeClone(html, parkX) {
+        const div = document.createElement('div');
+        // Inherit lesson body classes (font, layout, padding, etc.)
+        // so the clone visually matches the live body 1-to-1.
+        div.className = body.className + ' wc-page-clone';
+        div.style.position = 'absolute';
+        div.style.top = '0';
+        div.style.left = '0';
+        div.style.right = '0';
+        div.style.bottom = '0';
+        div.style.transform = 'translateX(' + parkX + 'px)';
+        div.style.pointerEvents = 'none';
+        div.style.willChange = 'transform';
+        div.style.zIndex = '1';
+        div.innerHTML = html;
+        return div;
+      }
+
+      function prepareClones(state) {
+        const L = window.WCLesson;
+        const pi = state.pi;
+        const w  = state.pageW;
+        // Previous (right swipe reveals this) — parked off-LEFT.
+        if (pi > 0) {
+          const html = L.renderPageHtml(pi - 1);
+          if (html) {
+            state.prevClone = makeClone(html, -w);
+            wrap.appendChild(state.prevClone);
+          }
+        }
+        // Next (left swipe reveals this) — parked off-RIGHT.
+        if (pi < state.total - 1) {
+          const html = L.renderPageHtml(pi + 1);
+          if (html) {
+            state.nextClone = makeClone(html, w);
+            wrap.appendChild(state.nextClone);
+          }
+        }
+      }
+
+      function setTransforms(state, dx) {
+        body.style.transform = 'translateX(' + dx + 'px)';
+        if (state.prevClone) {
+          state.prevClone.style.transform =
+            'translateX(' + (-state.pageW + dx) + 'px)';
+        }
+        if (state.nextClone) {
+          state.nextClone.style.transform =
+            'translateX(' + (state.pageW + dx) + 'px)';
+        }
+      }
+
+      function disableTransitions(state) {
+        body.style.transition = 'none';
+        if (state.prevClone) state.prevClone.style.transition = 'none';
+        if (state.nextClone) state.nextClone.style.transition = 'none';
+      }
+      function enableTransitions(state, ease) {
+        body.style.transition = ease;
+        if (state.prevClone) state.prevClone.style.transition = ease;
+        if (state.nextClone) state.nextClone.style.transition = ease;
+      }
+
+      function cleanup(state) {
+        if (state.prevClone) state.prevClone.remove();
+        if (state.nextClone) state.nextClone.remove();
+        body.style.transform   = '';
+        body.style.transition  = '';
+        body.style.willChange  = '';
+      }
+
+      function onStart(e) {
+        if (drag) return;
+        if (!shouldSwipe()) return;
+        if (isInteractive(e.target)) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        drag = {
+          x0: t.clientX, y0: t.clientY,
+          t0: Date.now(),
+          pageW: wrap.clientWidth,
+          pi: window.WCLesson.pageIdx,
+          total: window.WCLesson.pagesLength,
+          axis: null,                 // 'h' | 'v' once locked
+          prevClone: null, nextClone: null,
+          lastDx: 0,
+        };
+      }
+
+      function onMove(e) {
+        if (!drag) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        const dx = t.clientX - drag.x0;
+        const dy = t.clientY - drag.y0;
+        // Lock the gesture axis on the first commit past the dead zone.
+        if (!drag.axis) {
+          const ax = Math.abs(dx), ay = Math.abs(dy);
+          if (Math.max(ax, ay) < 8) return;
+          drag.axis = ax > ay ? 'h' : 'v';
+          if (drag.axis === 'h') {
+            prepareClones(drag);
+            disableTransitions(drag);
+            body.style.willChange = 'transform';
+          } else {
+            // Vertical scroll — release ownership so the page scrolls.
+            drag = null;
+            return;
+          }
+        }
+        if (drag.axis !== 'h') return;
+        // Suppress browser scroll while we're driving a horizontal drag.
+        // touchmove was attached with passive:false so preventDefault works.
+        if (e.cancelable) e.preventDefault();
+        // Clamp dx so the user can't drag past a non-existent neighbor —
+        // pulls back with rubber-band feel (×0.3 past the boundary).
+        let cdx = dx;
+        if (dx > 0 && !drag.prevClone)      cdx = dx * 0.3;
+        else if (dx < 0 && !drag.nextClone) cdx = dx * 0.3;
+        drag.lastDx = cdx;
+        setTransforms(drag, cdx);
+      }
+
+      function onEnd() {
+        if (!drag) return;
+        if (drag.axis !== 'h') { drag = null; return; }
+        const state = drag; drag = null;
+        const dx       = state.lastDx;
+        const elapsed  = Math.max(1, Date.now() - state.t0);
+        const velocity = Math.abs(dx) / elapsed;      // px/ms
+        // Commit thresholds — either dragged past 25% of width, OR a
+        // quick flick (>0.6 px/ms and >40 px).
+        const distThresh = state.pageW * 0.25;
+        const isFlick    = velocity > 0.6 && Math.abs(dx) > 40;
+        let target = null;
+        if ((dx <= -distThresh || (isFlick && dx < 0)) && state.nextClone) {
+          target = 'next';
+        } else if ((dx >= distThresh || (isFlick && dx > 0)) && state.prevClone) {
+          target = 'prev';
+        }
+        // Animate body + clones to commit or rollback position.
+        const ease = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+        enableTransitions(state, ease);
+        if (target === 'next') {
+          body.style.transform = 'translateX(' + (-state.pageW) + 'px)';
+          state.nextClone.style.transform = 'translateX(0)';
+          if (state.prevClone) state.prevClone.style.transform =
+            'translateX(' + (-2 * state.pageW) + 'px)';
+        } else if (target === 'prev') {
+          body.style.transform = 'translateX(' + state.pageW + 'px)';
+          state.prevClone.style.transform = 'translateX(0)';
+          if (state.nextClone) state.nextClone.style.transform =
+            'translateX(' + (2 * state.pageW) + 'px)';
+        } else {
+          body.style.transform = 'translateX(0)';
+          if (state.prevClone) state.prevClone.style.transform =
+            'translateX(' + (-state.pageW) + 'px)';
+          if (state.nextClone) state.nextClone.style.transform =
+            'translateX(' + (state.pageW) + 'px)';
+        }
+        // After the slide animation completes, swap the real DOM in.
+        setTimeout(() => {
+          cleanup(state);
+          if (target === 'next') {
+            window.WCLesson.swipeCommitPage(state.pi + 1);
+          } else if (target === 'prev') {
+            window.WCLesson.swipeCommitPage(state.pi - 1);
+          }
+        }, 230);
+      }
+
+      // touchmove is non-passive so we can preventDefault during the
+      // horizontal drag (suppresses browser scroll). touchstart can
+      // stay passive — we don't preventDefault there.
+      body.addEventListener('touchstart',  onStart, { passive: true });
+      body.addEventListener('touchmove',   onMove,  { passive: false });
+      body.addEventListener('touchend',    onEnd);
+      body.addEventListener('touchcancel', onEnd);
     })();
 
   </script>
