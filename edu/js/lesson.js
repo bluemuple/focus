@@ -1645,21 +1645,70 @@
   async function startRecording(key) {
     if (activeRec || !key) return;
     let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
-    catch (e) { alert('마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.'); return; }
+    try {
+      // Explicit constraints work better across browsers than the
+      // bare `audio: true` (Windows Edge in particular sometimes
+      // grabs a silent / wrong source without them).
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl:  true,
+        },
+      });
+    } catch (e) {
+      alert('마이크를 사용할 수 없어요. 브라우저의 마이크 권한을 확인해 주세요.');
+      return;
+    }
+    // Pick a mimeType the recorder AND the <audio> element will both
+    // accept. The default differs by browser (and a known Windows Edge
+    // build emits silent blobs unless the type is pinned) — opus-in-
+    // webm covers Chrome/Edge/Firefox; mp4/aac covers Safari.
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/mp4',
+    ];
+    let chosenType = '';
+    if (typeof MediaRecorder !== 'undefined'
+        && typeof MediaRecorder.isTypeSupported === 'function') {
+      chosenType = candidates.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    }
     let mr;
-    try { mr = new MediaRecorder(stream); }
-    catch (e) { stream.getTracks().forEach(t => t.stop()); return; }
+    try {
+      mr = chosenType
+        ? new MediaRecorder(stream, { mimeType: chosenType })
+        : new MediaRecorder(stream);
+    } catch (e) {
+      stream.getTracks().forEach(t => t.stop());
+      alert('녹음을 시작할 수 없어요: ' + (e && e.message));
+      return;
+    }
     const chunks = [];
     mr.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
     mr.onstop = () => {
       stream.getTracks().forEach(t => t.stop());
-      addTake(key, new Blob(chunks, { type: mr.mimeType || 'audio/webm' }));
+      // Strip ;codecs=… from the blob type — some Edge builds refuse
+      // to play back a blob whose type carries a codec parameter.
+      const recType  = mr.mimeType || chosenType || 'audio/webm';
+      const blobType = recType.split(';')[0] || 'audio/webm';
+      const blob     = new Blob(chunks, { type: blobType });
+      if (!blob.size) {
+        console.warn('[recording] empty blob — check mic input');
+        alert('녹음이 비어 있어요. 마이크 입력을 확인해 주세요.');
+      } else {
+        addTake(key, blob);
+      }
       activeRec = null;
       refreshRecUi();
     };
     activeRec = { mr, key };
-    mr.start();
+    // Force a flush every 250 ms instead of waiting for stop — some
+    // browsers (Windows Edge in particular) otherwise only emit
+    // dataavailable on stop, and an Edge bug can fire that event
+    // empty, leaving the take silent.
+    try { mr.start(250); } catch (e) { mr.start(); }
     refreshRecUi();
   }
 
@@ -1668,7 +1717,8 @@
     try { if (window.WCTTS) window.WCTTS.stop(); } catch {}
     try { if (lessonAudioEl) lessonAudioEl.pause(); } catch {}
     const a = new Audio(take.url);
-    a.play().catch(() => {});
+    a.play().catch(e =>
+      console.warn('[recording] playback failed', e && e.message));
   }
 
   // ── "Play all my recordings" — the light-blue nav-bar button.
