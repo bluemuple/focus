@@ -4175,6 +4175,25 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   /* Lift the lesson body just enough to clear the new flush-bottom
      bar (~ 50 px tall). */
   body.wc-lesson-layout .wc-lesson-text-wrap { padding-bottom: 70px; }
+
+  /* Kill iOS' double-tap-to-zoom on the lesson chrome so a fast
+     double-tap on a word doesn't zoom the page. Pinch zoom is
+     still allowed (touch-action: manipulation, not none). */
+  body.wc-lesson-layout {
+    touch-action: manipulation;
+  }
+
+  /* Push-up: when the bottom sheet is open, slide the WHOLE
+     lesson shell (.wc-shell — title bar + body) up so the
+     selected word ends up just above the sheet. JS measures the
+     required offset and writes it into --wc-pushup; CSS animates. */
+  body.wc-lesson-layout .wc-shell {
+    transition: transform .22s cubic-bezier(.22,.6,.36,1);
+    transform: translateY(0);
+  }
+  body.wc-lesson-layout.wc-pushup .wc-shell {
+    transform: translateY(calc(var(--wc-pushup, 0px) * -1));
+  }
 }
 
 /* ---- The fixed-bottom mobile word surface (sheet + bar) ---- */
@@ -4195,19 +4214,23 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   }
   .wc-mobsh > * { pointer-events: auto; }
 
-  /* ----- The dynamic-height sheet (only rendered when a word is
-     selected — keeps the bar alone clean when no word is up).
-     Hardened with !important + visibility:hidden so absolutely
-     nothing renders (border, box-shadow, margin gap, etc.) until
-     the .is-open class is added by JS. ----- */
+  /* ----- The dynamic-height sheet -----
+     Rectangular, attached to the bottom 3 sides (left/right/bottom
+     all flush), and butts directly up against the .wc-mobsh-bar
+     above (no gap). Hidden completely (display:none) when no word
+     is selected — only the bar shows. */
   .wc-mobsh-sheet {
-    margin: 0 10px 8px;
+    margin: 0;
     background: #fff;
-    border: 1px solid var(--tobok-line, #e5e7eb);
-    border-radius: 16px;
-    box-shadow: 0 8px 24px rgba(15,20,28,.14);
+    border: 0;
+    border-top: 1px solid var(--tobok-line, #e5e7eb);
+    border-radius: 0;
+    box-shadow: 0 -2px 10px rgba(0,0,0,.06);
     overflow: hidden;
     height: 0;
+    /* height alone — pages slide horizontally with their OWN
+       transition. Keeps the sheet's top edge moving in sync with
+       the swipe-driven height interpolation. */
     transition: height .25s cubic-bezier(.22,.6,.36,1);
     position: relative;
     display: none !important;
@@ -4216,49 +4239,54 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   .wc-mobsh.is-open .wc-mobsh-sheet {
     display: block !important;
     visibility: visible;
-    min-height: 80px;
   }
   /* Close button — circular ×, top-right inside the sheet. */
   .wc-mobsh-close {
     position: absolute;
-    top: 8px; right: 8px;
-    width: 28px; height: 28px;
+    top: 6px; right: 6px;
+    width: 26px; height: 26px;
     border: 1px solid var(--tobok-line, #e5e7eb);
     background: #fff;
     border-radius: 999px;
-    font-size: 16px; line-height: 1;
+    font-size: 15px; line-height: 1;
     color: #6b7280;
     cursor: pointer;
     padding: 0;
     display: grid; place-items: center;
     z-index: 3;
+    touch-action: manipulation;
   }
   .wc-mobsh-close:hover { background: #f1f3f5; color: var(--tobok-ink); }
 
-  /* ----- Carousel pages: native scroll-snap-x ----- */
+  /* ----- Carousel pages — bottom-anchored, variable height -----
+     No scroll-snap; the JS swipe handler in lesson.html drives all
+     transforms. Each page is `position: absolute` at `bottom: 0` so
+     adjacent pages with DIFFERENT natural heights both sit on the
+     same bottom rail — their TOP edges land at different Y values
+     (matches the user's spec: "다음 페이지가 낮으면 윗변 높이가
+     다르게"). */
   .wc-mobsh-pages {
-    display: flex;
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x mandatory;
-    scroll-snap-stop: always;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    height: 100%;
-  }
-  .wc-mobsh-pages::-webkit-scrollbar { display: none; }
-  .wc-mobsh-page {
-    flex: 0 0 100%;
+    position: relative;
     width: 100%;
-    min-width: 100%;
-    max-width: 100%;
-    scroll-snap-align: start;
-    padding: 14px 44px 14px 16px;  /* extra right for the × */
-    box-sizing: border-box;
-    overflow-y: auto;
-    overscroll-behavior: contain;
+    height: 100%;
+    overflow: visible;        /* sheet itself clips */
   }
+  .wc-mobsh-page {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: 12px 40px 12px 14px;  /* extra right gutter for × */
+    box-sizing: border-box;
+    will-change: transform;
+    /* Off-screen by default; JS positions the active page to 0. */
+    transform: translateX(100%);
+    display: none;            /* only the current + an active
+                                  neighbor during swipe are display:
+                                  block. JS toggles. */
+  }
+  .wc-mobsh-page.is-current { display: block; transform: translateX(0); }
+  .wc-mobsh-page.is-neighbor { display: block; }
 
   /* Page 1 — 뜻: headline + gray chunk box. */
   .wc-mobsh-headline {

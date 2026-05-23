@@ -2,9 +2,14 @@
 <html lang="en-NZ">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <!-- maximum-scale=1 + user-scalable=no kill iOS' double-tap zoom
+       on the lesson body so a fast double-tap doesn't zoom the page
+       (still leaves text-size + spacing adjustments to the in-page
+       Aa controls). On Android, touch-action: manipulation on the
+       body (CSS) does the same. -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=swipe-pages-1">
+  <link rel="stylesheet" href="./css/styles.css?v=sheet-v2">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -364,11 +369,6 @@
     //      — wired to existing WCTTS / WCLesson / btnPrev / btnNext.
     // ============================================================
     (function () {
-      if (!window.matchMedia('(max-width: 900px)').matches) {
-        // Desktop — leave the .wc-mobsh element inert. We still
-        // attach the resize listener at the very end so flipping
-        // to mobile (rotation, devtools) re-initialises.
-      }
       const root  = document.documentElement;
       const host  = document.getElementById('wcMobSh');
       const sheet = document.getElementById('wcMobShSheet');
@@ -390,140 +390,314 @@
       const lvlBtns    = host.querySelectorAll('.wc-mobsh-circ.is-lvl');
 
       // ── State ──
-      let currentWord     = null;     // { word, lower, sentence }
-      let currentChunk    = null;     // { chunk, sentence }
-      let currentInfo     = null;     // resolved word info
-      let isOpen          = false;
-      let lessonRef       = null;     // captured from WCLesson init payload
-      let pageHeights     = [80, 80, 130];
-      let scrollAnimRaf   = 0;
+      let currentWord    = null;     // { word, lower, sentence }
+      let currentChunk   = null;     // { chunk, sentence }
+      let currentInfo    = null;     // resolved word info
+      let isOpen         = false;
+      // Carousel — logical page indices into PAGES[]. Left swipe
+      // advances forward, right swipe retreats — both cycle.
+      const PAGES = ['meaning', 'more', 'msg'];
+      const pageEls = {
+        meaning: pages.querySelector('[data-page="meaning"]'),
+        more:    pages.querySelector('[data-page="more"]'),
+        msg:     pages.querySelector('[data-page="msg"]'),
+      };
+      let curIdx = 0;   // index into PAGES of the visible page
 
       function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
           ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
       }
-      function setSheetHeight(px) {
+      function setSheetHeight(px, withTransition) {
+        if (withTransition) {
+          sheet.style.transition = 'height .22s cubic-bezier(.22,.6,.36,1)';
+        } else {
+          sheet.style.transition = 'none';
+        }
         sheet.style.height = Math.max(0, px) + 'px';
       }
-      // Measure each page's natural content height by temporarily
-      // freeing the page from the carousel constraints. Cached per
-      // current word render so we can interpolate during swipes.
-      function measurePages() {
-        const arr = [];
-        pages.querySelectorAll('.wc-mobsh-page').forEach(p => {
-          // Natural content height + page's own vertical padding.
-          // scrollHeight gives content + padding (without borders) —
-          // close enough for the dynamic height target.
-          arr.push(p.scrollHeight);
-        });
-        pageHeights = arr.length ? arr : [80];
-        return pageHeights;
+      // Measure a page's natural rendered height — only meaningful
+      // when the page is in the DOM with display:block. Caller is
+      // responsible for that.
+      function pageNaturalHeight(el) {
+        if (!el) return 0;
+        // scrollHeight returns content height + padding; perfect
+        // since each page is its own padded box.
+        return el.scrollHeight;
       }
-      // Apply the height of whichever page is currently snapped.
-      function syncHeightToCurrent() {
-        if (!isOpen) { setSheetHeight(0); return; }
-        const w = pages.clientWidth || 1;
-        const idx = Math.round(pages.scrollLeft / w);
-        const h = pageHeights[idx] || 100;
-        setSheetHeight(h);
-      }
-      // During an active swipe, interpolate height between current
-      // and next page so the sheet's top edge slides with the finger.
-      function onPagesScroll() {
-        if (scrollAnimRaf) return;
-        scrollAnimRaf = requestAnimationFrame(() => {
-          scrollAnimRaf = 0;
-          if (!isOpen) return;
-          const w = pages.clientWidth || 1;
-          const raw = pages.scrollLeft / w;
-          const i0  = Math.floor(raw);
-          const i1  = Math.min(pageHeights.length - 1, i0 + 1);
-          const t   = Math.max(0, Math.min(1, raw - i0));
-          const h0  = pageHeights[i0] || 100;
-          const h1  = pageHeights[i1] || h0;
-          const h   = h0 + (h1 - h0) * t;
-          // Suppress the CSS transition while the finger is moving —
-          // tracking the scroll position 1:1 looks crisper than a
-          // 250 ms ease lagging behind the touch.
-          sheet.style.transition = 'none';
-          setSheetHeight(h);
-        });
-      }
-      // After scroll settles, restore the CSS transition for the
-      // next programmatic jump (carousel loop, page reset, etc.).
-      let scrollIdleT = 0;
-      pages.addEventListener('scroll', () => {
-        onPagesScroll();
-        clearTimeout(scrollIdleT);
-        scrollIdleT = setTimeout(() => {
-          sheet.style.transition = '';
-          measurePages();
-          syncHeightToCurrent();
-        }, 120);
-      }, { passive: true });
 
-      // ── Looping carousel: swiping past either edge wraps around.
-      //    Native scroll-snap clamps at the ends (it won't overshoot),
-      //    so we detect "the user clearly tried to swipe further but
-      //    didn't move" and JS-scroll to the opposite end. Threshold
-      //    40 px keeps small accidental drags from triggering a loop.
-      let touchX0 = null;
-      let touchStartIdx = null;
-      pages.addEventListener('touchstart', (e) => {
-        const t = e.touches && e.touches[0];
-        if (!t) return;
-        touchX0 = t.clientX;
-        const w = pages.clientWidth || 1;
-        touchStartIdx = Math.round(pages.scrollLeft / w);
-      }, { passive: true });
-      pages.addEventListener('touchend', (e) => {
-        if (touchX0 == null) return;
-        const t = (e.changedTouches && e.changedTouches[0]);
-        if (!t) { touchX0 = null; return; }
-        const dx = t.clientX - touchX0;
-        const startIdx = touchStartIdx;
-        touchX0 = null;
-        touchStartIdx = null;
-        // Wait for the scroll-snap to settle, then check whether the
-        // browser actually moved. If not AND the gesture was a clear
-        // swipe past the boundary, jump to the opposite end.
-        setTimeout(() => {
-          const w  = pages.clientWidth || 1;
-          const N  = pages.querySelectorAll('.wc-mobsh-page').length;
-          const idx = Math.round(pages.scrollLeft / w);
-          if (idx !== startIdx) return;          // normal snap happened
-          const SWIPE_MIN = 40;
-          if (dx <= -SWIPE_MIN && idx === N - 1) {
-            // Left swipe at last page → wrap to first.
-            pages.scrollTo({ left: 0, behavior: 'smooth' });
-          } else if (dx >= SWIPE_MIN && idx === 0) {
-            // Right swipe at first page → wrap to last.
-            pages.scrollTo({ left: (N - 1) * w, behavior: 'smooth' });
-          }
-        }, 160);
-      }, { passive: true });
+      // Make a page visible (display:block) and reset its transform.
+      // Used at swipe-start to render the neighbor in DOM so we can
+      // measure its natural height.
+      function activatePage(name, role /* 'current' | 'neighbor' */) {
+        const el = pageEls[name];
+        if (!el) return null;
+        el.classList.add('is-' + role);
+        el.style.display = 'block';
+        el.style.transform = '';
+        el.style.transition = 'none';
+        return el;
+      }
+      function deactivatePage(el) {
+        if (!el) return;
+        el.classList.remove('is-current', 'is-neighbor');
+        el.style.display = '';
+        el.style.transform = '';
+        el.style.transition = '';
+      }
+
+      // Show one page as the sole visible page, instant.
+      function showPageInstant(idx) {
+        // Hide all, then activate the target.
+        PAGES.forEach(name => deactivatePage(pageEls[name]));
+        const el = activatePage(PAGES[idx], 'current');
+        if (!el) return;
+        // Set the sheet height to the page's natural height (no
+        // transition — caller controls when to animate).
+        const h = pageNaturalHeight(el);
+        setSheetHeight(h, false);
+        curIdx = idx;
+      }
 
       // ── Open / close ──
       function openSheet() {
-        if (isOpen) return;
+        const wasOpen = isOpen;
         isOpen = true;
         host.classList.add('is-open');
         host.setAttribute('aria-hidden', 'false');
-        // Always reset to page 1 on open per spec.
-        pages.scrollTo({ left: 0, behavior: 'auto' });
+        // Always reset to page 0 (meaning) on a fresh open.
+        showPageInstant(0);
+        // After the layout commits, run the push-up so the word
+        // sits just above the sheet's top.
         requestAnimationFrame(() => {
-          measurePages();
-          syncHeightToCurrent();
+          applyWordPushUp();
         });
+        // First-open height transition — from 0 → measured.
+        if (!wasOpen) {
+          const finalH = sheet.offsetHeight;   // already set instant
+          setSheetHeight(0, false);
+          // Force the browser to commit the height:0 paint, then
+          // animate to the measured height in the next frame.
+          sheet.offsetHeight;                  // reflow
+          requestAnimationFrame(() => {
+            setSheetHeight(finalH, true);
+          });
+        }
       }
       function closeSheet() {
         if (!isOpen) return;
         isOpen = false;
         host.classList.remove('is-open');
         host.setAttribute('aria-hidden', 'true');
-        setSheetHeight(0);
+        setSheetHeight(0, true);
+        // Reset the push-up (animated) so the lesson body slides
+        // back down to its natural position.
+        clearWordPushUp();
       }
       btnClose.addEventListener('click', closeSheet);
+
+      // ── Word push-up (mirrors focus/english/lesson.html) ──
+      // Shift the .wc-shell up so the selected word sits just above
+      // the sheet's top edge. Re-runs on every word click + after the
+      // sheet's height settles. Resets on close.
+      function applyWordPushUp() {
+        if (!isOpen || !currentWord) { clearWordPushUp(); return; }
+        const wEl = document.querySelector(
+          '.w.focused[data-word="' + cssEsc(currentWord.lower) + '"]')
+          || document.querySelector('.w.focused');
+        if (!wEl) return;
+        const sheetTop  = sheet.getBoundingClientRect().top;
+        const wRect     = wEl.getBoundingClientRect();
+        const MARGIN    = 12;
+        const desiredBottom = sheetTop - MARGIN;
+        // Current push-up offset (CSS variable) so we compute the
+        // word's "natural" bottom (without any active shift).
+        const cssVar = parseFloat(
+          getComputedStyle(document.body).getPropertyValue('--wc-pushup')) || 0;
+        const naturalBottom = wRect.bottom + cssVar;
+        let needed = 0;
+        if (naturalBottom > desiredBottom) {
+          needed = Math.ceil(naturalBottom - desiredBottom);
+        }
+        document.body.style.setProperty('--wc-pushup', needed + 'px');
+        document.body.classList.toggle('wc-pushup', needed > 0);
+      }
+      function clearWordPushUp() {
+        document.body.classList.remove('wc-pushup');
+        document.body.style.removeProperty('--wc-pushup');
+      }
+      function cssEsc(s) {
+        if (window.CSS && CSS.escape) return CSS.escape(String(s || ''));
+        return String(s || '').replace(/["\\]/g, '\\$&');
+      }
+      // Re-apply push-up whenever the sheet's CSS height transition
+      // finishes (because its top edge moved, changing desiredBottom).
+      sheet.addEventListener('transitionend', (e) => {
+        if (e.propertyName === 'height' && isOpen) applyWordPushUp();
+      });
+
+      // ── Custom JS-driven carousel ──
+      //  At rest, only one page is in the DOM as `.is-current`. On
+      //  touch-start the start position is captured. On the first
+      //  horizontal move past the dead zone, the neighbor page in
+      //  the swipe direction is rendered (display:block) and parked
+      //  at translateX(±100%). Both pages translate 1:1 with the
+      //  finger. The sheet's height interpolates between current
+      //  and neighbor's natural heights — both pages stay bottom-
+      //  anchored, so their TOP edges land at DIFFERENT Y values
+      //  whenever their content heights differ (matches the spec).
+      let drag = null;
+      function nextIdx(d) {
+        // d = +1 for left swipe (forward), -1 for right swipe (back).
+        return (curIdx + d + PAGES.length) % PAGES.length;
+      }
+
+      function onTouchStart(e) {
+        if (!isOpen) return;
+        if (drag) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        // Skip swipe on form elements inside the message page —
+        // they need to receive touches themselves.
+        if (e.target && e.target.closest(
+          'textarea, input, button, a, .wc-mobsh-close')) return;
+        const curEl = pageEls[PAGES[curIdx]];
+        drag = {
+          x0: t.clientX, y0: t.clientY,
+          t0: Date.now(),
+          stageW: pages.clientWidth,
+          curEl,
+          curH: pageNaturalHeight(curEl),
+          neighborSide: 0,    // -1 = left, +1 = right, 0 = none yet
+          neighborEl: null,
+          neighborH: 0,
+          axis: null,
+          lastDx: 0,
+        };
+      }
+      function ensureNeighbor(side) {
+        // side = -1 → neighbor to the LEFT (right swipe shows it)
+        //         = +1 → neighbor to the RIGHT (left swipe shows it)
+        if (!drag) return;
+        if (drag.neighborSide === side && drag.neighborEl) return;
+        // Tear down a wrong-direction neighbor (e.g. user reversed).
+        if (drag.neighborEl) {
+          deactivatePage(drag.neighborEl);
+          drag.neighborEl = null;
+        }
+        // Forward = +1 (left swipe) → target is curIdx + 1.
+        // Backward = -1 (right swipe) → target is curIdx - 1 (= +2 mod 3).
+        const tIdx = nextIdx(side === +1 ? +1 : -1);
+        const el = activatePage(PAGES[tIdx], 'neighbor');
+        if (!el) return;
+        // Park at ±100% so it slides in from the correct side.
+        el.style.transform = 'translateX(' + (side === +1 ? 100 : -100) + '%)';
+        // Force the CSS to commit before we start reading scrollHeight.
+        el.offsetHeight;
+        drag.neighborSide = side;
+        drag.neighborEl   = el;
+        drag.neighborH    = pageNaturalHeight(el);
+        drag.neighborIdx  = tIdx;
+      }
+      function setDragTransforms(dx) {
+        if (!drag) return;
+        const w = drag.stageW;
+        drag.curEl.style.transition = 'none';
+        drag.curEl.style.transform  = 'translateX(' + dx + 'px)';
+        if (drag.neighborEl) {
+          const park = drag.neighborSide === +1 ? +w : -w;
+          drag.neighborEl.style.transition = 'none';
+          drag.neighborEl.style.transform =
+            'translateX(' + (park + dx) + 'px)';
+          // Interpolate sheet height between current and neighbor.
+          const t = Math.min(1, Math.abs(dx) / w);
+          const h = drag.curH + (drag.neighborH - drag.curH) * t;
+          setSheetHeight(h, false);
+        }
+      }
+
+      function onTouchMove(e) {
+        if (!drag) return;
+        const t = e.touches && e.touches[0];
+        if (!t) return;
+        const dx = t.clientX - drag.x0;
+        const dy = t.clientY - drag.y0;
+        if (!drag.axis) {
+          const ax = Math.abs(dx), ay = Math.abs(dy);
+          if (Math.max(ax, ay) < 8) return;
+          if (ax > ay) {
+            drag.axis = 'h';
+          } else {
+            // Vertical — release ownership so the page can scroll.
+            drag = null;
+            return;
+          }
+        }
+        if (drag.axis !== 'h') return;
+        if (e.cancelable) e.preventDefault();
+        // Pick neighbor based on swipe direction. Switching mid-drag
+        // is fine — ensureNeighbor swaps the active neighbor element.
+        const side = dx < 0 ? +1 : -1;
+        ensureNeighbor(side);
+        drag.lastDx = dx;
+        setDragTransforms(dx);
+      }
+      function onTouchEnd() {
+        if (!drag) return;
+        if (drag.axis !== 'h') { drag = null; return; }
+        const state = drag; drag = null;
+        const dx       = state.lastDx;
+        const w        = state.stageW;
+        const elapsed  = Math.max(1, Date.now() - state.t0);
+        const vel      = Math.abs(dx) / elapsed;
+        const distThr  = w * 0.25;
+        const isFlick  = vel > 0.6 && Math.abs(dx) > 40;
+        const commit   = Math.abs(dx) >= distThr || isFlick;
+
+        const ease = 'transform .22s cubic-bezier(.22,.6,.36,1)';
+        const heightEase = 'height .22s cubic-bezier(.22,.6,.36,1)';
+        state.curEl.style.transition      = ease;
+        if (state.neighborEl) state.neighborEl.style.transition = ease;
+        sheet.style.transition            = heightEase;
+
+        if (commit && state.neighborEl) {
+          // Commit: current exits off-screen the opposite side of
+          // where neighbor came from; neighbor lands at 0.
+          const exitSign = state.neighborSide === +1 ? -1 : +1;
+          state.curEl.style.transform = 'translateX(' + (exitSign * w) + 'px)';
+          state.neighborEl.style.transform = 'translateX(0)';
+          setSheetHeight(state.neighborH, true);
+          setTimeout(() => {
+            // Promote neighbor → current; remove old current.
+            deactivatePage(state.curEl);
+            state.neighborEl.classList.remove('is-neighbor');
+            state.neighborEl.classList.add('is-current');
+            state.neighborEl.style.transform = '';
+            curIdx = state.neighborIdx;
+            // Re-apply push-up since the sheet height may have changed.
+            applyWordPushUp();
+          }, 230);
+        } else {
+          // Rollback.
+          state.curEl.style.transform = 'translateX(0)';
+          if (state.neighborEl) {
+            const park = state.neighborSide === +1 ? +w : -w;
+            state.neighborEl.style.transform = 'translateX(' + park + 'px)';
+          }
+          setSheetHeight(state.curH, true);
+          setTimeout(() => {
+            if (state.neighborEl) {
+              deactivatePage(state.neighborEl);
+            }
+            applyWordPushUp();
+          }, 230);
+        }
+      }
+      // Stage owns the gestures — touch handlers attached here.
+      pages.addEventListener('touchstart',  onTouchStart, { passive: true });
+      pages.addEventListener('touchmove',   onTouchMove,  { passive: false });
+      pages.addEventListener('touchend',    onTouchEnd);
+      pages.addEventListener('touchcancel', onTouchEnd);
 
       // ── Page rendering ──
       function renderHeadline() {
@@ -618,27 +792,24 @@
           currentInfo = info || null;
           renderHeadline();
           renderMore(info);
-          requestAnimationFrame(() => {
-            measurePages();
-            syncHeightToCurrent();
-          });
+          // Content changed → re-fit the sheet to the visible page's
+          // new natural height (animated).
+          resizeCurrentPage();
         }).catch(() => {});
       });
       window.addEventListener('wc:word-deselected', closeSheet);
       window.addEventListener('wc:chunk-focused', (e) => {
         const d = e.detail || {};
-        // Only render a real multi-word chunk — a single-word "chunk"
-        // would just duplicate the headline.
         const chunkText = d.chunk;
         if (!chunkText || !d.sentence) {
           currentChunk = null;
           renderChunk('', '', '');
+          resizeCurrentPage();
           return;
         }
         currentChunk = { chunk: chunkText, sentence: d.sentence };
-        // Show the EN immediately; fetch KO lazily.
         renderChunk(chunkText, '', currentWord ? currentWord.word : '');
-        requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+        resizeCurrentPage();
         if (!window.WCKorBar) return;
         const seenChunk = chunkText, seenSent = d.sentence;
         window.WCKorBar.fetchChunk(chunkText, d.sentence).then(data => {
@@ -647,9 +818,24 @@
               || currentChunk.sentence !== seenSent) return;
           const ko = (data && data.ko) || '';
           renderChunk(chunkText, ko, currentWord ? currentWord.word : '');
-          requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+          resizeCurrentPage();
         }).catch(() => {});
       });
+
+      // When the visible page's content changes (info loaded, chunk
+      // KO arrived, etc.), animate the sheet's height to fit the
+      // new natural content height. Push-up re-runs after the
+      // transitionend fires (see the listener inside the sheet
+      // manager above).
+      function resizeCurrentPage() {
+        if (!isOpen) return;
+        const el = pageEls[PAGES[curIdx]];
+        if (!el) return;
+        requestAnimationFrame(() => {
+          const h = pageNaturalHeight(el);
+          setSheetHeight(h, true);
+        });
+      }
 
       // ── Bottom bar: word actions ──
       // ▶ TTS — plays the WHOLE current page (not the single word).
@@ -761,11 +947,12 @@
       }
 
       // Initial state — closed, height 0.
-      setSheetHeight(0);
-      // Re-measure on resize (keyboard pop, rotation).
+      setSheetHeight(0, false);
+      // Re-fit on viewport resize (keyboard pop, rotation).
       window.addEventListener('resize', () => {
         if (!isOpen) return;
-        requestAnimationFrame(() => { measurePages(); syncHeightToCurrent(); });
+        resizeCurrentPage();
+        applyWordPushUp();
       });
     })();
 
