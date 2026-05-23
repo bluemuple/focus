@@ -257,20 +257,19 @@
     // picks the reply up and bumps wc_users.money there. Doing the
     // credit client-side keeps the optimistic in-page counter and the
     // persisted row in lockstep without a server-side trigger.
-    async respondWithGift(messageId, animalSet, animalIndex, response, money) {
+    async respondWithGift(messageId, animalSet, animalIndex, response, money, minutes) {
       const patch = {
         gift_animal_set:   animalSet,
         gift_animal_index: animalIndex,
         teacher_response:  response || null,
         responded_at:      new Date().toISOString(),
       };
-      // Only write gift_money when the caller actually opted in — older
-      // databases without the column would 400 on the column name
-      // otherwise. Run the supabase-add-viz-money.sql migration first
-      // to use this feature.
-      if (Number.isFinite(money) && money > 0) {
-        patch.gift_money = Math.max(0, Math.floor(money));
-      }
+      // Only write gift_money / gift_minutes when the caller actually
+      // opted in — older databases without those columns would 400 on
+      // the column name otherwise. Run supabase-add-viz-money.sql AND
+      // supabase-add-viz-time.sql to use these features.
+      if (Number.isFinite(money)   && money   > 0) patch.gift_money   = Math.max(0, Math.floor(money));
+      if (Number.isFinite(minutes) && minutes > 0) patch.gift_minutes = Math.max(0, Math.floor(minutes));
       return rPatch('/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), patch);
     },
   };

@@ -3428,24 +3428,23 @@
     // reads the flag fresh on every level-up event so this button
     // takes effect immediately without a page reload.
     const HIDE_ENC_KEY = 'wc.hideEncounters.v1';
-    // Initial state — per-lesson default set by the teacher in My
-    // Lessons takes precedence over the per-device localStorage
-    // override (so the teacher's design wins when the student opens
-    // a new lesson). Falls back to the per-device localStorage
-    // value when the column is missing, then finally to the
-    // out-of-the-box default — Animals ON for brand-new sessions.
+    // Initial state — resolution order:
+    //   1. per-lesson `default_animals` (teacher's choice in My Lessons)
+    //   2. class-level "New lessons start with Animals OFF" toggle
+    //      (Settings) — ticked = OFF for every lesson without (1).
+    //   3. ALWAYS-ON default.
+    // The per-device localStorage is NOT consulted on init — without
+    // this, a student who once toggled 🐾 off would stay OFF forever
+    // even after the teacher unticks the class flag expecting ON to
+    // be the default. The 🐾 chip still toggles live within the
+    // session; the next lesson load re-reads the teacher's defaults.
     let hideEncounters;
     if (lesson && typeof lesson.default_animals === 'boolean') {
       hideEncounters = !lesson.default_animals;
     } else if (classFlags && classFlags.lessonsAnimalsDefaultOff) {
-      // Class-wide default set by the teacher in Settings — applies
-      // to every lesson without its own 🐾/🚫 choice. The teacher's
-      // design wins over the per-device localStorage memory.
       hideEncounters = true;
     } else {
-      // Unset → Animals ON. Hidden only when the student explicitly
-      // turned them off (stored '1').
-      hideEncounters = localStorage.getItem(HIDE_ENC_KEY) === '1';
+      hideEncounters = false;   // class default ON
     }
     // Override the placeholder WCLesson.encountersHidden — it was set
     // up top, BEFORE this let-scoped flag existed, so its arrow
@@ -3467,7 +3466,11 @@
       // plus the .active class carry the state. "Animals" text dropped.
       if (ico) ico.textContent = '🐾';
       if (lbl) lbl.textContent = hideEncounters ? 'off' : 'on';
-      try { localStorage.setItem(HIDE_ENC_KEY, hideEncounters ? '1' : '0'); } catch {}
+      // The 🐾 chip is session-only — its state is never persisted to
+      // localStorage. Clear any leftover from the previous behaviour
+      // so a stale '1' can't sneak into encounter.js's early-init
+      // fallback path before WCLesson installs.
+      try { localStorage.removeItem(HIDE_ENC_KEY); } catch {}
     }
     applyHideEncounters();
     if ($('btnHideEncounters')) {

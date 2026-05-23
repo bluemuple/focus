@@ -135,11 +135,23 @@ const CHUNK_SYS = [
   "WHOLE sentence — you MUST use it. Reply with JSON only. Keys:",
   "- ko (string): the chunk's Korean meaning AS THE CHUNK FUNCTIONS",
   "  WITHIN THE GIVEN SENTENCE — keep the grammatical role it plays.",
-  "  If the chunk is a to-infinitive / -ing complement, an object, a",
-  "  subordinate phrase, etc., the Korean MUST reflect that role, not",
-  "  the bare dictionary form. Example: sentence \"We can all help",
-  "  plan it.\", chunk \"plan it\" → \"그것을 계획하는 것을\" (NOT",
-  "  \"계획하다\"). Keep it short and natural.",
+  "  Example: sentence \"We can all help plan it.\", chunk \"plan it\"",
+  "  → \"그것을 계획하는 것을\" (NOT \"계획하다\"). Short & natural.",
+  "- parts (array of {en, ko}): split the chunk into 2-3 meaning",
+  "  pieces a beginner can map word-for-word, each translated in the",
+  "  same sentence-context grammatical role used in `ko`. The pieces",
+  "  must together cover the whole chunk in order, NOT overlap, and",
+  "  each `en` must appear verbatim in the chunk text.",
+  "  Examples:",
+  "    chunk \"I'll make a card\" → parts: [",
+  "      {\"en\":\"I'll make\",\"ko\":\"만들 거예요\"},",
+  "      {\"en\":\"a card\",\"ko\":\"카드를\"} ]",
+  "    chunk \"plan it\" → parts: [",
+  "      {\"en\":\"plan\",\"ko\":\"계획하는 것을\"},",
+  "      {\"en\":\"it\",\"ko\":\"그것을\"} ]   (reorder ko allowed)",
+  "    chunk \"go to school\" → parts: [",
+  "      {\"en\":\"go\",\"ko\":\"가요\"},",
+  "      {\"en\":\"to school\",\"ko\":\"학교에\"} ]",
   "- easy_en (string): the chunk's meaning in very simple English,",
   "  8 words or fewer, beginner level — also fitting the sentence.",
   "- situation (object or null): IF this chunk is a useful spoken",
@@ -254,17 +266,26 @@ Deno.serve(async (req) => {
       // One specific chunk, translated in the sentence's context.
       const text = String(body?.text || "").trim();
       if (!text) return json({ error: "text required" }, 400);
-      const ck = "korbar:v2:chunk:" + await senseHash(text + "|" + sentence);
+      const ck = "korbar:v3:chunk:" + await senseHash(text + "|" + sentence);
       const cached = await readCache(ck);
       if (cached) return json({ ...(cached as object), cached: true });
       if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
 
       const parsed = await callOpenAI(apiKey, CHUNK_SYS,
-        `Chunk: ${JSON.stringify(text)}\nSentence: ${JSON.stringify(sentence)}`, 320);
+        `Chunk: ${JSON.stringify(text)}\nSentence: ${JSON.stringify(sentence)}`, 380);
       const sit = (parsed?.situation && typeof parsed.situation === "object")
         ? parsed.situation as Record<string, unknown> : null;
+      // Normalise parts[] — drop anything missing en/ko, cap at 4.
+      const partsRaw = Array.isArray(parsed?.parts) ? parsed.parts : [];
+      const parts = partsRaw.slice(0, 4)
+        .map((p: Record<string, unknown>) => ({
+          en: String(p?.en || "").trim(),
+          ko: String(p?.ko || "").trim(),
+        }))
+        .filter((p: { en: string; ko: string }) => p.en && p.ko);
       const out = {
         ko:      String(parsed?.ko || ""),
+        parts,
         easy_en: String(parsed?.easy_en || ""),
         situation: (sit && (sit.say || sit.ko))
           ? { emoji: String(sit.emoji || ""), ko: String(sit.ko || ""), say: String(sit.say || "") }

@@ -570,10 +570,23 @@
         return;
       }
       const sit = data.situation;
-      // The chunk's Korean meaning — translated in the context of the
-      // whole sentence — shown directly (no English gloss, no toggle).
+      // The chunk's Korean meaning, broken down into 2-3 sub-pieces
+      // ("I'll make: 만들 거예요!" / "a card: 카드를") so the student
+      // sees the word-for-word mapping under the full translation.
+      // Falls back to the single combined translation when the GPT
+      // didn't return a parts breakdown (older cached entries).
+      const parts = Array.isArray(data.parts)
+        ? data.parts.filter(p => p && p.en && p.ko)
+        : [];
+      const partsHtml = parts.length
+        ? `<ul class="wc-kor-chunk-parts">${parts.map(p =>
+            `<li><span class="wc-kor-part-en">${escapeHtml(p.en)}:</span> ` +
+            `<span class="wc-kor-part-ko">${escapeHtml(p.ko)}</span></li>`
+          ).join('')}</ul>`
+        : '';
       body.innerHTML = `
         <div class="wc-kor-chunk-ko-main">${escapeHtml(data.ko || '뜻을 찾지 못했어요.')}</div>
+        ${partsHtml}
         ${sit && sit.say ? `
           <div class="wc-kor-situation">
             <div class="wc-kor-sit-label">💡 언제 써?</div>
@@ -843,15 +856,22 @@
     host.innerHTML = mine.slice(0, 3).map(m => {
       const replied = !!(m.responded_at || m.teacher_response
                          || m.gift_animal_set != null
-                         || (m.gift_money && m.gift_money > 0));
+                         || (m.gift_money && m.gift_money > 0)
+                         || (m.gift_minutes && m.gift_minutes > 0));
       const stickerSrc = (m.gift_animal_set != null && m.gift_animal_index != null)
         ? window.WCAssets.spriteFor(m.gift_animal_set, m.gift_animal_index, false)
         : '';
       // Money gift chip — visible alongside the sticker / text reply
-      // whenever the teacher attached coins to the response.
+      // whenever the teacher attached money. Values are stored in
+      // cents on wc_visualization_messages.gift_money (100 = $1).
       const money = (m.gift_money && m.gift_money > 0) ? m.gift_money : 0;
       const moneyChip = money
-        ? `<span class="wc-msg-money">💰 +${money}</span>`
+        ? `<span class="wc-msg-money">💰 +${window.WCDB.fmtDollars(money)}</span>`
+        : '';
+      // Time gift chip — same pattern, in minutes.
+      const mins = (m.gift_minutes && m.gift_minutes > 0) ? m.gift_minutes : 0;
+      const minsChip = mins
+        ? `<span class="wc-msg-money">⏰ +${mins}분</span>`
         : '';
       return `
         <div class="wc-msg-row">
@@ -860,6 +880,7 @@
             <div class="wc-msg-reply">
               ${stickerSrc ? `<img class="wc-msg-sticker" src="${stickerSrc}" alt=""/>` : ''}
               ${moneyChip}
+              ${minsChip}
               ${m.teacher_response ? `<div class="wc-msg-text">${escapeHtml(m.teacher_response)}</div>` : ''}
             </div>
           ` : `<div class="wc-msg-waiting">Waiting for your teacher…</div>`}
@@ -1038,6 +1059,15 @@
     if (msg.gift_money && msg.gift_money > 0) {
       try { await creditMoneyGift(L, msg.gift_money); } catch {}
     }
+    // Time gift — credit rest-time minutes to the wc_time_entries
+    // ledger. The home ⏰ popup re-reads the ledger on next open so
+    // the new minutes show up in the weekly graph + balance.
+    if (msg.gift_minutes && msg.gift_minutes > 0
+        && window.WCDB.time && typeof window.WCDB.time.add === 'function') {
+      try {
+        await window.WCDB.time.add(L.me.id, 'earn', msg.gift_minutes, '선생님 보너스 시간');
+      } catch (e) { console.warn('time gift credit failed', e); }
+    }
   }
 
   // Add `delta` coins to the current user's wc_users.money, update
@@ -1077,16 +1107,19 @@
     t.className = 'wc-toast';
     const hasSticker = (msg.gift_animal_set != null && msg.gift_animal_index != null);
     const hasMoney   = (msg.gift_money && msg.gift_money > 0);
+    const hasMins    = (msg.gift_minutes && msg.gift_minutes > 0);
     const sprite = hasSticker
       ? `<img src="${window.WCAssets.spriteFor(msg.gift_animal_set, msg.gift_animal_index, false)}" alt=""/>`
-      : hasMoney ? '💰' : '💌';
-    // Headline prefers money > sticker > generic reply so the student
-    // sees the most exciting word first.
+      : hasMoney ? '💰' : hasMins ? '⏰' : '💌';
+    // Headline prefers money > minutes > sticker > generic reply so
+    // the student sees the most exciting word first.
     const headline = hasMoney
-      ? `Your teacher sent you 💰 ${msg.gift_money}!`
-      : hasSticker
-        ? 'Your teacher sent a sticker!'
-        : 'Your teacher replied!';
+      ? `Your teacher sent you 💰 ${window.WCDB.fmtDollars(msg.gift_money)}!`
+      : hasMins
+        ? `Your teacher sent you ⏰ ${msg.gift_minutes}분 쉬는 시간!`
+        : hasSticker
+          ? 'Your teacher sent a sticker!'
+          : 'Your teacher replied!';
     const wordHint = msg.word ? ` (about <em>${escapeHtml(msg.word)}</em>)` : '';
     t.innerHTML = `
       <div class="wc-toast-sprite">${sprite.startsWith('<img') ? sprite : `<span>${sprite}</span>`}</div>

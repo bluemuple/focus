@@ -403,6 +403,10 @@
     if (!delta) return;
     const before = lessonState.me.xp || 0;
     const after  = Math.max(0, before + delta);
+    const oldLevel = (window.WCLevels && window.WCLevels.levelForXp)
+      ? window.WCLevels.levelForXp(before) : 1;
+    const newLevel = (window.WCLevels && window.WCLevels.levelForXp)
+      ? window.WCLevels.levelForXp(after) : 1;
     lessonState.me.xp = after;
     try {
       await window.WCDB.users.update(lessonState.me.id, { xp: after });
@@ -412,6 +416,56 @@
         localStorage.setItem('wc.session.v1', JSON.stringify(u));
       }
     } catch (e) { console.warn('xp update failed', e); }
+    if (newLevel > oldLevel) {
+      try { showLevelUpPopup(newLevel, after); }
+      catch (e) { console.warn('level-up popup failed', e); }
+    }
+  }
+
+  // ----------------------------------------------------------------
+  //  LEVEL-UP POPUP — celebratory modal that takes over the screen
+  //  the instant XP crosses a level boundary. Dimmed backdrop +
+  //  pop-in card with the new level's badge image + a gauge of
+  //  how far through the NEW level the student already is.
+  // ----------------------------------------------------------------
+  function showLevelUpPopup(newLevel, xp) {
+    const old = document.getElementById('wcLevelUpHost');
+    if (old) old.remove();
+    const info = (window.WCLevels && window.WCLevels.xpToNext)
+      ? window.WCLevels.xpToNext(xp)
+      : { level: newLevel, xpInLevel: 0, xpNeeded: 8, progressPct: 0, max: false };
+    const lvlPad = String(newLevel).padStart(2, '0');
+    const imgSrc = './images/lesson-levels/level-' + lvlPad + '.png';
+    const xpLine = info.max
+      ? 'MAX 레벨!'
+      : info.xpInLevel + ' / ' + info.xpNeeded + ' XP';
+
+    const host = document.createElement('div');
+    host.id = 'wcLevelUpHost';
+    host.className = 'wc-levelup-backdrop';
+    host.innerHTML =
+      '<div class="wc-levelup-card" role="dialog" aria-modal="true">' +
+        '<div class="wc-levelup-title">🎉 레벨 업! 🎉</div>' +
+        '<img class="wc-levelup-img" src="' + imgSrc + '" alt="Level ' + newLevel + '"' +
+          ' onerror="this.style.display=\'none\'" />' +
+        '<div class="wc-levelup-lvl">Lv ' + newLevel + '</div>' +
+        '<div class="wc-levelup-gauge"><div class="wc-levelup-gauge-fill"' +
+          ' style="width:' + info.progressPct + '%"></div></div>' +
+        '<div class="wc-levelup-xpnum">' + xpLine + '</div>' +
+        '<button class="wc-btn wc-levelup-close" type="button">계속 읽기 📖</button>' +
+      '</div>';
+    document.body.appendChild(host);
+    const close = () => host.remove();
+    host.querySelector('.wc-levelup-close').addEventListener('click', close);
+    host.addEventListener('click', e => { if (e.target === host) close(); });
+    // Esc dismiss (single-shot listener).
+    const onEsc = (e) => {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onEsc);
+        close();
+      }
+    };
+    document.addEventListener('keydown', onEsc);
   }
 
   window.WCEncounter = window.WCEncounter || {};

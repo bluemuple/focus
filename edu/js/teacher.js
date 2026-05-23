@@ -3765,16 +3765,29 @@
           </div>
           <div class="wc-animal-picker" data-msg="${m.id}"></div>
           <textarea class="wc-textarea wc-tmsg-text" rows="2" placeholder="Reply to ${escapeHtml(student?.real_name||'')}…"></textarea>
-          <!-- Coin gift — quick-pick presets plus a free-form number
-               so the teacher can reward a great "Use it" answer
-               without having to remember the keyboard sequence. -->
+          <!-- Money gift — quick-pick dollar presets plus a free-form
+               cents input. The student's balance is in cents
+               (wc_users.money) so we send / store cents directly;
+               the dollar buttons just translate ($0.50 → 50 cents).
+               -->
           <div class="wc-tmsg-money">
-            <span class="wc-muted">💰 Coins:</span>
-            <button type="button" class="wc-money-preset" data-money="1">+1</button>
-            <button type="button" class="wc-money-preset" data-money="5">+5</button>
-            <button type="button" class="wc-money-preset" data-money="10">+10</button>
-            <input type="number" class="wc-tmsg-money-input" min="0" max="999"
-                   step="1" placeholder="0" />
+            <span class="wc-muted">💰</span>
+            <button type="button" class="wc-money-preset" data-money="50">+$0.50</button>
+            <button type="button" class="wc-money-preset" data-money="100">+$1</button>
+            <button type="button" class="wc-money-preset" data-money="150">+$1.50</button>
+            <button type="button" class="wc-money-preset" data-money="200">+$2</button>
+            <input type="number" class="wc-tmsg-money-input" min="0" max="100000"
+                   step="50" placeholder="cents (1$ = 100)" />
+          </div>
+          <!-- Rest-time gift — same pattern, in minutes. Credited to
+               wc_time_entries on the student side. -->
+          <div class="wc-tmsg-money">
+            <span class="wc-muted">⏰</span>
+            <button type="button" class="wc-mins-preset" data-mins="1">+1분</button>
+            <button type="button" class="wc-mins-preset" data-mins="2">+2분</button>
+            <button type="button" class="wc-mins-preset" data-mins="3">+3분</button>
+            <input type="number" class="wc-tmsg-mins-input" min="0" max="240"
+                   step="1" placeholder="분" />
           </div>
           <button class="wc-btn wc-tmsg-send" data-msg="${m.id}">Send reply 📨</button>
           <span class="wc-tmsg-status wc-muted"></span>
@@ -3785,7 +3798,10 @@
           <div>
             ${m.teacher_response ? `<div>${escapeHtml(m.teacher_response)}</div>` : ''}
             ${(m.gift_money && m.gift_money > 0)
-              ? `<div class="wc-muted" style="font-size:13px;">💰 Sent ${m.gift_money} coin${m.gift_money === 1 ? '' : 's'}</div>`
+              ? `<div class="wc-muted" style="font-size:13px;">💰 Sent ${window.WCDB.fmtDollars(m.gift_money)}</div>`
+              : ''}
+            ${(m.gift_minutes && m.gift_minutes > 0)
+              ? `<div class="wc-muted" style="font-size:13px;">⏰ Sent ${m.gift_minutes}분 쉬는 시간</div>`
               : ''}
             <div class="wc-muted" style="font-size:13px;">
               Replied ${new Date(m.responded_at).toLocaleDateString('en-NZ')}
@@ -3804,7 +3820,15 @@
         btn.addEventListener('click', () => {
           const cur = parseInt(moneyInput.value, 10) || 0;
           const add = parseInt(btn.dataset.money, 10) || 0;
-          moneyInput.value = String(Math.min(999, Math.max(0, cur + add)));
+          moneyInput.value = String(Math.min(100000, Math.max(0, cur + add)));
+        });
+      });
+      const minsInput = card.querySelector('.wc-tmsg-mins-input');
+      card.querySelectorAll('.wc-mins-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const cur = parseInt(minsInput.value, 10) || 0;
+          const add = parseInt(btn.dataset.mins, 10) || 0;
+          minsInput.value = String(Math.min(240, Math.max(0, cur + add)));
         });
       });
       card.querySelector('.wc-tmsg-send').addEventListener('click', () => sendGift(card, m));
@@ -3818,11 +3842,13 @@
     const picked  = card.querySelector('.wc-animal-picker').dataset.picked;
     const note    = card.querySelector('.wc-tmsg-text').value.trim();
     const moneyEl = card.querySelector('.wc-tmsg-money-input');
-    const money   = Math.max(0, Math.min(999, parseInt(moneyEl?.value, 10) || 0));
-    // Text alone, sticker alone, money alone, or any combo — all OK.
-    // Only invalid case is everything empty (blank reply).
-    if (!picked && !note && money <= 0) {
-      status.textContent = 'Pick a sticker, type a reply, or add some coins first.';
+    const money   = Math.max(0, Math.min(100000, parseInt(moneyEl?.value, 10) || 0));
+    const minsEl  = card.querySelector('.wc-tmsg-mins-input');
+    const minutes = Math.max(0, Math.min(240, parseInt(minsEl?.value, 10) || 0));
+    // Text alone, sticker alone, money alone, minutes alone, or any
+    // combo — all OK. Only invalid case is everything empty.
+    if (!picked && !note && money <= 0 && minutes <= 0) {
+      status.textContent = 'Pick a sticker, type a reply, or add some money / minutes first.';
       status.style.color = 'var(--bad)';
       return;
     }
@@ -3848,7 +3874,7 @@
     status.textContent = 'Sending…';
     status.style.color = 'var(--ink-soft)';
     try {
-      await window.WCDB.viz.respondWithGift(m.id, setName, idx, note || null, money);
+      await window.WCDB.viz.respondWithGift(m.id, setName, idx, note || null, money, minutes);
       status.textContent = 'Sent ✓';
       status.style.color = 'var(--good)';
       // refresh messages list (move this card from pending → answered)
