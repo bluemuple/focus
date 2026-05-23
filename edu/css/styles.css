@@ -2158,6 +2158,21 @@ body.wc-lesson-layout .wc-lesson-img {
   border-radius: 10px;
   box-shadow: 0 2px 8px rgba(0,0,0,.08);
   user-select: none;
+  /* Stacking guarantee — if a stray absolutely-positioned span ever
+     slipped through, the image still draws ABOVE it instead of
+     getting covered. Combined with the float + shape-outside rules
+     below, this means text never visually overlaps the picture. */
+  position: relative;
+  z-index: 1;
+}
+/* Long unbreakable strings (URLs, run-on words) should hard-break
+   inside their line box BEFORE they overflow into the floated image's
+   margin-box. Without this, an oversize token can extend RIGHT through
+   the float area and visually cover the image. */
+body.wc-lesson-layout .wc-lesson-text,
+body.wc-lesson-layout .wc-page-clone {
+  overflow-wrap: break-word;
+  word-wrap: break-word;
 }
 /* Float direction picks left vs right corners; the vertical position
    follows naturally from where in the body the [[IMG:N]] marker sits.
@@ -3030,6 +3045,16 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   font-size: 13px;
   height: 28px;
   line-height: 1;
+}
+/* Armed state — the teacher has clicked + Add rectangle / + Add
+   circle and is now expected to click a bubble in the image. The
+   button gets the accent fill so it's obvious which tool is hot;
+   the stage's cursor also flips to crosshair (set in JS). */
+.wc-be-toolbtn.wc-be-armed {
+  background: var(--tobok-accent, #3aa776);
+  border-color: var(--tobok-accent, #3aa776);
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(58,167,118,.18);
 }
 .wc-be-meta { font-size: 12px; white-space: nowrap; }
 /* Bubble shape preview in the editor — matches the lesson-page render:
@@ -4157,9 +4182,32 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   /* Single-column lesson grid; the desktop sidebar is invisible. */
   body.wc-lesson-layout .wc-lesson-grid {
     grid-template-columns: minmax(0, 1fr);
-    gap: 16px;
+    gap: 0;
   }
   body.wc-lesson-layout .wc-sidebar { display: none !important; }
+
+  /* Pull the lesson card to the top of the viewport — the outer
+     rounded rectangle's top edge sits 5 px from the screen edge.
+     Shell + .wc-shell-wide bottom padding go to 0 since fixed-pos
+     bars own the bottom of the screen. */
+  body.wc-lesson-layout .wc-shell { padding: 5px 12px 0; }
+  body.wc-lesson-layout .wc-shell-wide { padding-bottom: 0; }
+
+  /* The outer rounded rectangle (.wc-lesson-main) — shrinks to its
+     content height so there's no white whitespace below the text.
+     Caps at calc(100vh - 70px) so a long page still scrolls inside
+     when scroll-mode is on. NO outer scroll: overflow:hidden keeps
+     the box itself a fixed shape. Inner text scrolling is governed
+     by the existing scroll-on (⬇) toggle (`.wc-scroll-mode` →
+     `.wc-lesson-text { overflow-y: auto }`). */
+  body.wc-lesson-layout .wc-lesson-main {
+    height: auto;
+    max-height: calc(100vh - 70px);
+    min-height: 0;
+    padding: 10px 12px 4px;   /* ← almost zero bottom padding */
+    border-radius: 12px;
+    overflow: hidden;
+  }
 
   /* Toolbar collapse button — bigger tap target on touch. */
   body.wc-lesson-layout .wc-lesson-titlerow .ht-collapse {
@@ -4174,9 +4222,25 @@ body.wc-single-mode .wc-lesson-img { display: none; }
     display: none !important;
   }
 
-  /* Lift the lesson body just enough to clear the new flush-bottom
-     bar (~ 50 px tall). */
-  body.wc-lesson-layout .wc-lesson-text-wrap { padding-bottom: 70px; }
+  /* No bottom padding on mobile — the .wc-lesson-main shrinks to
+     content so there's nothing for the bar to cover. The bar sits
+     OUTSIDE the box below it. */
+  body.wc-lesson-layout .wc-lesson-text-wrap { padding-bottom: 0; }
+
+  /* ----- Comic mode mobile — bigger panels, no wasted side margin.
+     5 px left/right + no bottom margin so a 1-panel page fits the
+     viewport edge-to-edge with no trailing whitespace. ----- */
+  body.wc-lesson-layout .wc-panel,
+  body.wc-lesson-layout .wc-lesson-img.wc-corner-panel {
+    width: calc(100% - 10px);
+    max-width: none;
+    margin: 8px 5px 0;
+  }
+  /* Scroll-page gap is wider on desktop (.3em ≈ 6px) — keep tight
+     stacking on mobile so successive panels don't drift apart. */
+  body.wc-lesson-layout.wc-scroll-mode .wc-scroll-page + .wc-scroll-page {
+    margin-top: 4px;
+  }
 
   /* Kill iOS' double-tap-to-zoom on the lesson chrome so a fast
      double-tap on a word doesn't zoom the page. Pinch zoom is

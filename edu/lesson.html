@@ -9,7 +9,7 @@
        body (CSS) does the same. -->
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <title>Ako — Reading</title>
-  <link rel="stylesheet" href="./css/styles.css?v=slide-fix-1">
+  <link rel="stylesheet" href="./css/styles.css?v=fit-content-1">
   <!-- Dyslexia-friendly & readability fonts loaded only on the lesson
        page (where the "Read Better" toggle uses them). Cheap because
        they're fetched once and cached by the CDN, and the browser
@@ -965,6 +965,27 @@
 
       // Stash the original transform so we can restore on rollback.
       let drag = null;
+      // The setTimeout that runs commit/cleanup after the slide
+      // animation. Tracked so onTouchStart can FAST-FORWARD it when
+      // the user starts a new swipe before the 230 ms timer fires —
+      // without this fast-forward, the timer fires mid-second-swipe,
+      // resets body.style.transform = '' and swipeCommitPage runs
+      // against a stale drag.pi → the new swipe appears to "stall"
+      // after ~30 px because body keeps snapping back to 0.
+      let pendingFn = null;
+      let pendingT  = 0;
+      function schedulePending(fn) {
+        pendingFn = fn;
+        pendingT  = setTimeout(() => { pendingT = 0; pendingFn = null; fn(); }, 230);
+      }
+      function flushPending() {
+        if (!pendingT) return;
+        clearTimeout(pendingT);
+        pendingT = 0;
+        const fn = pendingFn;
+        pendingFn = null;
+        if (fn) fn();
+      }
 
       function shouldSwipe() {
         const L = window.WCLesson;
@@ -1093,6 +1114,12 @@
       }
 
       function onStart(e) {
+        // If a previous swipe's commit/cleanup is still queued (the
+        // 230 ms slide-finish setTimeout), run it RIGHT NOW so the
+        // new swipe starts against fully-committed state instead of
+        // racing it. Without this, ~1-in-N rapid swipes stalls at
+        // ~30 px (the timer fires mid-drag and snaps body back).
+        flushPending();
         if (drag) return;
         if (!shouldSwipe()) return;
         if (isInteractive(e.target)) return;
@@ -1183,19 +1210,18 @@
         }
         // After the slide animation completes, swap content into body
         // (still offscreen) → snap body to 0 without animation → drop
-        // the clones. This kills the "old content jumps left then back"
-        // glitch that the naive cleanup caused.
-        setTimeout(() => {
+        // the clones. Scheduled via schedulePending so a fast next
+        // swipe can FAST-FORWARD this work in onStart instead of
+        // racing it.
+        schedulePending(() => {
           if (target === 'next') {
             commitAndCleanup(state, state.pi + 1);
           } else if (target === 'prev') {
             commitAndCleanup(state, state.pi - 1);
           } else {
-            // Should never hit here (target ∈ {'next','prev'} when
-            // we entered the commit branch), but be safe.
             cleanup(state);
           }
-        }, 230);
+        });
       }
 
       // touchmove is non-passive so we can preventDefault during the

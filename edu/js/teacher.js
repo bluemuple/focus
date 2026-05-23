@@ -1971,10 +1971,33 @@
     $('addImageFile').click();
   });
   $('addImageFile').addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    await handleImageFile(file);
-    e.target.value = '';   // allow same file twice
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    // Single file → keep the original flow (handleImageFile shows the
+    // corner picker per-file; preserves any paste/single-add quirks).
+    if (files.length === 1) {
+      await handleImageFile(files[0]);
+      e.target.value = '';
+      return;
+    }
+    // Multiple files → sort alphabetically by filename (case-insensitive),
+    // ask the corner picker ONCE, then insert every file in order using
+    // the same corner. The teacher confirms the position one time and the
+    // batch lands in sorted order.
+    files.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+    rememberCursor();
+    pickCorner(async (corner) => {
+      for (const file of files) {
+        try {
+          const dataUrl = await downscaleImage(file);
+          if (dataUrl) insertImage(corner, dataUrl);
+        } catch (err) {
+          console.warn('[bulk-image]', file.name, err && err.message);
+        }
+      }
+    });
+    e.target.value = '';
   });
   // Paste — works anywhere on the page; we only consume when there's
   // actually an image in the clipboard. Plain-text paste keeps default
@@ -3122,8 +3145,28 @@
     probe.crossOrigin = 'anonymous';
     probe.src = im.url || im.data_url;
 
+    // Currently-armed bubble shape. `null` = no tool armed (the
+    // original "click stage to auto-detect" flow with default
+    // shape). `'rect'` / `'circle'` = the matching toolbar button
+    // has been pressed; the NEXT stage-click on a bubble snaps a
+    // fitted box of THAT shape (instead of immediately creating a
+    // centered manual box, which is what the buttons used to do).
+    // Re-clicking the same button or pressing Esc disarms.
+    let pendingShape = null;
+    function setPendingShape(shape) {
+      pendingShape = shape;
+      const rb = host.querySelector('#beAddRect');
+      const cb = host.querySelector('#beAddCircle');
+      if (rb) rb.classList.toggle('wc-be-armed', shape === 'rect');
+      if (cb) cb.classList.toggle('wc-be-armed', shape === 'circle');
+      // Cursor cue while a tool is armed.
+      stage.style.cursor = shape ? 'crosshair' : '';
+    }
+
     // Click on bare stage (not on an existing box) → auto-detect the
-    // bubble under the cursor and snap a fitted box to it.
+    // bubble under the cursor and snap a fitted box to it. If a
+    // toolbar shape is armed, the new box gets that shape (and the
+    // tool disarms after one use).
     stage.addEventListener('click', (e) => {
       if (e.target !== stage) return;       // clicked a box / textarea / handle
       const rect = stage.getBoundingClientRect();
@@ -3132,15 +3175,18 @@
       const fy = (e.clientY - rect.top)  / rect.height;
       const hit = detectBubbleAt(fx, fy);
       if (!hit) {
-        flashMsg('No bubble found there — click nearer its centre, or use “+ Add bubble”.');
+        flashMsg('No bubble found there — click nearer its centre.');
         return;
       }
-      const box = addBox({ x: hit.x, y: hit.y, w: hit.w, h: hit.h, text: '' });
+      const shape = pendingShape || undefined;
+      const box = addBox({ x: hit.x, y: hit.y, w: hit.w, h: hit.h, text: '', shape });
       refreshCount();
       const ta = box.querySelector('.wc-be-text');
       if (ta) ta.focus();
       // Auto-draft the dialogue from the cropped bubble (best-effort).
       tryOcrInto(box, hit);
+      // One-shot: disarm the tool after a successful place.
+      if (pendingShape) setPendingShape(null);
     });
 
     function addBox(model) {
@@ -3227,15 +3273,18 @@
       });
     }
 
-    function addManualBubble(shape) {
-      if (!stage.clientWidth) return;   // image not loaded yet
-      addBox({ x: 0.34, y: 0.36, w: 0.32, h: 0.2, text: '', shape });
-      refreshCount();
-    }
+    // Add-rectangle / Add-circle buttons NO LONGER create a centered
+    // manual box on click. Instead they ARM the corresponding shape
+    // — the next stage-click on a bubble auto-detects + creates a
+    // box of that shape. Click the same button again to disarm.
     host.querySelector('#beAddRect').addEventListener('click',
-      () => addManualBubble('rect'));
+      () => setPendingShape(pendingShape === 'rect' ? null : 'rect'));
     host.querySelector('#beAddCircle').addEventListener('click',
-      () => addManualBubble('circle'));
+      () => setPendingShape(pendingShape === 'circle' ? null : 'circle'));
+    // Esc disarms — useful if the teacher hit the wrong tool.
+    host.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && pendingShape) { setPendingShape(null); e.stopPropagation(); }
+    });
 
     function close() { host.remove(); }
     host.querySelector('.wc-popup-close').addEventListener('click', close);
