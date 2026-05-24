@@ -1965,9 +1965,9 @@
     const sh = 'box-shadow:0 1px 4px rgba(0,0,0,.10);border-radius:4px;height:auto;';
     switch (corner) {
       case 'tl': case 'bl':
-        return `float:left;width:${w}%;max-width:80px;margin:0 8px 6px 0;${sh}`;
+        return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
       case 'tr': case 'br':
-        return `float:right;width:${w}%;max-width:80px;margin:0 0 6px 8px;${sh}`;
+        return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
       case 'cc':
         return `display:block;margin:6px auto;width:60%;max-width:120px;${sh}`;
       case 'cs':
