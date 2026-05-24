@@ -4052,6 +4052,9 @@
       if (navBar) navBar.classList.toggle('wc-hidden', recMode);
       if (!recMode) { stopActiveRecording(); stopRecPlaybackAll(); }
       else renderRecBar();
+      // Comic bubbles: per-sentence rec buttons appear/disappear with
+      // record mode — they take up inline space, so re-fit bubble text.
+      requestAnimationFrame(fitAllBubbles);
     }
     applyRecMode();
     if ($('btnRecord')) {
