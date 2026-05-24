@@ -1954,6 +1954,33 @@
     });
   })();
 
+  // ── Float button: pin mini preview to the viewport top-right corner ──
+  // Clicking Float moves .wc-lp-wrap to position:fixed top-right with a
+  // slide-down animation. Clicking again slides it back up and restores
+  // it to its original in-flow position (no DOM move — just CSS toggle).
+  (function wireLpFloatBtn() {
+    const btn  = document.getElementById('lpFloatBtn');
+    const wrap = document.querySelector('.wc-lp-wrap');
+    if (!btn || !wrap) return;
+
+    btn.addEventListener('click', () => {
+      const pinned = wrap.classList.contains('wc-lp-floating');
+      if (!pinned) {
+        // Enter floating mode — slide down into the top-right corner.
+        wrap.classList.add('wc-lp-floating', 'wc-lp-float-in');
+        wrap.addEventListener('animationend', () => {
+          wrap.classList.remove('wc-lp-float-in');
+        }, { once: true });
+      } else {
+        // Exit floating mode — slide back up, then restore to flow.
+        wrap.classList.add('wc-lp-dock-out');
+        wrap.addEventListener('animationend', () => {
+          wrap.classList.remove('wc-lp-floating', 'wc-lp-dock-out');
+        }, { once: true });
+      }
+    });
+  })();
+
   // ── Full-size lesson preview modal ────────────────────────────────────
   // Opens when the teacher clicks "👁 페이지 미리보기". Parses the body
   // into pages (split by ---), renders each page at lesson-page font/
