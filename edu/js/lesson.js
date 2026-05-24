@@ -1938,7 +1938,12 @@
     const scoped = body.querySelector(
       `.wc-scroll-page[data-page="${pageIdx}"]`);
     const root = scoped || body;
-    return Array.from(root.querySelectorAll('.wc-sentence'));
+    // Text/song: each sentence is a .wc-sentence.
+    // Comic:     sentences live in .wc-bubble-sent inside bubble overlays.
+    // Return both, sorted by DOM order, so playback and "all recorded?"
+    // checks work for all lesson types.
+    const all = Array.from(root.querySelectorAll('.wc-sentence, .wc-bubble-sent'));
+    return all;
   }
   // True when every sentence on the current page has at least one
   // saved recording — drives the play-all-recordings button colour.
@@ -2377,10 +2382,13 @@
     if (playRecBtn) {
       const any = anyRecordings();
       playRecBtn.classList.toggle('wc-hidden', !any);
-      // Green when every sentence on the current page is recorded —
-      // a click then also triggers the post-recording flow.
+      // Green when in paginated mode (scroll off) AND every sentence
+      // on the current page is recorded — a click then triggers the
+      // post-recording flow. Scroll mode keeps the button light-blue
+      // only (no green, because "a page" is ill-defined when all
+      // pages are stacked).
       playRecBtn.classList.toggle('wc-playrec-complete',
-        any && allRecordedThisPage());
+        any && !scrollMode && allRecordedThisPage());
     }
     renderRecBar();
   }
