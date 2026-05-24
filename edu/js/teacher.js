@@ -2672,7 +2672,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 위치 · → 끝 위치 · Enter 다음 문장</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 위치 · → 끝 위치+다음 문장 · Enter 다음 문장 · , +2초 · . −2초</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2745,7 +2745,10 @@
       };
       if (seg.start != null) vline(toX(seg.start), '#1f9d4d');
       if (seg.end   != null) vline(toX(seg.end),   '#d33');
-      if (!audio.paused)     vline(toX(audio.currentTime), 'rgba(0,0,0,.55)', 1.5);
+      // Black playhead — drawn ALWAYS (was: only while playing) so
+      // the teacher can see where the audio is sitting even when
+      // paused, before / after scrub-shortcuts (, .), etc.
+      vline(toX(audio.currentTime), '#000', audio.paused ? 1.5 : 2);
     }
 
     function tick() {
@@ -2851,14 +2854,40 @@
       work[idx][which] = +Math.max(0, Math.min(duration, audio.currentTime)).toFixed(2);
       draw();
     }
+    // Nudge the playhead by ±N seconds. Works whether playing or
+    // paused; calls draw() (or the running tick loop) so the new
+    // position is reflected on the black playhead line immediately.
+    function seekBy(delta) {
+      if (!duration) return;
+      try {
+        audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + delta));
+      } catch {}
+      if (!audio.paused) tick();
+      else draw();
+    }
     function onKey(e) {
       const tag = e.target && e.target.tagName;
       if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'z' || e.key === 'Z')  { e.preventDefault(); playFromStart(); }
       else if (e.key === 'ArrowLeft')           { e.preventDefault(); setEdgeAtPlayhead('start'); }
-      else if (e.key === 'ArrowRight')          { e.preventDefault(); setEdgeAtPlayhead('end'); }
+      else if (e.key === 'ArrowRight') {
+        // Set end position AND auto-advance to the next sentence so
+        // a teacher can rapid-fire through a song by holding play +
+        // tapping →. If it's already the last sentence, just set the
+        // end without advancing.
+        e.preventDefault();
+        setEdgeAtPlayhead('end');
+        if (idx < lines.length - 1) gotoSentence(idx + 1);
+      }
       else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
+      // Per-2-sec scrub shortcuts. Per the user's spec:
+      //   , → 재생 시점 앞으로 2초  (skip FORWARD 2 sec)
+      //   . → 뒤로 2초 이동         (rewind 2 sec)
+      // Unusual mapping (standard is the opposite), but matches the
+      // requested bindings exactly.
+      else if (e.key === ',')                   { e.preventDefault(); seekBy(+2); }
+      else if (e.key === '.')                   { e.preventDefault(); seekBy(-2); }
     }
     document.addEventListener('keydown', onKey);
 
