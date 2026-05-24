@@ -1682,7 +1682,7 @@
   let _previewDebounce = null;
   let lpMiniPages      = [];  // pre-rendered HTML strings, one per page
   let lpMiniCurPage    = 0;   // 0-indexed
-  let lpMiniFz         = 11;  // font-size px — matches .wc-lp-body CSS default
+  let lpMiniFz         = 9;   // font-size px — starts at minimum so the pane shows the most content
 
   // Build pages by rendering each atomic chunk (text line or image) into
   // an off-screen div that mirrors .wc-lp-body exactly, splitting whenever
@@ -1908,10 +1908,15 @@
 
   function lpvRenderLine(line) {
     const esc = s => escapeHtml(s);
-    let text = line, st = 'margin:.3em 0;';
-    if (/^# /.test(text))   { text = text.slice(2);  st = 'font-size:1.4em;font-weight:800;margin:.5em 0;'; }
-    else if (/^## /.test(text))  { text = text.slice(3);  st = 'font-size:1.15em;font-weight:700;margin:.4em 0;'; }
-    else if (/^### /.test(text)) { text = text.slice(4);  st = 'font-size:1em;font-weight:600;margin:.3em 0;'; }
+    // display:flow-root on every <p> establishes a BFC so the block is
+    // pushed *beside* a preceding float instead of trying to indent its
+    // line-boxes (the same fix applied to .wc-lesson-text p on the
+    // lesson page).  Without this, text falls below the float image in
+    // the narrow preview pane.
+    let text = line, st = 'margin:.3em 0;display:flow-root;';
+    if (/^# /.test(text))   { text = text.slice(2);  st = 'font-size:1.4em;font-weight:800;margin:.5em 0;display:flow-root;'; }
+    else if (/^## /.test(text))  { text = text.slice(3);  st = 'font-size:1.15em;font-weight:700;margin:.4em 0;display:flow-root;'; }
+    else if (/^### /.test(text)) { text = text.slice(4);  st = 'font-size:1em;font-weight:600;margin:.3em 0;display:flow-root;'; }
     text = esc(text)
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/__(.*?)__/g,     '<u>$1</u>')
