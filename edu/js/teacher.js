@@ -1716,13 +1716,14 @@
       const segtrim = seg.trim();
       if (!segtrim) return;
 
-      // Convert the segment into atomic HTML chunks.
-      // tl/tr images go BEFORE text so they float-anchor to the text top.
-      // bl/br images use position:absolute (bottom corner of the pane) so
-      // they are appended last and don't affect scrollHeight measurements.
-      const topFloatChunks = [];  // tl/tr — floated, rendered before text
-      const textChunks     = [];  // text lines + cc/cs/panel images
-      const bottomChunks   = [];  // bl/br — absolute-bottom, rendered last
+      // Convert the segment into atomic HTML chunks in SOURCE ORDER so
+      // each image appears on the same page as its [[IMG:N]] marker.
+      // tl/tr use float:left/right — they float beside the text that
+      // follows them in the DOM (not before all content).
+      // bl/br use position:absolute — they anchor to the pane bottom
+      // and don't affect scrollHeight during measurement, so source
+      // order is safe: they won't falsely trigger an overflow split.
+      const chunks = [];
 
       segtrim.split(/(\[\[IMG:\d+\]\])/).forEach(part => {
         const im = part.match(/^\[\[IMG:(\d+)\]\]$/);
@@ -1731,21 +1732,14 @@
           const src    = img && escapeHtml(img.url || img.data_url || '');
           const corner = (img && img.corner) || '';
           if (src) {
-            const html = `<img src="${src}" style="${lpvImgStyleMini(corner, img.scale)}" alt="">`;
-            if (/^(?:tl|tr)$/.test(corner))      topFloatChunks.push(html);
-            else if (/^(?:bl|br)$/.test(corner)) bottomChunks.push(html);
-            else                                  textChunks.push(html);
+            chunks.push(`<img src="${src}" style="${lpvImgStyleMini(corner, img.scale)}" alt="">`);
           }
         } else {
           part.split('\n').forEach(line => {
-            if (line.trim()) textChunks.push(lpvRenderLine(line));
+            if (line.trim()) chunks.push(lpvRenderLine(line));
           });
         }
       });
-
-      // bl/br are position:absolute — they don't affect scrollHeight so
-      // appending them last never triggers a false overflow-split.
-      const chunks = [...topFloatChunks, ...textChunks, ...bottomChunks];
 
       // Add chunks one by one; overflow → push current page, start a new one.
       let curHtml = '';
@@ -2087,10 +2081,12 @@
   // tl/tr floats go BEFORE text (top-anchor); bl/br use position:absolute
   // (bottom corner) and are appended AFTER text so they don't push content down.
   function lpvRenderPageMini(pageText, images) {
+    // All parts rendered in SOURCE ORDER so each image appears beside
+    // the text surrounding its [[IMG:N]] marker.
+    // tl/tr: float:left/right — image floats beside text that follows it.
+    // bl/br: position:absolute — anchors to pane bottom, DOM position irrelevant.
     const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
-    let topFloatHtml = '';   // tl/tr — float:left/right, before text
-    let contentHtml  = '';   // text paragraphs + cc/cs/panel images
-    let bottomHtml   = '';   // bl/br — position:absolute, after text
+    let html = '';
     parts.forEach(part => {
       const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
       if (m) {
@@ -2098,19 +2094,15 @@
         const src    = im && escapeHtml(im.url || im.data_url || '');
         const corner = (im && im.corner) || '';
         if (src) {
-          const style = lpvImgStyleMini(corner, im.scale);
-          const tag   = `<img src="${src}" style="${style}" alt="">`;
-          if (/^(?:tl|tr)$/.test(corner))      topFloatHtml += tag;
-          else if (/^(?:bl|br)$/.test(corner)) bottomHtml   += tag;
-          else                                  contentHtml  += tag;
+          html += `<img src="${src}" style="${lpvImgStyleMini(corner, im.scale)}" alt="">`;
         }
         return;
       }
       part.split('\n').forEach(line => {
-        if (line.trim()) contentHtml += lpvRenderLine(line);
+        if (line.trim()) html += lpvRenderLine(line);
       });
     });
-    return topFloatHtml + contentHtml + '<div style="clear:both;"></div>' + bottomHtml;
+    return html + '<div style="clear:both;"></div>';
   }
 
   function openLessonPreviewModal() {
