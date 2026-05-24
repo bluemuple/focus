@@ -1591,6 +1591,22 @@
       size -= 1;
       bub.style.fontSize = size + 'px';
     }
+    // Grow if text occupies less than 80 % of bubble width — a large
+    // bubble with only a few words should read big, not tiny.
+    const inner = bub.querySelector('.wc-bubble-inner');
+    if (inner) {
+      const target = bub.clientWidth * 0.8;
+      guard = 60;
+      while (guard-- > 0 && inner.scrollWidth < target) {
+        bub.style.fontSize = (size + 1) + 'px';
+        if (bub.scrollHeight > bub.clientHeight + 1 ||
+            bub.scrollWidth  > bub.clientWidth  + 1) {
+          bub.style.fontSize = size + 'px'; // revert last step
+          break;
+        }
+        size += 1;
+      }
+    }
   }
 
   // ============================================================
