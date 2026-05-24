@@ -86,6 +86,10 @@
   // Dedupes the event so re-reading a page (or jittery scrolling)
   // never double-counts toward the encounter trigger.
   let lastAdvancedPage = 0;
+  // Pages whose full post-recording flow (quiz → roulette → message popup)
+  // has already been run this session. Prevents a second green-button press
+  // from re-triggering the encounter + popup.
+  const recFlowDonePages = new Set();
   // Subscribers (sidebar) that want to react to word-level changes.
   const levelChangeListeners = [];
   function notifyLevelChange(detail) {
@@ -209,17 +213,24 @@
     // left" is fluid, so we return a permissive { ratio: 1 } that
     // never blocks.
     pageWordStats(pi) {
-      if (singleMode || scrollMode) {
-        return { total: 0, colored: 0, ratio: 1 };
-      }
+      // Single-sentence mode: no well-defined page boundary — always pass.
+      if (singleMode) return { total: 0, colored: 0, ratio: 1 };
       if (!Array.isArray(pages) || pi < 0 || pi >= pages.length) {
         return { total: 0, colored: 0, ratio: 1 };
       }
-      const parts = pages[pi] || [];
+      const parts   = pages[pi] || [];
+      const imgList = Array.isArray(lesson && lesson.images) ? lesson.images : [];
       const text  = parts.map(p => {
         if (p.kind === 'sent') return p.text || '';
         if (p.kind === 'gap')  return p.text || '';
         if (p.kind === 'html') return String(p.html || '').replace(/<[^>]+>/g, ' ');
+        if (p.kind === 'img') {
+          // Comic panel: words live in bubble dialogue, not the body text.
+          const rec = imgList[p.idx];
+          if (rec && Array.isArray(rec.bubbles)) {
+            return rec.bubbles.map(b => b.text || '').join(' ');
+          }
+        }
         return '';
       }).join(' ');
       const unique = new Set();
@@ -2486,7 +2497,8 @@
         if (playAllBusy) { stopPlayAll(); return; }
         const wasComplete = playRecBtn.classList.contains('wc-playrec-complete');
         const result = await playAllRecordings();
-        if (wasComplete && result === 'done') {
+        if (wasComplete && result === 'done' && !recFlowDonePages.has(pageIdx)) {
+          recFlowDonePages.add(pageIdx);
           try { await runPostRecordingFlow(); }
           catch (e) { console.warn('[post-rec] flow failed', e && e.message); }
         }

@@ -1672,14 +1672,81 @@
     const scrollField = $('comicScrollField');
     if (scrollField) scrollField.classList.toggle('wc-hidden', lessonMode !== 'comic');
   }
+  // ── Live lesson preview ──────────────────────────────────────────────
+  // Renders a miniature first-page view inside #lessonPreviewPane.
+  // Mirrors image corner floats so the teacher sees position changes
+  // instantly without saving.
+  let _previewDebounce = null;
+  function refreshLessonPreview(immediate) {
+    if (!immediate) {
+      clearTimeout(_previewDebounce);
+      _previewDebounce = setTimeout(() => refreshLessonPreview(true), 200);
+      return;
+    }
+    const pane = document.getElementById('lessonPreviewPane');
+    if (!pane) return;
+
+    const title   = ($('lessonTitle').value || '').trim() || '제목 없음';
+    const rawBody = ($('lessonBody').value || '').trim();
+
+    const badge = document.getElementById('lpModeBadge');
+    if (badge) badge.textContent =
+      lessonMode === 'comic' ? '💬' : lessonMode === 'song' ? '🎵' : '📄';
+
+    const titleEl = document.getElementById('lpTitle');
+    if (titleEl) titleEl.textContent = title;
+
+    const bodyEl = document.getElementById('lpBody');
+    if (!bodyEl) return;
+
+    if (!rawBody && !lessonImages.length) {
+      bodyEl.innerHTML = '<p class="wc-lp-empty">레슨 내용이<br>여기 표시됩니다</p>';
+      return;
+    }
+
+    // Use only text up to the first page break so the preview shows page 1.
+    const firstPage = rawBody.split(/^---\s*$/m)[0];
+    // Strip [[IMG:N]] markers from the text portion.
+    const textOnly = firstPage.replace(/\[\[IMG:\d+\]\]/g, ' ')
+      .replace(/\s{2,}/g, ' ').trim();
+    const preview = textOnly.length > 300
+      ? textOnly.slice(0, 300) + '…' : textOnly;
+
+    // Build: floated images first so text wraps around them correctly,
+    // then the body text, then a clearfix.
+    let html = '';
+    lessonImages.forEach((im) => {
+      const src = escapeHtml(im.url || im.data_url || '');
+      if (!src) return;
+      const cls = 'wc-lp-img lp-' + (im.corner || 'tr');
+      html += `<img class="${cls}" src="${src}" alt="">`;
+    });
+    if (preview) {
+      html += `<p style="margin:0;">${escapeHtml(preview)}</p>`;
+    }
+    html += '<div style="clear:both;"></div>';
+    bodyEl.innerHTML = html;
+  }
+
   (function wireLessonModeTabs() {
     const tabs = document.getElementById('lessonModeTabs');
     if (!tabs) return;
     tabs.addEventListener('click', (e) => {
       const t = e.target.closest('.wc-mode-tab');
-      if (t && t.dataset.mode) setLessonMode(t.dataset.mode);
+      if (t && t.dataset.mode) {
+        setLessonMode(t.dataset.mode);
+        refreshLessonPreview(true);
+      }
     });
     setLessonMode('text');
+  })();
+
+  // Wire title + body live-update for the preview.
+  (function wireLessonPreviewInputs() {
+    const titleIn = $('lessonTitle');
+    const bodyIn  = $('lessonBody');
+    if (titleIn) titleIn.addEventListener('input', () => refreshLessonPreview(true));
+    if (bodyIn)  bodyIn .addEventListener('input', () => refreshLessonPreview());
   })();
 
   function startEditing(lessonId) {
@@ -1735,6 +1802,7 @@
     $('lessonTitle').focus();
     // Re-render the list so the row gets the "(editing)" badge highlight.
     renderLessons();
+    refreshLessonPreview(true);
   }
 
   function cancelEditing() {
@@ -1754,6 +1822,7 @@
     const card = $('createLessonCard');
     if (card) card.open = false;
     renderLessons();
+    refreshLessonPreview(true);
   }
 
   function updateFormMode() {
@@ -2205,6 +2274,7 @@
       b.addEventListener('click', () =>
         openBubbleEditor(parseInt(b.dataset.bubbles, 10)));
     });
+    refreshLessonPreview(true);
   }
 
   // ----------------------------------------------------------------

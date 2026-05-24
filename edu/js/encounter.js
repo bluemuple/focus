@@ -204,7 +204,7 @@
   // 40 % per the spec; tweak here if the teacher wants a different
   // target. We check the PREVIOUS page (the one the student just
   // left), since that's the page they actually "finished reading".
-  const PAGE_COLOR_THRESHOLD = 0.4;
+  const PAGE_COLOR_THRESHOLD = 0.5;
 
   async function onPageAdvanced(ev) {
     if (window.WCEncounter?.busy) return;        // already in an encounter
