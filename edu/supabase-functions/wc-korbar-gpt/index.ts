@@ -90,8 +90,11 @@ const WORD_SYS = [
   "- easy_en (string): the meaning in VERY simple English — beginner",
   "  level, 8 words or fewer, only words a young learner knows. It must",
   "  match how the word is used in the GIVEN sentence.",
-  "- ko (string): the Korean meaning that fits THIS sentence's sense.",
-  "  Natural, short Korean. Plain dictionary-style Korean is fine.",
+  "- ko (string): this word's Korean meaning — one short word or phrase,",
+  "  dictionary style. Use the sentence only to choose the right sense.",
+  "  Do NOT translate the whole sentence.",
+  "  ✓ 'wants' in \"He wants some lunch.\" → \"원해요\" NOT \"그는 점심을 원해요\"",
+  "  ✓ 'buy' in \"Don't buy a dead one.\" → \"사다\"",
   "- word_family (array of 2-5 lowercase strings): related forms,",
   "  including the lemma. e.g. scared → [\"scare\",\"scared\",\"scary\"].",
   "- similar (array of 0-3 lowercase strings): simple synonyms.",
@@ -133,10 +136,16 @@ const CHUNK_SYS = [
   "You help a Korean child (age 7-9) learning English understand ONE",
   "chunk (a short phrase) of an English sentence. You are GIVEN the",
   "WHOLE sentence — you MUST use it. Reply with JSON only. Keys:",
-  "- ko (string): the chunk's Korean meaning AS THE CHUNK FUNCTIONS",
-  "  WITHIN THE GIVEN SENTENCE — keep the grammatical role it plays.",
-  "  Example: sentence \"We can all help plan it.\", chunk \"plan it\"",
-  "  → \"그것을 계획하는 것을\" (NOT \"계획하다\"). Short & natural.",
+  "- ko (string): translate ONLY the words inside this chunk. Do NOT",
+  "  add words from outside the chunk. Use the sentence to understand",
+  "  meaning and add the right Korean particle (을/를 이/가 에서 에게 로 등).",
+  "  ✓ \"don't buy\" (from \"don't buy a dead one\") → \"사지 마세요\"",
+  "    NOT \"죽은 걸 사지 마세요\" — that imports context from outside.",
+  "  ✓ \"She gave him\" → \"그녀는 그에게 주었다\" (translate ALL 3 words)",
+  "    NOT \"그에게\" — that omits She and gave.",
+  "  ✓ \"cat biscuits\" (direct object) → \"고양이 비스킷을\" (add particle)",
+  "  ✓ \"some broccoli\" → \"브로콜리 조금을\" (natural Korean for some)",
+  "  ✓ \"plan it\" → \"그것을 계획하는 것을\" (grammatical role preserved)",
   "- parts (array of {en, ko}): split the chunk into 2-3 meaning",
   "  pieces a beginner can map word-for-word, each translated in the",
   "  same sentence-context grammatical role used in `ko`. The pieces",
@@ -266,7 +275,7 @@ Deno.serve(async (req) => {
       // One specific chunk, translated in the sentence's context.
       const text = String(body?.text || "").trim();
       if (!text) return json({ error: "text required" }, 400);
-      const ck = "korbar:v3:chunk:" + await senseHash(text + "|" + sentence);
+      const ck = "korbar:v4:chunk:" + await senseHash(text + "|" + sentence);
       const cached = await readCache(ck);
       if (cached) return json({ ...(cached as object), cached: true });
       if (!apiKey) return json({ error: "OPENAI_API_KEY not set" }, 500);
@@ -298,7 +307,7 @@ Deno.serve(async (req) => {
     // kind === "word"
     const word = String(body?.word || "").trim();
     if (!word) return json({ error: "word required" }, 400);
-    const ck = "korbar:v2:word:" + word.toLowerCase() + ":"
+    const ck = "korbar:v3:word:" + word.toLowerCase() + ":"
              + (sentence ? await senseHash(sentence) : "_");
     const cached = await readCache(ck);
     if (cached) return json({ ...(cached as object), cached: true });

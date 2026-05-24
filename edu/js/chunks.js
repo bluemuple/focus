@@ -47,7 +47,14 @@
       if (!n) continue;
       const serverStart = (Array.isArray(c.indices) && Number.isFinite(c.indices[0]))
         ? (c.indices[0] | 0) : null;
-      const start = serverStart !== null ? serverStart : runningStart;
+      // Never let start regress behind runningStart. chunk-gpt occasionally
+      // returns overlapping texts (e.g. "which is" at the end of one chunk
+      // AND the start of the next). Accepting a regressed start would make
+      // that word highlight as part of two consecutive chunks (double
+      // underline). Clamping to runningStart keeps each word in exactly
+      // one chunk's index range.
+      const start = (serverStart !== null && serverStart >= runningStart)
+        ? serverStart : runningStart;
       if (n <= 6) {
         const end = start + n - 1;
         out.push({ text: c.text, indices: [start, end] });
