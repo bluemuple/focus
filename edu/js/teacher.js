@@ -2672,7 +2672,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝 · Enter 다음 문장 · , +2초 · . −2초 · 검은선 드래그=재생 위치</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝 · Enter 다음 문장 · , −2초 · . +2초 · 검은선 드래그=재생 위치</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2930,13 +2930,13 @@
       else if (e.key === 'ArrowLeft')           { e.preventDefault(); setEdgeAtPlayhead('start'); }
       else if (e.key === 'ArrowRight')          { e.preventDefault(); setEdgeAtPlayhead('end'); }
       else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
-      // Per-2-sec scrub shortcuts. Per the user's spec:
-      //   , → 재생 시점 앞으로 2초  (skip FORWARD 2 sec)
-      //   . → 뒤로 2초 이동         (rewind 2 sec)
-      // Unusual mapping (standard is the opposite), but matches the
-      // requested bindings exactly.
-      else if (e.key === ',')                   { e.preventDefault(); seekBy(+2); }
-      else if (e.key === '.')                   { e.preventDefault(); seekBy(-2); }
+      // Per-2-sec scrub shortcuts — swapped to the standard mapping
+      // (`,` carries the `<` glyph = rewind, `.` carries `>` =
+      // forward), so muscle memory from other media players carries.
+      //   , → 뒤로 2초 (rewind)
+      //   . → 앞으로 2초 (skip forward)
+      else if (e.key === ',')                   { e.preventDefault(); seekBy(-2); }
+      else if (e.key === '.')                   { e.preventDefault(); seekBy(+2); }
     }
     document.addEventListener('keydown', onKey);
 
