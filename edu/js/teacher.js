@@ -1704,28 +1704,11 @@
       return;
     }
 
-    // Use only text up to the first page break so the preview shows page 1.
-    const firstPage = rawBody.split(/^---\s*$/m)[0];
-    // Strip [[IMG:N]] markers from the text portion.
-    const textOnly = firstPage.replace(/\[\[IMG:\d+\]\]/g, ' ')
-      .replace(/\s{2,}/g, ' ').trim();
-    const preview = textOnly.length > 300
-      ? textOnly.slice(0, 300) + '…' : textOnly;
-
-    // Build: floated images first so text wraps around them correctly,
-    // then the body text, then a clearfix.
-    let html = '';
-    lessonImages.forEach((im) => {
-      const src = escapeHtml(im.url || im.data_url || '');
-      if (!src) return;
-      const cls = 'wc-lp-img lp-' + (im.corner || 'tr');
-      html += `<img class="${cls}" src="${src}" alt="">`;
-    });
-    if (preview) {
-      html += `<p style="margin:0;">${escapeHtml(preview)}</p>`;
-    }
-    html += '<div style="clear:both;"></div>';
-    bodyEl.innerHTML = html;
+    // Show page 1 only (text up to first --- separator).
+    // Render with the same lpvRenderPageMini engine the full modal uses,
+    // so layout, headings, colours, and float images all look identical.
+    const firstPage = rawBody.split(/\n\s*---\s*(?:\n|$)/)[0].trim();
+    bodyEl.innerHTML = lpvRenderPageMini(firstPage, lessonImages);
   }
 
   (function wireLessonModeTabs() {
@@ -1753,6 +1736,28 @@
   // Opens when the teacher clicks "👁 페이지 미리보기". Parses the body
   // into pages (split by ---), renders each page at lesson-page font/
   // line-height with images at their real corner floats. Prev/next nav.
+
+  // Compact image style for the 260 px side-pane preview — same layout
+  // intent as lpvImgStyle but uses %-widths suited to the narrow pane.
+  function lpvImgStyleMini(corner, scale) {
+    const sc = Number.isFinite(scale) ? scale : 1.0;
+    const w  = (30 * sc).toFixed(1);
+    const sh = 'box-shadow:0 1px 4px rgba(0,0,0,.10);border-radius:4px;height:auto;';
+    switch (corner) {
+      case 'tl': case 'bl':
+        return `float:left;width:${w}%;max-width:80px;margin:0 8px 6px 0;${sh}`;
+      case 'tr': case 'br':
+        return `float:right;width:${w}%;max-width:80px;margin:0 0 6px 8px;${sh}`;
+      case 'cc':
+        return `display:block;margin:6px auto;width:60%;max-width:120px;${sh}`;
+      case 'cs':
+        return `display:block;margin:4px auto;max-width:${Math.round(50 * sc)}px;${sh}`;
+      case 'panel':
+        return `display:block;width:90%;margin:4px auto 6px;border:2px solid #1a1a1a;border-radius:3px;${sh}`;
+      default:
+        return `float:right;width:${w}%;max-width:80px;margin:0 0 6px 8px;${sh}`;
+    }
+  }
 
   function lpvImgStyle(corner, scale) {
     const sc = Number.isFinite(scale) ? scale : 1.0;
@@ -1809,6 +1814,25 @@
     return html + '<div style="clear:both;"></div>';
   }
 
+  // Same as lpvRenderPage but uses lpvImgStyleMini for the narrow side-pane.
+  function lpvRenderPageMini(pageText, images) {
+    const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
+    let html = '';
+    parts.forEach(part => {
+      const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
+      if (m) {
+        const im = images && images[parseInt(m[1], 10)];
+        const src = im && escapeHtml(im.url || im.data_url || '');
+        if (src) html += `<img src="${src}" style="${lpvImgStyleMini(im.corner, im.scale)}" alt="">`;
+        return;
+      }
+      part.split('\n').forEach(line => {
+        if (line.trim()) html += lpvRenderLine(line);
+      });
+    });
+    return html + '<div style="clear:both;"></div>';
+  }
+
   function openLessonPreviewModal() {
     const body   = ($('lessonBody').value  || '').trim();
     const title  = ($('lessonTitle').value || '').trim() || '(제목 없음)';
@@ -1853,6 +1877,12 @@
          <div class="wc-lpv-head">
            <span class="wc-lpv-mode">${badge}</span>
            <span class="wc-lpv-title">${escapeHtml(title)}</span>
+           <div class="wc-lpv-ctrls">
+             <button class="wc-lpv-ctrl" id="lpvFzDec" title="글자 작게">A−</button>
+             <button class="wc-lpv-ctrl" id="lpvFzInc" title="글자 크게">A+</button>
+             <button class="wc-lpv-ctrl" id="lpvLhDec" title="행간 좁게">↕−</button>
+             <button class="wc-lpv-ctrl" id="lpvLhInc" title="행간 넓게">↕+</button>
+           </div>
            <button class="wc-lpv-close" id="lpvClose" title="닫기">✕</button>
          </div>
          <div class="wc-lpv-body" id="lpvPageBody"></div>
@@ -1864,10 +1894,19 @@
        </div>`;
     document.body.appendChild(overlay);
 
+    // Font-size and line-height state for this modal instance.
+    let lpvFz = 20;   // px — matches .wc-lpv-body default
+    let lpvLh = 2.4;  // unitless — matches .wc-lpv-body default
+    function applyLpvBodyStyle() {
+      const b = document.getElementById('lpvPageBody');
+      if (b) { b.style.fontSize = lpvFz + 'px'; b.style.lineHeight = String(lpvLh); }
+    }
+
     function render(idx) {
       cur = idx;
       const bodyEl = document.getElementById('lpvPageBody');
       if (bodyEl) bodyEl.innerHTML = lpvRenderPage(lpvPages[idx] || '', imgs);
+      applyLpvBodyStyle();
       const countEl = document.getElementById('lpvCount');
       if (countEl) countEl.textContent = `${idx + 1} / ${lpvPages.length}`;
       const prev = document.getElementById('lpvPrev');
@@ -1881,6 +1920,22 @@
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
     document.getElementById('lpvPrev').addEventListener('click', () => { if (cur > 0) render(cur - 1); });
     document.getElementById('lpvNext').addEventListener('click', () => { if (cur < lpvPages.length - 1) render(cur + 1); });
+
+    // A− / A+ — font size step 2px, range 14–32px.
+    document.getElementById('lpvFzDec').addEventListener('click', () => {
+      lpvFz = Math.max(14, lpvFz - 2); applyLpvBodyStyle();
+    });
+    document.getElementById('lpvFzInc').addEventListener('click', () => {
+      lpvFz = Math.min(32, lpvFz + 2); applyLpvBodyStyle();
+    });
+    // ↕− / ↕+ — line-height step 0.2, range 1.4–3.6.
+    document.getElementById('lpvLhDec').addEventListener('click', () => {
+      lpvLh = Math.max(1.4, +(lpvLh - 0.2).toFixed(1)); applyLpvBodyStyle();
+    });
+    document.getElementById('lpvLhInc').addEventListener('click', () => {
+      lpvLh = Math.min(3.6, +(lpvLh + 0.2).toFixed(1)); applyLpvBodyStyle();
+    });
+
     // Keyboard nav.
     const onKey = e => {
       if (!document.getElementById('wcLpvOverlay')) { document.removeEventListener('keydown', onKey); return; }
