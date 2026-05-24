@@ -1816,9 +1816,32 @@
     const mode   = lessonMode;
     const badge  = mode === 'comic' ? '💬' : mode === 'song' ? '🎵' : '📄';
 
-    // Pages = body split on standalone --- lines.
-    const pageTexts = body.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean);
-    const lpvPages  = pageTexts.length ? pageTexts : [''];
+    // Pages = body split on standalone --- lines, then FURTHER auto-paginated
+    // by sentence count (max 6 sentences per page — mirrors lesson.js so the
+    // teacher sees the same number of pages the student will navigate through).
+    const MAX_SENTS = 6;
+    const lpvPages = [];
+    body.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean)
+      .forEach(seg => {
+        const lines = seg.split('\n');
+        let curLines = [];
+        let sentCount = 0;
+        lines.forEach(line => {
+          curLines.push(line);
+          // Count sentence-ending punctuation; ignore headings and IMG markers.
+          const clean = line.replace(/\[\[IMG:\d+\]\]/g, '').replace(/^#{1,6}\s.*/, '');
+          sentCount += (clean.match(/[.!?]+/g) || []).length;
+          if (sentCount >= MAX_SENTS) {
+            const pg = curLines.join('\n').trim();
+            if (pg) lpvPages.push(pg);
+            curLines  = [];
+            sentCount = 0;
+          }
+        });
+        const tail = curLines.join('\n').trim();
+        if (tail) lpvPages.push(tail);
+      });
+    if (!lpvPages.length) lpvPages.push('');
     let cur = 0;
 
     // Build overlay DOM.
