@@ -2651,7 +2651,12 @@
       <div class="wc-popup wc-wave-sync">
         <button class="wc-popup-close" aria-label="Close">×</button>
         <div class="wc-ws-head">
-          <h3 style="margin:0;">오디오 보정 — 문장별 구간</h3>
+          <h3 style="margin:0; display:inline-flex; align-items:center; gap:10px;">
+            오디오 보정 — 문장별 구간
+            <button class="wc-btn ghost wc-ws-fast wc-ws-fast-on" id="wsFast" type="button"
+                    title="빨리 모드 — 모든 문장 boundary 를 한 번에 편집"
+                    style="height:28px; padding:4px 14px; font-size:13px;">⚡ 빨리</button>
+          </h3>
           <div class="wc-ws-meta">
             <label>재생속도
               <select id="wsSpeed">
@@ -2672,7 +2677,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝 · Enter 다음 문장 · , −2초 · . +2초 · 검은선 드래그=재생 위치</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝(⚡ 켜져 있으면 다음 문장 자동) · Enter 다음 문장 · , −2초 · . +2초 · 검은선·번호 드래그=위치 이동</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2709,6 +2714,37 @@
       cx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
+    // ⚡ 빨리 (fast) mode — default ON. When ON, the waveform shows
+    // EVERY sentence's start/end pair at once (each with a small
+    // numbered badge above) so the teacher can rapid-fire through
+    // the whole song without losing context. When OFF, only the
+    // currently-edited sentence's lines are drawn.
+    let fastMode = true;
+
+    // Numbered badge — a small filled circle with the sentence's
+    // 1-based index inside, drawn above a start (green) or end
+    // (red) line. The badges are draggable; their position is the
+    // canonical hit-test for adjusting the corresponding time.
+    const BADGE_R = 9;       // radius
+    const BADGE_Y = BADGE_R + 2;
+    function drawBadge(x, num, which, isCurrent) {
+      const color = which === 'start' ? '#1f9d4d' : '#d33';
+      cx.beginPath();
+      cx.arc(x, BADGE_Y, BADGE_R, 0, Math.PI * 2);
+      cx.fillStyle = color;
+      cx.fill();
+      if (isCurrent) {
+        cx.strokeStyle = '#000';
+        cx.lineWidth = 2;
+        cx.stroke();
+      }
+      cx.fillStyle = '#fff';
+      cx.font = 'bold 10px -apple-system, BlinkMacSystemFont, sans-serif';
+      cx.textAlign = 'center';
+      cx.textBaseline = 'middle';
+      cx.fillText(String(num), x, BADGE_Y);
+    }
+
     function draw() {
       if (!cssW) return;
       cx.clearRect(0, 0, cssW, cssH);
@@ -2743,11 +2779,27 @@
         cx.strokeStyle = color; cx.lineWidth = w || 2;
         cx.beginPath(); cx.moveTo(x, 0); cx.lineTo(x, cssH); cx.stroke();
       };
-      if (seg.start != null) vline(toX(seg.start), '#1f9d4d');
-      if (seg.end   != null) vline(toX(seg.end),   '#d33');
-      // Black playhead — drawn ALWAYS (was: only while playing) so
-      // the teacher can see where the audio is sitting even when
-      // paused, before / after scrub-shortcuts (, .), etc.
+      if (fastMode) {
+        // Draw EVERY sentence's start/end. Current sentence (idx)
+        // gets thicker lines + a black ring on its badges so the
+        // teacher always knows which sentence ←/→ will edit.
+        work.forEach((s, i) => {
+          const isCurrent = (i === idx);
+          if (s.start != null) {
+            vline(toX(s.start), '#1f9d4d', isCurrent ? 3 : 2);
+            drawBadge(toX(s.start), i + 1, 'start', isCurrent);
+          }
+          if (s.end != null) {
+            vline(toX(s.end),   '#d33',   isCurrent ? 3 : 2);
+            drawBadge(toX(s.end),   i + 1, 'end',   isCurrent);
+          }
+        });
+      } else {
+        if (seg.start != null) vline(toX(seg.start), '#1f9d4d');
+        if (seg.end   != null) vline(toX(seg.end),   '#d33');
+      }
+      // Black playhead — drawn ALWAYS so the teacher can see where
+      // the audio is sitting even when paused.
       vline(toX(audio.currentTime), '#000', audio.paused ? 1.5 : 2);
     }
 
@@ -2818,11 +2870,69 @@
     canvas.addEventListener('mousemove', (e) => {
       if (playheadDragging) return;
       if (!duration) return;
+      // Badge takes priority over playhead-hover cue.
+      if (badgeHitAt(e.offsetX, e.offsetY)) {
+        canvas.style.cursor = 'grab';
+        return;
+      }
       const near = Math.abs(e.offsetX - playheadX()) < 14;
       canvas.style.cursor = near ? 'ew-resize' : 'crosshair';
     });
+    // Hit-test the small numbered badges at the top of the canvas.
+    // Returns {i, which:'start'|'end'} or null. Only meaningful in
+    // fast mode (badges are only drawn then). Y is constrained to
+    // the top strip so a click lower on the line itself doesn't
+    // accidentally drag a badge.
+    function badgeHitAt(ox, oy) {
+      if (!fastMode || oy > BADGE_R * 2 + 6) return null;
+      let best = null;
+      let bestDist = Infinity;
+      work.forEach((s, i) => {
+        if (s.start != null) {
+          const x = (s.start / duration) * cssW;
+          const d = Math.abs(ox - x);
+          if (d < BADGE_R + 4 && d < bestDist) {
+            best = { i, which: 'start' }; bestDist = d;
+          }
+        }
+        if (s.end != null) {
+          const x = (s.end / duration) * cssW;
+          const d = Math.abs(ox - x);
+          if (d < BADGE_R + 4 && d < bestDist) {
+            best = { i, which: 'end' }; bestDist = d;
+          }
+        }
+      });
+      return best;
+    }
+
     canvas.addEventListener('mousedown', (e) => {
       if (e.button !== 0 || !duration) return;
+      // 1. Try a numbered badge first (fast mode only). Dragging it
+      //    re-positions the corresponding start/end without touching
+      //    the playhead or audio. The current sentence is unaffected
+      //    — boundaries belong to whichever sentence's badge moved.
+      const hit = badgeHitAt(e.offsetX, e.offsetY);
+      if (hit) {
+        e.preventDefault();
+        const rect0 = canvas.getBoundingClientRect();
+        function onBMove(ev) {
+          const x = Math.max(0, Math.min(cssW, ev.clientX - rect0.left));
+          work[hit.i][hit.which] =
+            +((x / cssW) * duration).toFixed(2);
+          draw();
+        }
+        function onBUp() {
+          document.removeEventListener('mousemove', onBMove);
+          document.removeEventListener('mouseup',   onBUp);
+          suppressNextClick = true;
+          setTimeout(() => { suppressNextClick = false; }, 50);
+        }
+        document.addEventListener('mousemove', onBMove);
+        document.addEventListener('mouseup',   onBUp);
+        return;
+      }
+      // 2. Otherwise try the playhead — within 14 px → drag-to-scrub.
       if (Math.abs(e.offsetX - playheadX()) >= 14) return;   // miss
       e.preventDefault();
       playheadDragging = true;
@@ -2868,9 +2978,24 @@
       audio.playbackRate = parseFloat(e.target.value) || 1;
     });
 
-    function gotoSentence(n) {
+    // ⚡ 빨리 toggle. Default ON (the button starts with class
+    // .wc-ws-fast-on from the markup). Clicking flips the mode +
+    // the .wc-ws-fast-on class, then re-draws so the canvas
+    // immediately reflects "all sentences" vs "only current".
+    host.querySelector('#wsFast').addEventListener('click', (e) => {
+      fastMode = !fastMode;
+      e.currentTarget.classList.toggle('wc-ws-fast-on', fastMode);
+      e.currentTarget.title = fastMode
+        ? '빨리 모드 ON — →/← 가 자동 진행, 모든 문장의 시작/끝 동시 표시'
+        : '빨리 모드 OFF — 현재 문장만 표시, Enter 로 다음 문장';
+      draw();
+    });
+
+    function gotoSentence(n, keepPlaying) {
       idx = Math.max(0, Math.min(lines.length - 1, n));
-      try { audio.pause(); } catch {}
+      if (!keepPlaying) {
+        try { audio.pause(); } catch {}
+      }
       refreshSentenceUi();
     }
     host.querySelector('#wsPrev').addEventListener('click', () => gotoSentence(idx - 1));
@@ -2886,8 +3011,11 @@
       audio.play().catch(() => {});
       tick();
     }
-    // Stop at the current line's end while playing.
+    // Stop at the current line's end while playing — but ONLY when
+    // fastMode is OFF. In fast mode, we want continuous playback so
+    // the teacher can mark every sentence in one pass with ←/→.
     audio.addEventListener('timeupdate', () => {
+      if (fastMode) return;
       const seg = work[idx];
       if (!audio.paused && seg.end != null && audio.currentTime >= seg.end) audio.pause();
     });
@@ -2920,15 +3048,26 @@
       if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'z' || e.key === 'Z')  { e.preventDefault(); playFromStart(); }
-      // ← / → just set the current sentence's start / end to the
-      // black-playhead position. ALWAYS override (re-pressing →
-      // after the end is already set just snaps it to the new
-      // playhead position). Auto-advance was removed per the
-      // teacher's request — Enter is the explicit "next sentence"
-      // key, so ← / → can be tapped repeatedly to fine-tune the
-      // current sentence's boundaries.
-      else if (e.key === 'ArrowLeft')           { e.preventDefault(); setEdgeAtPlayhead('start'); }
-      else if (e.key === 'ArrowRight')          { e.preventDefault(); setEdgeAtPlayhead('end'); }
+      // ← / → set the current sentence's start / end to the
+      // black-playhead position. Behavior splits on fastMode:
+      //   - fastMode ON (default): → also advances to the next
+      //     sentence WITHOUT pausing the audio, so the teacher can
+      //     mark every boundary in a single playthrough. ← also
+      //     keeps the audio playing.
+      //   - fastMode OFF: just sets the value, no advance, no
+      //     change to playback. Enter is the explicit "next" key.
+      // Both keys ALWAYS override an existing value so re-pressing
+      // snaps to the new playhead — handy for fine-tuning either
+      // before advancing (fastMode) or repeatedly (slow mode).
+      else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        setEdgeAtPlayhead('start');
+      }
+      else if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        setEdgeAtPlayhead('end');
+        if (fastMode && idx < lines.length - 1) gotoSentence(idx + 1, true);
+      }
       else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
       // Per-2-sec scrub shortcuts — swapped to the standard mapping
       // (`,` carries the `<` glyph = rewind, `.` carries `>` =
