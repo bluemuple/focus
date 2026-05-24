@@ -1717,20 +1717,33 @@
       if (!segtrim) return;
 
       // Convert the segment into atomic HTML chunks.
-      const chunks = [];
+      // Float images (tl/bl/tr/br) are collected first so they anchor
+      // to the TOP of the adjacent text — without this, an image that
+      // appears at the end of a text line in the source would be
+      // inserted AFTER that line's <p>, making the float start below
+      // the line instead of beside its top.
+      const floatChunks = [];  // float images — rendered before text
+      const textChunks  = [];  // text lines and center images — source order
+
       segtrim.split(/(\[\[IMG:\d+\]\])/).forEach(part => {
         const im = part.match(/^\[\[IMG:(\d+)\]\]$/);
         if (im) {
           const img = images && images[parseInt(im[1], 10)];
           const src = img && escapeHtml(img.url || img.data_url || '');
-          if (src) chunks.push(
-            `<img src="${src}" style="${lpvImgStyleMini(img.corner, img.scale)}" alt="">`);
+          if (src) {
+            const html    = `<img src="${src}" style="${lpvImgStyleMini(img.corner, img.scale)}" alt="">`;
+            const isFloat = /^(?:tl|bl|tr|br)$/.test(img.corner || '');
+            if (isFloat) floatChunks.push(html);
+            else          textChunks.push(html);
+          }
         } else {
           part.split('\n').forEach(line => {
-            if (line.trim()) chunks.push(lpvRenderLine(line));
+            if (line.trim()) textChunks.push(lpvRenderLine(line));
           });
         }
       });
+
+      const chunks = [...floatChunks, ...textChunks];
 
       // Add chunks one by one; overflow → push current page, start a new one.
       let curHtml = '';
@@ -1857,6 +1870,88 @@
     });
   })();
 
+  // ── Mini preview pane drag-to-resize ─────────────────────────────────
+  // Bottom edge: drag down/up to change pane height (max 2 × initial).
+  // Left  edge: drag left/right to change pane width  (max 1.5 × initial).
+  // Resizing re-paginates in real time (RAF-throttled) so the page count
+  // and word wrapping update as the teacher drags.
+  (function wireMiniPreviewResize() {
+    const pane = document.getElementById('lessonPreviewPane');
+    if (!pane) return;
+
+    const INIT_W = 360, INIT_H = 170;          // match CSS defaults
+    const MAX_W  = Math.round(INIT_W * 1.5);   // 540 px
+    const MAX_H  = Math.round(INIT_H * 2);     // 340 px
+    const MIN_W  = 180,  MIN_H = 80;
+    const EDGE   = 8;   // hit-area thickness (px) near each edge
+
+    let dir = null;              // null | 'h' | 'w' | 'both'
+    let startX, startY, startW, startH;
+    let _raf = null;
+
+    // RAF-throttled repagination — reads the NEW pane dimensions after resize.
+    function repaginate() {
+      if (_raf) cancelAnimationFrame(_raf);
+      _raf = requestAnimationFrame(() => {
+        lpMiniCurPage = 0;
+        const raw = ($('lessonBody').value || '').trim();
+        lpMiniPages   = raw ? computeMiniPagesByHeight(raw, lessonImages) : [''];
+        renderMiniPage();
+        _raf = null;
+      });
+    }
+
+    // Change cursor when hovering near the bottom or left edge.
+    pane.addEventListener('mousemove', e => {
+      if (dir) return;
+      const r = pane.getBoundingClientRect();
+      const nb = e.clientY >= r.bottom - EDGE;
+      const nl = e.clientX <= r.left   + EDGE;
+      pane.style.cursor = (nb && nl) ? 'sw-resize' : nb ? 's-resize' : nl ? 'w-resize' : '';
+    });
+    pane.addEventListener('mouseleave', () => { if (!dir) pane.style.cursor = ''; });
+
+    // Begin drag on mousedown near an edge.
+    pane.addEventListener('mousedown', e => {
+      const r = pane.getBoundingClientRect();
+      const nb = e.clientY >= r.bottom - EDGE;
+      const nl = e.clientX <= r.left   + EDGE;
+      if (!nb && !nl) return;
+      e.preventDefault();
+      dir    = (nb && nl) ? 'both' : nb ? 'h' : 'w';
+      startX = e.clientX; startY = e.clientY;
+      startW = pane.offsetWidth; startH = pane.offsetHeight;
+      document.body.style.cursor     = pane.style.cursor;
+      document.body.style.userSelect = 'none';
+    });
+
+    // Apply resize deltas on mousemove.
+    document.addEventListener('mousemove', e => {
+      if (!dir) return;
+      if (dir === 'h' || dir === 'both') {
+        // Drag down → taller.
+        const h = Math.min(MAX_H, Math.max(MIN_H, startH + (e.clientY - startY)));
+        pane.style.height = h + 'px';
+      }
+      if (dir === 'w' || dir === 'both') {
+        // Drag left → wider (left edge moves left, right edge stays).
+        const w = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - e.clientX)));
+        pane.style.width = w + 'px';
+      }
+      repaginate();
+    });
+
+    // End drag.
+    document.addEventListener('mouseup', () => {
+      if (!dir) return;
+      dir = null;
+      pane.style.cursor          = '';
+      document.body.style.cursor     = '';
+      document.body.style.userSelect = '';
+      repaginate();
+    });
+  })();
+
   // ── Full-size lesson preview modal ────────────────────────────────────
   // Opens when the teacher clicks "👁 페이지 미리보기". Parses the body
   // into pages (split by ---), renders each page at lesson-page font/
@@ -1926,41 +2021,53 @@
   }
 
   function lpvRenderPage(pageText, images) {
-    // Split on [[IMG:N]] markers (kept as delimiters), then render each chunk.
+    // Float images (tl/bl/tr/br) are placed BEFORE text so they anchor
+    // to the top of the adjacent text block.  Center images (cc/cs/panel)
+    // stay in source order.
     const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
-    let html = '';
+    let floatHtml = '', contentHtml = '';
     parts.forEach(part => {
       const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
       if (m) {
         const im = images && images[parseInt(m[1], 10)];
         const src = im && escapeHtml(im.url || im.data_url || '');
-        if (src) html += `<img src="${src}" style="${lpvImgStyle(im.corner, im.scale)}" alt="">`;
+        if (src) {
+          const style   = lpvImgStyle(im.corner, im.scale);
+          const isFloat = /^(?:tl|bl|tr|br)$/.test(im.corner || '');
+          if (isFloat) floatHtml   += `<img src="${src}" style="${style}" alt="">`;
+          else         contentHtml += `<img src="${src}" style="${style}" alt="">`;
+        }
         return;
       }
       part.split('\n').forEach(line => {
-        if (line.trim()) html += lpvRenderLine(line);
+        if (line.trim()) contentHtml += lpvRenderLine(line);
       });
     });
-    return html + '<div style="clear:both;"></div>';
+    return floatHtml + contentHtml + '<div style="clear:both;"></div>';
   }
 
   // Same as lpvRenderPage but uses lpvImgStyleMini for the narrow side-pane.
   function lpvRenderPageMini(pageText, images) {
     const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
-    let html = '';
+    let floatHtml = '', contentHtml = '';
     parts.forEach(part => {
       const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
       if (m) {
         const im = images && images[parseInt(m[1], 10)];
         const src = im && escapeHtml(im.url || im.data_url || '');
-        if (src) html += `<img src="${src}" style="${lpvImgStyleMini(im.corner, im.scale)}" alt="">`;
+        if (src) {
+          const style   = lpvImgStyleMini(im.corner, im.scale);
+          const isFloat = /^(?:tl|bl|tr|br)$/.test(im.corner || '');
+          if (isFloat) floatHtml   += `<img src="${src}" style="${style}" alt="">`;
+          else         contentHtml += `<img src="${src}" style="${style}" alt="">`;
+        }
         return;
       }
       part.split('\n').forEach(line => {
-        if (line.trim()) html += lpvRenderLine(line);
+        if (line.trim()) contentHtml += lpvRenderLine(line);
       });
     });
-    return html + '<div style="clear:both;"></div>';
+    return floatHtml + contentHtml + '<div style="clear:both;"></div>';
   }
 
   function openLessonPreviewModal() {
