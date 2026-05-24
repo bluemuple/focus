@@ -2672,7 +2672,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 위치 · → 끝 위치+다음 문장 · Enter 다음 문장 · , +2초 · . −2초</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝+다음 · Enter 다음 · , +2초 · . −2초 · 검은선 드래그=재생 위치 이동</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2801,8 +2801,58 @@
       }
     })();
 
+    // ── Playhead drag — grab the black line within 14 px and drag
+    //    sideways to scrub. While dragging the audio is paused so
+    //    we don't fight playback. On release, the suppress-click
+    //    flag keeps the existing left-click-= start logic from
+    //    treating the drop point as a new sentence-start. ──
+    let playheadDragging = false;
+    let suppressNextClick = false;
+    function playheadX() {
+      return duration ? (audio.currentTime / duration) * cssW : -100;
+    }
+    // Native CSS cursor `ew-resize` shows the drag arrows when the
+    // pointer is over the canvas — fine enough for a quick visual
+    // affordance without needing a per-frame hover hit-test.
+    canvas.style.cursor = 'crosshair';
+    canvas.addEventListener('mousemove', (e) => {
+      if (playheadDragging) return;
+      if (!duration) return;
+      const near = Math.abs(e.offsetX - playheadX()) < 14;
+      canvas.style.cursor = near ? 'ew-resize' : 'crosshair';
+    });
+    canvas.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || !duration) return;
+      if (Math.abs(e.offsetX - playheadX()) >= 14) return;   // miss
+      e.preventDefault();
+      playheadDragging = true;
+      const wasPlaying = !audio.paused;
+      try { audio.pause(); } catch {}
+      const rect0 = canvas.getBoundingClientRect();
+      function onMove(ev) {
+        const x = Math.max(0, Math.min(cssW, ev.clientX - rect0.left));
+        try { audio.currentTime = (x / cssW) * duration; } catch {}
+        draw();
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup',   onUp);
+        playheadDragging = false;
+        canvas.style.cursor = 'crosshair';
+        // Eat the click event the browser fires right after mouseup
+        // — without this, the canvas.click handler below would treat
+        // the drop point as the new sentence-start position.
+        suppressNextClick = true;
+        setTimeout(() => { suppressNextClick = false; }, 50);
+        if (wasPlaying) audio.play().catch(() => {});
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup',   onUp);
+    });
+
     // Left-click = start, right-click = end of the current line.
     canvas.addEventListener('click', (e) => {
+      if (suppressNextClick) return;          // just finished a drag
       if (!duration) return;
       work[idx].start = +(e.offsetX / cssW * duration).toFixed(2);
       draw();
