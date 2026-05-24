@@ -243,7 +243,7 @@
       if (typeof studentVoiceUrl === 'string' && studentVoiceUrl) {
         row.student_voice_url = studentVoiceUrl;
       }
-      const rows = await rPost('/wc_visualization_messages', row, true);
+      const rows = await writeResilient('POST', '/wc_visualization_messages', row);
       return rows && rows[0];
     },
     async forStudent(studentId) {
@@ -286,7 +286,8 @@
       if (typeof teacherVoiceUrl === 'string' && teacherVoiceUrl) {
         patch.teacher_voice_url = teacherVoiceUrl;
       }
-      return rPatch('/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), patch);
+      const rows = await writeResilient('PATCH', '/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), patch);
+      return rows && rows[0];
     },
   };
 

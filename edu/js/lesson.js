@@ -318,6 +318,7 @@
     // banana." stays one line with one 🔊). Set before tokeniseBody.
     songMode = !!(lesson && lesson.mode === 'song');
     document.body.classList.toggle('wc-song-mode', songMode);
+    document.body.classList.toggle('wc-comic-mode', !!(lesson && lesson.mode === 'comic'));
 
     // Preview banner — yellow strip at the very top of the page so
     // the teacher knows nothing they do here is being saved. Fades
@@ -468,6 +469,21 @@
     // HTML body — every part is one page. The teacher's <hr> markers
     // already decided where the page breaks are.
     if (parts.every(p => p.kind === 'html')) return parts.map(p => [p]);
+
+    // Comic mode: each panel image becomes its own page so scroll-off
+    // shows one image at a time filling the full card. Gaps and any
+    // stray sentences between [[IMG:N]] markers are dropped — all
+    // dialogue lives inside bubble overlays, not the body text.
+    if (lesson && lesson.mode === 'comic') {
+      const imgList = Array.isArray(lesson.images) ? lesson.images : [];
+      const comicPages = [];
+      parts.forEach(p => {
+        if (p.kind === 'img' && imgList[p.idx] && imgList[p.idx].corner === 'panel') {
+          comicPages.push([p]);
+        }
+      });
+      return comicPages.length ? comicPages : [parts];
+    }
 
     const MAX_SENTENCES_PER_PAGE = 6;
     const out  = [];
@@ -4063,6 +4079,20 @@
       // Comic bubbles: per-sentence rec buttons appear/disappear with
       // record mode — they take up inline space, so re-fit bubble text.
       requestAnimationFrame(fitAllBubbles);
+      // On mobile, anchor the word-detail sheet directly above the rec-bar.
+      // CSS uses a hardcoded 61px fallback; measure the actual rendered
+      // height so iPhones with large safe-area insets position it correctly.
+      const mobSh = document.querySelector('.wc-mobsh');
+      if (mobSh) {
+        if (recMode && recBar) {
+          requestAnimationFrame(() => {
+            const h = recBar.getBoundingClientRect().height;
+            mobSh.style.bottom = h + 'px';
+          });
+        } else {
+          mobSh.style.bottom = '';
+        }
+      }
     }
     applyRecMode();
     if ($('btnRecord')) {
