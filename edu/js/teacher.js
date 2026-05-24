@@ -1717,24 +1717,24 @@
       if (!segtrim) return;
 
       // Convert the segment into atomic HTML chunks.
-      // Float images (tl/bl/tr/br) are collected first so they anchor
-      // to the TOP of the adjacent text — without this, an image that
-      // appears at the end of a text line in the source would be
-      // inserted AFTER that line's <p>, making the float start below
-      // the line instead of beside its top.
-      const floatChunks = [];  // float images — rendered before text
-      const textChunks  = [];  // text lines and center images — source order
+      // tl/tr images go BEFORE text so they float-anchor to the text top.
+      // bl/br images use position:absolute (bottom corner of the pane) so
+      // they are appended last and don't affect scrollHeight measurements.
+      const topFloatChunks = [];  // tl/tr — floated, rendered before text
+      const textChunks     = [];  // text lines + cc/cs/panel images
+      const bottomChunks   = [];  // bl/br — absolute-bottom, rendered last
 
       segtrim.split(/(\[\[IMG:\d+\]\])/).forEach(part => {
         const im = part.match(/^\[\[IMG:(\d+)\]\]$/);
         if (im) {
-          const img = images && images[parseInt(im[1], 10)];
-          const src = img && escapeHtml(img.url || img.data_url || '');
+          const img    = images && images[parseInt(im[1], 10)];
+          const src    = img && escapeHtml(img.url || img.data_url || '');
+          const corner = (img && img.corner) || '';
           if (src) {
-            const html    = `<img src="${src}" style="${lpvImgStyleMini(img.corner, img.scale)}" alt="">`;
-            const isFloat = /^(?:tl|bl|tr|br)$/.test(img.corner || '');
-            if (isFloat) floatChunks.push(html);
-            else          textChunks.push(html);
+            const html = `<img src="${src}" style="${lpvImgStyleMini(corner, img.scale)}" alt="">`;
+            if (/^(?:tl|tr)$/.test(corner))      topFloatChunks.push(html);
+            else if (/^(?:bl|br)$/.test(corner)) bottomChunks.push(html);
+            else                                  textChunks.push(html);
           }
         } else {
           part.split('\n').forEach(line => {
@@ -1743,7 +1743,9 @@
         }
       });
 
-      const chunks = [...floatChunks, ...textChunks];
+      // bl/br are position:absolute — they don't affect scrollHeight so
+      // appending them last never triggers a false overflow-split.
+      const chunks = [...topFloatChunks, ...textChunks, ...bottomChunks];
 
       // Add chunks one by one; overflow → push current page, start a new one.
       let curHtml = '';
@@ -1964,10 +1966,18 @@
     const w  = (30 * sc).toFixed(1);
     const sh = 'box-shadow:0 1px 4px rgba(0,0,0,.10);border-radius:4px;height:auto;';
     switch (corner) {
-      case 'tl': case 'bl':
+      case 'tl':
         return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
-      case 'tr': case 'br':
+      case 'bl':
+        // Absolute-positioned so it anchors to the bottom-left of the
+        // preview body without being clipped by overflow:hidden.
+        return `position:absolute;bottom:5px;left:6px;width:${w}%;max-width:80px;${sh}`;
+      case 'tr':
         return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
+      case 'br':
+        // Absolute-positioned so it anchors to the bottom-right of the
+        // preview body without being clipped by overflow:hidden.
+        return `position:absolute;bottom:5px;right:6px;width:${w}%;max-width:80px;${sh}`;
       case 'cc':
         return `display:block;margin:6px auto;width:60%;max-width:120px;${sh}`;
       case 'cs':
@@ -2047,19 +2057,25 @@
   }
 
   // Same as lpvRenderPage but uses lpvImgStyleMini for the narrow side-pane.
+  // tl/tr floats go BEFORE text (top-anchor); bl/br use position:absolute
+  // (bottom corner) and are appended AFTER text so they don't push content down.
   function lpvRenderPageMini(pageText, images) {
     const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
-    let floatHtml = '', contentHtml = '';
+    let topFloatHtml = '';   // tl/tr — float:left/right, before text
+    let contentHtml  = '';   // text paragraphs + cc/cs/panel images
+    let bottomHtml   = '';   // bl/br — position:absolute, after text
     parts.forEach(part => {
       const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
       if (m) {
-        const im = images && images[parseInt(m[1], 10)];
-        const src = im && escapeHtml(im.url || im.data_url || '');
+        const im     = images && images[parseInt(m[1], 10)];
+        const src    = im && escapeHtml(im.url || im.data_url || '');
+        const corner = (im && im.corner) || '';
         if (src) {
-          const style   = lpvImgStyleMini(im.corner, im.scale);
-          const isFloat = /^(?:tl|bl|tr|br)$/.test(im.corner || '');
-          if (isFloat) floatHtml   += `<img src="${src}" style="${style}" alt="">`;
-          else         contentHtml += `<img src="${src}" style="${style}" alt="">`;
+          const style = lpvImgStyleMini(corner, im.scale);
+          const tag   = `<img src="${src}" style="${style}" alt="">`;
+          if (/^(?:tl|tr)$/.test(corner))      topFloatHtml += tag;
+          else if (/^(?:bl|br)$/.test(corner)) bottomHtml   += tag;
+          else                                  contentHtml  += tag;
         }
         return;
       }
@@ -2067,7 +2083,7 @@
         if (line.trim()) contentHtml += lpvRenderLine(line);
       });
     });
-    return floatHtml + contentHtml + '<div style="clear:both;"></div>';
+    return topFloatHtml + contentHtml + '<div style="clear:both;"></div>' + bottomHtml;
   }
 
   function openLessonPreviewModal() {
