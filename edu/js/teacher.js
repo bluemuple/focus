@@ -1990,15 +1990,15 @@
       case 'tl':
         return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
       case 'bl':
-        // Absolute-positioned so it anchors to the bottom-left of the
-        // preview body without being clipped by overflow:hidden.
-        return `position:absolute;bottom:5px;left:6px;width:${w}%;max-width:80px;${sh}`;
+        // float:left — image appears at marker position in source order,
+        // text after the marker wraps beside it on the right.
+        return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
       case 'tr':
         return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
       case 'br':
-        // Absolute-positioned so it anchors to the bottom-right of the
-        // preview body without being clipped by overflow:hidden.
-        return `position:absolute;bottom:5px;right:6px;width:${w}%;max-width:80px;${sh}`;
+        // float:right — image appears at marker position in source order,
+        // text after the marker wraps beside it on the left.
+        return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
       case 'cc':
         return `display:block;margin:6px auto;width:60%;max-width:120px;${sh}`;
       case 'cs':
@@ -2010,27 +2010,6 @@
     }
   }
 
-  function lpvImgStyle(corner, scale) {
-    const sc = Number.isFinite(scale) ? scale : 1.0;
-    const base = (22 * sc).toFixed(1);
-    const minW = Math.round(120 * sc);
-    const maxW = Math.round(220 * sc);
-    const shadow = 'box-shadow:0 2px 8px rgba(0,0,0,.10);border-radius:8px;height:auto;';
-    switch (corner) {
-      case 'tl': case 'bl':
-        return `float:left;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 18px 10px 0;${shadow}`;
-      case 'tr': case 'br':
-        return `float:right;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 0 10px 18px;${shadow}`;
-      case 'cc':
-        return `display:block;margin:14px auto;max-width:50%;${shadow}`;
-      case 'cs':
-        return `display:block;margin:10px auto;max-width:${Math.round(140*sc)}px;${shadow}`;
-      case 'panel':
-        return `display:block;width:${Math.min(100,88*sc).toFixed(1)}%;margin:16px auto 8px;border:3px solid #1a1a1a;border-radius:6px;${shadow}`;
-      default:
-        return `float:right;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 0 10px 18px;${shadow}`;
-    }
-  }
 
   function lpvRenderLine(line) {
     const esc = s => escapeHtml(s);
@@ -2051,35 +2030,7 @@
     return `<p style="${st}">${text}</p>`;
   }
 
-  function lpvRenderPage(pageText, images) {
-    // Float images (tl/bl/tr/br) are placed BEFORE text so they anchor
-    // to the top of the adjacent text block.  Center images (cc/cs/panel)
-    // stay in source order.
-    const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
-    let floatHtml = '', contentHtml = '';
-    parts.forEach(part => {
-      const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
-      if (m) {
-        const im = images && images[parseInt(m[1], 10)];
-        const src = im && escapeHtml(im.url || im.data_url || '');
-        if (src) {
-          const style   = lpvImgStyle(im.corner, im.scale);
-          const isFloat = /^(?:tl|bl|tr|br)$/.test(im.corner || '');
-          if (isFloat) floatHtml   += `<img src="${src}" style="${style}" alt="">`;
-          else         contentHtml += `<img src="${src}" style="${style}" alt="">`;
-        }
-        return;
-      }
-      part.split('\n').forEach(line => {
-        if (line.trim()) contentHtml += lpvRenderLine(line);
-      });
-    });
-    return floatHtml + contentHtml + '<div style="clear:both;"></div>';
-  }
-
-  // Same as lpvRenderPage but uses lpvImgStyleMini for the narrow side-pane.
-  // tl/tr floats go BEFORE text (top-anchor); bl/br use position:absolute
-  // (bottom corner) and are appended AFTER text so they don't push content down.
+  // Uses lpvImgStyleMini for the narrow side-pane.
   function lpvRenderPageMini(pageText, images) {
     // All parts rendered in SOURCE ORDER so each image appears beside
     // the text surrounding its [[IMG:N]] marker.
@@ -2105,123 +2056,6 @@
     return html + '<div style="clear:both;"></div>';
   }
 
-  function openLessonPreviewModal() {
-    const body   = ($('lessonBody').value  || '').trim();
-    const title  = ($('lessonTitle').value || '').trim() || '(제목 없음)';
-    const imgs   = lessonImages || [];
-    const mode   = lessonMode;
-    const badge  = mode === 'comic' ? '💬' : mode === 'song' ? '🎵' : '📄';
-
-    // Pages = body split on standalone --- lines, then FURTHER auto-paginated
-    // by sentence count (max 6 sentences per page — mirrors lesson.js so the
-    // teacher sees the same number of pages the student will navigate through).
-    const MAX_SENTS = 6;
-    const lpvPages = [];
-    body.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean)
-      .forEach(seg => {
-        const lines = seg.split('\n');
-        let curLines = [];
-        let sentCount = 0;
-        lines.forEach(line => {
-          curLines.push(line);
-          // Count sentence-ending punctuation; ignore headings and IMG markers.
-          const clean = line.replace(/\[\[IMG:\d+\]\]/g, '').replace(/^#{1,6}\s.*/, '');
-          sentCount += (clean.match(/[.!?]+/g) || []).length;
-          if (sentCount >= MAX_SENTS) {
-            const pg = curLines.join('\n').trim();
-            if (pg) lpvPages.push(pg);
-            curLines  = [];
-            sentCount = 0;
-          }
-        });
-        const tail = curLines.join('\n').trim();
-        if (tail) lpvPages.push(tail);
-      });
-    if (!lpvPages.length) lpvPages.push('');
-    let cur = 0;
-
-    // Build overlay DOM.
-    const overlay = document.createElement('div');
-    overlay.id = 'wcLpvOverlay';
-    overlay.className = 'wc-lpv-overlay';
-    overlay.innerHTML =
-      `<div class="wc-lpv-card">
-         <div class="wc-lpv-head">
-           <span class="wc-lpv-mode">${badge}</span>
-           <span class="wc-lpv-title">${escapeHtml(title)}</span>
-           <div class="wc-lpv-ctrls">
-             <button class="wc-lpv-ctrl" id="lpvFzDec" title="글자 작게">A−</button>
-             <button class="wc-lpv-ctrl" id="lpvFzInc" title="글자 크게">A+</button>
-             <button class="wc-lpv-ctrl" id="lpvLhDec" title="행간 좁게">↕−</button>
-             <button class="wc-lpv-ctrl" id="lpvLhInc" title="행간 넓게">↕+</button>
-           </div>
-           <button class="wc-lpv-close" id="lpvClose" title="닫기">✕</button>
-         </div>
-         <div class="wc-lpv-body" id="lpvPageBody"></div>
-         <div class="wc-lpv-nav">
-           <button class="wc-lpv-nav-btn" id="lpvPrev">&#8592;</button>
-           <span class="wc-lpv-page-count" id="lpvCount"></span>
-           <button class="wc-lpv-nav-btn" id="lpvNext">&#8594;</button>
-         </div>
-       </div>`;
-    document.body.appendChild(overlay);
-
-    // Font-size and line-height state for this modal instance.
-    let lpvFz = 20;   // px — matches .wc-lpv-body default
-    let lpvLh = 2.4;  // unitless — matches .wc-lpv-body default
-    function applyLpvBodyStyle() {
-      const b = document.getElementById('lpvPageBody');
-      if (b) { b.style.fontSize = lpvFz + 'px'; b.style.lineHeight = String(lpvLh); }
-    }
-
-    function render(idx) {
-      cur = idx;
-      const bodyEl = document.getElementById('lpvPageBody');
-      if (bodyEl) bodyEl.innerHTML = lpvRenderPage(lpvPages[idx] || '', imgs);
-      applyLpvBodyStyle();
-      const countEl = document.getElementById('lpvCount');
-      if (countEl) countEl.textContent = `${idx + 1} / ${lpvPages.length}`;
-      const prev = document.getElementById('lpvPrev');
-      const next = document.getElementById('lpvNext');
-      if (prev) prev.disabled = idx <= 0;
-      if (next) next.disabled = idx >= lpvPages.length - 1;
-    }
-    render(0);
-
-    document.getElementById('lpvClose').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
-    document.getElementById('lpvPrev').addEventListener('click', () => { if (cur > 0) render(cur - 1); });
-    document.getElementById('lpvNext').addEventListener('click', () => { if (cur < lpvPages.length - 1) render(cur + 1); });
-
-    // A− / A+ — font size step 2px, range 14–32px.
-    document.getElementById('lpvFzDec').addEventListener('click', () => {
-      lpvFz = Math.max(14, lpvFz - 2); applyLpvBodyStyle();
-    });
-    document.getElementById('lpvFzInc').addEventListener('click', () => {
-      lpvFz = Math.min(32, lpvFz + 2); applyLpvBodyStyle();
-    });
-    // ↕− / ↕+ — line-height step 0.2, range 1.4–3.6.
-    document.getElementById('lpvLhDec').addEventListener('click', () => {
-      lpvLh = Math.max(1.4, +(lpvLh - 0.2).toFixed(1)); applyLpvBodyStyle();
-    });
-    document.getElementById('lpvLhInc').addEventListener('click', () => {
-      lpvLh = Math.min(3.6, +(lpvLh + 0.2).toFixed(1)); applyLpvBodyStyle();
-    });
-
-    // Keyboard nav.
-    const onKey = e => {
-      if (!document.getElementById('wcLpvOverlay')) { document.removeEventListener('keydown', onKey); return; }
-      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
-      if (e.key === 'ArrowRight' && cur < lpvPages.length - 1) render(cur + 1);
-      if (e.key === 'ArrowLeft'  && cur > 0) render(cur - 1);
-    };
-    document.addEventListener('keydown', onKey);
-  }
-
-  (function wireLessonPreviewBtn() {
-    const btn = $('lessonPreviewBtn');
-    if (btn) btn.addEventListener('click', openLessonPreviewModal);
-  })();
 
   function startEditing(lessonId) {
     const L = lessons.find(x => x.id === lessonId);
