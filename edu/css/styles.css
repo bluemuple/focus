@@ -606,6 +606,78 @@ textarea.wc-rt-editor::placeholder {
   .wc-lp-pane { width: 100%; max-height: 240px; }
 }
 
+/* ── Full-size lesson preview modal (teacher Create / Edit form) ─────
+   Opens when the teacher clicks "페이지 미리보기". Shows the lesson
+   body at real lesson-page dimensions so they can check layout,
+   image positions, and multi-page structure before saving. */
+.wc-lpv-overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.wc-lpv-card {
+  /* Fill most of the screen so the teacher gets as close to the
+     student's reading area as possible. */
+  width: calc(100vw - 80px);
+  height: calc(100vh - 80px);
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0,0,0,.35);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.wc-lpv-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+  background: var(--bg);
+}
+.wc-lpv-mode { font-size: 16px; line-height: 1; }
+.wc-lpv-title {
+  flex: 1; font-size: 14px; font-weight: 700;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wc-lpv-close {
+  appearance: none; border: none; background: none;
+  width: 30px; height: 30px; border-radius: 7px;
+  font-size: 17px; cursor: pointer; color: var(--ink-soft);
+  display: grid; place-items: center;
+}
+.wc-lpv-close:hover { background: #f1f3f5; color: var(--ink); }
+/* Content area — same font/line-height as the student's lesson page. */
+.wc-lpv-body {
+  flex: 1 1 auto; min-height: 0;
+  padding: 20px 26px;
+  font-size: 20px;
+  line-height: 2.4;
+  color: #1a1a1a;
+  overflow: hidden;
+  overflow-wrap: break-word; word-wrap: break-word;
+}
+/* Prev/next page nav at the bottom. */
+.wc-lpv-nav {
+  display: flex; align-items: center; justify-content: center; gap: 20px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.wc-lpv-nav-btn {
+  appearance: none;
+  width: 38px; height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #f8fafc;
+  font-size: 17px; cursor: pointer;
+  display: grid; place-items: center;
+  transition: background .1s;
+}
+.wc-lpv-nav-btn:hover:not(:disabled) { background: #e5e7eb; }
+.wc-lpv-nav-btn:disabled { opacity: .35; cursor: not-allowed; }
+.wc-lpv-page-count { font-size: 14px; font-weight: 600; color: var(--ink-soft); min-width: 60px; text-align: center; }
+
 /* Unobtrusive footer "Teacher login →" link — small enough that
    primary-school students reaching the landing page focus on the
    big gender buttons, but always-on so teachers don't have to
@@ -2350,22 +2422,32 @@ body.wc-lesson-layout .wc-panel .wc-panel-img {
    .wc-lesson-text becomes a flex centering container; the panel
    shrinks to fit-content so the absolutely-positioned bubbles stay
    correctly aligned with the image regardless of portrait/landscape. */
+/* Paginated comic: one panel per page, panel fills the full card height.
+   Chain: lesson-text (flex row, concrete height) → <p> (height:100%) →
+   .wc-panel (height:100%) → .wc-panel-img (height:100%, auto width). */
 body.wc-comic-mode:not(.wc-scroll-mode) .wc-lesson-text {
+  display: flex;
+  align-items: stretch;          /* <p> children stretch vertically */
+  justify-content: center;
+  padding: 0;                    /* no wasted padding around the image */
+}
+body.wc-comic-mode:not(.wc-scroll-mode) .wc-lesson-text > p {
+  height: 100%;
+  margin: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding-bottom: 0;
 }
 body.wc-comic-mode:not(.wc-scroll-mode) .wc-panel {
-  width: fit-content !important;
+  width: auto !important;        /* shrinks to image's natural width */
   max-width: 100%;
-  margin: 0 auto;
+  height: 100%;                  /* fill the <p> height */
+  margin: 0;
 }
 body.wc-comic-mode:not(.wc-scroll-mode) .wc-panel-img {
-  width: auto;
-  max-width: 100%;
-  max-height: 80dvh;
-  height: auto;
+  height: 100%;                  /* fill panel height */
+  width: auto;                   /* proportional width */
+  max-width: 100%;               /* never overflow horizontally */
 }
 
 /* One speech bubble — an opaque white box laid over the original
@@ -4307,7 +4389,9 @@ body.wc-single-mode .wc-lesson-img { display: none; }
      (dynamic viewport height) follows the actual visible height as
      iOS chrome shows/hides, so the box doesn't overshoot when the
      address bar appears. Fallback `100vh` for older browsers. */
-  html, body.wc-lesson-layout {
+  /* html.wc-lesson-page (not plain html) so this lock only applies
+     to lesson.html — home.html / profile.html keep normal scrolling. */
+  html.wc-lesson-page, body.wc-lesson-layout {
     overflow: hidden;
     height: 100vh;
     height: 100dvh;
@@ -4342,11 +4426,12 @@ body.wc-single-mode .wc-lesson-img { display: none; }
   body.wc-lesson-layout .wc-lesson-main {
     /* Fallback for browsers without dvh — close enough on devices
        where the address bar doesn't auto-hide. */
-    height: calc(100vh - 69px - env(safe-area-inset-bottom, 0px));
+    /* 61px = 5 (shell top) + 4 (gap) + 52 (bar) — gap was 12px, now 4px. */
+    height: calc(100vh - 61px - env(safe-area-inset-bottom, 0px));
     /* The real rule on modern browsers — follows the dynamic viewport
        so the box never overshoots into the bar when iOS Safari's
        address bar appears. */
-    height: calc(100dvh - 69px - env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - 61px - env(safe-area-inset-bottom, 0px));
     max-height: none;
     min-height: 0;
     padding: 10px 12px;
@@ -4381,16 +4466,18 @@ body.wc-single-mode .wc-lesson-img { display: none; }
     max-width: none;
     margin: 8px 5px 0;
   }
-  /* Paginated comic on mobile — override the full-width scroll rule
-     so the panel shrinks to fit the image (preserving bubble alignment). */
+  /* Paginated comic on mobile — keep the height-fill chain, just
+     constrain max-width to viewport so wide images don't overflow. */
   body.wc-comic-mode:not(.wc-scroll-mode) .wc-panel {
-    width: fit-content !important;
+    width: auto !important;
     max-width: calc(100vw - 10px);
+    height: 100%;
     margin: 0 auto;
   }
   body.wc-comic-mode:not(.wc-scroll-mode) .wc-panel-img {
     max-width: calc(100vw - 10px);
-    max-height: 80dvh;
+    height: 100%;
+    width: auto;
   }
 
   /* Scroll-page gap is wider on desktop (.3em ≈ 6px) — keep tight

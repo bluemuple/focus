@@ -1749,6 +1749,130 @@
     if (bodyIn)  bodyIn .addEventListener('input', () => refreshLessonPreview());
   })();
 
+  // ── Full-size lesson preview modal ────────────────────────────────────
+  // Opens when the teacher clicks "👁 페이지 미리보기". Parses the body
+  // into pages (split by ---), renders each page at lesson-page font/
+  // line-height with images at their real corner floats. Prev/next nav.
+
+  function lpvImgStyle(corner, scale) {
+    const sc = Number.isFinite(scale) ? scale : 1.0;
+    const base = (22 * sc).toFixed(1);
+    const minW = Math.round(120 * sc);
+    const maxW = Math.round(220 * sc);
+    const shadow = 'box-shadow:0 2px 8px rgba(0,0,0,.10);border-radius:8px;height:auto;';
+    switch (corner) {
+      case 'tl': case 'bl':
+        return `float:left;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 18px 10px 0;${shadow}`;
+      case 'tr': case 'br':
+        return `float:right;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 0 10px 18px;${shadow}`;
+      case 'cc':
+        return `display:block;margin:14px auto;max-width:50%;${shadow}`;
+      case 'cs':
+        return `display:block;margin:10px auto;max-width:${Math.round(140*sc)}px;${shadow}`;
+      case 'panel':
+        return `display:block;width:${Math.min(100,88*sc).toFixed(1)}%;margin:16px auto 8px;border:3px solid #1a1a1a;border-radius:6px;${shadow}`;
+      default:
+        return `float:right;width:${base}%;min-width:${minW}px;max-width:${maxW}px;margin:0 0 10px 18px;${shadow}`;
+    }
+  }
+
+  function lpvRenderLine(line) {
+    const esc = s => escapeHtml(s);
+    let text = line, st = 'margin:.3em 0;';
+    if (/^# /.test(text))   { text = text.slice(2);  st = 'font-size:1.4em;font-weight:800;margin:.5em 0;'; }
+    else if (/^## /.test(text))  { text = text.slice(3);  st = 'font-size:1.15em;font-weight:700;margin:.4em 0;'; }
+    else if (/^### /.test(text)) { text = text.slice(4);  st = 'font-size:1em;font-weight:600;margin:.3em 0;'; }
+    text = esc(text)
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/__(.*?)__/g,     '<u>$1</u>')
+      .replace(/\{color:(#[0-9a-fA-F]{3,6})\}(.*?)\{\/color\}/g,
+               '<span style="color:$1">$2</span>');
+    return `<p style="${st}">${text}</p>`;
+  }
+
+  function lpvRenderPage(pageText, images) {
+    // Split on [[IMG:N]] markers (kept as delimiters), then render each chunk.
+    const parts = pageText.split(/(\[\[IMG:\d+\]\])/);
+    let html = '';
+    parts.forEach(part => {
+      const m = part.match(/^\[\[IMG:(\d+)\]\]$/);
+      if (m) {
+        const im = images && images[parseInt(m[1], 10)];
+        const src = im && escapeHtml(im.url || im.data_url || '');
+        if (src) html += `<img src="${src}" style="${lpvImgStyle(im.corner, im.scale)}" alt="">`;
+        return;
+      }
+      part.split('\n').forEach(line => {
+        if (line.trim()) html += lpvRenderLine(line);
+      });
+    });
+    return html + '<div style="clear:both;"></div>';
+  }
+
+  function openLessonPreviewModal() {
+    const body   = ($('lessonBody').value  || '').trim();
+    const title  = ($('lessonTitle').value || '').trim() || '(제목 없음)';
+    const imgs   = lessonImages || [];
+    const mode   = lessonMode;
+    const badge  = mode === 'comic' ? '💬' : mode === 'song' ? '🎵' : '📄';
+
+    // Pages = body split on standalone --- lines.
+    const pageTexts = body.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean);
+    const lpvPages  = pageTexts.length ? pageTexts : [''];
+    let cur = 0;
+
+    // Build overlay DOM.
+    const overlay = document.createElement('div');
+    overlay.id = 'wcLpvOverlay';
+    overlay.className = 'wc-lpv-overlay';
+    overlay.innerHTML =
+      `<div class="wc-lpv-card">
+         <div class="wc-lpv-head">
+           <span class="wc-lpv-mode">${badge}</span>
+           <span class="wc-lpv-title">${escapeHtml(title)}</span>
+           <button class="wc-lpv-close" id="lpvClose" title="닫기">✕</button>
+         </div>
+         <div class="wc-lpv-body" id="lpvPageBody"></div>
+         <div class="wc-lpv-nav">
+           <button class="wc-lpv-nav-btn" id="lpvPrev">&#8592;</button>
+           <span class="wc-lpv-page-count" id="lpvCount"></span>
+           <button class="wc-lpv-nav-btn" id="lpvNext">&#8594;</button>
+         </div>
+       </div>`;
+    document.body.appendChild(overlay);
+
+    function render(idx) {
+      cur = idx;
+      const bodyEl = document.getElementById('lpvPageBody');
+      if (bodyEl) bodyEl.innerHTML = lpvRenderPage(lpvPages[idx] || '', imgs);
+      const countEl = document.getElementById('lpvCount');
+      if (countEl) countEl.textContent = `${idx + 1} / ${lpvPages.length}`;
+      const prev = document.getElementById('lpvPrev');
+      const next = document.getElementById('lpvNext');
+      if (prev) prev.disabled = idx <= 0;
+      if (next) next.disabled = idx >= lpvPages.length - 1;
+    }
+    render(0);
+
+    document.getElementById('lpvClose').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.getElementById('lpvPrev').addEventListener('click', () => { if (cur > 0) render(cur - 1); });
+    document.getElementById('lpvNext').addEventListener('click', () => { if (cur < lpvPages.length - 1) render(cur + 1); });
+    // Keyboard nav.
+    const onKey = e => {
+      if (!document.getElementById('wcLpvOverlay')) { document.removeEventListener('keydown', onKey); return; }
+      if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', onKey); }
+      if (e.key === 'ArrowRight' && cur < lpvPages.length - 1) render(cur + 1);
+      if (e.key === 'ArrowLeft'  && cur > 0) render(cur - 1);
+    };
+    document.addEventListener('keydown', onKey);
+  }
+
+  (function wireLessonPreviewBtn() {
+    const btn = $('lessonPreviewBtn');
+    if (btn) btn.addEventListener('click', openLessonPreviewModal);
+  })();
+
   function startEditing(lessonId) {
     const L = lessons.find(x => x.id === lessonId);
     if (!L) return;

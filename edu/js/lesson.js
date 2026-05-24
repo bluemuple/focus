@@ -86,10 +86,10 @@
   // Dedupes the event so re-reading a page (or jittery scrolling)
   // never double-counts toward the encounter trigger.
   let lastAdvancedPage = 0;
-  // Pages whose full post-recording flow (quiz → roulette → message popup)
-  // has already been run this session. Prevents a second green-button press
-  // from re-triggering the encounter + popup.
-  const recFlowDonePages = new Set();
+  // How many times the post-recording flow (quiz → roulette → message popup)
+  // has fired this session. Fires automatically every 6 NEW recordings
+  // (cross-page, lesson-wide) when the 50%-word-color gate also passes.
+  let recFlowFiredCount = 0;
   // Subscribers (sidebar) that want to react to word-level changes.
   const levelChangeListeners = [];
   function notifyLevelChange(detail) {
@@ -1717,6 +1717,7 @@
       }
     }
     persistTake(key, take, blob);   // best-effort: upload to Storage + DB row
+    checkRecFlowTrigger();          // fire quiz/roulette/popup every 6 recordings
     return rec;
   }
 
@@ -1998,11 +1999,44 @@
       return hasTakes(key);
     });
   }
-  // After a "complete green button" playback, run a forced encounter
-  // (no probability gate, no page-advance counter — the student
-  // earned this one by recording every sentence), then surface the
-  // "녹음하면서 어려웠던 단어 적어줘" message popup so the teacher
-  // gets the page's recordings + a note in the Visualisation inbox.
+  // ── Lesson-wide recording flow trigger ───────────────────────────────
+  // Count unique sentence keys that have at least one take.
+  function totalRecordedCount() {
+    let n = 0;
+    recordings.forEach(rec => { if (rec && rec.takes && rec.takes.length > 0) n++; });
+    return n;
+  }
+  // Color gate: among all unique words in recorded sentences, ≥50% must
+  // be colored (wordLevels level > 0 and ≠ −1).
+  function recFlowColorGate() {
+    const words = new Set();
+    sentences.forEach(sent => {
+      if (!hasTakes(normAudioKey(sent.text || ''))) return;
+      (sent.words || []).forEach(w => { if (w && w.lower) words.add(w.lower); });
+    });
+    if (!words.size) return true; // no words to check → gate passes
+    let colored = 0;
+    words.forEach(w => {
+      const lvl = wordLevels.get(w);
+      if (lvl !== undefined && lvl > 0) colored++;
+    });
+    return (colored / words.size) >= 0.5;
+  }
+  // Called after every new take. Fires the flow when total recordings
+  // cross a multiple of 6 AND the color gate is met.
+  function checkRecFlowTrigger() {
+    if (isPreview || !me) return;
+    const total = totalRecordedCount();
+    const expected = Math.floor(total / 6);
+    if (expected <= recFlowFiredCount) return; // no new threshold reached
+    if (!recFlowColorGate()) return;           // color gate not met yet
+    recFlowFiredCount++;
+    runPostRecordingFlow().catch(e =>
+      console.warn('[rec-flow] trigger failed', e && e.message));
+  }
+
+  // Run encounter + roulette + message popup. Called by the lesson-wide
+  // recording trigger (every 6 new recordings + 50% colour gate).
   async function runPostRecordingFlow() {
     if (window.WCEncounter && typeof window.WCEncounter.runForPage === 'function') {
       const stats = { pages: 1, words: 0, xp: 0 };
@@ -2493,15 +2527,12 @@
     // "녹음하면서 어려웠던 단어 적어줘" message popup.
     const playRecBtn = $('btnPlayRec');
     if (playRecBtn) {
+      // Green button replays recordings only. The quiz/roulette/message
+      // flow now fires automatically when 6 sentences are recorded AND
+      // ≥50% of their words are coloured (checkRecFlowTrigger in addTake).
       playRecBtn.addEventListener('click', async () => {
         if (playAllBusy) { stopPlayAll(); return; }
-        const wasComplete = playRecBtn.classList.contains('wc-playrec-complete');
-        const result = await playAllRecordings();
-        if (wasComplete && result === 'done' && !recFlowDonePages.has(pageIdx)) {
-          recFlowDonePages.add(pageIdx);
-          try { await runPostRecordingFlow(); }
-          catch (e) { console.warn('[post-rec] flow failed', e && e.message); }
-        }
+        await playAllRecordings();
       });
     }
     const bar = $('wcRecBar');
