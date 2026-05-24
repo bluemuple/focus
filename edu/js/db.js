@@ -229,7 +229,7 @@
 
   // ---------- visualization messages ----------
   const viz = {
-    async send(studentId, lessonId, word, prompt, recordingUrls) {
+    async send(studentId, lessonId, word, prompt, recordingUrls, studentVoiceUrl) {
       const row = { student_id: studentId, lesson_id: lessonId, word, prompt };
       // Optional Storage URLs from the post-recording flow. Only
       // attached when non-empty so an older DB without the column
@@ -237,6 +237,11 @@
       // to enable.
       if (Array.isArray(recordingUrls) && recordingUrls.length) {
         row.recording_urls = recordingUrls.filter(u => typeof u === 'string' && u);
+      }
+      // Student's free-form voice note (separate from sentence recordings).
+      // Run supabase-add-viz-voice.sql to enable.
+      if (typeof studentVoiceUrl === 'string' && studentVoiceUrl) {
+        row.student_voice_url = studentVoiceUrl;
       }
       const rows = await rPost('/wc_visualization_messages', row, true);
       return rows && rows[0];
@@ -264,7 +269,7 @@
     // picks the reply up and bumps wc_users.money there. Doing the
     // credit client-side keeps the optimistic in-page counter and the
     // persisted row in lockstep without a server-side trigger.
-    async respondWithGift(messageId, animalSet, animalIndex, response, money, minutes) {
+    async respondWithGift(messageId, animalSet, animalIndex, response, money, minutes, teacherVoiceUrl) {
       const patch = {
         gift_animal_set:   animalSet,
         gift_animal_index: animalIndex,
@@ -277,6 +282,10 @@
       // supabase-add-viz-time.sql to use these features.
       if (Number.isFinite(money)   && money   > 0) patch.gift_money   = Math.max(0, Math.floor(money));
       if (Number.isFinite(minutes) && minutes > 0) patch.gift_minutes = Math.max(0, Math.floor(minutes));
+      // Teacher voice note — run supabase-add-viz-voice.sql to enable.
+      if (typeof teacherVoiceUrl === 'string' && teacherVoiceUrl) {
+        patch.teacher_voice_url = teacherVoiceUrl;
+      }
       return rPatch('/wc_visualization_messages?id=eq.' + encodeURIComponent(messageId), patch);
     },
   };

@@ -1004,11 +1004,16 @@
         ? window.WCAssets.spriteFor(m.gift_animal_set, m.gift_animal_index, false) : '';
       const card = document.createElement('div');
       card.className = 'wc-reply';
+      const tvUrl = typeof m.teacher_voice_url === 'string'
+        && /^https?:\/\//.test(m.teacher_voice_url) ? m.teacher_voice_url : '';
       card.innerHTML = `
         ${giftSrc ? `<img class="wc-reply-gift" src="${giftSrc}" alt=""/>` : ''}
         <div class="wc-reply-body">
           ${m.teacher_response ? `<div class="wc-reply-text">${escapeHtml(m.teacher_response)}</div>` : ''}
-          ${m.word ? `<div class="wc-side-hint">re: <em>${escapeHtml(m.word)}</em></div>` : ''}
+          ${tvUrl ? `<div class="wc-side-hint" style="margin-top:4px;">🎤 선생님 목소리</div>
+            <audio controls preload="none" src="${escapeHtml(tvUrl)}"
+                   style="width:100%;height:28px;margin-top:2px;"></audio>` : ''}
+          ${m.word && m.word !== '__recording__' ? `<div class="wc-side-hint">re: <em>${escapeHtml(m.word)}</em></div>` : ''}
         </div>
       `;
       list.appendChild(card);

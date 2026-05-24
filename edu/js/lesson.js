@@ -1986,51 +1986,215 @@
     return urls;
   }
 
-  // Modal: "녹음하면서 어려웠던 단어 적어줘." Student types a quick
-  // note; we POST it to wc_visualization_messages with the page's
-  // recording URLs attached. Teacher reads + replies in the Messages
-  // tab (where the audio players render under the prompt).
+  // Modal: 녹음을 마친 뒤 교사에게 보내는 메시지 팝업.
+  // 왼쪽: 현재 페이지 텍스트(또는 만화 이미지+말풍선).
+  // 오른쪽: 텍스트 입력 + 목소리 녹음 버튼 → 교사에게 전송.
   function showRecordingMessagePopup() {
     const old = document.getElementById('wcRecMsgHost');
     if (old) old.remove();
+
+    // ── Left panel: build a preview of the current page ──
+    // For comic mode show panel images + bubble texts;
+    // for text/song show the sentences as plain paragraphs.
+    function buildPagePreviewHtml() {
+      const isComic = lesson && lesson.mode === 'comic';
+      const parts   = pages[pageIdx] || [];
+      const imgList = Array.isArray(lesson && lesson.images) ? lesson.images : [];
+      const esc = s => String(s || '').replace(/[&<>"']/g, c =>
+        ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]);
+      let html = '';
+      if (isComic) {
+        parts.forEach(p => {
+          if (p.kind === 'img') {
+            const rec = imgList[p.idx];
+            const src = rec && (rec.url || rec.src || rec.image_url || '');
+            if (src) {
+              html += '<div class="wc-recmsg-panel">' +
+                '<img class="wc-recmsg-panel-img" src="' + esc(src) + '" alt="" draggable="false">';
+              if (Array.isArray(rec.bubbles) && rec.bubbles.length) {
+                html += '<div class="wc-recmsg-panel-bubbles">';
+                rec.bubbles.forEach(b => {
+                  if (b.text) html += '<span class="wc-recmsg-bubble-txt">' + esc(b.text) + '</span>';
+                });
+                html += '</div>';
+              }
+              html += '</div>';
+            }
+          } else if (p.kind === 'sent' && p.text) {
+            html += '<p class="wc-recmsg-sent">' + esc(p.text) + '</p>';
+          }
+        });
+      } else {
+        currentPageSentenceEls().forEach(el => {
+          const t = (el.dataset.text || el.textContent || '').trim();
+          if (t) html += '<p class="wc-recmsg-sent">' + esc(t) + '</p>';
+        });
+      }
+      return html || '<p class="wc-muted">내용 없음</p>';
+    }
+
     const host = document.createElement('div');
     host.id = 'wcRecMsgHost';
     host.className = 'wc-popup-backdrop';
     host.innerHTML =
       '<div class="wc-popup wc-rec-msg-pop" role="dialog" aria-modal="true">' +
-        '<button class="wc-popup-close" aria-label="Close">×</button>' +
-        '<h3 style="margin:0 0 4px;">📝 녹음을 마쳤어요!</h3>' +
-        '<p class="wc-muted" style="margin:0 0 10px;">내가 가장 잘 말한 단어나 표현은 뭐야? 녹음하면서 어려웠던 단어도 적어줘.</p>' +
-        '<textarea id="wcRecMsgInput" rows="4" class="wc-input"' +
-          ' style="width:100%;font:inherit;line-height:1.5;"' +
-          ' placeholder="예) plan it 부분이 어려웠어요"></textarea>' +
-        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">' +
-          '<button class="wc-btn ghost" id="wcRecMsgSkip" type="button">나중에</button>' +
-          '<button class="wc-btn" id="wcRecMsgSend" type="button">보내기 📨</button>' +
+        '<button class="wc-popup-close" aria-label="닫기">×</button>' +
+        '<div class="wc-recmsg-layout">' +
+          // ── Left: page preview ──
+          '<div class="wc-recmsg-left">' +
+            '<div class="wc-recmsg-left-title wc-muted">이번 페이지</div>' +
+            '<div class="wc-recmsg-preview" id="wcRecMsgPreview"></div>' +
+          '</div>' +
+          // ── Right: textarea + mic + send ──
+          '<div class="wc-recmsg-right">' +
+            '<h3 class="wc-recmsg-title">📝 녹음을 마쳤어요!</h3>' +
+            '<p class="wc-muted" style="margin:0 0 8px;font-size:14px;">' +
+              '녹음하면서 좋은 발음, 어려운 발음을 적어줘.' +
+            '</p>' +
+            '<textarea id="wcRecMsgInput" rows="4" class="wc-input"' +
+              ' style="width:100%;font:inherit;line-height:1.5;resize:vertical;"' +
+              ' placeholder="예) plan it 부분이 어려웠어요"></textarea>' +
+            // Mic recording section
+            '<div class="wc-recmsg-mic" id="wcRecMsgMicArea">' +
+              '<button class="wc-recmsg-mic-btn" id="wcRecMsgMicBtn" type="button">' +
+                '<span id="wcRecMsgMicIco">⏺</span>' +
+                '<span id="wcRecMsgMicLabel"> 목소리 녹음</span>' +
+              '</button>' +
+              '<span class="wc-recmsg-mic-status wc-muted" id="wcRecMsgMicStatus"></span>' +
+              '<audio class="wc-recmsg-mic-play wc-hidden" id="wcRecMsgMicPlay"' +
+                ' controls preload="none"></audio>' +
+              '<button class="wc-recmsg-mic-reset wc-hidden wc-muted" id="wcRecMsgMicReset"' +
+                ' type="button">다시 녹음</button>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">' +
+              '<button class="wc-btn ghost" id="wcRecMsgSkip" type="button">나중에</button>' +
+              '<button class="wc-btn" id="wcRecMsgSend" type="button">보내기 📨</button>' +
+            '</div>' +
+            '<div id="wcRecMsgStatus" class="wc-muted"' +
+              ' style="font-size:12px;margin-top:6px;min-height:1em;"></div>' +
+          '</div>' +
         '</div>' +
-        '<div id="wcRecMsgStatus" class="wc-muted"' +
-          ' style="font-size:12px;margin-top:6px;min-height:1em;"></div>' +
       '</div>';
     document.body.appendChild(host);
-    const close = () => host.remove();
+
+    // Fill left panel
+    const preview = host.querySelector('#wcRecMsgPreview');
+    if (preview) preview.innerHTML = buildPagePreviewHtml();
+
+    const close = () => {
+      // Stop any active mic recording before closing.
+      if (micMR && micMR.state === 'recording') {
+        try { micMR.stop(); } catch {}
+      }
+      if (micStream) micStream.getTracks().forEach(t => t.stop());
+      host.remove();
+    };
     host.querySelector('.wc-popup-close').addEventListener('click', close);
     host.querySelector('#wcRecMsgSkip').addEventListener('click', close);
     host.addEventListener('click', e => { if (e.target === host) close(); });
+
+    // ── Mic recording wiring ──
+    let micMR     = null;   // MediaRecorder
+    let micStream = null;   // MediaStream
+    let micBlob   = null;   // final recording blob
+    let micChunks = [];
+    const micBtn    = host.querySelector('#wcRecMsgMicBtn');
+    const micIco    = host.querySelector('#wcRecMsgMicIco');
+    const micLabel  = host.querySelector('#wcRecMsgMicLabel');
+    const micStat   = host.querySelector('#wcRecMsgMicStatus');
+    const micPlay   = host.querySelector('#wcRecMsgMicPlay');
+    const micReset  = host.querySelector('#wcRecMsgMicReset');
+
+    function setMicState(state) {
+      if (state === 'idle') {
+        micBtn.classList.remove('recording');
+        micIco.textContent   = '⏺';
+        micLabel.textContent = ' 목소리 녹음';
+        micStat.textContent  = '';
+        micPlay.classList.add('wc-hidden');
+        micReset.classList.add('wc-hidden');
+        micBlob = null;
+      } else if (state === 'recording') {
+        micBtn.classList.add('recording');
+        micIco.textContent   = '⏹';
+        micLabel.textContent = ' 녹음 중지';
+        micStat.textContent  = '녹음 중…';
+      } else if (state === 'done') {
+        micBtn.classList.remove('recording');
+        micIco.textContent   = '✓';
+        micLabel.textContent = ' 녹음됨';
+        micPlay.classList.remove('wc-hidden');
+        micReset.classList.remove('wc-hidden');
+        micStat.textContent  = '';
+      }
+    }
+
+    micBtn.addEventListener('click', async () => {
+      if (micMR && micMR.state === 'recording') {
+        micMR.stop();
+        return;
+      }
+      // Start recording.
+      micChunks = [];
+      micBlob   = null;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch {
+        micStat.textContent = '마이크 권한이 필요해요.';
+        return;
+      }
+      micMR = new MediaRecorder(micStream);
+      micMR.ondataavailable = e => { if (e.data && e.data.size) micChunks.push(e.data); };
+      micMR.onstop = () => {
+        micStream.getTracks().forEach(t => t.stop());
+        micBlob = new Blob(micChunks, { type: micChunks[0] && micChunks[0].type || 'audio/webm' });
+        const blobUrl = URL.createObjectURL(micBlob);
+        micPlay.src = blobUrl;
+        setMicState('done');
+      };
+      micMR.start();
+      setMicState('recording');
+    });
+
+    micReset.addEventListener('click', () => {
+      if (micPlay.src && micPlay.src.startsWith('blob:')) URL.revokeObjectURL(micPlay.src);
+      micPlay.src = '';
+      setMicState('idle');
+    });
+
+    setMicState('idle');
+
+    // ── Send handler ──
     host.querySelector('#wcRecMsgSend').addEventListener('click', async () => {
-      const ta     = document.getElementById('wcRecMsgInput');
-      const status = document.getElementById('wcRecMsgStatus');
-      const send   = document.getElementById('wcRecMsgSend');
+      const ta     = host.querySelector('#wcRecMsgInput');
+      const status = host.querySelector('#wcRecMsgStatus');
+      const send   = host.querySelector('#wcRecMsgSend');
       const text = (ta.value || '').trim();
       if (!text) { status.textContent = '메시지를 적어줘.'; return; }
       if (isPreview || !me || !lessonId) {
         status.textContent = '미리보기 모드에선 보낼 수 없어요.';
         return;
       }
+      // Stop any in-progress mic recording.
+      if (micMR && micMR.state === 'recording') {
+        micMR.stop();
+        await new Promise(r => setTimeout(r, 300));
+      }
       send.disabled = true;
       status.textContent = '보내는 중…';
       try {
-        const urls = collectPageRecordingUrls();
-        await window.WCDB.viz.send(me.id, lessonId, '__recording__', text, urls);
+        const sentUrls = collectPageRecordingUrls();
+        let voiceUrl = null;
+        if (micBlob) {
+          try {
+            const ext = /ogg/i.test(micBlob.type) ? 'ogg' : (/mp4/i.test(micBlob.type) ? 'mp4' : 'webm');
+            voiceUrl = await window.WCDB.storage.uploadBlob(micBlob, ext, 'recordings');
+          } catch (uploadErr) {
+            console.warn('[recmsg] voice upload failed', uploadErr && uploadErr.message);
+            // Non-fatal: send without voice.
+          }
+        }
+        await window.WCDB.viz.send(me.id, lessonId, '__recording__', text, sentUrls, voiceUrl);
         status.textContent = '잘 보냈어요! ✓';
         setTimeout(close, 1200);
       } catch (e) {
@@ -2038,9 +2202,10 @@
         send.disabled = false;
       }
     });
+
     // Focus the textarea so the student can start typing right away.
     setTimeout(() => {
-      const ta = document.getElementById('wcRecMsgInput');
+      const ta = host.querySelector('#wcRecMsgInput');
       if (ta) ta.focus();
     }, 50);
   }

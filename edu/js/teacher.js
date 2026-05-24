@@ -4215,6 +4215,15 @@
                    style="flex:1;max-width:380px;height:32px;"></audio>
           </div>`).join('')}
       </div>` : '';
+    // Student voice note (recorded inside the popup, separate from sentence recordings).
+    const voiceUrl = typeof m.student_voice_url === 'string' && /^https?:\/\//.test(m.student_voice_url)
+      ? m.student_voice_url : null;
+    const voiceBlock = voiceUrl ? `
+      <div class="wc-tmsg-recs" style="margin:8px 0;">
+        <div class="wc-muted" style="font-size:12px;">🎤 학생 목소리 메시지</div>
+        <audio controls preload="none" src="${escapeHtml(voiceUrl)}"
+               style="width:100%;max-width:380px;height:32px;margin-top:4px;"></audio>
+      </div>` : '';
     // Word label — hide the internal '__recording__' marker; instead
     // show a friendly "🎙️ 녹음 메시지" tag.
     const wordLabel = m.word === '__recording__'
@@ -4232,6 +4241,7 @@
         </div>
       </div>
       ${recBlock}
+      ${voiceBlock}
       <div class="wc-tmsg-prompt">${escapeHtml(m.prompt)}</div>
       ${editable ? `
         <div class="wc-tmsg-reply">
@@ -4265,6 +4275,17 @@
             <input type="number" class="wc-tmsg-mins-input" min="0" max="240"
                    step="1" placeholder="분" />
           </div>
+          <!-- Teacher voice reply — record a voice note to send back. -->
+          <div class="wc-tmsg-teacher-rec">
+            <button type="button" class="wc-tmsg-rec-btn" data-state="idle">
+              <span class="wc-tmsg-rec-ico">⏺</span>
+              <span class="wc-tmsg-rec-lbl"> 목소리 답장 녹음</span>
+            </button>
+            <span class="wc-tmsg-rec-status wc-muted"></span>
+            <audio class="wc-tmsg-rec-play wc-hidden" controls preload="none"
+                   style="height:30px;max-width:300px;"></audio>
+            <button type="button" class="wc-tmsg-rec-reset wc-hidden wc-muted">다시 녹음</button>
+          </div>
           <button class="wc-btn wc-tmsg-send" data-msg="${m.id}">Send reply 📨</button>
           <span class="wc-tmsg-status wc-muted"></span>
         </div>
@@ -4278,6 +4299,13 @@
               : ''}
             ${(m.gift_minutes && m.gift_minutes > 0)
               ? `<div class="wc-muted" style="font-size:13px;">⏰ Sent ${m.gift_minutes}분 쉬는 시간</div>`
+              : ''}
+            ${(m.teacher_voice_url && /^https?:\/\//.test(m.teacher_voice_url))
+              ? `<div style="margin-top:4px;">
+                  <div class="wc-muted" style="font-size:12px;">🎤 선생님 목소리 답장</div>
+                  <audio controls preload="none" src="${escapeHtml(m.teacher_voice_url)}"
+                         style="height:30px;max-width:300px;"></audio>
+                 </div>`
               : ''}
             <div class="wc-muted" style="font-size:13px;">
               Replied ${new Date(m.responded_at).toLocaleDateString('en-NZ')}
@@ -4307,12 +4335,79 @@
           minsInput.value = String(Math.min(240, Math.max(0, cur + add)));
         });
       });
-      card.querySelector('.wc-tmsg-send').addEventListener('click', () => sendGift(card, m));
+      // Teacher voice reply recording — MediaRecorder, same pattern as
+      // the student-side recording in lesson.js showRecordingMessagePopup.
+      const recBtn   = card.querySelector('.wc-tmsg-rec-btn');
+      const recIco   = card.querySelector('.wc-tmsg-rec-ico');
+      const recLbl   = card.querySelector('.wc-tmsg-rec-lbl');
+      const recStat  = card.querySelector('.wc-tmsg-rec-status');
+      const recPlay  = card.querySelector('.wc-tmsg-rec-play');
+      const recReset = card.querySelector('.wc-tmsg-rec-reset');
+      let tMR = null, tStream = null, tBlob = null, tChunks = [];
+
+      function setTeacherRecState(state) {
+        if (state === 'idle') {
+          recBtn.dataset.state = 'idle';
+          recIco.textContent  = '⏺';
+          recLbl.textContent  = ' 목소리 답장 녹음';
+          recStat.textContent = '';
+          recPlay.classList.add('wc-hidden');
+          recReset.classList.add('wc-hidden');
+          tBlob = null;
+        } else if (state === 'recording') {
+          recBtn.dataset.state = 'recording';
+          recIco.textContent  = '⏹';
+          recLbl.textContent  = ' 녹음 중지';
+          recStat.textContent = '녹음 중…';
+        } else if (state === 'done') {
+          recBtn.dataset.state = 'done';
+          recIco.textContent  = '✓';
+          recLbl.textContent  = ' 녹음됨';
+          recStat.textContent = '';
+          recPlay.classList.remove('wc-hidden');
+          recReset.classList.remove('wc-hidden');
+        }
+      }
+
+      recBtn.addEventListener('click', async () => {
+        if (recBtn.dataset.state === 'recording') {
+          if (tMR) tMR.stop();
+          return;
+        }
+        tChunks = []; tBlob = null;
+        try {
+          tStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch {
+          recStat.textContent = '마이크 권한이 필요해요.';
+          return;
+        }
+        tMR = new MediaRecorder(tStream);
+        tMR.ondataavailable = e => { if (e.data && e.data.size) tChunks.push(e.data); };
+        tMR.onstop = () => {
+          tStream.getTracks().forEach(t => t.stop());
+          tBlob = new Blob(tChunks, { type: tChunks[0] && tChunks[0].type || 'audio/webm' });
+          recPlay.src = URL.createObjectURL(tBlob);
+          setTeacherRecState('done');
+        };
+        tMR.start();
+        setTeacherRecState('recording');
+      });
+
+      recReset.addEventListener('click', () => {
+        if (recPlay.src && recPlay.src.startsWith('blob:')) URL.revokeObjectURL(recPlay.src);
+        recPlay.src = '';
+        setTeacherRecState('idle');
+      });
+
+      setTeacherRecState('idle');
+
+      card.querySelector('.wc-tmsg-send').addEventListener('click', () => sendGift(card, m,
+        () => tMR && tMR.state === 'recording' ? (tMR.stop(), tBlob) : tBlob));
     }
     return card;
   }
 
-  async function sendGift(card, m) {
+  async function sendGift(card, m, getTeacherBlob) {
     const status  = card.querySelector('.wc-tmsg-status');
     const sendBtn = card.querySelector('.wc-tmsg-send');
     const picked  = card.querySelector('.wc-animal-picker').dataset.picked;
@@ -4350,7 +4445,18 @@
     status.textContent = 'Sending…';
     status.style.color = 'var(--ink-soft)';
     try {
-      await window.WCDB.viz.respondWithGift(m.id, setName, idx, note || null, money, minutes);
+      // Upload teacher voice note if any.
+      let teacherVoiceUrl = null;
+      const tBlob = typeof getTeacherBlob === 'function' ? getTeacherBlob() : null;
+      if (tBlob) {
+        try {
+          const ext = /ogg/i.test(tBlob.type) ? 'ogg' : (/mp4/i.test(tBlob.type) ? 'mp4' : 'webm');
+          teacherVoiceUrl = await window.WCDB.storage.uploadBlob(tBlob, ext, 'recordings');
+        } catch (e) {
+          console.warn('[teacher] voice upload failed', e && e.message);
+        }
+      }
+      await window.WCDB.viz.respondWithGift(m.id, setName, idx, note || null, money, minutes, teacherVoiceUrl);
       status.textContent = 'Sent ✓';
       status.style.color = 'var(--good)';
       // refresh messages list (move this card from pending → answered)
