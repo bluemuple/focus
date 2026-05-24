@@ -2672,7 +2672,7 @@
         </div>
         <div class="wc-ws-sent" id="wsSent"></div>
         <div class="wc-ws-foot">
-          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝+다음 · Enter 다음 · , +2초 · . −2초 · 검은선 드래그=재생 위치 이동</span>
+          <span class="wc-ws-keys">SPACE 재생/정지 · Z 문장 처음부터 · ← 시작 · → 끝 · Enter 다음 문장 · , +2초 · . −2초 · 검은선 드래그=재생 위치</span>
           <span class="wc-ws-act">
             <button class="wc-btn ghost" id="wsAuto" type="button">✨ Auto-align</button>
             <button class="wc-btn ghost" id="wsPrev" type="button">‹ 이전</button>
@@ -2920,16 +2920,15 @@
       if ((tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') && e.key !== 'Enter') return;
       if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'z' || e.key === 'Z')  { e.preventDefault(); playFromStart(); }
+      // ← / → just set the current sentence's start / end to the
+      // black-playhead position. ALWAYS override (re-pressing →
+      // after the end is already set just snaps it to the new
+      // playhead position). Auto-advance was removed per the
+      // teacher's request — Enter is the explicit "next sentence"
+      // key, so ← / → can be tapped repeatedly to fine-tune the
+      // current sentence's boundaries.
       else if (e.key === 'ArrowLeft')           { e.preventDefault(); setEdgeAtPlayhead('start'); }
-      else if (e.key === 'ArrowRight') {
-        // Set end position AND auto-advance to the next sentence so
-        // a teacher can rapid-fire through a song by holding play +
-        // tapping →. If it's already the last sentence, just set the
-        // end without advancing.
-        e.preventDefault();
-        setEdgeAtPlayhead('end');
-        if (idx < lines.length - 1) gotoSentence(idx + 1);
-      }
+      else if (e.key === 'ArrowRight')          { e.preventDefault(); setEdgeAtPlayhead('end'); }
       else if (e.key === 'Enter')               { e.preventDefault(); gotoSentence(idx + 1); }
       // Per-2-sec scrub shortcuts. Per the user's spec:
       //   , → 재생 시점 앞으로 2초  (skip FORWARD 2 sec)
