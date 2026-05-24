@@ -1674,41 +1674,86 @@
   }
   // ── Live lesson preview ──────────────────────────────────────────────
   // Renders a paginated miniature view inside #lessonPreviewPane.
-  // Mirrors the same 6-sentence page splits as the full modal so the
-  // teacher sees the real page count; prev/next and A-/A+ let them
-  // browse and adjust font size without opening the full modal.
+  // Pages are split by VISUAL OVERFLOW: content is added chunk-by-chunk
+  // into a hidden measuring div; when scrollHeight exceeds the body's
+  // clientHeight a new page begins. This means the page count and split
+  // points are exact for the current font size, not an approximation.
+  // A−/A+ change font size AND re-paginate automatically.
   let _previewDebounce = null;
-  let lpMiniPages      = [];   // computed pages (same logic as openLessonPreviewModal)
-  let lpMiniCurPage    = 0;    // 0-indexed current page
-  let lpMiniFz         = 11;   // font-size px — matches .wc-lp-body default
+  let lpMiniPages      = [];  // pre-rendered HTML strings, one per page
+  let lpMiniCurPage    = 0;   // 0-indexed
+  let lpMiniFz         = 11;  // font-size px — matches .wc-lp-body CSS default
 
-  // Split rawBody into pages using the same 6-sentence logic so the
-  // page count matches what the student navigates.
-  function computeMiniPages(rawBody) {
-    const MAX_SENTS = 6;
+  // Build pages by rendering each atomic chunk (text line or image) into
+  // an off-screen div that mirrors .wc-lp-body exactly, splitting whenever
+  // the content would exceed the visible body height.
+  // Explicit --- markers are treated as forced page breaks.
+  // Returns an array of pre-rendered HTML strings.
+  function computeMiniPagesByHeight(rawBody, images) {
+    const bodyEl = document.getElementById('lpBody');
+    if (!bodyEl) return [''];
+    const maxH   = bodyEl.clientHeight;  // visible height incl. padding
+    const innerW = bodyEl.clientWidth;   // full width  incl. padding
+    if (!maxH || !innerW) return [''];
+
+    // Off-screen clone — must match .wc-lp-body padding/font/line-height.
+    const m = document.createElement('div');
+    m.style.cssText =
+      'position:absolute;left:-9999px;top:0;' +
+      `width:${innerW}px;` +
+      `font-size:${lpMiniFz}px;` +
+      'line-height:1.6;' +
+      'padding:10px 12px;' +
+      'box-sizing:border-box;' +
+      'overflow-wrap:break-word;word-wrap:break-word;';
+    document.body.appendChild(m);
+
+    const CLEAR = '<div style="clear:both"></div>';
     const pages = [];
-    rawBody.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean)
-      .forEach(seg => {
-        const lines = seg.split('\n');
-        let curLines = [], sentCount = 0;
-        lines.forEach(line => {
-          curLines.push(line);
-          const clean = line.replace(/\[\[IMG:\d+\]\]/g, '').replace(/^#{1,6}\s.*/, '');
-          sentCount += (clean.match(/[.!?]+/g) || []).length;
-          if (sentCount >= MAX_SENTS) {
-            const pg = curLines.join('\n').trim();
-            if (pg) pages.push(pg);
-            curLines  = [];
-            sentCount = 0;
-          }
-        });
-        const tail = curLines.join('\n').trim();
-        if (tail) pages.push(tail);
+
+    // Split at --- first (forced page breaks), then overflow within each segment.
+    rawBody.split(/\n\s*---\s*(?:\n|$)/).forEach(seg => {
+      const segtrim = seg.trim();
+      if (!segtrim) return;
+
+      // Convert the segment into atomic HTML chunks.
+      const chunks = [];
+      segtrim.split(/(\[\[IMG:\d+\]\])/).forEach(part => {
+        const im = part.match(/^\[\[IMG:(\d+)\]\]$/);
+        if (im) {
+          const img = images && images[parseInt(im[1], 10)];
+          const src = img && escapeHtml(img.url || img.data_url || '');
+          if (src) chunks.push(
+            `<img src="${src}" style="${lpvImgStyleMini(img.corner, img.scale)}" alt="">`);
+        } else {
+          part.split('\n').forEach(line => {
+            if (line.trim()) chunks.push(lpvRenderLine(line));
+          });
+        }
       });
+
+      // Add chunks one by one; overflow → push current page, start a new one.
+      let curHtml = '';
+      for (const chunk of chunks) {
+        const testHtml = curHtml + chunk;
+        m.innerHTML = testHtml + CLEAR;
+        if (m.scrollHeight > maxH && curHtml !== '') {
+          // Current chunk would overflow — commit what we have, start fresh.
+          pages.push(curHtml + CLEAR);
+          curHtml = chunk;
+        } else {
+          curHtml = testHtml;
+        }
+      }
+      if (curHtml) pages.push(curHtml + CLEAR);
+    });
+
+    document.body.removeChild(m);
     return pages.length ? pages : [''];
   }
 
-  // Render lpMiniCurPage into #lpBody and update nav button states.
+  // Render lpMiniCurPage into #lpBody and sync nav button states.
+  // Pages are pre-rendered HTML — set innerHTML directly.
   function renderMiniPage() {
     const bodyEl  = document.getElementById('lpBody');
     const countEl = document.getElementById('lpMiniCount');
@@ -1726,7 +1771,7 @@
       return;
     }
     bodyEl.style.fontSize = lpMiniFz + 'px';
-    bodyEl.innerHTML = lpvRenderPageMini(lpMiniPages[lpMiniCurPage] || '', lessonImages);
+    bodyEl.innerHTML = lpMiniPages[lpMiniCurPage] || '';
     if (countEl) countEl.textContent = `${lpMiniCurPage + 1} / ${lpMiniPages.length}`;
     if (prevBtn) prevBtn.disabled = lpMiniCurPage === 0;
     if (nextBtn) nextBtn.disabled = lpMiniCurPage >= lpMiniPages.length - 1;
@@ -1751,10 +1796,11 @@
     const titleEl = document.getElementById('lpTitle');
     if (titleEl) titleEl.textContent = title;
 
-    // Re-compute pages; reset to page 1 when page count changes.
-    const newPages = rawBody ? computeMiniPages(rawBody) : [''];
-    if (newPages.length !== lpMiniPages.length) lpMiniCurPage = 0;
-    lpMiniPages = newPages;
+    // Re-compute by visual overflow; always start at page 1 after an edit.
+    lpMiniCurPage = 0;
+    lpMiniPages   = rawBody
+      ? computeMiniPagesByHeight(rawBody, lessonImages)
+      : [''];
     renderMiniPage();
   }
 
@@ -1779,7 +1825,8 @@
     if (bodyIn)  bodyIn .addEventListener('input', () => refreshLessonPreview());
   })();
 
-  // Wire prev/next page nav and A−/A+ font-size controls for the mini pane.
+  // Wire prev/next page nav and A−/A+ font-size controls.
+  // A−/A+ re-paginate because overflow point changes with font size.
   (function wireMiniPreviewNav() {
     const prev  = $('lpMiniPrev');
     const next  = $('lpMiniNext');
@@ -1791,12 +1838,22 @@
     if (next) next.addEventListener('click', () => {
       if (lpMiniCurPage < lpMiniPages.length - 1) { lpMiniCurPage++; renderMiniPage(); }
     });
-    // A−: step −1 px, min 9 px  |  A+: step +1 px, max 18 px
+    // A−: −1 px, min 9 px  |  A+: +1 px, max 18 px. Re-paginate each time.
     if (fzDec) fzDec.addEventListener('click', () => {
-      lpMiniFz = Math.max(9, lpMiniFz - 1); renderMiniPage();
+      if (lpMiniFz <= 9) return;
+      lpMiniFz--;
+      const raw = ($('lessonBody').value || '').trim();
+      lpMiniCurPage = 0;
+      lpMiniPages   = raw ? computeMiniPagesByHeight(raw, lessonImages) : [''];
+      renderMiniPage();
     });
     if (fzInc) fzInc.addEventListener('click', () => {
-      lpMiniFz = Math.min(18, lpMiniFz + 1); renderMiniPage();
+      if (lpMiniFz >= 18) return;
+      lpMiniFz++;
+      const raw = ($('lessonBody').value || '').trim();
+      lpMiniCurPage = 0;
+      lpMiniPages   = raw ? computeMiniPagesByHeight(raw, lessonImages) : [''];
+      renderMiniPage();
     });
   })();
 
