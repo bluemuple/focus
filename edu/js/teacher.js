@@ -2651,11 +2651,20 @@
       <div class="wc-popup wc-wave-sync">
         <button class="wc-popup-close" aria-label="Close">×</button>
         <div class="wc-ws-head">
-          <h3 style="margin:0; display:inline-flex; align-items:center; gap:10px;">
+          <h3 style="margin:0; display:inline-flex; align-items:center; gap:8px;">
             오디오 보정 — 문장별 구간
             <button class="wc-btn ghost wc-ws-fast wc-ws-fast-on" id="wsFast" type="button"
                     title="빨리 모드 — 모든 문장 boundary 를 한 번에 편집"
                     style="height:28px; padding:4px 14px; font-size:13px;">⚡ 빨리</button>
+            <span class="wc-ws-zoom" role="group" aria-label="확대/축소"
+                  style="display:inline-flex; gap:4px;">
+              <button class="wc-btn ghost wc-ws-zbtn" id="wsZoomOut" type="button"
+                      title="축소"
+                      style="height:28px; min-width:28px; padding:2px 8px; font-size:14px; line-height:1;">−</button>
+              <button class="wc-btn ghost wc-ws-zbtn" id="wsZoomIn" type="button"
+                      title="확대"
+                      style="height:28px; min-width:28px; padding:2px 8px; font-size:14px; line-height:1;">+</button>
+            </span>
           </h3>
           <div class="wc-ws-meta">
             <label>재생속도
@@ -2700,18 +2709,67 @@
     const audio = new Audio(src);
     audio.preload = 'auto';
 
-    let peaks = null, duration = 0, cssW = 0;
+    let peaks = null, duration = 0, cssW = 0, baseW = 0;
     const cssH = 170;
     let rafId = null;
+    // Zoom factor — 1 = waveform fills the stage exactly. Each + step
+    // multiplies by ZOOM_STEP; − divides. Min 1 (no shrink below
+    // base), max 8× (covers ~5-min songs at decent detail).
+    let zoom = 1;
+    const ZOOM_STEP = 1.5;
+    const ZOOM_MIN = 1;
+    const ZOOM_MAX = 8;
 
     function layoutCanvas() {
-      cssW = Math.max(320, stage.clientWidth);
+      baseW = Math.max(320, stage.clientWidth);
+      cssW  = Math.round(baseW * zoom);
       const dpr = window.devicePixelRatio || 1;
       canvas.style.width  = cssW + 'px';
       canvas.style.height = cssH + 'px';
       canvas.width  = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
       cx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    // Re-render the waveform peaks at the new canvas width — call
+    // after a zoom change so the wave isn't visually stretched
+    // (would look fuzzy at high zoom without re-sampling).
+    function regenPeaks(audioBuf) {
+      if (!audioBuf) return;
+      const ch = audioBuf.getChannelData(0);
+      const cols = Math.max(400, Math.round(cssW));
+      const per = Math.max(1, Math.floor(ch.length / cols));
+      peaks = new Float32Array(cols);
+      for (let c = 0; c < cols; c++) {
+        let mx = 0;
+        const s0 = c * per, e0 = Math.min(ch.length, s0 + per);
+        for (let i = s0; i < e0; i++) {
+          const v = Math.abs(ch[i]);
+          if (v > mx) mx = v;
+        }
+        peaks[c] = mx;
+      }
+    }
+    // Decoded AudioBuffer kept so the zoom re-renders the peaks at
+    // the new column count (cleaner zoom-in view).
+    let decodedBuf = null;
+
+    // Auto-scroll the stage so the playhead stays in view. Called
+    // from tick() (per-frame while playing) and after any
+    // currentTime change (keyboard scrub, drag, set-edge).
+    function autoScrollToPlayhead() {
+      if (!cssW || !duration) return;
+      const px = (audio.currentTime / duration) * cssW;
+      const vw = stage.clientWidth;
+      const margin = 60;
+      const left = stage.scrollLeft;
+      // Push the scroll only when the playhead is about to leave
+      // the right edge OR has fallen off the left edge.
+      if (px > left + vw - margin) {
+        stage.scrollLeft = Math.max(0, px - vw + margin);
+      } else if (px < left + margin) {
+        stage.scrollLeft = Math.max(0, px - margin);
+      }
     }
 
     // ⚡ 빨리 (fast) mode — default ON. When ON, the waveform shows
@@ -2805,6 +2863,7 @@
 
     function tick() {
       draw();
+      autoScrollToPlayhead();
       if (!audio.paused) rafId = requestAnimationFrame(tick);
     }
 
@@ -2829,22 +2888,10 @@
         const ab = await (await fetch(src)).arrayBuffer();
         const AC = window.AudioContext || window.webkitAudioContext;
         const actx = new AC();
-        const audioBuf = await actx.decodeAudioData(ab);
+        decodedBuf = await actx.decodeAudioData(ab);
         try { actx.close(); } catch {}
-        duration = audioBuf.duration;
-        const ch = audioBuf.getChannelData(0);
-        const cols = Math.max(400, Math.round(cssW));
-        const per = Math.max(1, Math.floor(ch.length / cols));
-        peaks = new Float32Array(cols);
-        for (let c = 0; c < cols; c++) {
-          let mx = 0;
-          const s0 = c * per, e0 = Math.min(ch.length, s0 + per);
-          for (let i = s0; i < e0; i++) {
-            const v = Math.abs(ch[i]);
-            if (v > mx) mx = v;
-          }
-          peaks[c] = mx;
-        }
+        duration = decodedBuf.duration;
+        regenPeaks(decodedBuf);
         loadEl.style.display = 'none';
         refreshSentenceUi();
       } catch (e) {
@@ -2852,6 +2899,38 @@
         console.warn('[waveform] decode failed', e && e.message);
       }
     })();
+
+    // ── Zoom controls — re-layout the canvas at a wider px size,
+    //    re-sample peaks for sharpness, and keep the playhead in
+    //    view after the layout change. Min 1× (no shrink below base
+    //    width), max 8×. ──
+    function applyZoom(newZoom) {
+      const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, newZoom));
+      if (z === zoom) return;
+      // Preserve the time the playhead sat on so the user's mental
+      // model of "where am I in the song" survives the zoom.
+      const wasAt = audio.currentTime || 0;
+      zoom = z;
+      layoutCanvas();
+      regenPeaks(decodedBuf);
+      draw();
+      // Scroll so the playhead's TIME stays in view after the
+      // wider canvas was rendered. Center it on the viewport.
+      if (duration) {
+        const px = (wasAt / duration) * cssW;
+        const vw = stage.clientWidth;
+        stage.scrollLeft = Math.max(0, px - vw / 2);
+      }
+      // Disable buttons at the limits.
+      host.querySelector('#wsZoomIn').disabled  = zoom >= ZOOM_MAX;
+      host.querySelector('#wsZoomOut').disabled = zoom <= ZOOM_MIN;
+    }
+    host.querySelector('#wsZoomIn').addEventListener('click',
+      () => applyZoom(zoom * ZOOM_STEP));
+    host.querySelector('#wsZoomOut').addEventListener('click',
+      () => applyZoom(zoom / ZOOM_STEP));
+    // Sync the disabled state at the initial limit.
+    host.querySelector('#wsZoomOut').disabled = true;
 
     // ── Playhead drag — grab the black line within 14 px and drag
     //    sideways to scrub. While dragging the audio is paused so
@@ -3034,14 +3113,15 @@
     }
     // Nudge the playhead by ±N seconds. Works whether playing or
     // paused; calls draw() (or the running tick loop) so the new
-    // position is reflected on the black playhead line immediately.
+    // position is reflected on the black playhead line immediately,
+    // and scrolls the stage so the playhead stays in view at high zoom.
     function seekBy(delta) {
       if (!duration) return;
       try {
         audio.currentTime = Math.max(0, Math.min(duration, audio.currentTime + delta));
       } catch {}
       if (!audio.paused) tick();
-      else draw();
+      else { draw(); autoScrollToPlayhead(); }
     }
     function onKey(e) {
       const tag = e.target && e.target.tagName;
@@ -3107,7 +3187,11 @@
       }
     });
 
-    function onResize() { layoutCanvas(); draw(); }
+    function onResize() {
+      layoutCanvas();
+      regenPeaks(decodedBuf);
+      draw();
+    }
     window.addEventListener('resize', onResize);
 
     function cleanup() {
