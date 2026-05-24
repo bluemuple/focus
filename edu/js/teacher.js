@@ -1673,10 +1673,65 @@
     if (scrollField) scrollField.classList.toggle('wc-hidden', lessonMode !== 'comic');
   }
   // ── Live lesson preview ──────────────────────────────────────────────
-  // Renders a miniature first-page view inside #lessonPreviewPane.
-  // Mirrors image corner floats so the teacher sees position changes
-  // instantly without saving.
+  // Renders a paginated miniature view inside #lessonPreviewPane.
+  // Mirrors the same 6-sentence page splits as the full modal so the
+  // teacher sees the real page count; prev/next and A-/A+ let them
+  // browse and adjust font size without opening the full modal.
   let _previewDebounce = null;
+  let lpMiniPages      = [];   // computed pages (same logic as openLessonPreviewModal)
+  let lpMiniCurPage    = 0;    // 0-indexed current page
+  let lpMiniFz         = 11;   // font-size px — matches .wc-lp-body default
+
+  // Split rawBody into pages using the same 6-sentence logic so the
+  // page count matches what the student navigates.
+  function computeMiniPages(rawBody) {
+    const MAX_SENTS = 6;
+    const pages = [];
+    rawBody.split(/\n\s*---\s*(?:\n|$)/).map(s => s.trim()).filter(Boolean)
+      .forEach(seg => {
+        const lines = seg.split('\n');
+        let curLines = [], sentCount = 0;
+        lines.forEach(line => {
+          curLines.push(line);
+          const clean = line.replace(/\[\[IMG:\d+\]\]/g, '').replace(/^#{1,6}\s.*/, '');
+          sentCount += (clean.match(/[.!?]+/g) || []).length;
+          if (sentCount >= MAX_SENTS) {
+            const pg = curLines.join('\n').trim();
+            if (pg) pages.push(pg);
+            curLines  = [];
+            sentCount = 0;
+          }
+        });
+        const tail = curLines.join('\n').trim();
+        if (tail) pages.push(tail);
+      });
+    return pages.length ? pages : [''];
+  }
+
+  // Render lpMiniCurPage into #lpBody and update nav button states.
+  function renderMiniPage() {
+    const bodyEl  = document.getElementById('lpBody');
+    const countEl = document.getElementById('lpMiniCount');
+    const prevBtn = document.getElementById('lpMiniPrev');
+    const nextBtn = document.getElementById('lpMiniNext');
+    if (!bodyEl) return;
+
+    const empty = !lpMiniPages.length || (lpMiniPages.length === 1 && !lpMiniPages[0]);
+    if (empty) {
+      bodyEl.innerHTML = '<p class="wc-lp-empty">레슨 내용이<br>여기 표시됩니다</p>';
+      bodyEl.style.fontSize = '';
+      if (countEl) countEl.textContent = '';
+      if (prevBtn) prevBtn.disabled = true;
+      if (nextBtn) nextBtn.disabled = true;
+      return;
+    }
+    bodyEl.style.fontSize = lpMiniFz + 'px';
+    bodyEl.innerHTML = lpvRenderPageMini(lpMiniPages[lpMiniCurPage] || '', lessonImages);
+    if (countEl) countEl.textContent = `${lpMiniCurPage + 1} / ${lpMiniPages.length}`;
+    if (prevBtn) prevBtn.disabled = lpMiniCurPage === 0;
+    if (nextBtn) nextBtn.disabled = lpMiniCurPage >= lpMiniPages.length - 1;
+  }
+
   function refreshLessonPreview(immediate) {
     if (!immediate) {
       clearTimeout(_previewDebounce);
@@ -1696,19 +1751,11 @@
     const titleEl = document.getElementById('lpTitle');
     if (titleEl) titleEl.textContent = title;
 
-    const bodyEl = document.getElementById('lpBody');
-    if (!bodyEl) return;
-
-    if (!rawBody && !lessonImages.length) {
-      bodyEl.innerHTML = '<p class="wc-lp-empty">레슨 내용이<br>여기 표시됩니다</p>';
-      return;
-    }
-
-    // Show page 1 only (text up to first --- separator).
-    // Render with the same lpvRenderPageMini engine the full modal uses,
-    // so layout, headings, colours, and float images all look identical.
-    const firstPage = rawBody.split(/\n\s*---\s*(?:\n|$)/)[0].trim();
-    bodyEl.innerHTML = lpvRenderPageMini(firstPage, lessonImages);
+    // Re-compute pages; reset to page 1 when page count changes.
+    const newPages = rawBody ? computeMiniPages(rawBody) : [''];
+    if (newPages.length !== lpMiniPages.length) lpMiniCurPage = 0;
+    lpMiniPages = newPages;
+    renderMiniPage();
   }
 
   (function wireLessonModeTabs() {
@@ -1730,6 +1777,27 @@
     const bodyIn  = $('lessonBody');
     if (titleIn) titleIn.addEventListener('input', () => refreshLessonPreview(true));
     if (bodyIn)  bodyIn .addEventListener('input', () => refreshLessonPreview());
+  })();
+
+  // Wire prev/next page nav and A−/A+ font-size controls for the mini pane.
+  (function wireMiniPreviewNav() {
+    const prev  = $('lpMiniPrev');
+    const next  = $('lpMiniNext');
+    const fzDec = $('lpMiniFzDec');
+    const fzInc = $('lpMiniFzInc');
+    if (prev) prev.addEventListener('click', () => {
+      if (lpMiniCurPage > 0) { lpMiniCurPage--; renderMiniPage(); }
+    });
+    if (next) next.addEventListener('click', () => {
+      if (lpMiniCurPage < lpMiniPages.length - 1) { lpMiniCurPage++; renderMiniPage(); }
+    });
+    // A−: step −1 px, min 9 px  |  A+: step +1 px, max 18 px
+    if (fzDec) fzDec.addEventListener('click', () => {
+      lpMiniFz = Math.max(9, lpMiniFz - 1); renderMiniPage();
+    });
+    if (fzInc) fzInc.addEventListener('click', () => {
+      lpMiniFz = Math.min(18, lpMiniFz + 1); renderMiniPage();
+    });
   })();
 
   // ── Full-size lesson preview modal ────────────────────────────────────
