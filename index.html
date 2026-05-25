@@ -2479,6 +2479,14 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     pointer-events: none;
   }
+  /* Duration watermark — large centred text inside a block/ghost */
+  .tg-block-dur, .tg-ghost-dur {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 0;
+    font-weight: 800; color: #374151; opacity: 0.18; line-height: 1;
+    overflow: hidden;
+  }
   .tg-block {
     position: absolute; left: 40px; right: 4px;
     background: #d1d5db;
@@ -6422,16 +6430,11 @@ function renderFocusMatrix() {
                               state.activeTimer.idx === i;
 
         if (isSameRunning) {
-          // Second click on the running task → cancel timer + full colour-coding reset.
-          // Call stopActiveTimer so intervals/state are cleaned up properly, then
-          // undo the activeAt/activeEndMs it may have written to gauge blocks.
+          // Second click → stop the timer but KEEP the colour frozen on gauge blocks.
+          // stopActiveTimer('reset') already sets activeEndMs = now on any open block,
+          // so the fill stays visible at exactly the time the user stopped.
+          // We intentionally do NOT clear activeAt/activeEndMs here.
           stopActiveTimer('reset');
-          (state.scheduledBlocks || []).forEach(b => {
-            if (b.q === q && b.taskIdx === i) {
-              b.activeAt    = null;
-              b.activeEndMs = null;
-            }
-          });
           saveState(); debouncedPushSettings();
           drawGauge();
           renderFocusMatrix();
@@ -7137,7 +7140,19 @@ function drawGauge() {
   });
   if (state.activeTimer) {
     const seg = activeTimerToSegment(state.activeTimer, now);
-    if (seg) addGaugeSegment(segmentsEl, pct, seg, true);
+    if (seg) {
+      // Suppress the live gauge colour band when a scheduled block for this task
+      // is already showing its colour fill — the block fill is the visual indicator
+      // and the gauge band behind it would create a distracting colour duplication.
+      // (The weekly stats view is unaffected: completed phases are logged via
+      // logPomodoroPhase → watchLog, and the live phase still shows there.)
+      const at = state.activeTimer;
+      const coveredByBlock = (at.q != null && at.idx != null) &&
+        (state.scheduledBlocks || []).some(b =>
+          b.q === at.q && b.taskIdx === at.idx && b.activeAt && !b.activeEndMs
+        );
+      if (!coveredByBlock) addGaugeSegment(segmentsEl, pct, seg, true);
+    }
   }
 
   // ---- Current-time red line ----
@@ -9144,10 +9159,24 @@ function renderWeekView() {
       color:   color
     });
   });
-  // 3) The currently RUNNING timer (live band) — pomodoro or mana tracker
+  // 3) The currently RUNNING timer (live band) — pomodoro or mana tracker.
+  // If a scheduled block is showing the colour fill for this task, use the
+  // block's active period (activeAt → now) so the weekly view is consistent
+  // with what the gauge blocks show (same colour, same time window).
   if (state.activeTimer) {
-    const live = activeTimerToSegment(state.activeTimer, Date.now());
-    if (live && live.startMs && live.endMs > live.startMs) pushSegmentSplit(live);
+    const at3 = state.activeTimer;
+    const now3 = Date.now();
+    const covBlock = (at3.q != null && at3.idx != null)
+      ? (state.scheduledBlocks || []).find(b =>
+          b.q === at3.q && b.taskIdx === at3.idx && b.activeAt && !b.activeEndMs)
+      : null;
+    if (covBlock) {
+      pushSegmentSplit({ startMs: covBlock.activeAt, endMs: now3,
+                         name: covBlock.taskName || '(task)', q: covBlock.q });
+    } else {
+      const live = activeTimerToSegment(at3, now3);
+      if (live && live.startMs && live.endMs > live.startMs) pushSegmentSplit(live);
+    }
   }
   // 4) User-created events — light gray bands.
   (state.events || []).forEach(ev => {
@@ -10613,7 +10642,24 @@ setInterval(() => {
   const ghostLblEl = document.createElement('div');
   ghostLblEl.className = 'tg-ghost-label';
   ghostEl.appendChild(ghostLblEl);
+  const ghostDurEl = document.createElement('div');
+  ghostDurEl.className = 'tg-ghost-dur';
+  ghostEl.appendChild(ghostDurEl);
   gaugeInner.appendChild(ghostEl);
+
+  /* ---- Duration formatter: ms → "35m" / "1h" / "1h30m" ---- */
+  function fmtDur(ms) {
+    const totalMin = Math.max(0, Math.round(ms / 60000));
+    if (totalMin < 60) return totalMin + 'm';
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    return m ? `${h}h${m}m` : `${h}h`;
+  }
+
+  /* ---- Compute font-size for duration watermark based on pixel height ---- */
+  function durFontSize(htPct) {
+    const pxH = gaugeInner.clientHeight * htPct / 100;
+    return Math.max(9, Math.min(pxH * 0.7, 52)) + 'px';
+  }
 
   /* ---- Two tooltip pills ---- */
   const tipTopEl = document.createElement('div');
@@ -10689,14 +10735,16 @@ setInterval(() => {
     const { startMs, durationMs } = _ghost;
     const endMs  = startMs + durationMs;
     const topPct = msToPct(startMs);
-    const botPct = msToPct(endMs);
+    const htPct  = Math.max(0.5, msToPct(endMs) - topPct);
     ghostEl.style.top     = topPct + '%';
-    ghostEl.style.height  = Math.max(0.5, botPct - topPct) + '%';
+    ghostEl.style.height  = htPct  + '%';
     ghostEl.style.display = 'block';
     if (_draggedTask) {
       const tasks = state.tasks[_draggedTask.q] || [];
       ghostLblEl.textContent = (tasks[_draggedTask.idx] || {}).text || '';
     }
+    ghostDurEl.textContent  = fmtDur(durationMs);
+    ghostDurEl.style.fontSize = durFontSize(htPct);
     showTips(startMs, endMs);
   }
 
@@ -10806,6 +10854,7 @@ setInterval(() => {
         _arrowBlock.endMs = Math.max(_arrowBlock.startMs + STEP_MS, _arrowBlock.endMs - STEP_MS);
       }
       saveState(); debouncedPushSettings();
+      // drawGauge re-renders all blocks with updated durEl labels
       drawGauge();
       // Re-show bottom tip at new position (drawGauge doesn't hide tips)
       tipBotEl.textContent = hhMM(_arrowBlock.endMs);
@@ -10890,6 +10939,13 @@ setInterval(() => {
       nameEl.className   = 'tg-block-name';
       nameEl.textContent = b.taskName || '';
       div.appendChild(nameEl);
+
+      /* -- Duration watermark (centred, 70 % of block height) -- */
+      const durEl = document.createElement('div');
+      durEl.className = 'tg-block-dur';
+      durEl.textContent = fmtDur(b.endMs - b.startMs);
+      durEl.style.fontSize = durFontSize(htPct);
+      div.appendChild(durEl);
 
       /* -- Resize handles (top & bottom edge) -- */
       const rtEl = document.createElement('div'); rtEl.className = 'tg-block-rt';
@@ -11095,8 +11151,11 @@ setInterval(() => {
         function onMove(mv) {
           b.startMs      = Math.min(snapMs(yToMs(mv.clientY)), origEnd - STEP_MS);
           const newTop   = livePct(b.startMs);
-          div.style.top  = newTop + '%';
-          div.style.height = Math.max(0.5, livePct(b.endMs) - newTop) + '%';
+          const newHt    = Math.max(0.5, livePct(b.endMs) - newTop);
+          div.style.top    = newTop + '%';
+          div.style.height = newHt  + '%';
+          durEl.textContent  = fmtDur(b.endMs - b.startMs);
+          durEl.style.fontSize = durFontSize(newHt);
           showTips(b.startMs, b.endMs);
         }
         function onUp() {
@@ -11121,8 +11180,11 @@ setInterval(() => {
           const t = mv.touches[0];
           b.startMs        = Math.min(snapMs(yToMs(t.clientY)), origEnd - STEP_MS);
           const newTop     = livePct(b.startMs);
+          const newHt      = Math.max(0.5, livePct(b.endMs) - newTop);
           div.style.top    = newTop + '%';
-          div.style.height = Math.max(0.5, livePct(b.endMs) - newTop) + '%';
+          div.style.height = newHt  + '%';
+          durEl.textContent  = fmtDur(b.endMs - b.startMs);
+          durEl.style.fontSize = durFontSize(newHt);
           showTips(b.startMs, b.endMs);
         }
         function onTUp() {
@@ -11144,8 +11206,11 @@ setInterval(() => {
         _arrowBlock = b; _tgBusy = true;
         const origStart = b.startMs;
         function onMove(mv) {
-          b.endMs          = Math.max(snapMs(yToMs(mv.clientY)), origStart + STEP_MS);
-          div.style.height = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs)) + '%';
+          b.endMs        = Math.max(snapMs(yToMs(mv.clientY)), origStart + STEP_MS);
+          const newHt    = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs));
+          div.style.height = newHt + '%';
+          durEl.textContent  = fmtDur(b.endMs - b.startMs);
+          durEl.style.fontSize = durFontSize(newHt);
           showTips(b.startMs, b.endMs);
         }
         function onUp() {
@@ -11168,8 +11233,11 @@ setInterval(() => {
         function onTMove(mv) {
           mv.preventDefault();
           const t = mv.touches[0];
-          b.endMs          = Math.max(snapMs(yToMs(t.clientY)), origStart + STEP_MS);
-          div.style.height = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs)) + '%';
+          b.endMs        = Math.max(snapMs(yToMs(t.clientY)), origStart + STEP_MS);
+          const newHt    = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs));
+          div.style.height = newHt + '%';
+          durEl.textContent  = fmtDur(b.endMs - b.startMs);
+          durEl.style.fontSize = durFontSize(newHt);
           showTips(b.startMs, b.endMs);
         }
         function onTUp() {
