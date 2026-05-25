@@ -1071,7 +1071,11 @@
     display: grid; grid-template-columns: 20% 1fr; gap: 12px; align-items: start;
   }
   @media (max-width: 700px) {
-    .focus-layout { grid-template-columns: 60px 1fr; }
+    /* Hide the left gauge column entirely on mobile — its job is taken over
+       by the .time-panel mini-gauge inserted between Money/Mana and Tasks.
+       The right column now spans the full width. */
+    .focus-layout { grid-template-columns: 1fr; }
+    .focus-layout .gauge-wrap { display: none; }
   }
   /* Calendar-style gauge */
   .gauge-col {
@@ -2598,6 +2602,21 @@
   /* Prevent page scroll while touching a block */
   .tg-block { touch-action: none; }
 
+  /* Mobile-only — empty quadrant cells shrink so the matrix isn't padded out
+     by blank rows. Title + add-task button stay readable. */
+  @media (max-width: 700px) {
+    .focus-cell.is-empty {
+      min-height: 0;
+      padding: 6px 10px;
+    }
+    .focus-cell.is-empty h4 { margin: 0 0 4px; font-size: .82rem; }
+    .focus-cell.is-empty .add-task {
+      padding: 3px 8px;
+      font-size: .8rem;
+    }
+    .focus-cell.is-empty .tasks { min-height: 0; }
+  }
+
   /* =========================================================================
      Time panel — mobile-only mini gauge that replaces the left-side gauge.
      Hidden on desktop; appears on phone between Money/Mana and Tasks.
@@ -2673,6 +2692,11 @@
     cursor: pointer;
     box-shadow: 0 1px 2px rgba(0,0,0,.08);
   }
+  .time-block.selected {
+    outline: 2px solid #3b82f6;
+    outline-offset: -1px;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.22), 0 1px 2px rgba(0,0,0,.08);
+  }
   .time-block-fill {
     position: absolute; left: 0; right: 0;
     pointer-events: none;
@@ -2696,6 +2720,40 @@
     border-top: 2px solid #ef4444;
     pointer-events: none;
     z-index: 10;
+  }
+  /* Goal lines (deadline = blue, bedtime = green) — rendered only when their
+     time falls inside the visible window. */
+  .time-goal-line {
+    position: absolute; left: 0; right: 0;
+    height: 0;
+    border-top: 2px solid #3b82f6;
+    pointer-events: none;
+    z-index: 9;
+  }
+  .time-goal-label {
+    position: absolute; right: 2px;
+    transform: translateY(-50%);
+    color: #fff;
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  /* Drop preview when dragging a task onto the Time area */
+  .time-ghost {
+    position: absolute; left: 38px; right: 4px;
+    background: rgba(100,116,139,.22);
+    border: 2px dashed #64748b;
+    border-radius: 5px;
+    pointer-events: none;
+    z-index: 20;
+    display: none;
+  }
+  .time-ghost-label {
+    position: absolute; top: 2px; left: 6px; right: 4px;
+    font-size: 11px; font-weight: 700; color: #374151;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .time-now-label {
     position: absolute; left: 2px;
@@ -3063,6 +3121,9 @@
             <div class="time-blocks" id="time-blocks"></div>
             <div class="time-now-line" id="time-now-line">
               <span class="time-now-label" id="time-now-label"></span>
+            </div>
+            <div class="time-ghost" id="time-ghost">
+              <span class="time-ghost-label" id="time-ghost-label"></span>
             </div>
           </div>
           <div class="time-edge-controls time-edge-bottom">
@@ -6415,6 +6476,12 @@ function scrollGaugeToCurrentTime() {
 }
 function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
+  // Restore collapsed state of the Time panel from saved state
+  const timePanel = document.getElementById('time-panel');
+  if (timePanel) {
+    if (state.timeCollapsed) timePanel.classList.add('collapsed');
+    else timePanel.classList.remove('collapsed');
+  }
   drawGauge();
   renderImDoing();
   focusTickHandle = setInterval(() => {
@@ -6447,6 +6514,10 @@ function renderFocusMatrix() {
   order.forEach(q => {
     const cell = document.createElement('div');
     cell.className = 'focus-cell ' + q;
+    // Mark cell as empty when it has no tasks — CSS uses this to shrink the
+    // cell on mobile so the matrix isn't dominated by blank space.
+    const taskCount = (state.tasks[q] || []).length;
+    if (taskCount === 0) cell.classList.add('is-empty');
     // Cell layout: <h4>Title</h4>  <button>+ add task</button>  <div.tasks/>
     // The add-task button sits BETWEEN the title and the task list so the
     // creation entry point is always at the top of the cell.
@@ -7490,12 +7561,46 @@ function drawTimeArea() {
     durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
     div.appendChild(durEl);
 
+    // Tap → select this block as the arrow-key / backspace target. The keyboard
+    // shortcuts (↑/↓ navigate, Shift+↑/↓ resize, Backspace delete) are still
+    // useful on mobile if the user has a Bluetooth keyboard.
+    div.dataset.bid = String(b.id);
+    const selected = (typeof window.__tgGetSelectedBlock === 'function')
+      ? window.__tgGetSelectedBlock() : null;
+    if (selected && selected.id === b.id) div.classList.add('selected');
+    div.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (typeof window.__tgSelectBlock === 'function') window.__tgSelectBlock(b);
+      drawTimeArea();
+    });
+
     blocksEl.appendChild(div);
   });
 
   /* ---- Current time line + label ---- */
   nowLineEl.style.top = pct(now) + '%';
   if (nowLabel) nowLabel.textContent = fmtTimeShort(now);
+
+  /* ---- Goal lines: "Go home" (blue) and "Sleep" (green) ----
+     Only rendered when their time falls inside the visible window. */
+  area.querySelectorAll('.time-goal-line').forEach(el => el.remove());
+  function placeTimeGoal(timeStr, dateStr, name, color) {
+    if (!timeStr || typeof combineDateTime !== 'function') return;
+    const tMs = combineDateTime(dateStr, timeStr, { anchor: topMs, rolling: true });
+    if (tMs == null || tMs < topMs || tMs > botMs) return;
+    const line = document.createElement('div');
+    line.className = 'time-goal-line';
+    line.style.top = pct(tMs) + '%';
+    line.style.borderTopColor = color;
+    const lbl = document.createElement('span');
+    lbl.className = 'time-goal-label';
+    lbl.textContent = `${fmtTimeShort(tMs)} · ${name}`;
+    lbl.style.background = color;
+    line.appendChild(lbl);
+    area.appendChild(line);
+  }
+  placeTimeGoal(state.deadline, state.deadlineDate, 'Go home', '#3b82f6');
+  placeTimeGoal(state.bedtime,  state.bedtimeDate,  'Sleep',   '#10b981');
 
   /* ---- Header summary + button disabled state ---- */
   const summary = document.getElementById('time-summary');
@@ -7672,6 +7777,53 @@ function openEventModal(existing) {
   const btn = document.getElementById('gauge-event-btn');
   if (!btn) return;
   btn.addEventListener('click', () => openEventModal(null));
+})();
+
+/* Time area button handlers — 4 buttons adjust top/bottom offsets independently.
+   Constraints: duration ∈ [1h, 12h]; topOffset ≤ 0; bottomOffset ≥ 0.        */
+(function wireTimeButtons() {
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('.time-btn');
+    if (!btn || btn.disabled) return;
+    const HOUR = 3600000;
+    if (!state.timeArea) {
+      state.timeArea = { topOffsetMs: -36 * 60 * 1000, bottomOffsetMs: 144 * 60 * 1000 };
+    }
+    const ts = state.timeArea;
+    const before = { top: ts.topOffsetMs, bot: ts.bottomOffsetMs };
+    const a = btn.dataset.action;
+    if      (a === 'top-extend')    ts.topOffsetMs    -= HOUR;
+    else if (a === 'top-shrink')    ts.topOffsetMs    = Math.min(0, ts.topOffsetMs + HOUR);
+    else if (a === 'bottom-extend') ts.bottomOffsetMs += HOUR;
+    else if (a === 'bottom-shrink') ts.bottomOffsetMs = Math.max(0, ts.bottomOffsetMs - HOUR);
+    // Enforce duration bounds [1h, 12h] — roll back if violated
+    const dur = ts.bottomOffsetMs - ts.topOffsetMs;
+    if (dur < HOUR || dur > 12 * HOUR) {
+      ts.topOffsetMs = before.top;
+      ts.bottomOffsetMs = before.bot;
+      return;
+    }
+    drawTimeArea();
+    saveState();
+    if (typeof markSettingsChanged === 'function') markSettingsChanged();
+    if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+  });
+})();
+
+(function wireTimeToggle() {
+  const toggle = document.getElementById('time-toggle');
+  if (!toggle) return;
+  toggle.addEventListener('click', (e) => {
+    // Ignore clicks bubbling from the button row inside the header
+    if (e.target.closest('.time-btn')) return;
+    const panel = document.getElementById('time-panel');
+    if (panel) {
+      panel.classList.toggle('collapsed');
+      // Persist collapsed state on the panel so it survives re-renders
+      state.timeCollapsed = panel.classList.contains('collapsed');
+      saveState();
+    }
+  });
 })();
 
 function openSegmentEditModal(seg) {
@@ -11011,6 +11163,11 @@ setInterval(() => {
   let _tgBusy     = false;   // true during block drag/resize → skip re-render in drawGauge
   let _arrowBlock = null;    // last-placed / last-interacted block — arrow keys resize its endMs
 
+  // Expose a way for drawTimeArea() (mobile mini-gauge, lives outside this
+  // IIFE) to select a block as the arrow-key target.
+  window.__tgSelectBlock = function(b) { _arrowBlock = b; };
+  window.__tgGetSelectedBlock = function() { return _arrowBlock; };
+
   /* ---- Gauge coordinate helpers ---- */
   function gaugeRange() {
     const now  = Date.now();
@@ -11759,6 +11916,51 @@ setInterval(() => {
              touch.clientY >= r.top  && touch.clientY <= r.bottom;
     }
 
+    /* Mobile mini-gauge (Time area) — separate drop target with its own
+       coordinate system (1-12 h window vs the main gauge's 24 h). */
+    function timeAreaEl() { return document.getElementById('time-area'); }
+    function isOverTimeArea(touch) {
+      const ta = timeAreaEl();
+      if (!ta || ta.offsetParent === null) return false;
+      const r = ta.getBoundingClientRect();
+      return touch.clientX >= r.left && touch.clientX <= r.right &&
+             touch.clientY >= r.top  && touch.clientY <= r.bottom;
+    }
+    function timeAreaYToMs(clientY) {
+      const ta = timeAreaEl();
+      if (!ta || !state.timeArea) return Date.now();
+      const r = ta.getBoundingClientRect();
+      const now = Date.now();
+      const topMs = now + state.timeArea.topOffsetMs;
+      const botMs = now + state.timeArea.bottomOffsetMs;
+      const ratio = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
+      return topMs + ratio * (botMs - topMs);
+    }
+    function placeTimeGhost(startMs, durMs) {
+      const ta = timeAreaEl();
+      const tg = document.getElementById('time-ghost');
+      const tgLbl = document.getElementById('time-ghost-label');
+      if (!ta || !tg || !state.timeArea) return;
+      const now = Date.now();
+      const topMs = now + state.timeArea.topOffsetMs;
+      const botMs = now + state.timeArea.bottomOffsetMs;
+      const dur = botMs - topMs;
+      if (dur <= 0) return;
+      const tP = Math.max(0, ((startMs - topMs) / dur) * 100);
+      const bP = Math.min(100, ((startMs + durMs - topMs) / dur) * 100);
+      tg.style.top    = tP + '%';
+      tg.style.height = Math.max(0.5, bP - tP) + '%';
+      tg.style.display = 'block';
+      if (tgLbl && _draggedTask) {
+        const tasks = state.tasks[_draggedTask.q] || [];
+        tgLbl.textContent = (tasks[_draggedTask.idx] || {}).text || '';
+      }
+    }
+    function hideTimeGhost() {
+      const tg = document.getElementById('time-ghost');
+      if (tg) tg.style.display = 'none';
+    }
+
     document.addEventListener('touchstart', ev => {
       // Ignore touches on interactive controls or gauge elements.
       if (ev.target.closest('input,button,a,select,.tg-block,#gauge-col')) return;
@@ -11792,18 +11994,28 @@ setInterval(() => {
       // Badge follows finger (slightly above so name is readable)
       badgeEl.style.left = t.clientX + 'px';
       badgeEl.style.top  = t.clientY + 'px';
-      // Show / update gauge ghost when over the gauge
+      // Show / update ghost when over the main gauge (PC) or Time area (mobile)
       if (isOverGauge(t)) {
         _ghost = { startMs: snapMs(yToMs(t.clientY)), durationMs: _td.durMs };
         placeGhost();
+        hideTimeGhost();
+      } else if (isOverTimeArea(t)) {
+        const startMs = snapMs(timeAreaYToMs(t.clientY));
+        _ghost = { startMs, durationMs: _td.durMs, fromTimeArea: true };
+        placeTimeGhost(startMs, _td.durMs);
+        // Make sure the main gauge ghost is hidden in case it was shown earlier
+        const ghostEl2 = document.querySelector('.tg-ghost');
+        if (ghostEl2) ghostEl2.style.display = 'none';
       } else {
         if (_ghost) { _ghost = null; placeGhost(); }
+        hideTimeGhost();
       }
     }, { passive: false });
 
     document.addEventListener('touchend', ev => {
       if (!_td) return;
       badgeEl.style.display = 'none';
+      hideTimeGhost();
       // Only commit a gauge block if the user actually dragged (not just tapped).
       if (_td.dragging && _ghost) {
         const { startMs, durationMs } = _ghost;
@@ -11820,18 +12032,16 @@ setInterval(() => {
             activeEndMs: null
           };
           state.scheduledBlocks.push(_newTBlock);
-          _arrowBlock = _newTBlock;   // enable arrow-key bottom-edge tuning
+          _arrowBlock = _newTBlock;
           saveState(); debouncedPushSettings();
-          // Show bottom-edge tip for the freshly placed block
           tipBotEl.textContent = hhMM(_newTBlock.endMs);
           tipBotEl.style.top   = msToPct(_newTBlock.endMs) + '%';
           tipBotEl.classList.remove('hidden');
         }
         _ghost = null;
         placeGhost();
-        drawGauge();
+        drawGauge();   // also redraws Time area via the chained call
       } else if (_ghost) {
-        // Tap ended without crossing threshold — discard ghost
         _ghost = null;
         placeGhost();
       }
@@ -11842,6 +12052,7 @@ setInterval(() => {
     document.addEventListener('touchcancel', () => {
       if (!_td) return;
       badgeEl.style.display = 'none';
+      hideTimeGhost();
       if (_ghost) { _ghost = null; placeGhost(); }
       _draggedTask = null;
       _td = null;
