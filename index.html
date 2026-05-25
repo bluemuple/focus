@@ -2629,40 +2629,30 @@
     display: flex; align-items: center; justify-content: space-between;
     gap: 8px; margin-bottom: 6px;
   }
-  .time-edge-controls {
-    display: flex; gap: 6px; align-items: center;
-  }
-  .time-edge-controls.time-edge-bottom {
-    margin-top: 6px; justify-content: center;
-  }
-  .time-btn {
-    background: #f9fafb;
-    border: 1px solid #d1d5db;
-    border-radius: 8px;
-    padding: 5px 10px;
-    cursor: pointer;
-    color: #4b5563;
-    display: inline-flex; align-items: center; justify-content: center;
-    transition: background .15s ease, border-color .15s ease, opacity .15s ease;
-  }
-  .time-btn:hover  { background: #f3f4f6; border-color: #9ca3af; }
-  .time-btn:active { background: #e5e7eb; }
-  .time-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-  .time-btn svg { display: block; }
-  /* Visually distinguish expand (outline) vs shrink (filled) — even though
-     the SVGs differ inside, this gives a subtle hover/border accent. */
-  .time-btn.ti-expand:hover { border-color: #3b82f6; color: #2563eb; }
-  .time-btn.ti-shrink:hover { border-color: #ef4444; color: #dc2626; }
 
-  /* The scrollable / scaled time area itself */
+  /* Outer viewport — scrolls vertically through the fixed-height inner content.
+     The viewport's pixel height equals durationMs × 1px/min (set inline by JS).
+     iOS-style momentum scrolling is enabled via overflow & touch-action. */
   .time-area {
     position: relative;
     width: 100%;
-    height: 280px;
     background: #fcfcfd;
-    border-radius: 8px;
+    border-radius: 8px 8px 0 0;
     border: 1px solid #e5e7eb;
-    overflow: hidden;
+    border-bottom: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;   /* iOS momentum */
+    touch-action: pan-y;
+    /* default height set by JS — fallback in case JS hasn't run */
+    height: 180px;
+  }
+  /* Inner content — 24h × 60 px/h = 1440 px tall. Tasks & grid are positioned
+     absolutely by pixel offset from content top. */
+  .time-content {
+    position: relative;
+    width: 100%;
+    height: 1440px;   /* CONTENT_HOURS × PX_PER_HOUR — see drawTimeArea() */
   }
   .time-grid { position: absolute; inset: 0; pointer-events: none; }
   .time-hour-line {
@@ -2683,6 +2673,29 @@
     position: absolute; inset: 0;
     pointer-events: none;
   }
+
+  /* Bottom drag handle — resize viewport (= duration). */
+  .time-resize-handle {
+    height: 14px;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+    cursor: ns-resize;
+    user-select: none;
+    touch-action: none;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s ease;
+  }
+  .time-resize-handle::before {
+    content: '';
+    width: 40px; height: 4px;
+    background: #9ca3af;
+    border-radius: 2px;
+  }
+  .time-resize-handle:hover { background: #e5e7eb; }
+  .time-resize-handle:active { background: #d1d5db; }
+  .time-resize-handle:active::before { background: #4b5563; }
   .time-block {
     position: absolute; left: 38px; right: 4px;
     background: #e5e7eb;
@@ -2766,16 +2779,11 @@
     line-height: 1.3;
   }
 
-  /* Collapsed state — matches money-mana-row pattern */
-  .time-panel.collapsed .time-area,
-  .time-panel.collapsed .time-edge-controls.time-edge-bottom { display: none; }
+  /* Summary chip in header (shows current duration) */
   .time-panel .compact-summary {
-    display: none;
     margin-left: 8px; font-size: .85rem;
     color: #6b7280; font-weight: 500;
   }
-  .time-panel.collapsed .compact-summary { display: inline; }
-  .time-panel.collapsed .time-edge-controls.time-edge-top .time-btn { display: none; }
 </style>
 </head>
 <body>
@@ -3097,49 +3105,28 @@
              edges independently. ============================================ -->
         <div class="panel time-panel" id="time-panel" style="margin:0;">
           <div class="time-head">
-            <h3 id="time-toggle" style="margin:0;cursor:pointer;user-select:none;">
+            <h3 id="time-toggle" style="margin:0;cursor:pointer;user-select:none;" title="Tap to scroll back to current time">
               <span>Time</span>
               <span class="compact-summary" id="time-summary"></span>
             </h3>
-            <div class="time-edge-controls time-edge-top">
-              <button class="time-btn ti-expand" data-action="top-extend" type="button" title="과거 1시간 더 보기" aria-label="Extend past">
-                <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-                  <path d="M3 8 L7 4 L11 8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-                  <line x1="3" y1="11.5" x2="11" y2="11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.55"/>
-                </svg>
-              </button>
-              <button class="time-btn ti-shrink" data-action="top-shrink" type="button" title="과거 1시간 덜 보기" aria-label="Shrink past">
-                <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-                  <line x1="3" y1="2.5" x2="11" y2="2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.55"/>
-                  <path d="M3 6 L7 10 L11 6 Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.6" stroke-linejoin="round"/>
-                </svg>
-              </button>
-            </div>
           </div>
+          <!-- Outer = scrollable viewport, height = durationMs × 1px/min.
+               Inner = 24h fixed content. iOS-style overflow scrolling lets
+               the user peek past/future beyond the visible window. -->
           <div class="time-area" id="time-area">
-            <div class="time-grid" id="time-grid"></div>
-            <div class="time-blocks" id="time-blocks"></div>
-            <div class="time-now-line" id="time-now-line">
-              <span class="time-now-label" id="time-now-label"></span>
-            </div>
-            <div class="time-ghost" id="time-ghost">
-              <span class="time-ghost-label" id="time-ghost-label"></span>
+            <div class="time-content" id="time-content">
+              <div class="time-grid" id="time-grid"></div>
+              <div class="time-blocks" id="time-blocks"></div>
+              <div class="time-now-line" id="time-now-line">
+                <span class="time-now-label" id="time-now-label"></span>
+              </div>
+              <div class="time-ghost" id="time-ghost">
+                <span class="time-ghost-label" id="time-ghost-label"></span>
+              </div>
             </div>
           </div>
-          <div class="time-edge-controls time-edge-bottom">
-            <button class="time-btn ti-shrink" data-action="bottom-shrink" type="button" title="미래 1시간 덜 보기" aria-label="Shrink future">
-              <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-                <path d="M3 8 L7 4 L11 8 Z" stroke="currentColor" stroke-width="1.5" fill="currentColor" fill-opacity="0.6" stroke-linejoin="round"/>
-                <line x1="3" y1="11.5" x2="11" y2="11.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.55"/>
-              </svg>
-            </button>
-            <button class="time-btn ti-expand" data-action="bottom-extend" type="button" title="미래 1시간 더 보기" aria-label="Extend future">
-              <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
-                <line x1="3" y1="2.5" x2="11" y2="2.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.55"/>
-                <path d="M3 6 L7 10 L11 6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-            </button>
-          </div>
+          <!-- Drag this handle up/down to resize the viewport (1-10 h). -->
+          <div class="time-resize-handle" id="time-resize-handle" title="Drag to resize"></div>
         </div>
 
         <div class="panel" style="margin:0;">
@@ -6476,12 +6463,8 @@ function scrollGaugeToCurrentTime() {
 }
 function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
-  // Restore collapsed state of the Time panel from saved state
-  const timePanel = document.getElementById('time-panel');
-  if (timePanel) {
-    if (state.timeCollapsed) timePanel.classList.add('collapsed');
-    else timePanel.classList.remove('collapsed');
-  }
+  // On entering the focus page, snap Time area scroll back to current time.
+  if (state.timeArea) state.timeArea._needsScroll = true;
   drawGauge();
   renderImDoing();
   focusTickHandle = setInterval(() => {
@@ -7469,71 +7452,91 @@ function drawGauge() {
 }
 
 /* =========================================================================
-   Time area — mobile mini-gauge with adjustable window (1-12 h).
-   topOffsetMs ≤ 0 (default -36 min), bottomOffsetMs ≥ 0 (default +144 min).
-   As real time passes, the offsets stay constant → top/bottom slide forward
-   with `now`, so the current-time line stays at a fixed visual position
-   (default 1/5 from the top) while blocks scroll upward.
+   Time area — mobile mini-gauge, calendar-app style.
+     • Inner content = 24 h × PX_PER_HOUR px (absolute pixel positioning)
+     • Outer viewport = durationMs × (PX_PER_HOUR / 1h) px tall  ── scrollable
+     • Default scroll position: current time at 30 min from viewport top
+     • Top of view is ALWAYS 30 min before "now" when reset (Time-tap)
+     • As real time passes, scrollTop stays where the user left it; the
+       current-time line moves down inside the content
    ====================================================================== */
+const TIME_PX_PER_HOUR = 60;                       // 1 px ≙ 1 min
+const TIME_CONTENT_HOURS = 24;
+const TIME_CONTENT_HEIGHT_PX = TIME_CONTENT_HOURS * TIME_PX_PER_HOUR;  // 1440
+const TIME_MIN_MS = 1 * 3600 * 1000;
+const TIME_MAX_MS = 10 * 3600 * 1000;
+const TIME_HEAD_OFFSET_MS = 30 * 60 * 1000;        // 30 min above current
+
 function drawTimeArea() {
   const area = document.getElementById('time-area');
-  if (!area) return;
-  // Skip render when the panel isn't visible (e.g. on desktop where CSS
-  // hides it). offsetParent is null when display:none in any ancestor.
-  if (area.offsetParent === null) return;
+  if (!area || area.offsetParent === null) return;
+  const content  = document.getElementById('time-content');
   const grid     = document.getElementById('time-grid');
   const blocksEl = document.getElementById('time-blocks');
   const nowLineEl= document.getElementById('time-now-line');
   const nowLabel = document.getElementById('time-now-label');
-  if (!grid || !blocksEl || !nowLineEl) return;
+  if (!content || !grid || !blocksEl || !nowLineEl) return;
 
-  if (!state.timeArea) {
-    // 3h window with the now-line at 1/5 from top
-    state.timeArea = { topOffsetMs: -36 * 60 * 1000, bottomOffsetMs: 144 * 60 * 1000 };
+  /* Init / migrate state. Older sessions may still carry top/bottom offsets — */
+  if (!state.timeArea || typeof state.timeArea.durationMs !== 'number') {
+    const prev = state.timeArea || {};
+    let dur = (prev.bottomOffsetMs && prev.topOffsetMs)
+      ? prev.bottomOffsetMs - prev.topOffsetMs
+      : 3 * 3600 * 1000;
+    if (dur < TIME_MIN_MS) dur = TIME_MIN_MS;
+    if (dur > TIME_MAX_MS) dur = TIME_MAX_MS;
+    state.timeArea = { durationMs: dur, _needsScroll: true };
   }
-  const ts = state.timeArea;
-  if (ts.topOffsetMs    > 0) ts.topOffsetMs    = 0;
-  if (ts.bottomOffsetMs < 0) ts.bottomOffsetMs = 0;
+  let durMs = state.timeArea.durationMs;
+  if (durMs < TIME_MIN_MS) durMs = TIME_MIN_MS;
+  if (durMs > TIME_MAX_MS) durMs = TIME_MAX_MS;
+  state.timeArea.durationMs = durMs;
 
-  const now   = Date.now();
-  const topMs = now + ts.topOffsetMs;
-  const botMs = now + ts.bottomOffsetMs;
-  const dur   = botMs - topMs;
-  if (dur <= 0) return;
-  const pct = (ms) => ((ms - topMs) / dur) * 100;
+  /* Viewport height = durationMs / 1h × PX_PER_HOUR */
+  const viewportPx = Math.round((durMs / 3600000) * TIME_PX_PER_HOUR);
+  area.style.height = viewportPx + 'px';
+  content.style.height = TIME_CONTENT_HEIGHT_PX + 'px';
+
+  /* Content range = 24 h anchored to most recent 4 AM (matches main gauge) */
+  const now = Date.now();
+  const anchor = new Date();
+  anchor.setHours(4, 0, 0, 0);
+  if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
+  const contentTopMs = anchor.getTime();
+  const contentBotMs = contentTopMs + TIME_CONTENT_HOURS * 3600 * 1000;
+  const msPerPx = (contentBotMs - contentTopMs) / TIME_CONTENT_HEIGHT_PX;
+  const msToPx  = (ms) => (ms - contentTopMs) / msPerPx;
 
   /* ---- Hour grid + labels ---- */
   grid.innerHTML = '';
-  const startHour = new Date(topMs);
+  const startHour = new Date(contentTopMs);
   startHour.setMinutes(0, 0, 0);
-  if (startHour.getTime() < topMs) startHour.setHours(startHour.getHours() + 1);
-  for (let cur = startHour.getTime(); cur <= botMs; cur += 3600000) {
-    const y = pct(cur);
-    if (y < -1 || y > 101) continue;
+  if (startHour.getTime() < contentTopMs) startHour.setHours(startHour.getHours() + 1);
+  for (let cur = startHour.getTime(); cur <= contentBotMs; cur += 3600000) {
+    const y = msToPx(cur);
     const line = document.createElement('div');
     line.className = 'time-hour-line';
-    line.style.top = y + '%';
+    line.style.top = y + 'px';
     grid.appendChild(line);
     const lbl = document.createElement('div');
     lbl.className = 'time-hour-label';
-    lbl.style.top = y + '%';
+    lbl.style.top = y + 'px';
     lbl.textContent = fmtHourLabel(cur);
     grid.appendChild(lbl);
   }
 
-  /* ---- Scheduled blocks visible in this window ---- */
+  /* ---- Scheduled blocks ---- */
   blocksEl.innerHTML = '';
   (state.scheduledBlocks || []).forEach(b => {
-    if (b.endMs <= topMs || b.startMs >= botMs) return;
-    const tP = Math.max(0, pct(b.startMs));
-    const bP = Math.min(100, pct(b.endMs));
-    if (bP - tP < 0.3) return;
+    if (b.endMs <= contentTopMs || b.startMs >= contentBotMs) return;
+    const tPx = Math.max(0, msToPx(b.startMs));
+    const bPx = Math.min(TIME_CONTENT_HEIGHT_PX, msToPx(b.endMs));
+    if (bPx - tPx < 2) return;
     const div = document.createElement('div');
     div.className = 'time-block';
-    div.style.top    = tP + '%';
-    div.style.height = (bP - tP) + '%';
+    div.style.top    = tPx + 'px';
+    div.style.height = (bPx - tPx) + 'px';
 
-    // Coloured fill from activeAt to (activeEndMs or now), clipped to block
     if (b.activeAt) {
       const colorEnd = b.activeEndMs ? Math.min(b.activeEndMs, now) : now;
       const blockH   = b.endMs - b.startMs;
@@ -7561,9 +7564,6 @@ function drawTimeArea() {
     durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
     div.appendChild(durEl);
 
-    // Tap → select this block as the arrow-key / backspace target. The keyboard
-    // shortcuts (↑/↓ navigate, Shift+↑/↓ resize, Backspace delete) are still
-    // useful on mobile if the user has a Bluetooth keyboard.
     div.dataset.bid = String(b.id);
     const selected = (typeof window.__tgGetSelectedBlock === 'function')
       ? window.__tgGetSelectedBlock() : null;
@@ -7578,46 +7578,44 @@ function drawTimeArea() {
   });
 
   /* ---- Current time line + label ---- */
-  nowLineEl.style.top = pct(now) + '%';
+  nowLineEl.style.top = msToPx(now) + 'px';
   if (nowLabel) nowLabel.textContent = fmtTimeShort(now);
 
-  /* ---- Goal lines: "Go home" (blue) and "Sleep" (green) ----
-     Only rendered when their time falls inside the visible window. */
-  area.querySelectorAll('.time-goal-line').forEach(el => el.remove());
+  /* ---- Goal lines ("Go home" blue / "Sleep" green) ---- */
+  content.querySelectorAll('.time-goal-line').forEach(el => el.remove());
   function placeTimeGoal(timeStr, dateStr, name, color) {
     if (!timeStr || typeof combineDateTime !== 'function') return;
-    const tMs = combineDateTime(dateStr, timeStr, { anchor: topMs, rolling: true });
-    if (tMs == null || tMs < topMs || tMs > botMs) return;
+    const tMs = combineDateTime(dateStr, timeStr, { anchor: contentTopMs, rolling: true });
+    if (tMs == null || tMs < contentTopMs || tMs > contentBotMs) return;
     const line = document.createElement('div');
     line.className = 'time-goal-line';
-    line.style.top = pct(tMs) + '%';
+    line.style.top = msToPx(tMs) + 'px';
     line.style.borderTopColor = color;
     const lbl = document.createElement('span');
     lbl.className = 'time-goal-label';
     lbl.textContent = `${fmtTimeShort(tMs)} · ${name}`;
     lbl.style.background = color;
     line.appendChild(lbl);
-    area.appendChild(line);
+    content.appendChild(line);
   }
   placeTimeGoal(state.deadline, state.deadlineDate, 'Go home', '#3b82f6');
   placeTimeGoal(state.bedtime,  state.bedtimeDate,  'Sleep',   '#10b981');
 
-  /* ---- Header summary + button disabled state ---- */
+  /* ---- Header summary (current duration in hours) ---- */
   const summary = document.getElementById('time-summary');
   if (summary) {
-    const hrs = Math.round(dur / 3600000 * 10) / 10;
+    const hrs = Math.round(durMs / 3600000 * 10) / 10;
     summary.textContent = `${hrs}h`;
   }
-  const HOUR = 3600000;
-  document.querySelectorAll('.time-btn').forEach(btn => {
-    const a = btn.dataset.action;
-    let disable = false;
-    if (a === 'top-extend')    disable = (dur >= 12 * HOUR);
-    if (a === 'bottom-extend') disable = (dur >= 12 * HOUR);
-    if (a === 'top-shrink')    disable = (dur <= HOUR || ts.topOffsetMs    >= 0);
-    if (a === 'bottom-shrink') disable = (dur <= HOUR || ts.bottomOffsetMs <= 0);
-    btn.disabled = disable;
-  });
+
+  /* ---- Reset scroll position when explicitly requested (initial load,
+         "Time" tap, or duration change) — now-line ends at 30 min from
+         the top of the visible area. */
+  if (state.timeArea._needsScroll) {
+    const targetScroll = msToPx(now - TIME_HEAD_OFFSET_MS);
+    area.scrollTop = Math.max(0, Math.min(TIME_CONTENT_HEIGHT_PX - viewportPx, targetScroll));
+    state.timeArea._needsScroll = false;
+  }
 }
 
 /* Compact duration label for time-block-dur (e.g. "35m" / "1h" / "1h30m") */
@@ -7779,51 +7777,79 @@ function openEventModal(existing) {
   btn.addEventListener('click', () => openEventModal(null));
 })();
 
-/* Time area button handlers — 4 buttons adjust top/bottom offsets independently.
-   Constraints: duration ∈ [1h, 12h]; topOffset ≤ 0; bottomOffset ≥ 0.        */
-(function wireTimeButtons() {
-  document.addEventListener('click', e => {
-    const btn = e.target.closest('.time-btn');
-    if (!btn || btn.disabled) return;
-    const HOUR = 3600000;
-    if (!state.timeArea) {
-      state.timeArea = { topOffsetMs: -36 * 60 * 1000, bottomOffsetMs: 144 * 60 * 1000 };
-    }
-    const ts = state.timeArea;
-    const before = { top: ts.topOffsetMs, bot: ts.bottomOffsetMs };
-    const a = btn.dataset.action;
-    if      (a === 'top-extend')    ts.topOffsetMs    -= HOUR;
-    else if (a === 'top-shrink')    ts.topOffsetMs    = Math.min(0, ts.topOffsetMs + HOUR);
-    else if (a === 'bottom-extend') ts.bottomOffsetMs += HOUR;
-    else if (a === 'bottom-shrink') ts.bottomOffsetMs = Math.max(0, ts.bottomOffsetMs - HOUR);
-    // Enforce duration bounds [1h, 12h] — roll back if violated
-    const dur = ts.bottomOffsetMs - ts.topOffsetMs;
-    if (dur < HOUR || dur > 12 * HOUR) {
-      ts.topOffsetMs = before.top;
-      ts.bottomOffsetMs = before.bot;
-      return;
-    }
-    drawTimeArea();
-    saveState();
-    if (typeof markSettingsChanged === 'function') markSettingsChanged();
-    if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-  });
-})();
-
+/* "Time" header tap → reset scroll so the current-time line is 30 min from
+   the top of the visible area. */
 (function wireTimeToggle() {
   const toggle = document.getElementById('time-toggle');
   if (!toggle) return;
-  toggle.addEventListener('click', (e) => {
-    // Ignore clicks bubbling from the button row inside the header
-    if (e.target.closest('.time-btn')) return;
-    const panel = document.getElementById('time-panel');
-    if (panel) {
-      panel.classList.toggle('collapsed');
-      // Persist collapsed state on the panel so it survives re-renders
-      state.timeCollapsed = panel.classList.contains('collapsed');
-      saveState();
-    }
+  toggle.addEventListener('click', () => {
+    if (!state.timeArea) state.timeArea = { durationMs: 3 * 3600 * 1000 };
+    state.timeArea._needsScroll = true;
+    if (typeof drawTimeArea === 'function') drawTimeArea();
   });
+})();
+
+/* Bottom resize handle — drag up/down to change durationMs (1h-10h).
+   60 px ≙ 1 h, so dragging 60 px adds/removes 1 hour. */
+(function wireTimeResizeHandle() {
+  const handle = document.getElementById('time-resize-handle');
+  if (!handle) return;
+  const PX_PER_HOUR = 60;
+  const HOUR = 3600000;
+  const MIN_MS = 1 * HOUR;
+  const MAX_MS = 10 * HOUR;
+
+  function clampDur(ms) {
+    if (ms < MIN_MS) return MIN_MS;
+    if (ms > MAX_MS) return MAX_MS;
+    return ms;
+  }
+
+  function startDrag(startY, isTouch) {
+    if (!state.timeArea) state.timeArea = { durationMs: 3 * HOUR };
+    const startDur = state.timeArea.durationMs;
+    function onMove(clientY) {
+      const dy = clientY - startY;
+      const newDur = clampDur(startDur + (dy / PX_PER_HOUR) * HOUR);
+      state.timeArea.durationMs = newDur;
+      if (typeof drawTimeArea === 'function') drawTimeArea();
+    }
+    function onUp() {
+      if (isTouch) {
+        document.removeEventListener('touchmove', tMove);
+        document.removeEventListener('touchend',  tUp);
+        document.removeEventListener('touchcancel', tUp);
+      } else {
+        window.removeEventListener('mousemove', mMove);
+        window.removeEventListener('mouseup',   mUp);
+      }
+      saveState();
+      if (typeof markSettingsChanged === 'function') markSettingsChanged();
+      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+    }
+    function mMove(ev) { onMove(ev.clientY); }
+    function mUp()     { onUp(); }
+    function tMove(ev) { if (ev.touches[0]) { ev.preventDefault(); onMove(ev.touches[0].clientY); } }
+    function tUp()     { onUp(); }
+    if (isTouch) {
+      document.addEventListener('touchmove', tMove, { passive: false });
+      document.addEventListener('touchend',  tUp);
+      document.addEventListener('touchcancel', tUp);
+    } else {
+      window.addEventListener('mousemove', mMove);
+      window.addEventListener('mouseup',   mUp);
+    }
+  }
+
+  handle.addEventListener('mousedown', e => {
+    e.preventDefault();
+    startDrag(e.clientY, false);
+  });
+  handle.addEventListener('touchstart', e => {
+    if (!e.touches[0]) return;
+    e.preventDefault();
+    startDrag(e.touches[0].clientY, true);
+  }, { passive: false });
 })();
 
 function openSegmentEditModal(seg) {
@@ -11916,8 +11942,9 @@ setInterval(() => {
              touch.clientY >= r.top  && touch.clientY <= r.bottom;
     }
 
-    /* Mobile mini-gauge (Time area) — separate drop target with its own
-       coordinate system (1-12 h window vs the main gauge's 24 h). */
+    /* Mobile mini-gauge (Time area) — separate drop target. Now uses a
+       scrollable pixel coordinate system: viewport scrollTop + cursor Y →
+       pixel offset within the 24h content → ms timestamp. */
     function timeAreaEl() { return document.getElementById('time-area'); }
     function isOverTimeArea(touch) {
       const ta = timeAreaEl();
@@ -11926,30 +11953,35 @@ setInterval(() => {
       return touch.clientX >= r.left && touch.clientX <= r.right &&
              touch.clientY >= r.top  && touch.clientY <= r.bottom;
     }
+    function _timeAreaContentRange() {
+      const now = Date.now();
+      const anchor = new Date();
+      anchor.setHours(4, 0, 0, 0);
+      if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
+      const topMs = anchor.getTime();
+      const span  = 24 * 3600 * 1000;
+      return { topMs, botMs: topMs + span, span };
+    }
     function timeAreaYToMs(clientY) {
       const ta = timeAreaEl();
-      if (!ta || !state.timeArea) return Date.now();
+      if (!ta) return Date.now();
       const r = ta.getBoundingClientRect();
-      const now = Date.now();
-      const topMs = now + state.timeArea.topOffsetMs;
-      const botMs = now + state.timeArea.bottomOffsetMs;
-      const ratio = Math.max(0, Math.min(1, (clientY - r.top) / r.height));
-      return topMs + ratio * (botMs - topMs);
+      const yInContent = ta.scrollTop + (clientY - r.top);
+      const { topMs, span } = _timeAreaContentRange();
+      const PX_TOTAL = 24 * 60;
+      const ratio = Math.max(0, Math.min(1, yInContent / PX_TOTAL));
+      return topMs + ratio * span;
     }
     function placeTimeGhost(startMs, durMs) {
-      const ta = timeAreaEl();
       const tg = document.getElementById('time-ghost');
       const tgLbl = document.getElementById('time-ghost-label');
-      if (!ta || !tg || !state.timeArea) return;
-      const now = Date.now();
-      const topMs = now + state.timeArea.topOffsetMs;
-      const botMs = now + state.timeArea.bottomOffsetMs;
-      const dur = botMs - topMs;
-      if (dur <= 0) return;
-      const tP = Math.max(0, ((startMs - topMs) / dur) * 100);
-      const bP = Math.min(100, ((startMs + durMs - topMs) / dur) * 100);
-      tg.style.top    = tP + '%';
-      tg.style.height = Math.max(0.5, bP - tP) + '%';
+      if (!tg) return;
+      const { topMs, span } = _timeAreaContentRange();
+      const PX_TOTAL = 24 * 60;
+      const tPx = ((startMs - topMs) / span) * PX_TOTAL;
+      const bPx = ((startMs + durMs - topMs) / span) * PX_TOTAL;
+      tg.style.top    = Math.max(0, tPx) + 'px';
+      tg.style.height = Math.max(2, bPx - tPx) + 'px';
       tg.style.display = 'block';
       if (tgLbl && _draggedTask) {
         const tasks = state.tasks[_draggedTask.q] || [];
