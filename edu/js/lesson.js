@@ -477,24 +477,51 @@
   // pagination without doing the full layout-measurement dance.
   function paginate(parts /*, rawBody */) {
     if (!parts.length) return [];
-    // HTML body — every part is one page. The teacher's <hr> markers
-    // already decided where the page breaks are.
-    if (parts.every(p => p.kind === 'html')) return parts.map(p => [p]);
 
     // Comic mode: each panel image becomes its own page so scroll-off
     // shows one image at a time filling the full card. Gaps and any
     // stray sentences between [[IMG:N]] markers are dropped — all
     // dialogue lives inside bubble overlays, not the body text.
+    //
+    // This block MUST run before the all-HTML early-return below
+    // because markdown comic bodies go through markdownToHtml → one
+    // big {kind:'html'} part containing all [[IMG:N]] markers. Without
+    // this check first, that single HTML part becomes one page showing
+    // all panels side-by-side (the "10 panels compressed" bug).
     if (lesson && lesson.mode === 'comic') {
       const imgList = Array.isArray(lesson.images) ? lesson.images : [];
       const comicPages = [];
       parts.forEach(p => {
+        // Plain-text path: tokeniseBody emits a separate {kind:'img'} per marker.
         if (p.kind === 'img' && imgList[p.idx] && imgList[p.idx].corner === 'panel') {
           comicPages.push([p]);
+          return;
+        }
+        // HTML path (markdown body → markdownToHtml → one HTML blob):
+        // [[IMG:N]] markers live inside <p> tags. Scan and emit one page
+        // per panel. renderBody handles <p>[[IMG:N]]</p> via
+        // tokenizeTextNodesInPlace → buildSentenceFragment → makeComicPanel.
+        if (p.kind === 'html') {
+          const markerRe = /\[\[IMG:(\d+)\]\]/g;
+          let m;
+          let foundPanel = false;
+          while ((m = markerRe.exec(p.html)) !== null) {
+            const idx = parseInt(m[1], 10);
+            if (imgList[idx] && imgList[idx].corner === 'panel') {
+              foundPanel = true;
+              comicPages.push([{ kind: 'html', html: `<p>[[IMG:${idx}]]</p>`, sentences: [] }]);
+            }
+          }
+          // Non-panel HTML (captions, intro text, etc.) — keep as one page.
+          if (!foundPanel) comicPages.push([p]);
         }
       });
       return comicPages.length ? comicPages : [parts];
     }
+
+    // HTML body — every part is one page. The teacher's <hr> markers
+    // already decided where the page breaks are.
+    if (parts.every(p => p.kind === 'html')) return parts.map(p => [p]);
 
     const MAX_SENTENCES_PER_PAGE = 6;
     const out  = [];

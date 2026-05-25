@@ -689,7 +689,10 @@
     btn.dataset.busy = '1';
     const origLabel = btn.textContent;
 
-    const sentences = extractPrewarmSentences(L.body || '');
+    const sentences = [
+      ...extractPrewarmSentences(L.body || ''),
+      ...extractBubbleSentences(L),
+    ];
     const wordPairs = extractPrewarmWordPairs(sentences);
     const total = sentences.length + wordPairs.length;
     if (total === 0) {
@@ -765,7 +768,10 @@
     btn.dataset.busy = '1';
     const origLabel = btn.textContent;
 
-    const sentences = extractPrewarmSentences(L.body || '');
+    const sentences = [
+      ...extractPrewarmSentences(L.body || ''),
+      ...extractBubbleSentences(L),
+    ];
     if (!sentences.length) {
       btn.textContent = '∅ Empty';
       setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
@@ -833,7 +839,10 @@
     btn.dataset.busy = '1';
     const origLabel = btn.textContent;
 
-    const sentences = extractPrewarmSentences(L.body || '');
+    const sentences = [
+      ...extractPrewarmSentences(L.body || ''),
+      ...extractBubbleSentences(L),
+    ];
     if (!sentences.length) {
       btn.textContent = '∅ Empty';
       setTimeout(() => { btn.textContent = origLabel; btn.dataset.busy = ''; }, 1500);
@@ -923,7 +932,10 @@
     btn.dataset.busy = '1';
     const origLabel = btn.textContent;
 
-    const sentences = extractPrewarmSentences(L.body || '');
+    const sentences = [
+      ...extractPrewarmSentences(L.body || ''),
+      ...extractBubbleSentences(L),
+    ];
     const wordPairs = extractPrewarmWordPairs(sentences);
     const total = wordPairs.length;
     if (total === 0) {
@@ -1189,6 +1201,31 @@
       // "sentence" too — the renderer does the same.
       if (lastEnd < text.length) remember(text.slice(lastEnd));
     }
+    return out;
+  }
+
+  // Comic lessons keep all dialogue in image speech bubbles (not in
+  // the body text). Extract those bubble texts as sentences so every
+  // prewarm function covers comic panels too.
+  function extractBubbleSentences(L) {
+    const seen = new Set();
+    const out  = [];
+    if (!L || !Array.isArray(L.images)) return out;
+    L.images.forEach(im => {
+      if (!im || !Array.isArray(im.bubbles)) return;
+      im.bubbles.forEach(b => {
+        const t = (b && typeof b.text === 'string') ? b.text.trim() : '';
+        if (!t) return;
+        // Split bubble text on sentence boundaries (best-effort, matches
+        // the renderer's own tokenisation so cache keys align).
+        t.split(/(?<=[.!?])\s+/).forEach(s => {
+          const c = s.trim();
+          if (!c || seen.has(c)) return;
+          seen.add(c);
+          out.push(c);
+        });
+      });
+    });
     return out;
   }
 
