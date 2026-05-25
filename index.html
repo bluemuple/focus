@@ -1148,7 +1148,7 @@
     position: absolute; left: 0; right: 0;
     height: 2px;
     background: #ef4444;
-    z-index: 10;
+    z-index: 20;   /* above .tg-block (15) so the time oval is never buried */
     pointer-events: none;
     transition: top .9s linear;
   }
@@ -2543,6 +2543,29 @@
     transition: opacity .15s ease;
   }
   .tg-tooltip.hidden { opacity: 0; pointer-events: none; }
+
+  /* ---- Phone: full-width translucent blocks ---- */
+  @media (max-width: 700px) {
+    /* Span the entire gauge width so the block looks like a band across
+       the full column; the hour labels and time oval show through because
+       the background is semi-transparent. */
+    .tg-ghost {
+      left: 0; right: 0;
+      background: rgba(100,116,139,.18);
+    }
+    .tg-block {
+      left: 0; right: 0;
+      background: rgba(209,213,219,.5);   /* semi-transparent grey */
+      border-radius: 0;
+    }
+    /* Overlap split: use true halves of the full gauge width */
+    .tg-block.half-l { left: 0;   right: 50%; }
+    .tg-block.half-r { left: 50%; right: 0;   }
+    /* Colour fill: keep out of the 38 px hour-label zone so labels show */
+    .tg-block-fill   { left: 38px; opacity: .65; }
+    /* Task name: start after the hour-label zone */
+    .tg-block-name   { left: 42px; }
+  }
 </style>
 </head>
 <body>
@@ -4051,9 +4074,10 @@ async function pushSettingsToCloud() {
         sessionStartMs:          state.sessionStartMs || null,
         lastSnapshotDate:        state.lastSnapshotDate || '',
         last3amResetDate:        state.last3amResetDate || '',
-        scoreLog:                Array.isArray(state.scoreLog) ? state.scoreLog.slice(-1000) : [],
-        events:                  Array.isArray(state.events)   ? state.events.slice(-500)    : [],
-        versions:                Array.isArray(versionsForPush) ? versionsForPush.slice(-3)  : [],
+        scoreLog:                Array.isArray(state.scoreLog)          ? state.scoreLog.slice(-1000)          : [],
+        events:                  Array.isArray(state.events)            ? state.events.slice(-500)             : [],
+        scheduledBlocks:         Array.isArray(state.scheduledBlocks)   ? state.scheduledBlocks.slice(-200)    : [],
+        versions:                Array.isArray(versionsForPush)         ? versionsForPush.slice(-3)            : [],
         motivationalCurrent:     state.motivationalCurrent || null,
         // ---- Money system (synced) ----
         money:                   +state.money || 0,
@@ -4276,8 +4300,9 @@ function applyRemoteSettings(remote) {
     if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
     if (typeof ss.lastSnapshotDate === 'string') state.lastSnapshotDate = ss.lastSnapshotDate;
     if (typeof ss.last3amResetDate === 'string') state.last3amResetDate = ss.last3amResetDate;
-    if (Array.isArray(ss.scoreLog)) state.scoreLog = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
-    if (Array.isArray(ss.events))   state.events   = ss.events;
+    if (Array.isArray(ss.scoreLog))          state.scoreLog      = mergeScoreLogs(state.scoreLog || [], ss.scoreLog);
+    if (Array.isArray(ss.events))            state.events        = ss.events;
+    if (Array.isArray(ss.scheduledBlocks))   state.scheduledBlocks = ss.scheduledBlocks;
     // Merge cloud + local versions instead of replacing. This guarantees a
     // newly-signed-in device whose `state.versions` is empty does NOT wipe
     // the backups that already exist on the cloud — both sides are unioned
