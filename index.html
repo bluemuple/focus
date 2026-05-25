@@ -187,6 +187,74 @@
   .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
   .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
 
+  /* "Now Playing" chip — sticky pill at the top of the focus page that shows
+     the currently-running task. Critical on mobile where the narrow gauge
+     can only fit a one-letter task abbreviation inside its blocks. */
+  .now-playing-bar {
+    position: sticky;
+    top: 4px;
+    z-index: 50;
+    display: flex;
+    justify-content: center;
+    pointer-events: none;        /* clicks pass through except on the chip */
+    margin-bottom: 6px;
+  }
+  .now-playing-bar.hidden { display: none; }
+  .now-playing-chip {
+    pointer-events: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 14px 5px 11px;
+    border-radius: 999px;
+    background: #fff;
+    color: #1f2937;
+    font-weight: 700;
+    font-size: 13px;
+    line-height: 1;
+    box-shadow: 0 2px 12px rgba(0,0,0,.18);
+    border: 1px solid rgba(0,0,0,.08);
+    max-width: 88vw;
+    cursor: pointer;
+    user-select: none;
+    transition: background .2s ease, border-color .2s ease;
+  }
+  .now-playing-chip.q1 { background: #fce7f3; border-color: #fbcfe8; }
+  .now-playing-chip.q2 { background: #fef3c7; border-color: #fde68a; }
+  .now-playing-chip.q3 { background: #ede9fe; border-color: #ddd6fe; }
+  .now-playing-chip.q4 { background: #dbeafe; border-color: #bfdbfe; }
+  .now-playing-chip.short-break,
+  .now-playing-chip.long-break { background: #d1fae5; border-color: #86efac; }
+  .now-playing-chip.paused {
+    opacity: .65;
+    filter: grayscale(.4);
+  }
+  .now-playing-chip .npc-dot {
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #ef4444;
+    flex-shrink: 0;
+    animation: npc-pulse 1.4s ease-in-out infinite;
+  }
+  .now-playing-chip.paused .npc-dot { animation: none; background: #9ca3af; }
+  .now-playing-chip.short-break .npc-dot,
+  .now-playing-chip.long-break  .npc-dot { background: #10b981; animation: none; }
+  .now-playing-chip .npc-name {
+    max-width: 55vw;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .now-playing-chip .npc-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    color: #4b5563;
+    font-weight: 600;
+    margin-left: 2px;
+  }
+  @keyframes npc-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.35); opacity: .65; }
+  }
+
   /* Modal */
   .modal {
     position: fixed; inset: 0; z-index: 100;
@@ -2579,6 +2647,15 @@
     /* Overlap split: use true halves of the full gauge width */
     .tg-block.half-l { left: 10px; right: 50%; }
     .tg-block.half-r { left: 50%;  right: 0;   }
+    /* Duration label — tiny, bottom-right, light grey on phone */
+    .tg-block-dur, .tg-ghost-dur {
+      inset: auto;
+      bottom: 1px; right: 3px;
+      display: block;
+      font-weight: 600;
+      color: #6b7280;
+      opacity: 0.6;
+    }
     /* Colour fill: keep out of the 38 px hour-label zone so labels show */
     .tg-block-fill   { left: 38px; }  /* fully opaque — no grey bleed-through */
     /* Task name: start after the hour-label zone */
@@ -2794,6 +2871,16 @@
 
   <!-- ============================== PAGE 2 — FOCUS ============================== -->
   <section id="focus-page">
+    <!-- Sticky "Now Playing" chip — shown only while a task timer is running.
+         Sits at the top of the focus-page, sticks to the viewport top while
+         the user scrolls the gauge so they always know what's running. -->
+    <div class="now-playing-bar hidden" id="now-playing-bar">
+      <div class="now-playing-chip" id="now-playing-chip" title="Tap to pause / resume">
+        <span class="npc-dot"></span>
+        <span class="npc-name"></span>
+        <span class="npc-time"></span>
+      </div>
+    </div>
     <div class="focus-layout">
       <div class="gauge-wrap">
         <div class="gauge-col" id="gauge-col">
@@ -6580,6 +6667,9 @@ function renderFocusMatrix() {
     if (typeof attachCellDragHandlers === 'function') attachCellDragHandlers(cell, q);
     root.appendChild(cell);
   });
+  // Refresh the sticky "Now Playing" chip — instant feedback on timer start /
+  // stop / task rename, instead of waiting up to one second for the next tick.
+  if (typeof updateNowPlayingChip === 'function') updateNowPlayingChip();
 }
 
 /* Open the ✎ name-edit popup for a focus-matrix task. OK saves; Delete (red)
@@ -6623,6 +6713,40 @@ function tickTaskTimers() {
       display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
     }
   }
+  updateNowPlayingChip();
+}
+
+/* ---- Sticky "Now Playing" chip — shows current task + remaining time -----
+   Visible only while a task pomodoro is running. Lives at the top of the
+   focus-page and sticks to the viewport so the user can see what they're
+   working on even when scrolled down to a different part of the gauge.    */
+function updateNowPlayingChip() {
+  const bar  = document.getElementById('now-playing-bar');
+  const chip = document.getElementById('now-playing-chip');
+  if (!bar || !chip) return;
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') {
+    bar.classList.add('hidden');
+    return;
+  }
+  const task = state.tasks[at.q] && state.tasks[at.q][at.idx];
+  if (!task) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+  const remaining = getPomodoroRemainingMs();
+  const totalSec  = Math.max(0, Math.floor(remaining / 1000));
+  const m = Math.floor(totalSec / 60), s = totalSec % 60;
+  const nameEl = chip.querySelector('.npc-name');
+  const timeEl = chip.querySelector('.npc-time');
+  if (nameEl) nameEl.textContent = task.text || '(task)';
+  if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  // Background colour: quadrant during work, light green during break, grey if paused
+  const phaseClass = (at.phase === 'short-break' || at.phase === 'long-break')
+    ? at.phase
+    : (at.q || 'q1');
+  chip.className = `now-playing-chip ${phaseClass}${at.paused ? ' paused' : ''}`;
 }
 
 /* ---- Single active-timer model ----
@@ -7367,6 +7491,15 @@ function openEventModal(existing) {
   const btn = document.getElementById('gauge-event-btn');
   if (!btn) return;
   btn.addEventListener('click', () => openEventModal(null));
+})();
+
+(function wireNowPlayingChip() {
+  const chip = document.getElementById('now-playing-chip');
+  if (!chip) return;
+  // Tap chip → pause/resume the running pomodoro (same UX as the inline display).
+  chip.addEventListener('click', () => {
+    if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
+  });
 })();
 
 function openSegmentEditModal(seg) {
@@ -10684,6 +10817,11 @@ setInterval(() => {
 
   /* ---- Compute font-size for duration watermark based on pixel height ---- */
   function durFontSize(htPct) {
+    // Mobile: small fixed size; the CSS positions it at the bottom-right corner.
+    if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) {
+      return '10px';
+    }
+    // Desktop: large watermark in the centre, scaled to block height.
     const pxH = gaugeInner.clientHeight * htPct / 100;
     return Math.max(9, Math.min(pxH * 0.7, 52)) + 'px';
   }
