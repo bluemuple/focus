@@ -6439,12 +6439,39 @@ function renderFocusMatrix() {
           drawGauge();
           renderFocusMatrix();
         } else {
-          // First click → activate colour-coding on gauge blocks, start timer.
+          // First click → start timer. Approach A: every task session is captured
+          // by a gauge block — either an existing block that's LIVE and covers NOW,
+          // or a freshly auto-created 25-minute block. The gauge background never
+          // paints task colour anymore; the block fill IS the visual indicator.
+          const task = state.tasks[q] && state.tasks[q][i];
+          let hasLiveCoveringBlock = false;
           (state.scheduledBlocks || []).forEach(b => {
-            if (b.q === q && b.taskIdx === i && !b.activeAt) {
+            if (b.q !== q || b.taskIdx !== i) return;
+            const coversNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
+            if (!b.activeAt) {
+              // Never-worked block → activate it (will fill when its time comes)
               b.activeAt = _tgNow;
+              if (coversNow) hasLiveCoveringBlock = true;
+            } else if (!b.activeEndMs && coversNow) {
+              // Already live and covering NOW
+              hasLiveCoveringBlock = true;
             }
+            // else: frozen from a previous session (activeAt + activeEndMs set) —
+            // leave alone; auto-create below will spawn a fresh block for this session.
           });
+          if (!hasLiveCoveringBlock) {
+            // Auto-create a 25-minute pomodoro-sized block at the current time.
+            state.scheduledBlocks.push({
+              id:          Date.now() + '_' + Math.random().toString(36).slice(2),
+              q,
+              taskIdx:     i,
+              taskName:    (task && task.text) || '',
+              startMs:     _tgNow,
+              endMs:       _tgNow + 25 * 60 * 1000,
+              activeAt:    _tgNow,
+              activeEndMs: null
+            });
+          }
           toggleTaskTimer(q, i);
         }
       };
@@ -7124,8 +7151,17 @@ function drawGauge() {
   }
 
   // ---- Segments (completed + active) ----
+  // Approach A: task work is shown ONLY through gauge blocks (with their colour
+  // fill). The gauge background bands are reserved for non-task activity:
+  // events (gray), money/mana trackers (pink/blue/gray). Past task timeSegments
+  // (any seg with .q set) are filtered out here — the corresponding scheduled
+  // block, if any, already shows the work. Weekly stats are unaffected because
+  // they read from watchLog / stats[].segments directly.
   segmentsEl.innerHTML = '';
-  (state.timeSegments || []).forEach(seg => addGaugeSegment(segmentsEl, pct, seg, false));
+  (state.timeSegments || []).forEach(seg => {
+    if (seg.q) return;   // task segment — handled by blocks
+    addGaugeSegment(segmentsEl, pct, seg, false);
+  });
   // User-created events — light gray bands. Drawn UNDER pomodoro/tracker bands
   // so the activity color always wins where they overlap.
   (state.events || []).forEach(ev => {
@@ -7140,19 +7176,10 @@ function drawGauge() {
   });
   if (state.activeTimer) {
     const seg = activeTimerToSegment(state.activeTimer, now);
-    if (seg) {
-      // Suppress the live gauge colour band when a scheduled block for this task
-      // is already showing its colour fill — the block fill is the visual indicator
-      // and the gauge band behind it would create a distracting colour duplication.
-      // (The weekly stats view is unaffected: completed phases are logged via
-      // logPomodoroPhase → watchLog, and the live phase still shows there.)
-      const at = state.activeTimer;
-      const coveredByBlock = (at.q != null && at.idx != null) &&
-        (state.scheduledBlocks || []).some(b =>
-          b.q === at.q && b.taskIdx === at.idx && b.activeAt && !b.activeEndMs
-        );
-      if (!coveredByBlock) addGaugeSegment(segmentsEl, pct, seg, true);
-    }
+    // Task timers (seg.q set) always show via block fill — never on the
+    // gauge background. Non-task timers (mana / multiplier / event-style)
+    // use seg.color and continue to paint as bands on the gauge.
+    if (seg && !seg.q) addGaugeSegment(segmentsEl, pct, seg, true);
   }
 
   // ---- Current-time red line ----
