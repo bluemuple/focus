@@ -2463,6 +2463,71 @@
       font-size: .65rem;
     }
   }
+
+  /* ===== Task-Gauge scheduling overlay (tg = task-gauge) ===== */
+  .tg-ghost {
+    position: absolute; left: 40px; right: 4px;
+    background: rgba(100,116,139,.22);
+    border: 2px dashed #64748b;
+    border-radius: 6px;
+    pointer-events: none;
+    z-index: 20;
+    box-sizing: border-box;
+    overflow: hidden;
+    transform-origin: center top;
+    animation: tg-appear .18s ease forwards;
+  }
+  @keyframes tg-appear {
+    from { opacity: 0; transform: scaleX(.08); }
+    to   { opacity: 1; transform: scaleX(1);   }
+  }
+  .tg-ghost-label {
+    position: absolute; top: 4px; left: 8px; right: 4px;
+    font-size: 11px; font-weight: 700; color: #374151;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .tg-block {
+    position: absolute; left: 40px; right: 4px;
+    background: #d1d5db;
+    border-radius: 5px;
+    overflow: hidden;
+    z-index: 15;
+    cursor: grab;
+    box-shadow: 0 1px 3px rgba(0,0,0,.13);
+    box-sizing: border-box;
+    user-select: none;
+  }
+  .tg-block:active { cursor: grabbing; }
+  .tg-block.half-l { right: calc(50% + 2px); }
+  .tg-block.half-r { left: calc(40px + (100% - 44px) / 2 + 2px); right: 4px; }
+  .tg-block-fill {
+    position: absolute; left: 0; right: 0;
+    pointer-events: none;
+  }
+  .tg-block-name {
+    position: absolute; top: 3px; left: 6px; right: 6px;
+    font-size: 11px; font-weight: 700; color: #1f2937;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none; z-index: 1;
+  }
+  .tg-block-rt, .tg-block-rb {
+    position: absolute; left: 0; right: 0; height: 8px;
+    cursor: ns-resize; z-index: 2;
+  }
+  .tg-block-rt { top: 0; }
+  .tg-block-rb { bottom: 0; }
+  .tg-tooltip {
+    position: absolute; right: 8px;
+    background: rgba(15,23,42,.82); color: #fff;
+    font-size: 11px; font-weight: 700;
+    padding: 3px 10px; border-radius: 999px;
+    pointer-events: none; white-space: nowrap;
+    z-index: 50; transform: translateY(-50%);
+    font-variant-numeric: tabular-nums;
+    transition: opacity .15s ease;
+  }
+  .tg-tooltip.hidden { opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -3331,6 +3396,9 @@ const defaultState = () => ({
   // User-created calendar events. Each: { id, name, startMs, endMs }.
   // Painted as light-gray bands on the vertical gauge + weekly view.
   events: [],
+  // Task blocks dragged onto the gauge. Each: { id, q, taskIdx, taskName,
+  // startMs, endMs, activeAt, activeEndMs }.
+  scheduledBlocks: [],
   // Up to 3 daily backups of the full state. Each: { id, savedAt, money,
   // manaScore, label, snapshot: {tasks, watchLog, money, mana, ext, …} }.
   // Created automatically at 3 AM and trimmed to the latest 3. Click any
@@ -3517,7 +3585,8 @@ function migrateState() {
     if (typeof state.focusActionsShown[_q] !== 'boolean') state.focusActionsShown[_q] = false;
   });
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
-  if (!Array.isArray(state.events))   state.events   = [];
+  if (!Array.isArray(state.events))          state.events          = [];
+  if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
   if (!Array.isArray(state.versions)) state.versions = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
@@ -6294,7 +6363,17 @@ function renderFocusMatrix() {
         markSettingsChanged(); debouncedPushSettings();
         renderFocusMatrix();
       };
-      textEl.onclick = () => toggleTaskTimer(q, i);
+      textEl.onclick = () => {
+        // Activate colour-coding for any scheduled gauge block tied to this task
+        // (only if colour-coding hasn't started yet — first click wins).
+        const _tgNow = Date.now();
+        (state.scheduledBlocks || []).forEach(b => {
+          if (b.q === q && b.taskIdx === i && !b.activeAt) {
+            b.activeAt = _tgNow;
+          }
+        });
+        toggleTaskTimer(q, i);
+      };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
       // Inline pomodoro display when this task is currently running.
       // On phone the timer goes ABOVE the bid pill (bid drops below it).
@@ -6469,6 +6548,12 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
     if (!at.pendingPhaseConfirm) {
       logPomodoroPhase(at, now);
     }
+    // Freeze colour-coding for any gauge blocks tied to this task.
+    (state.scheduledBlocks || []).forEach(b => {
+      if (b.q === at.q && b.taskIdx === at.idx && b.activeAt && !b.activeEndMs) {
+        b.activeEndMs = now;
+      }
+    });
     state.activeTimer = null;
     saveState();
     markSettingsChanged();
@@ -7015,6 +7100,11 @@ function drawGauge() {
   }
   placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
   placeGoalLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
+
+  // Scheduled task blocks — rendered AFTER goal lines so they sit on top.
+  if (typeof window.renderScheduledBlocks === 'function') {
+    window.renderScheduledBlocks(topMs, bottomMs, pct);
+  }
 }
 
 function addGaugeSegment(parent, pct, seg, isActive) {
@@ -10433,6 +10523,323 @@ setInterval(() => {
     }
   }
 }, 1000);
+
+/* ===================================================
+   TASK-GAUGE SCHEDULING  (drag task handle → gauge)
+   =================================================== */
+(function taskGaugeScheduling() {
+  const DEFAULT_MS = 60 * 60 * 1000;   // 60-min default block
+  const STEP_MS    =  5 * 60 * 1000;   // ↑/↓ arrow key step
+  const SNAP_THR   =  5 * 60 * 1000;   // snap-to threshold
+  const GRID_MS    = 15 * 60 * 1000;   // 15-min invisible grid
+
+  const gaugeCol   = document.getElementById('gauge-col');
+  const gaugeInner = document.getElementById('gauge-inner');
+  if (!gaugeCol || !gaugeInner) return;
+
+  /* ---- Ghost element (shown while dragging a task over the gauge) ---- */
+  const ghostEl    = document.createElement('div');
+  ghostEl.className = 'tg-ghost';
+  ghostEl.style.display = 'none';
+  const ghostLblEl = document.createElement('div');
+  ghostLblEl.className = 'tg-ghost-label';
+  ghostEl.appendChild(ghostLblEl);
+  gaugeInner.appendChild(ghostEl);
+
+  /* ---- Two tooltip pills ---- */
+  const tipTopEl = document.createElement('div');
+  tipTopEl.className = 'tg-tooltip hidden';
+  const tipBotEl = document.createElement('div');
+  tipBotEl.className = 'tg-tooltip hidden';
+  gaugeInner.appendChild(tipTopEl);
+  gaugeInner.appendChild(tipBotEl);
+
+  /* ---- Module state ---- */
+  let _ghost  = null;    // { startMs, durationMs } — live while dragging task→gauge
+  let _tgBusy = false;   // true during block drag/resize → skip re-render in drawGauge
+
+  /* ---- Gauge coordinate helpers ---- */
+  function gaugeRange() {
+    const now  = Date.now();
+    const mode = state.gaugeMode || 'set';
+    let topMs;
+    if (mode === '2') {
+      topMs = now - 2 * 3600000;
+    } else if (mode === '4') {
+      topMs = now - 4 * 3600000;
+    } else {
+      const a = new Date(); a.setHours(4, 0, 0, 0);
+      if (a.getTime() > now) a.setDate(a.getDate() - 1);
+      topMs = a.getTime();
+    }
+    return { topMs, totalMs: 24 * 3600000 };
+  }
+
+  function yToMs(clientY) {
+    const r = gaugeInner.getBoundingClientRect();
+    const { topMs, totalMs } = gaugeRange();
+    return topMs + ((clientY - r.top) / r.height) * totalMs;
+  }
+
+  function msToPct(ms) {
+    const { topMs, totalMs } = gaugeRange();
+    return Math.max(0, Math.min(100, ((ms - topMs) / totalMs) * 100));
+  }
+
+  function snapMs(ms) {
+    const grid = Math.round(ms / GRID_MS) * GRID_MS;
+    const red  = Date.now();
+    if (Math.abs(ms - red)  < SNAP_THR) return red;
+    if (Math.abs(ms - grid) < SNAP_THR) return grid;
+    return ms;
+  }
+
+  function hhMM(ms) {
+    const d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  /* ---- Tooltip helpers ---- */
+  function showTips(startMs, endMs) {
+    tipTopEl.textContent = hhMM(startMs);
+    tipTopEl.style.top   = msToPct(startMs) + '%';
+    tipTopEl.classList.remove('hidden');
+    tipBotEl.textContent = hhMM(endMs);
+    tipBotEl.style.top   = msToPct(endMs) + '%';
+    tipBotEl.classList.remove('hidden');
+  }
+  function hideTips() {
+    tipTopEl.classList.add('hidden');
+    tipBotEl.classList.add('hidden');
+  }
+
+  /* ---- Ghost rendering ---- */
+  function placeGhost() {
+    if (!_ghost) { ghostEl.style.display = 'none'; hideTips(); return; }
+    const { startMs, durationMs } = _ghost;
+    const endMs  = startMs + durationMs;
+    const topPct = msToPct(startMs);
+    const botPct = msToPct(endMs);
+    ghostEl.style.top     = topPct + '%';
+    ghostEl.style.height  = Math.max(0.5, botPct - topPct) + '%';
+    ghostEl.style.display = 'block';
+    if (_draggedTask) {
+      const tasks = state.tasks[_draggedTask.q] || [];
+      ghostLblEl.textContent = (tasks[_draggedTask.idx] || {}).text || '';
+    }
+    showTips(startMs, endMs);
+  }
+
+  /* ---- Gauge drag-over: intercept task→gauge drags ---- */
+  gaugeCol.addEventListener('dragenter', e => {
+    if (!_draggedTask) return;
+    e.preventDefault();
+  });
+
+  gaugeCol.addEventListener('dragover', e => {
+    if (!_draggedTask) return;
+    e.preventDefault();
+    try { e.dataTransfer.dropEffect = 'copy'; } catch (_) {}
+    const startMs   = snapMs(yToMs(e.clientY));
+    const durMs     = _ghost ? _ghost.durationMs : DEFAULT_MS;
+    _ghost = { startMs, durationMs: durMs };
+    placeGhost();
+  });
+
+  gaugeCol.addEventListener('dragleave', e => {
+    if (!_draggedTask) return;
+    // Only clear if the pointer truly left the gauge (not entered a child).
+    if (gaugeCol.contains(e.relatedTarget)) return;
+    _ghost = null;
+    placeGhost();
+  });
+
+  gaugeCol.addEventListener('drop', e => {
+    if (!_draggedTask || !_ghost) return;
+    e.preventDefault();
+    const { startMs, durationMs } = _ghost;
+    const tasks = state.tasks[_draggedTask.q] || [];
+    const task  = tasks[_draggedTask.idx];
+    if (!task) return;
+    state.scheduledBlocks.push({
+      id:          Date.now() + '_' + Math.random().toString(36).slice(2),
+      q:           _draggedTask.q,
+      taskIdx:     _draggedTask.idx,
+      taskName:    task.text || '',
+      startMs,
+      endMs:       startMs + durationMs,
+      activeAt:    null,
+      activeEndMs: null
+    });
+    saveState();
+    _ghost = null;
+    placeGhost();
+    drawGauge();
+  });
+
+  /* ---- Arrow-key duration adjustment while ghost is visible ---- */
+  window.addEventListener('keydown', e => {
+    if (!_ghost) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      _ghost.durationMs += STEP_MS;
+      placeGhost();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      _ghost.durationMs = Math.max(STEP_MS, _ghost.durationMs - STEP_MS);
+      placeGhost();
+    }
+  });
+
+  /* ---- renderScheduledBlocks — injected into drawGauge via window ---- */
+  window.renderScheduledBlocks = function(topMs, bottomMs, pct) {
+    // Remove stale block elements (drawGauge clears segments but not gaugeInner).
+    gaugeInner.querySelectorAll('.tg-block').forEach(el => el.remove());
+
+    const blocks = state.scheduledBlocks;
+    if (!blocks || !blocks.length) return;
+    if (_tgBusy) return;   // mid-interaction — skip repaint to avoid flicker
+
+    const now = Date.now();
+
+    /* -- Pairwise overlap → first gets left half, second gets right half -- */
+    const side = blocks.map(() => 'full');  // 'full' | 'half-l' | 'half-r'
+    for (let i = 0; i < blocks.length; i++) {
+      for (let j = i + 1; j < blocks.length; j++) {
+        if (blocks[i].endMs > blocks[j].startMs && blocks[j].endMs > blocks[i].startMs) {
+          if (side[i] === 'full') side[i] = 'half-l';
+          side[j] = 'half-r';
+        }
+      }
+    }
+
+    /* -- Helper: percentage from a raw timestamp during this render pass -- */
+    function livePct(ms) {
+      return Math.max(0, Math.min(100, ((ms - topMs) / (bottomMs - topMs)) * 100));
+    }
+
+    blocks.forEach((b, idx) => {
+      if (b.endMs <= topMs || b.startMs >= bottomMs) return;
+
+      const topPct = pct(b.startMs);
+      const htPct  = Math.max(0.5, pct(b.endMs) - topPct);
+
+      const div = document.createElement('div');
+      div.className = 'tg-block';
+      if (side[idx] === 'half-l') div.classList.add('half-l');
+      if (side[idx] === 'half-r') div.classList.add('half-r');
+      div.style.top    = topPct + '%';
+      div.style.height = htPct  + '%';
+      div.dataset.bid  = String(b.id);
+
+      /* -- Colour fill: grey base + task-colour stripe from activeAt onward -- */
+      if (b.activeAt) {
+        const colorEnd = b.activeEndMs ? Math.min(b.activeEndMs, now) : now;
+        const totalH   = b.endMs - b.startMs;
+        if (totalH > 0 && colorEnd > b.activeAt) {
+          const fillTop = Math.max(0, (b.activeAt - b.startMs) / totalH) * 100;
+          const fillBot = Math.min(100, (colorEnd  - b.startMs) / totalH) * 100;
+          if (fillBot > fillTop) {
+            const fill        = document.createElement('div');
+            fill.className    = 'tg-block-fill';
+            fill.style.top    = fillTop + '%';
+            fill.style.height = (fillBot - fillTop) + '%';
+            fill.style.background = qColor(b.q);
+            div.appendChild(fill);
+          }
+        }
+      }
+
+      /* -- Task name label -- */
+      const nameEl       = document.createElement('div');
+      nameEl.className   = 'tg-block-name';
+      nameEl.textContent = b.taskName || '';
+      div.appendChild(nameEl);
+
+      /* -- Resize handles (top & bottom edge) -- */
+      const rtEl = document.createElement('div'); rtEl.className = 'tg-block-rt';
+      const rbEl = document.createElement('div'); rbEl.className = 'tg-block-rb';
+      div.appendChild(rtEl);
+      div.appendChild(rbEl);
+
+      gaugeInner.appendChild(div);
+
+      /* ---- Block move (drag body up/down) ---- */
+      div.addEventListener('mousedown', ev => {
+        if (ev.target === rtEl || ev.target === rbEl) return;
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        _tgBusy = true;
+        const offsetMs = yToMs(ev.clientY) - b.startMs;
+        const dur      = b.endMs - b.startMs;
+        function onMove(mv) {
+          const raw = snapMs(yToMs(mv.clientY) - offsetMs);
+          b.startMs = raw;
+          b.endMs   = raw + dur;
+          div.style.top = livePct(b.startMs) + '%';
+          showTips(b.startMs, b.endMs);
+        }
+        function onUp() {
+          _tgBusy = false;
+          saveState();
+          hideTips();
+          drawGauge();
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup',   onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup',   onUp);
+      });
+
+      /* ---- Top-edge resize ---- */
+      rtEl.addEventListener('mousedown', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        _tgBusy = true;
+        const origEnd = b.endMs;
+        function onMove(mv) {
+          b.startMs      = Math.min(snapMs(yToMs(mv.clientY)), origEnd - STEP_MS);
+          const newTop   = livePct(b.startMs);
+          div.style.top  = newTop + '%';
+          div.style.height = Math.max(0.5, livePct(b.endMs) - newTop) + '%';
+          showTips(b.startMs, b.endMs);
+        }
+        function onUp() {
+          _tgBusy = false;
+          saveState();
+          hideTips();
+          drawGauge();
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup',   onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup',   onUp);
+      });
+
+      /* ---- Bottom-edge resize ---- */
+      rbEl.addEventListener('mousedown', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        _tgBusy = true;
+        const origStart = b.startMs;
+        function onMove(mv) {
+          b.endMs          = Math.max(snapMs(yToMs(mv.clientY)), origStart + STEP_MS);
+          div.style.height = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs)) + '%';
+          showTips(b.startMs, b.endMs);
+        }
+        function onUp() {
+          _tgBusy = false;
+          saveState();
+          hideTips();
+          drawGauge();
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup',   onUp);
+        }
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup',   onUp);
+      });
+    });
+  };
+
+})();
 </script>
 </body>
 </html>
