@@ -2488,7 +2488,7 @@
     overflow: hidden;
   }
   .tg-block {
-    position: absolute; left: 40px; right: 4px;
+    position: absolute; left: 50px; right: 4px;   /* 10 px crop on the left */
     background: #d1d5db;
     border-radius: 5px;
     overflow: hidden;
@@ -2500,7 +2500,7 @@
   }
   .tg-block:active { cursor: grabbing; }
   .tg-block.half-l { right: calc(50% + 2px); }
-  .tg-block.half-r { left: calc(40px + (100% - 44px) / 2 + 2px); right: 4px; }
+  .tg-block.half-r { left: calc(50px + (100% - 54px) / 2 + 2px); right: 4px; }
   /* Selected state — shown while a block is the arrow-key / backspace target */
   .tg-block.selected {
     outline: 2px solid #3b82f6;
@@ -2572,13 +2572,13 @@
       background: rgba(100,116,139,.18);
     }
     .tg-block {
-      left: 0; right: 0;
+      left: 10px; right: 0;               /* 10 px crop on the left */
       background: rgba(209,213,219,.5);   /* semi-transparent grey */
       border-radius: 0;
     }
     /* Overlap split: use true halves of the full gauge width */
-    .tg-block.half-l { left: 0;   right: 50%; }
-    .tg-block.half-r { left: 50%; right: 0;   }
+    .tg-block.half-l { left: 10px; right: 50%; }
+    .tg-block.half-r { left: 50%;  right: 0;   }
     /* Colour fill: keep out of the 38 px hour-label zone so labels show */
     .tg-block-fill   { left: 38px; }  /* fully opaque — no grey bleed-through */
     /* Task name: start after the hour-label zone */
@@ -10863,31 +10863,57 @@ setInterval(() => {
 
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
 
-    /* -- Ghost phase: bottom edge of the preview rectangle -- */
+    /* -- Ghost phase: bottom edge of the preview rectangle (drag in progress) -- */
     if (_ghost) {
       e.preventDefault();
       if (e.key === 'ArrowDown') _ghost.durationMs += STEP_MS;
       else _ghost.durationMs = Math.max(STEP_MS, _ghost.durationMs - STEP_MS);
-      placeGhost();   // updates ghost height + both tooltips
+      placeGhost();
       return;
     }
 
-    /* -- Placed block: bottom edge of the selected block -- */
-    if (_arrowBlock && !_tgBusy && !isTyping) {
+    if (isTyping || _tgBusy) return;
+
+    /* -- Shift+↑/↓: resize bottom edge in 5-min steps
+       -- Ctrl/Cmd+↑/↓: resize bottom edge in 1-min steps                       */
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      if (!_arrowBlock) return;
       e.preventDefault();
+      const step = (e.ctrlKey || e.metaKey) ? 60 * 1000 : STEP_MS;   // 1 m or 5 m
       if (e.key === 'ArrowDown') {
-        _arrowBlock.endMs += STEP_MS;
+        _arrowBlock.endMs += step;
       } else {
-        _arrowBlock.endMs = Math.max(_arrowBlock.startMs + STEP_MS, _arrowBlock.endMs - STEP_MS);
+        _arrowBlock.endMs = Math.max(_arrowBlock.startMs + step, _arrowBlock.endMs - step);
       }
       saveState(); debouncedPushSettings();
-      // drawGauge re-renders all blocks with updated durEl labels
       drawGauge();
-      // Re-show bottom tip at new position (drawGauge doesn't hide tips)
       tipBotEl.textContent = hhMM(_arrowBlock.endMs);
       tipBotEl.style.top   = msToPct(_arrowBlock.endMs) + '%';
       tipBotEl.classList.remove('hidden');
+      return;
     }
+
+    /* -- ↑/↓ alone: navigate to the previous/next block by start time -------- */
+    const blocks = (state.scheduledBlocks || []).slice().sort((a, b) => a.startMs - b.startMs);
+    if (!blocks.length) return;
+    e.preventDefault();
+    let nextIdx;
+    if (!_arrowBlock) {
+      // Nothing selected → ↓ picks the earliest block, ↑ picks the latest.
+      nextIdx = (e.key === 'ArrowDown') ? 0 : blocks.length - 1;
+    } else {
+      const curIdx = blocks.indexOf(_arrowBlock);
+      if (curIdx < 0) {
+        nextIdx = 0;
+      } else if (e.key === 'ArrowDown') {
+        nextIdx = Math.min(blocks.length - 1, curIdx + 1);
+      } else {
+        nextIdx = Math.max(0, curIdx - 1);
+      }
+    }
+    _arrowBlock = blocks[nextIdx];
+    drawGauge();
+    showTips(_arrowBlock.startMs, _arrowBlock.endMs);
   });
 
   /* ---- Click anywhere on gauge (not on a block) deselects arrow-key target ---- */
