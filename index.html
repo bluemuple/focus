@@ -2518,6 +2518,20 @@
   }
   .tg-block-rt { top: 0; }
   .tg-block-rb { bottom: 0; }
+  /* Dragged outside the gauge — dim while outside, fade+shrink on release */
+  .tg-block.tg-removing {
+    opacity: .35;
+    transition: opacity .12s ease;
+    pointer-events: none;
+  }
+  @keyframes tg-block-out {
+    from { opacity: .35; transform: scaleY(.85) scaleX(.7); }
+    to   { opacity: 0;   transform: scaleY(.5)  scaleX(.4); }
+  }
+  .tg-block.tg-fade-out {
+    animation: tg-block-out .28s ease forwards;
+    pointer-events: none;
+  }
   .tg-tooltip {
     position: absolute; right: 8px;
     background: rgba(15,23,42,.82); color: #fff;
@@ -10701,12 +10715,15 @@ setInterval(() => {
 
   /* ---- renderScheduledBlocks — injected into drawGauge via window ---- */
   window.renderScheduledBlocks = function(topMs, bottomMs, pct) {
-    // Remove stale block elements (drawGauge clears segments but not gaugeInner).
+    // IMPORTANT: check _tgBusy BEFORE removing elements — removing them then
+    // returning early would make every block vanish during a drag/resize.
+    if (_tgBusy) return;   // mid-interaction — skip repaint to avoid flicker
+
+    // Safe to replace now: no interaction is in progress.
     gaugeInner.querySelectorAll('.tg-block').forEach(el => el.remove());
 
     const blocks = state.scheduledBlocks;
     if (!blocks || !blocks.length) return;
-    if (_tgBusy) return;   // mid-interaction — skip repaint to avoid flicker
 
     const now = Date.now();
 
@@ -10780,21 +10797,56 @@ setInterval(() => {
         _tgBusy = true;
         const offsetMs = yToMs(ev.clientY) - b.startMs;
         const dur      = b.endMs - b.startMs;
-        function onMove(mv) {
-          const raw = snapMs(yToMs(mv.clientY) - offsetMs);
-          b.startMs = raw;
-          b.endMs   = raw + dur;
-          div.style.top = livePct(b.startMs) + '%';
-          showTips(b.startMs, b.endMs);
+        let _outside   = false;   // true when pointer is beyond gauge bounds
+
+        function isOutside(mv) {
+          const r = gaugeCol.getBoundingClientRect();
+          return mv.clientX < r.left - 30 || mv.clientX > r.right  + 30 ||
+                 mv.clientY < r.top  - 30 || mv.clientY > r.bottom + 30;
         }
+
+        function onMove(mv) {
+          _outside = isOutside(mv);
+          if (_outside) {
+            div.classList.add('tg-removing');
+            hideTips();
+          } else {
+            div.classList.remove('tg-removing');
+            const raw = snapMs(yToMs(mv.clientY) - offsetMs);
+            b.startMs = raw;
+            b.endMs   = raw + dur;
+            div.style.top = livePct(b.startMs) + '%';
+            showTips(b.startMs, b.endMs);
+          }
+        }
+
         function onUp() {
-          _tgBusy = false;
-          saveState();
-          hideTips();
-          drawGauge();
           window.removeEventListener('mousemove', onMove);
           window.removeEventListener('mouseup',   onUp);
+          hideTips();
+          if (_outside) {
+            // Remove from state immediately; keep _tgBusy true until animation ends
+            // so drawGauge doesn't try to re-render the vanishing element.
+            const bi = state.scheduledBlocks.indexOf(b);
+            if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
+            saveState();
+            div.classList.remove('tg-removing');
+            div.classList.add('tg-fade-out');
+            let done = false;
+            function finish() {
+              if (done) return; done = true;
+              _tgBusy = false;
+              drawGauge();
+            }
+            div.addEventListener('animationend', finish, { once: true });
+            setTimeout(finish, 400);   // safety fallback
+          } else {
+            _tgBusy = false;
+            saveState();
+            drawGauge();
+          }
         }
+
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup',   onUp);
       });
