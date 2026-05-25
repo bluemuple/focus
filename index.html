@@ -2493,6 +2493,12 @@
   .tg-block:active { cursor: grabbing; }
   .tg-block.half-l { right: calc(50% + 2px); }
   .tg-block.half-r { left: calc(40px + (100% - 44px) / 2 + 2px); right: 4px; }
+  /* Selected state — shown while a block is the arrow-key / backspace target */
+  .tg-block.selected {
+    outline: 2px solid #3b82f6;
+    outline-offset: -1px;
+    box-shadow: 0 0 0 3px rgba(59,130,246,.25), 0 1px 3px rgba(0,0,0,.13);
+  }
   /* Draggable tail — the portion of a block below the current-time line */
   .tg-block-tail {
     position: absolute; left: 0; right: 0; bottom: 8px;
@@ -10754,13 +10760,32 @@ setInterval(() => {
     if (_ghost) { _ghost = null; placeGhost(); }
   });
 
-  /* ---- Arrow-key: resize bottom edge of ghost (during drag) or placed block ---- */
+  /* ---- Arrow-key / Backspace: resize or delete selected block ---- */
   window.addEventListener('keydown', e => {
+    // Never steal Backspace / arrow keys while the user is typing in an input.
+    const activeEl = document.activeElement;
+    const isTyping = activeEl &&
+      (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' ||
+       activeEl.isContentEditable);
+
     if (e.key === 'Escape') {
-      // Deselect placed block (hides bottom-tip)
-      if (_arrowBlock) { _arrowBlock = null; hideTips(); }
+      if (_arrowBlock) { _arrowBlock = null; hideTips(); if (!_tgBusy) drawGauge(); }
       return;
     }
+
+    /* -- Backspace: delete selected block -- */
+    if (e.key === 'Backspace') {
+      if (isTyping || !_arrowBlock || _tgBusy) return;
+      e.preventDefault();
+      const bi = state.scheduledBlocks.indexOf(_arrowBlock);
+      if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
+      saveState(); debouncedPushSettings();
+      _arrowBlock = null;
+      hideTips();
+      drawGauge();
+      return;
+    }
+
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
 
     /* -- Ghost phase: bottom edge of the preview rectangle -- */
@@ -10772,8 +10797,8 @@ setInterval(() => {
       return;
     }
 
-    /* -- Placed block: bottom edge of the last-interacted block -- */
-    if (_arrowBlock && !_tgBusy) {
+    /* -- Placed block: bottom edge of the selected block -- */
+    if (_arrowBlock && !_tgBusy && !isTyping) {
       e.preventDefault();
       if (e.key === 'ArrowDown') {
         _arrowBlock.endMs += STEP_MS;
@@ -10837,6 +10862,7 @@ setInterval(() => {
       div.className = 'tg-block';
       if (side[idx] === 'half-l') div.classList.add('half-l');
       if (side[idx] === 'half-r') div.classList.add('half-r');
+      if (_arrowBlock && b.id === _arrowBlock.id) div.classList.add('selected');
       div.style.top    = topPct + '%';
       div.style.height = htPct  + '%';
       div.dataset.bid  = String(b.id);
@@ -10982,6 +11008,7 @@ setInterval(() => {
       div.addEventListener('touchstart', ev => {
         if (ev.target === rtEl || ev.target === rbEl || ev.target === tailEl) return;
         ev.preventDefault();
+        _arrowBlock = b;   // mark as selected for arrow-key / backspace
         _tgBusy = true;
         const t0       = ev.touches[0];
         const offsetMs = yToMs(t0.clientY) - b.startMs;
@@ -11063,7 +11090,7 @@ setInterval(() => {
       /* ---- Top-edge resize ---- */
       rtEl.addEventListener('mousedown', ev => {
         ev.preventDefault(); ev.stopPropagation();
-        _tgBusy = true;
+        _arrowBlock = b; _tgBusy = true;
         const origEnd = b.endMs;
         function onMove(mv) {
           b.startMs      = Math.min(snapMs(yToMs(mv.clientY)), origEnd - STEP_MS);
@@ -11087,7 +11114,7 @@ setInterval(() => {
       /* ---- Top-edge resize (touch) ---- */
       rtEl.addEventListener('touchstart', ev => {
         ev.preventDefault(); ev.stopPropagation();
-        _tgBusy = true;
+        _arrowBlock = b; _tgBusy = true;
         const origEnd = b.endMs;
         function onTMove(mv) {
           mv.preventDefault();
@@ -11114,7 +11141,7 @@ setInterval(() => {
       /* ---- Bottom-edge resize ---- */
       rbEl.addEventListener('mousedown', ev => {
         ev.preventDefault(); ev.stopPropagation();
-        _tgBusy = true;
+        _arrowBlock = b; _tgBusy = true;
         const origStart = b.startMs;
         function onMove(mv) {
           b.endMs          = Math.max(snapMs(yToMs(mv.clientY)), origStart + STEP_MS);
@@ -11136,7 +11163,7 @@ setInterval(() => {
       /* ---- Bottom-edge resize (touch) ---- */
       rbEl.addEventListener('touchstart', ev => {
         ev.preventDefault(); ev.stopPropagation();
-        _tgBusy = true;
+        _arrowBlock = b; _tgBusy = true;
         const origStart = b.startMs;
         function onTMove(mv) {
           mv.preventDefault();
