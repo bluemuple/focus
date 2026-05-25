@@ -2565,7 +2565,11 @@
     .tg-block-fill   { left: 38px; opacity: .65; }
     /* Task name: start after the hour-label zone */
     .tg-block-name   { left: 42px; }
+    /* Resize handles: taller hit zone for fingers */
+    .tg-block-rt, .tg-block-rb { height: 20px; }
   }
+  /* Prevent page scroll while touching a block */
+  .tg-block { touch-action: none; }
 </style>
 </head>
 <body>
@@ -10880,6 +10884,63 @@ setInterval(() => {
         window.addEventListener('mouseup',   onUp);
       });
 
+      /* ---- Block move (touch) ---- */
+      div.addEventListener('touchstart', ev => {
+        if (ev.target === rtEl || ev.target === rbEl) return;
+        ev.preventDefault();
+        _tgBusy = true;
+        const t0       = ev.touches[0];
+        const offsetMs = yToMs(t0.clientY) - b.startMs;
+        const dur      = b.endMs - b.startMs;
+        let _outside   = false;
+
+        function isOutsideTouch(t) {
+          const r = gaugeCol.getBoundingClientRect();
+          return t.clientX < r.left - 40 || t.clientX > r.right  + 40 ||
+                 t.clientY < r.top  - 40 || t.clientY > r.bottom + 40;
+        }
+        function onTMove(mv) {
+          mv.preventDefault();
+          const t = mv.touches[0];
+          _outside = isOutsideTouch(t);
+          if (_outside) {
+            div.classList.add('tg-removing');
+            hideTips();
+          } else {
+            div.classList.remove('tg-removing');
+            const raw = snapMs(yToMs(t.clientY) - offsetMs);
+            b.startMs = raw;
+            b.endMs   = raw + dur;
+            div.style.top = livePct(b.startMs) + '%';
+            showTips(b.startMs, b.endMs);
+          }
+        }
+        function onTUp() {
+          document.removeEventListener('touchmove',   onTMove);
+          document.removeEventListener('touchend',    onTUp);
+          document.removeEventListener('touchcancel', onTUp);
+          hideTips();
+          if (_outside) {
+            const bi = state.scheduledBlocks.indexOf(b);
+            if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
+            saveState(); debouncedPushSettings();
+            div.classList.remove('tg-removing');
+            div.classList.add('tg-fade-out');
+            let done = false;
+            function finish() { if (done) return; done = true; _tgBusy = false; drawGauge(); }
+            div.addEventListener('animationend', finish, { once: true });
+            setTimeout(finish, 400);
+          } else {
+            _tgBusy = false;
+            saveState(); debouncedPushSettings();
+            drawGauge();
+          }
+        }
+        document.addEventListener('touchmove',   onTMove, { passive: false });
+        document.addEventListener('touchend',    onTUp);
+        document.addEventListener('touchcancel', onTUp);
+      }, { passive: false });
+
       /* ---- Top-edge resize ---- */
       rtEl.addEventListener('mousedown', ev => {
         ev.preventDefault(); ev.stopPropagation();
@@ -10904,6 +10965,33 @@ setInterval(() => {
         window.addEventListener('mouseup',   onUp);
       });
 
+      /* ---- Top-edge resize (touch) ---- */
+      rtEl.addEventListener('touchstart', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        _tgBusy = true;
+        const origEnd = b.endMs;
+        function onTMove(mv) {
+          mv.preventDefault();
+          const t = mv.touches[0];
+          b.startMs        = Math.min(snapMs(yToMs(t.clientY)), origEnd - STEP_MS);
+          const newTop     = livePct(b.startMs);
+          div.style.top    = newTop + '%';
+          div.style.height = Math.max(0.5, livePct(b.endMs) - newTop) + '%';
+          showTips(b.startMs, b.endMs);
+        }
+        function onTUp() {
+          _tgBusy = false;
+          saveState(); debouncedPushSettings();
+          hideTips(); drawGauge();
+          document.removeEventListener('touchmove',   onTMove);
+          document.removeEventListener('touchend',    onTUp);
+          document.removeEventListener('touchcancel', onTUp);
+        }
+        document.addEventListener('touchmove',   onTMove, { passive: false });
+        document.addEventListener('touchend',    onTUp);
+        document.addEventListener('touchcancel', onTUp);
+      }, { passive: false });
+
       /* ---- Bottom-edge resize ---- */
       rbEl.addEventListener('mousedown', ev => {
         ev.preventDefault(); ev.stopPropagation();
@@ -10925,6 +11013,31 @@ setInterval(() => {
         window.addEventListener('mousemove', onMove);
         window.addEventListener('mouseup',   onUp);
       });
+
+      /* ---- Bottom-edge resize (touch) ---- */
+      rbEl.addEventListener('touchstart', ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        _tgBusy = true;
+        const origStart = b.startMs;
+        function onTMove(mv) {
+          mv.preventDefault();
+          const t = mv.touches[0];
+          b.endMs          = Math.max(snapMs(yToMs(t.clientY)), origStart + STEP_MS);
+          div.style.height = Math.max(0.5, livePct(b.endMs) - livePct(b.startMs)) + '%';
+          showTips(b.startMs, b.endMs);
+        }
+        function onTUp() {
+          _tgBusy = false;
+          saveState(); debouncedPushSettings();
+          hideTips(); drawGauge();
+          document.removeEventListener('touchmove',   onTMove);
+          document.removeEventListener('touchend',    onTUp);
+          document.removeEventListener('touchcancel', onTUp);
+        }
+        document.addEventListener('touchmove',   onTMove, { passive: false });
+        document.addEventListener('touchend',    onTUp);
+        document.addEventListener('touchcancel', onTUp);
+      }, { passive: false });
     });
   };
 
