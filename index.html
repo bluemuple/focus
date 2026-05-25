@@ -507,6 +507,7 @@
     cursor: grab; color: #9ca3af; user-select: none;
     padding: 0 6px;
     font-size: 1.05rem; line-height: 1; font-weight: 700;
+    touch-action: none;   /* allow touchstart preventDefault without passive warning */
   }
   .drag-handle:hover { color: #4b5563; }
   .drag-handle:active { cursor: grabbing; }
@@ -10639,7 +10640,9 @@ setInterval(() => {
   gaugeCol.addEventListener('dragover', e => {
     if (!_draggedTask) return;
     e.preventDefault();
-    try { e.dataTransfer.dropEffect = 'copy'; } catch (_) {}
+    // Must match effectAllowed = 'move' set in ondragstart — using 'copy'
+    // causes browsers to reject the drop (drop event never fires).
+    try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
     const startMs   = snapMs(yToMs(e.clientY));
     const durMs     = _ghost ? _ghost.durationMs : DEFAULT_MS;
     _ghost = { startMs, durationMs: durMs };
@@ -10675,6 +10678,11 @@ setInterval(() => {
     _ghost = null;
     placeGhost();
     drawGauge();
+  });
+
+  /* ---- Cleanup on drag end (covers both drop and cancel/Escape) ---- */
+  document.addEventListener('dragend', () => {
+    if (_ghost) { _ghost = null; placeGhost(); }
   });
 
   /* ---- Arrow-key duration adjustment while ghost is visible ---- */
@@ -10838,6 +10846,111 @@ setInterval(() => {
       });
     });
   };
+
+  /* ================================================================
+     TOUCH DRAG — task handle → gauge (mobile)
+     Uses touchstart/touchmove/touchend on document so any handle in
+     any quadrant is caught via event delegation.
+     ================================================================ */
+  (function() {
+    // Small pill badge that tracks the finger while dragging
+    const badgeEl = document.createElement('div');
+    badgeEl.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;display:none;' +
+      'background:rgba(15,23,42,.82);color:#fff;font-size:12px;font-weight:700;' +
+      'padding:5px 14px;border-radius:999px;white-space:nowrap;' +
+      'transform:translate(-50%,-140%);box-shadow:0 2px 8px rgba(0,0,0,.25);';
+    document.body.appendChild(badgeEl);
+
+    let _td = null; // { q, idx, durMs } while touch drag is live
+
+    /* Walk up from handle to identify which task (q + idx) was touched. */
+    function taskFromHandle(handle) {
+      const row  = handle.closest('.task-row');
+      const cell = handle.closest('.focus-cell');
+      if (!row || !cell) return null;
+      const q = ['q1','q2','q3','q4'].find(k => cell.classList.contains(k));
+      if (!q) return null;
+      const tasksDiv = cell.querySelector('.tasks');
+      if (!tasksDiv) return null;
+      const rows = Array.from(tasksDiv.querySelectorAll(':scope > .task-row'));
+      const idx  = rows.indexOf(row);
+      if (idx < 0) return null;
+      const task = (state.tasks[q] || [])[idx];
+      return task ? { q, idx, taskName: task.text || '' } : null;
+    }
+
+    function isOverGauge(touch) {
+      const r = gaugeCol.getBoundingClientRect();
+      return touch.clientX >= r.left && touch.clientX <= r.right &&
+             touch.clientY >= r.top  && touch.clientY <= r.bottom;
+    }
+
+    document.addEventListener('touchstart', ev => {
+      const handle = ev.target.closest('.drag-handle');
+      if (!handle) return;
+      const info = taskFromHandle(handle);
+      if (!info) return;
+      ev.preventDefault();    // block scroll while dragging handle
+      const t = ev.touches[0];
+      _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: DEFAULT_MS };
+      _draggedTask = { q: info.q, idx: info.idx }; // lets placeGhost() read label
+      badgeEl.textContent = info.taskName;
+      badgeEl.style.left  = t.clientX + 'px';
+      badgeEl.style.top   = t.clientY + 'px';
+      badgeEl.style.display = 'block';
+    }, { passive: false });
+
+    document.addEventListener('touchmove', ev => {
+      if (!_td) return;
+      ev.preventDefault();
+      const t = ev.touches[0];
+      // Badge follows finger (slightly above so name is readable)
+      badgeEl.style.left = t.clientX + 'px';
+      badgeEl.style.top  = t.clientY + 'px';
+      // Show / update gauge ghost when over the gauge
+      if (isOverGauge(t)) {
+        _ghost = { startMs: snapMs(yToMs(t.clientY)), durationMs: _td.durMs };
+        placeGhost();
+      } else {
+        if (_ghost) { _ghost = null; placeGhost(); }
+      }
+    }, { passive: false });
+
+    document.addEventListener('touchend', ev => {
+      if (!_td) return;
+      badgeEl.style.display = 'none';
+      if (_ghost) {
+        const { startMs, durationMs } = _ghost;
+        const task = (state.tasks[_td.q] || [])[_td.idx];
+        if (task) {
+          state.scheduledBlocks.push({
+            id:          Date.now() + '_' + Math.random().toString(36).slice(2),
+            q:           _td.q,
+            taskIdx:     _td.idx,
+            taskName:    task.text || '',
+            startMs,
+            endMs:       startMs + durationMs,
+            activeAt:    null,
+            activeEndMs: null
+          });
+          saveState();
+        }
+        _ghost = null;
+        placeGhost();
+        drawGauge();
+      }
+      _draggedTask = null;
+      _td = null;
+    });
+
+    document.addEventListener('touchcancel', () => {
+      if (!_td) return;
+      badgeEl.style.display = 'none';
+      if (_ghost) { _ghost = null; placeGhost(); }
+      _draggedTask = null;
+      _td = null;
+    });
+  })();
 
 })();
 </script>
