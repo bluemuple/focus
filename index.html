@@ -2493,8 +2493,6 @@
     background: #d1d5db;
     border-radius: 5px;
     overflow: hidden;
-    /* belt-and-suspenders: clip ensures fill never bleeds outside the rounded rect */
-    clip-path: inset(0 round 5px);
     z-index: 15;
     cursor: grab;
     box-shadow: 0 1px 3px rgba(0,0,0,.13);
@@ -2577,7 +2575,7 @@
     .tg-block.half-l { left: 0;   right: 50%; }
     .tg-block.half-r { left: 50%; right: 0;   }
     /* Colour fill: keep out of the 38 px hour-label zone so labels show */
-    .tg-block-fill   { left: 38px; opacity: .65; }
+    .tg-block-fill   { left: 38px; }  /* fully opaque — no grey bleed-through */
     /* Task name: start after the hour-label zone */
     .tg-block-name   { left: 42px; }
     /* Resize handles: taller hit zone for fingers */
@@ -10859,7 +10857,8 @@ setInterval(() => {
         _tgBusy = true;
         const offsetMs = yToMs(ev.clientY) - b.startMs;
         const dur      = b.endMs - b.startMs;
-        let _outside   = false;   // true when pointer is beyond gauge bounds
+        let _outside   = false;
+        let _fixOffX = 0, _fixOffY = 0;   // cursor offset inside the block when going fixed
 
         function isOutside(mv) {
           const r = gaugeCol.getBoundingClientRect();
@@ -10867,13 +10866,40 @@ setInterval(() => {
                  mv.clientY < r.top  - 30 || mv.clientY > r.bottom + 30;
         }
 
+        // Convert to viewport-fixed so the block follows the cursor outside the gauge
+        function goFixed(mv) {
+          const rect = div.getBoundingClientRect();
+          _fixOffX = mv.clientX - rect.left;
+          _fixOffY = mv.clientY - rect.top;
+          div.style.position = 'fixed';
+          div.style.left   = rect.left + 'px';
+          div.style.top    = rect.top  + 'px';
+          div.style.right  = 'auto';
+          div.style.width  = rect.width  + 'px';
+          div.style.height = rect.height + 'px';
+          div.style.zIndex = '9998';
+        }
+
+        // Restore absolute positioning (back inside gauge)
+        function goAbsolute() {
+          div.style.position = '';
+          div.style.left = ''; div.style.right = ''; div.style.top = '';
+          div.style.width = ''; div.style.height = '';
+          div.style.zIndex = ''; div.style.opacity = '';
+          div.style.top = livePct(b.startMs) + '%';
+        }
+
         function onMove(mv) {
+          const wasOutside = _outside;
           _outside = isOutside(mv);
           if (_outside) {
-            div.classList.add('tg-removing');
+            if (!wasOutside) goFixed(mv);                  // first frame outside
+            div.style.left    = (mv.clientX - _fixOffX) + 'px';
+            div.style.top     = (mv.clientY - _fixOffY) + 'px';
+            div.style.opacity = '0.72';
             hideTips();
           } else {
-            div.classList.remove('tg-removing');
+            if (wasOutside) goAbsolute();                  // returned inside
             const raw = snapMs(yToMs(mv.clientY) - offsetMs);
             b.startMs = raw;
             b.endMs   = raw + dur;
@@ -10887,22 +10913,24 @@ setInterval(() => {
           window.removeEventListener('mouseup',   onUp);
           hideTips();
           if (_outside) {
-            // Remove from state immediately; keep _tgBusy true until animation ends
-            // so drawGauge doesn't try to re-render the vanishing element.
             const bi = state.scheduledBlocks.indexOf(b);
             if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
             saveState(); debouncedPushSettings();
-            div.classList.remove('tg-removing');
-            div.classList.add('tg-fade-out');
+            // Fade + shrink at the exact spot where the user released
+            div.style.transition = 'opacity .28s ease, transform .28s ease';
+            div.style.opacity    = '0';
+            div.style.transform  = 'scale(.45)';
             let done = false;
             function finish() {
               if (done) return; done = true;
+              if (div.parentNode) div.remove();
               _tgBusy = false;
               drawGauge();
             }
-            div.addEventListener('animationend', finish, { once: true });
-            setTimeout(finish, 400);   // safety fallback
+            div.addEventListener('transitionend', finish, { once: true });
+            setTimeout(finish, 380);   // safety fallback
           } else {
+            if (div.style.position === 'fixed') goAbsolute();
             _tgBusy = false;
             saveState(); debouncedPushSettings();
             drawGauge();
@@ -10922,21 +10950,44 @@ setInterval(() => {
         const offsetMs = yToMs(t0.clientY) - b.startMs;
         const dur      = b.endMs - b.startMs;
         let _outside   = false;
+        let _fixOffX = 0, _fixOffY = 0;
 
         function isOutsideTouch(t) {
           const r = gaugeCol.getBoundingClientRect();
           return t.clientX < r.left - 40 || t.clientX > r.right  + 40 ||
                  t.clientY < r.top  - 40 || t.clientY > r.bottom + 40;
         }
+        function goFixedT(t) {
+          const rect = div.getBoundingClientRect();
+          _fixOffX = t.clientX - rect.left;
+          _fixOffY = t.clientY - rect.top;
+          div.style.position = 'fixed';
+          div.style.left   = rect.left + 'px';
+          div.style.top    = rect.top  + 'px';
+          div.style.right  = 'auto';
+          div.style.width  = rect.width  + 'px';
+          div.style.height = rect.height + 'px';
+          div.style.zIndex = '9998';
+        }
+        function goAbsoluteT() {
+          div.style.position = ''; div.style.left = ''; div.style.right = '';
+          div.style.width = ''; div.style.height = '';
+          div.style.zIndex = ''; div.style.opacity = '';
+          div.style.top = livePct(b.startMs) + '%';
+        }
         function onTMove(mv) {
           mv.preventDefault();
           const t = mv.touches[0];
+          const wasOutside = _outside;
           _outside = isOutsideTouch(t);
           if (_outside) {
-            div.classList.add('tg-removing');
+            if (!wasOutside) goFixedT(t);
+            div.style.left    = (t.clientX - _fixOffX) + 'px';
+            div.style.top     = (t.clientY - _fixOffY) + 'px';
+            div.style.opacity = '0.72';
             hideTips();
           } else {
-            div.classList.remove('tg-removing');
+            if (wasOutside) goAbsoluteT();
             const raw = snapMs(yToMs(t.clientY) - offsetMs);
             b.startMs = raw;
             b.endMs   = raw + dur;
@@ -10953,13 +11004,15 @@ setInterval(() => {
             const bi = state.scheduledBlocks.indexOf(b);
             if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
             saveState(); debouncedPushSettings();
-            div.classList.remove('tg-removing');
-            div.classList.add('tg-fade-out');
+            div.style.transition = 'opacity .28s ease, transform .28s ease';
+            div.style.opacity    = '0';
+            div.style.transform  = 'scale(.45)';
             let done = false;
-            function finish() { if (done) return; done = true; _tgBusy = false; drawGauge(); }
-            div.addEventListener('animationend', finish, { once: true });
-            setTimeout(finish, 400);
+            function finish() { if (done) return; done = true; if (div.parentNode) div.remove(); _tgBusy = false; drawGauge(); }
+            div.addEventListener('transitionend', finish, { once: true });
+            setTimeout(finish, 380);
           } else {
+            if (div.style.position === 'fixed') goAbsoluteT();
             _tgBusy = false;
             saveState(); debouncedPushSettings();
             drawGauge();
