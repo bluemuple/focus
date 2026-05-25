@@ -502,15 +502,8 @@
   .login-modal-content input:focus { outline: 2px solid #c7d8ff; outline-offset: -1px; }
   #login-status { font-size: .8rem; }
 
-  /* Drag handle for task reordering */
-  .drag-handle {
-    cursor: grab; color: #9ca3af; user-select: none;
-    padding: 0 6px;
-    font-size: 1.05rem; line-height: 1; font-weight: 700;
-    touch-action: none;   /* allow touchstart preventDefault without passive warning */
-  }
-  .drag-handle:hover { color: #4b5563; }
-  .drag-handle:active { cursor: grabbing; }
+  /* .drag-handle removed — whole row is now the drag source */
+  .drag-handle { display: none; }
   .task-row.dragging { opacity: 0.4; }
   /* Legacy single-row highlight kept for non-matrix lists; the matrix uses
      the .drop-indicator element below for between-row precision. */
@@ -707,8 +700,7 @@
   .matrix-wrap:not(.expanded) .task-row .task-bid {
     margin: 0; flex-shrink: 0;
   }
-  .matrix-wrap:not(.expanded) .task-row .x,
-  .matrix-wrap:not(.expanded) .task-row .drag-handle {
+  .matrix-wrap:not(.expanded) .task-row .x {
     padding: 0 2px;
   }
   /* When expanded — give the row a bit of breathing room again. */
@@ -1627,17 +1619,18 @@
     flex-shrink: 0;
   }
   .focus-cell .task-row .task-edit-pen:hover { color: #2563eb; }
-  /* Drag handle + delete × on PC. */
+  /* Delete × on PC. Whole row is now the drag handle. */
+  .focus-cell .task-row { cursor: grab; }
+  .focus-cell .task-row:active { cursor: grabbing; }
   .focus-cell .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; cursor: pointer; }
-  .focus-cell .task-row .drag-handle { cursor: grab; color: #9ca3af; padding: 0 2px; user-select: none; }
+  .focus-cell .task-row .drag-handle { display: none; }   /* removed — whole row is draggable */
   /* Clicking the quadrant title (h4) toggles the row action buttons
-     (✎ edit, × delete, ≡ drag handle). They're hidden by default so the
+     (✎ edit, × delete). They're hidden by default so the
      task name has the full row width — click the title to reveal/hide. */
   .focus-cell > h4 { cursor: pointer; user-select: none; }
   .focus-cell > h4:hover { opacity: .78; }
   .focus-cell:not(.show-actions) .task-row .task-edit-pen,
-  .focus-cell:not(.show-actions) .task-row > .x,
-  .focus-cell:not(.show-actions) .task-row .drag-handle {
+  .focus-cell:not(.show-actions) .task-row > .x {
     display: none !important;
   }
   .focus-cell .add-task {
@@ -2413,9 +2406,7 @@
     .matrix-wrap:not(.expanded) .task-row .x {
       font-size: .9rem; padding: 0 1px;
     }
-    .matrix-wrap:not(.expanded) .task-row .drag-handle {
-      padding: 0 1px; font-size: .9rem;
-    }
+    /* .drag-handle removed */
 
     /* Factor panels — keep slider + number from overflowing the box */
     .factors-grid { gap: 10px; }
@@ -3128,7 +3119,7 @@
           <li><em>+ add task</em> — every cell has its own button. Tapping it creates a row and immediately opens the name editor.</li>
           <li><em>✎ pen</em> next to a task — opens an editor where you can rename or delete the task (red Delete button).</li>
           <li><em>$N pill</em> — that task's <strong>bid</strong> (money you earn when you check it done, or lose when you uncheck it). Tap it to open a popup with <code>+$10 / +$5 / +$1</code>, <code>−$1 / −$5</code>, and <code>↺ Reset</code> (back to the default in <em>Edit Earning for Tasks</em>). No free-form input — every change is in fixed steps.</li>
-          <li><em>Drag handle</em> <code>≡</code> (PC only) — drag to reorder inside a quadrant.</li>
+          <li><em>Drag to reorder</em> — drag a task bar from anywhere (avoid text inputs and buttons) to reorder it within its quadrant.</li>
           <li><em>Phone layout toggle</em> — the small <code>⤢ / ⤡</code> button next to the "Tasks" title flips between the default 4-cell vertical stack and a swipeable 2×2 grid. Tapping the title text instead toggles the whole panel collapsed.</li>
         </ul>
       </li>
@@ -4900,36 +4891,33 @@ function _commitTaskMove(q, fromIdx, insertAtRaw) {
   if (document.getElementById('setup-page') && document.getElementById('setup-page').style.display !== 'none') renderTasks();
   if (document.getElementById('focus-page') && document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
 }
-function attachDragHandlers(row, handle, q, i) {
-  if (handle) {
-    handle.ondragstart = (e) => {
-      _draggedTask = { q, idx: i };
-      try { e.dataTransfer.setData('text/plain', `${q}:${i}`); } catch (_){}
-      try { e.dataTransfer.effectAllowed = 'move'; } catch (_){}
-      // Align the cursor with the centre of the drag handle (≡) on the
-      // RIGHT side of the row so the bar trails to the LEFT of the pointer.
-      // Without this, setDragImage's default offset of (0,0) puts the row's
-      // top-left at the cursor, making the bar visually drift to the right.
-      let offX = 10, offY = 10;
-      try {
-        const rowRect    = row.getBoundingClientRect();
-        const handleRect = handle.getBoundingClientRect();
-        offX = (handleRect.left - rowRect.left) + handleRect.width  / 2;
-        offY = (handleRect.top  - rowRect.top ) + handleRect.height / 2;
-      } catch (_) {}
-      try { e.dataTransfer.setDragImage(row, offX, offY); } catch (_){}
-      row.classList.add('dragging');
-    };
-    handle.ondragend = () => {
-      _draggedTask = null;
-      row.classList.remove('dragging');
-      // Clean up any lingering indicator + legacy drag-over highlight.
-      _clearDropIndicator();
-      document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
-    };
-    // Prevent click from triggering pomodoro when releasing on handle
-    handle.onclick = (e) => e.stopPropagation();
-  }
+function attachDragHandlers(row, q, i) {
+  // Make the entire row the drag source.
+  row.draggable = true;
+  row.ondragstart = (e) => {
+    // Don't start a drag when the user clicks inside an input/button/link —
+    // let those elements handle the interaction normally.
+    if (e.target.closest('input,button,a,select')) { e.preventDefault(); return; }
+    _draggedTask = { q, idx: i };
+    try { e.dataTransfer.setData('text/plain', `${q}:${i}`); } catch (_){}
+    try { e.dataTransfer.effectAllowed = 'move'; } catch (_){}
+    // Align drag image so the grabbed point under the cursor stays fixed.
+    let offX = 10, offY = 10;
+    try {
+      const rowRect = row.getBoundingClientRect();
+      offX = e.clientX - rowRect.left;
+      offY = e.clientY - rowRect.top;
+    } catch (_) {}
+    try { e.dataTransfer.setDragImage(row, offX, offY); } catch (_){}
+    row.classList.add('dragging');
+  };
+  row.ondragend = () => {
+    _draggedTask = null;
+    row.classList.remove('dragging');
+    // Clean up any lingering indicator + legacy drag-over highlight.
+    _clearDropIndicator();
+    document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
+  };
   row.ondragover = (e) => {
     if (!_draggedTask) return;
     if (_draggedTask.q !== q) return;   // same-quadrant reorder only
@@ -5039,9 +5027,8 @@ function renderTasks() {
         <input type="checkbox" ${t.done?'checked':''}>
         <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
         <button class="task-bid" title="Bid for this task — money you earn when you finish">$${bidVal}</button>
-        <button class="x" title="delete">×</button>
-        <span class="drag-handle" draggable="true" title="Drag to reorder">≡</span>`;
-      const cb = row.children[0], txt = row.children[1], bidBtn = row.children[2], del = row.children[3], handle = row.children[4];
+        <button class="x" title="delete">×</button>`;
+      const cb = row.children[0], txt = row.children[1], bidBtn = row.children[2], del = row.children[3];
       bidBtn.onclick = (ev) => {
         ev.stopPropagation();
         editTaskBid(q, i);
@@ -5112,7 +5099,7 @@ function renderTasks() {
         }
       };
       del.onclick = () => { deleteTaskAt(q, i); saveState(); renderTasks(); markSettingsChanged(); pushSettingsToCloud(); };
-      attachDragHandlers(row, handle, q, i);
+      attachDragHandlers(row, q, i);
       wrap.appendChild(row);
     });
   });
@@ -6423,15 +6410,34 @@ function renderFocusMatrix() {
         renderFocusMatrix();
       };
       textEl.onclick = () => {
-        // Activate colour-coding for any scheduled gauge block tied to this task
-        // (only if colour-coding hasn't started yet — first click wins).
         const _tgNow = Date.now();
-        (state.scheduledBlocks || []).forEach(b => {
-          if (b.q === q && b.taskIdx === i && !b.activeAt) {
-            b.activeAt = _tgNow;
-          }
-        });
-        toggleTaskTimer(q, i);
+        const isSameRunning = state.activeTimer &&
+                              state.activeTimer.q === q &&
+                              state.activeTimer.idx === i;
+
+        if (isSameRunning) {
+          // Second click on the running task → cancel timer + full colour-coding reset.
+          // Call stopActiveTimer so intervals/state are cleaned up properly, then
+          // undo the activeAt/activeEndMs it may have written to gauge blocks.
+          stopActiveTimer('reset');
+          (state.scheduledBlocks || []).forEach(b => {
+            if (b.q === q && b.taskIdx === i) {
+              b.activeAt    = null;
+              b.activeEndMs = null;
+            }
+          });
+          saveState(); debouncedPushSettings();
+          drawGauge();
+          renderFocusMatrix();
+        } else {
+          // First click → activate colour-coding on gauge blocks, start timer.
+          (state.scheduledBlocks || []).forEach(b => {
+            if (b.q === q && b.taskIdx === i && !b.activeAt) {
+              b.activeAt = _tgNow;
+            }
+          });
+          toggleTaskTimer(q, i);
+        }
       };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
       // Inline pomodoro display when this task is currently running.
@@ -6465,13 +6471,7 @@ function renderFocusMatrix() {
         del.textContent = '×';
         del.onclick = (ev) => { ev.stopPropagation(); deleteTaskAt(q, i); saveState(); renderFocusMatrix(); markSettingsChanged(); pushSettingsToCloud(); };
         row.appendChild(del);
-        const handle = document.createElement('span');
-        handle.className = 'drag-handle';
-        handle.draggable = true;
-        handle.title = isPhone ? 'Drag to schedule on gauge' : 'Drag to reorder';
-        handle.textContent = '≡';
-        row.appendChild(handle);
-        attachDragHandlers(row, handle, q, i);
+        attachDragHandlers(row, q, i);
       }
       tasksDiv.appendChild(row);
     });
@@ -10618,8 +10618,9 @@ setInterval(() => {
   gaugeInner.appendChild(tipBotEl);
 
   /* ---- Module state ---- */
-  let _ghost  = null;    // { startMs, durationMs } — live while dragging task→gauge
-  let _tgBusy = false;   // true during block drag/resize → skip re-render in drawGauge
+  let _ghost      = null;    // { startMs, durationMs } — live while dragging task→gauge
+  let _tgBusy     = false;   // true during block drag/resize → skip re-render in drawGauge
+  let _arrowBlock = null;    // last-placed / last-interacted block — arrow keys resize its endMs
 
   /* ---- Gauge coordinate helpers ---- */
   function gaugeRange() {
@@ -10726,7 +10727,7 @@ setInterval(() => {
     const tasks = state.tasks[_draggedTask.q] || [];
     const task  = tasks[_draggedTask.idx];
     if (!task) return;
-    state.scheduledBlocks.push({
+    const _newBlock = {
       id:          Date.now() + '_' + Math.random().toString(36).slice(2),
       q:           _draggedTask.q,
       taskIdx:     _draggedTask.idx,
@@ -10735,11 +10736,17 @@ setInterval(() => {
       endMs:       startMs + durationMs,
       activeAt:    null,
       activeEndMs: null
-    });
+    };
+    state.scheduledBlocks.push(_newBlock);
     saveState(); debouncedPushSettings();
+    _arrowBlock = _newBlock;   // enable arrow-key bottom-edge tuning
     _ghost = null;
-    placeGhost();
+    placeGhost();              // hides tips
     drawGauge();
+    // Show bottom-edge tip for the freshly placed block
+    tipBotEl.textContent = hhMM(_newBlock.endMs);
+    tipBotEl.style.top   = msToPct(_newBlock.endMs) + '%';
+    tipBotEl.classList.remove('hidden');
   });
 
   /* ---- Cleanup on drag end (covers both drop and cancel/Escape) ---- */
@@ -10747,17 +10754,46 @@ setInterval(() => {
     if (_ghost) { _ghost = null; placeGhost(); }
   });
 
-  /* ---- Arrow-key duration adjustment while ghost is visible ---- */
+  /* ---- Arrow-key: resize bottom edge of ghost (during drag) or placed block ---- */
   window.addEventListener('keydown', e => {
-    if (!_ghost) return;
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Escape') {
+      // Deselect placed block (hides bottom-tip)
+      if (_arrowBlock) { _arrowBlock = null; hideTips(); }
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+
+    /* -- Ghost phase: bottom edge of the preview rectangle -- */
+    if (_ghost) {
       e.preventDefault();
-      _ghost.durationMs += STEP_MS;
-      placeGhost();
-    } else if (e.key === 'ArrowUp') {
+      if (e.key === 'ArrowDown') _ghost.durationMs += STEP_MS;
+      else _ghost.durationMs = Math.max(STEP_MS, _ghost.durationMs - STEP_MS);
+      placeGhost();   // updates ghost height + both tooltips
+      return;
+    }
+
+    /* -- Placed block: bottom edge of the last-interacted block -- */
+    if (_arrowBlock && !_tgBusy) {
       e.preventDefault();
-      _ghost.durationMs = Math.max(STEP_MS, _ghost.durationMs - STEP_MS);
-      placeGhost();
+      if (e.key === 'ArrowDown') {
+        _arrowBlock.endMs += STEP_MS;
+      } else {
+        _arrowBlock.endMs = Math.max(_arrowBlock.startMs + STEP_MS, _arrowBlock.endMs - STEP_MS);
+      }
+      saveState(); debouncedPushSettings();
+      drawGauge();
+      // Re-show bottom tip at new position (drawGauge doesn't hide tips)
+      tipBotEl.textContent = hhMM(_arrowBlock.endMs);
+      tipBotEl.style.top   = msToPct(_arrowBlock.endMs) + '%';
+      tipBotEl.classList.remove('hidden');
+    }
+  });
+
+  /* ---- Click anywhere on gauge (not on a block) deselects arrow-key target ---- */
+  gaugeCol.addEventListener('click', ev => {
+    if (!ev.target.closest('.tg-block') && _arrowBlock) {
+      _arrowBlock = null;
+      hideTips();
     }
   });
 
@@ -10854,6 +10890,7 @@ setInterval(() => {
         if (ev.target === rtEl || ev.target === rbEl || ev.target === tailEl) return;
         if (ev.button !== 0) return;
         ev.preventDefault();
+        _arrowBlock = b;   // selecting this block enables arrow-key bottom-edge tuning
         _tgBusy = true;
         const offsetMs = yToMs(ev.clientY) - b.startMs;
         const dur      = b.endMs - b.startMs;
@@ -11243,11 +11280,10 @@ setInterval(() => {
 
     let _td = null; // { q, idx, durMs } while touch drag is live
 
-    /* Walk up from handle to identify which task (q + idx) was touched. */
-    function taskFromHandle(handle) {
-      const row  = handle.closest('.task-row');
-      const cell = handle.closest('.focus-cell');
-      if (!row || !cell) return null;
+    /* Walk up from a task row to identify which task (q + idx) was touched. */
+    function taskFromRow(row) {
+      const cell = row.closest('.focus-cell');
+      if (!cell) return null;
       const q = ['q1','q2','q3','q4'].find(k => cell.classList.contains(k));
       if (!q) return null;
       const tasksDiv = cell.querySelector('.tasks');
@@ -11266,24 +11302,35 @@ setInterval(() => {
     }
 
     document.addEventListener('touchstart', ev => {
-      const handle = ev.target.closest('.drag-handle');
-      if (!handle) return;
-      const info = taskFromHandle(handle);
+      // Ignore touches on interactive controls or gauge elements.
+      if (ev.target.closest('input,button,a,select,.tg-block,#gauge-col')) return;
+      const row = ev.target.closest('.task-row');
+      if (!row || !row.closest('.focus-cell')) return;
+      const info = taskFromRow(row);
       if (!info) return;
-      ev.preventDefault();    // block scroll while dragging handle
+      // Don't preventDefault here — let taps and scroll proceed naturally until
+      // the movement threshold is crossed (handled in touchmove below).
       const t = ev.touches[0];
-      _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: DEFAULT_MS };
-      _draggedTask = { q: info.q, idx: info.idx }; // lets placeGhost() read label
-      badgeEl.textContent = info.taskName;
-      badgeEl.style.left  = t.clientX + 'px';
-      badgeEl.style.top   = t.clientY + 'px';
-      badgeEl.style.display = 'block';
+      _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: DEFAULT_MS,
+              startX: t.clientX, startY: t.clientY, dragging: false };
+      _draggedTask = { q: info.q, idx: info.idx };
     }, { passive: false });
 
     document.addEventListener('touchmove', ev => {
       if (!_td) return;
-      ev.preventDefault();
       const t = ev.touches[0];
+      // Wait for an 8 px movement before committing to a drag — this lets
+      // short taps still fire click events without interference.
+      if (!_td.dragging) {
+        const dx = t.clientX - _td.startX, dy = t.clientY - _td.startY;
+        if (dx * dx + dy * dy < 64) return;   // < 8 px — not a drag yet
+        _td.dragging = true;
+        badgeEl.textContent = _td.taskName;
+        badgeEl.style.left    = t.clientX + 'px';
+        badgeEl.style.top     = t.clientY + 'px';
+        badgeEl.style.display = 'block';
+      }
+      ev.preventDefault();   // prevent scroll now that drag is confirmed
       // Badge follows finger (slightly above so name is readable)
       badgeEl.style.left = t.clientX + 'px';
       badgeEl.style.top  = t.clientY + 'px';
@@ -11299,11 +11346,12 @@ setInterval(() => {
     document.addEventListener('touchend', ev => {
       if (!_td) return;
       badgeEl.style.display = 'none';
-      if (_ghost) {
+      // Only commit a gauge block if the user actually dragged (not just tapped).
+      if (_td.dragging && _ghost) {
         const { startMs, durationMs } = _ghost;
         const task = (state.tasks[_td.q] || [])[_td.idx];
         if (task) {
-          state.scheduledBlocks.push({
+          const _newTBlock = {
             id:          Date.now() + '_' + Math.random().toString(36).slice(2),
             q:           _td.q,
             taskIdx:     _td.idx,
@@ -11312,12 +11360,22 @@ setInterval(() => {
             endMs:       startMs + durationMs,
             activeAt:    null,
             activeEndMs: null
-          });
+          };
+          state.scheduledBlocks.push(_newTBlock);
+          _arrowBlock = _newTBlock;   // enable arrow-key bottom-edge tuning
           saveState(); debouncedPushSettings();
+          // Show bottom-edge tip for the freshly placed block
+          tipBotEl.textContent = hhMM(_newTBlock.endMs);
+          tipBotEl.style.top   = msToPct(_newTBlock.endMs) + '%';
+          tipBotEl.classList.remove('hidden');
         }
         _ghost = null;
         placeGhost();
         drawGauge();
+      } else if (_ghost) {
+        // Tap ended without crossing threshold — discard ghost
+        _ghost = null;
+        placeGhost();
       }
       _draggedTask = null;
       _td = null;
