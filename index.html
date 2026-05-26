@@ -2518,7 +2518,7 @@
   }
   .tg-block {
     position: absolute; left: 50px; right: 4px;   /* 10 px crop on the left */
-    background: #d1d5db;
+    background: rgba(209, 213, 219, 0.7);          /* 70 % opaque — gauge grid shows through */
     border-radius: 5px;
     overflow: hidden;
     z-index: 15;
@@ -2615,7 +2615,7 @@
          readable. Previously full-width with semi-transparent overlay caused
          the block background to bleed over "1 AM", "12 AM" etc. */
       left: 40px; right: 2px;
-      background: rgba(209,213,219,.55);
+      background: rgba(209, 213, 219, 0.7);
       border-radius: 4px;
     }
     .tg-block.half-l { left: 40px; right: calc(50% + 1px); }
@@ -2726,8 +2726,10 @@
   .time-resize-handle:active { background: #d1d5db; }
   .time-resize-handle:active::before { background: #4b5563; }
   .time-block {
-    position: absolute; left: 38px; right: 4px;
-    background: #e5e7eb;
+    /* Shrunk by 6 px centered (3 px each side) and tinted 70 % opaque so the
+       gauge grid behind the block stays visible. */
+    position: absolute; left: 41px; right: 7px;
+    background: rgba(229, 231, 235, 0.7);
     border-radius: 5px;
     overflow: hidden;
     pointer-events: auto;
@@ -2854,9 +2856,10 @@
     font-weight: 700;
     line-height: 1.3;
   }
-  /* Drop preview when dragging a task onto the Time area */
+  /* Drop preview when dragging a task onto the Time area — matches .time-block
+     horizontal inset (41 px left, 7 px right). */
   .time-ghost {
-    position: absolute; left: 38px; right: 4px;
+    position: absolute; left: 41px; right: 7px;
     background: rgba(100,116,139,.22);
     border: 2px dashed #64748b;
     border-radius: 5px;
@@ -12598,6 +12601,7 @@ setInterval(() => {
       _undoStack.push(snap);
       if (_undoStack.length > MAX_UNDO) _undoStack.shift();
       _lastSnapMs = Date.now();
+      if (window.__undoDebug) console.log('[undo] snap, stack:', _undoStack.length);
     } catch (_) {}
   }
 
@@ -12607,15 +12611,30 @@ setInterval(() => {
     snapshotNow();
   }
 
-  /* Wrap the global saveState — every save triggers a (debounced) snapshot. */
-  if (typeof saveState === 'function') {
-    const _orig = saveState;
-    /* eslint-disable no-global-assign */
-    saveState = function() {
-      snapshotDebounced();
-      return _orig.apply(this, arguments);
+  /* ---------- Trigger snapshots from multiple sources for reliability ----- */
+
+  /* (A) Wrap the global saveState. Most state mutations go through this. */
+  try {
+    if (typeof saveState === 'function') {
+      const _orig = saveState;
+      saveState = function() {
+        snapshotDebounced();
+        return _orig.apply(this, arguments);
+      };
+    }
+  } catch (_) {}
+
+  /* (B) Wrap localStorage.setItem as a belt-and-suspenders backup. Every
+        save ultimately calls setItem(STORAGE_KEY, …) — even paths that
+        bypass our saveState wrapper (e.g. async callbacks captured before
+        the wrap) still land here. */
+  try {
+    const _origSetItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = function(key, value) {
+      if (key === STORAGE_KEY) snapshotDebounced();
+      return _origSetItem(key, value);
     };
-  }
+  } catch (_) {}
 
   function _rerenderEverything() {
     try { if (typeof drawGauge        === 'function') drawGauge();        } catch (_){}
@@ -12674,14 +12693,21 @@ setInterval(() => {
     if (!isZ) return;
     e.preventDefault();
     e.stopPropagation();
+    if (window.__undoDebug) console.log('[undo] hotkey fired, stack size:', _undoStack.length);
     undo();
   }
   window.addEventListener('keydown', _undoHotkeyHandler, true);
   document.addEventListener('keydown', _undoHotkeyHandler, true);
 
-  /* Seed history with the initial state on next idle tick so the user can
-     immediately undo their first change. */
+  /* Seed history with the initial state. Synchronous first call so undo works
+     IMMEDIATELY after the script loads, plus a deferred call to catch any late
+     state mutations during init. */
+  snapshotNow();
   setTimeout(snapshotNow, 0);
+
+  /* Periodic safety-net snapshot — even if every other trigger fails, this
+     guarantees the user can undo to ~2 seconds ago. */
+  setInterval(snapshotDebounced, 2000);
 })();
 </script>
 </body>
