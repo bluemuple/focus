@@ -2022,28 +2022,32 @@
   function lpvImgStyleMini(corner, scale) {
     const sc = Number.isFinite(scale) ? scale : 1.0;
     const w  = (30 * sc).toFixed(1);
+    // max-width also scales with sc so the −/+ buttons grow the image visibly
+    // in the preview. Without this, sc>1 hit the static 80 px cap and the
+    // image never appeared larger even though "%" in the chip showed >100 %.
+    const maxW = Math.round(80 * sc);
     const sh = 'box-shadow:0 1px 4px rgba(0,0,0,.10);border-radius:4px;height:auto;';
     switch (corner) {
       case 'tl':
-        return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
+        return `float:left;width:${w}%;max-width:${maxW}px;margin:5px 8px 6px 0;${sh}`;
       case 'bl':
         // float:left — image appears at marker position in source order,
         // text after the marker wraps beside it on the right.
-        return `float:left;width:${w}%;max-width:80px;margin:5px 8px 6px 0;${sh}`;
+        return `float:left;width:${w}%;max-width:${maxW}px;margin:5px 8px 6px 0;${sh}`;
       case 'tr':
-        return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
+        return `float:right;width:${w}%;max-width:${maxW}px;margin:5px 0 6px 8px;${sh}`;
       case 'br':
         // float:right — image appears at marker position in source order,
         // text after the marker wraps beside it on the left.
-        return `float:right;width:${w}%;max-width:80px;margin:5px 0 6px 8px;${sh}`;
+        return `float:right;width:${w}%;max-width:${maxW}px;margin:5px 0 6px 8px;${sh}`;
       case 'cc':
-        return `display:block;margin:6px auto;width:60%;max-width:120px;${sh}`;
+        return `display:block;margin:6px auto;width:${(60 * sc).toFixed(1)}%;max-width:${Math.round(120 * sc)}px;${sh}`;
       case 'cs':
         return `display:block;margin:4px auto;max-width:${Math.round(50 * sc)}px;${sh}`;
       case 'panel':
-        return `display:block;width:90%;margin:4px auto 6px;border:2px solid #1a1a1a;border-radius:3px;${sh}`;
+        return `display:block;width:${(90 * sc).toFixed(1)}%;margin:4px auto 6px;border:2px solid #1a1a1a;border-radius:3px;${sh}`;
       default:
-        return `float:right;width:${w}%;max-width:80px;margin:0 0 6px 8px;${sh}`;
+        return `float:right;width:${w}%;max-width:${maxW}px;margin:0 0 6px 8px;${sh}`;
     }
   }
 

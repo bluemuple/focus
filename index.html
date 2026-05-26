@@ -7820,7 +7820,11 @@ function drawTimeArea() {
 
     /* ---- ms-per-pixel within the 24h content ---- */
     const _msPerPx = msPerPx;
-    const SNAP_MS = 5 * 60 * 1000;
+    // 1-minute snap during drag → block visually moves every pixel of finger
+    // travel (1 px = 1 min in this coordinate system) instead of jumping
+    // every 5 px. Feels continuous like the time-area resize handle.
+    const SNAP_MS     = 60 * 1000;             // drag granularity
+    const MIN_BLOCK_MS = 5 * 60 * 1000;        // minimum block duration (kept at 5 min)
     function snap(ms) { return Math.round(ms / SNAP_MS) * SNAP_MS; }
 
     /* ---- X delete ---- */
@@ -7925,7 +7929,7 @@ function drawTimeArea() {
         const dy = clientY - dragSt.startY;
         const dMs = dy * _msPerPx;
         let newEnd = snap(dragSt.origEnd + dMs);
-        if (newEnd < dragSt.origStart + SNAP_MS) newEnd = dragSt.origStart + SNAP_MS;
+        if (newEnd < dragSt.origStart + MIN_BLOCK_MS) newEnd = dragSt.origStart + MIN_BLOCK_MS;
         if (newEnd !== b.endMs) {
           b.endMs = newEnd;
           drawTimeArea();
@@ -8272,12 +8276,11 @@ function openEventModal(existing) {
       const dy = clientY - startY;
       const newDur = clampDur(startDur + (dy / PX_PER_HOUR) * HOUR);
       state.timeArea.durationMs = newDur;
-      // Re-anchor scroll so the top of the visible area stays at "now − 30 min".
-      // Without this, growing the viewport near the bottom of the 24h content
-      // causes scrollTop to clamp, which makes blocks visually slide down with
-      // the handle (the reported bug). Anchoring the top keeps existing
-      // visible blocks in place while new future time appears below.
-      state.timeArea._needsScroll = true;
+      // Preserve the user's current scrollTop while resizing — DON'T reset to
+      // "now − 30 min" anchor. Resetting on every drag step caused blocks the
+      // user was viewing to suddenly snap to a different time, which felt like
+      // the blocks were "magnetically following" the handle. Content is 48 h
+      // tall so scrollTop won't clamp at the bottom edge.
       if (typeof drawTimeArea === 'function') drawTimeArea();
     }
     function onUp() {
