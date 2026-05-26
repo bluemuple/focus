@@ -1793,38 +1793,54 @@
     body.tt-split .time-tasks-wrap {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 0;                       /* zero gap → looks like one box */
+      gap: 0;                        /* zero gap → looks like one box */
       align-items: stretch;          /* both columns share row height */
+      /* Outer chrome lives on the WRAPPER, not the individual panels —
+         that way the border draws all four sides of the merged container
+         (previously only the left side had it, because tasks-panel had
+         border:none and time-panel had border-right:none).
+         White background per spec. */
+      background: #ffffff;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      overflow: hidden;              /* clip panel corners to the rounded outer */
+      margin: 0 0 12px 0;
     }
-    /* Tasks panel — strip its own header / border so it visually merges
-       into the Time panel's frame. Tile colour matches the grey base used
-       around individual coloured task rows. */
+    /* Both panels: strip their own chrome so the wrapper's border / radius /
+       background is the only visible frame. */
+    body.tt-split #time-panel,
     body.tt-split #tasks-panel {
-      background: #f3f4f6;
-      padding: 8px;
+      background: transparent;
       border: none;
-      margin: 0;
-      border-radius: 0 8px 8px 0;   /* round only the OUTER right corners */
+      border-radius: 0;
       box-shadow: none;
+      margin: 0;
+      padding: 8px;
     }
     /* Hide the entire Tasks h3 (incl. matrix-view-toggle) in split mode.
        The merged container's single header lives in #time-toggle now. */
     body.tt-split #tasks-panel > .focus-tasks-title { display: none; }
-    body.tt-split #time-panel {
-      padding: 8px;
-      border-radius: 8px 0 0 8px;   /* round only the OUTER left corners */
-      margin: 0;
-      /* Same grey chrome as #tasks-panel so the two halves read as a
-         single unified card. The actual gauge (.time-area) inside keeps
-         its own white background. */
-      background: #f3f4f6;
-      border-color: #e5e7eb;
-      border-right: none;            /* seam down the middle stays clean */
-      box-shadow: none;
-    }
-    /* Hide the resize handle in split mode — gauge height is now driven
-       by the matching tasks-list height (drawTimeArea takes care of it). */
+    /* Hide the × delete button on EVERY task row on mobile (split or stacked).
+       User can delete a task via the ✎ edit popup. */
+    .focus-cell .task-row > .x { display: none !important; }
+    /* Hide the per-Time-panel resize handle in split mode — the new
+       full-width #time-resize-handle-split below replaces it. */
     body.tt-split #time-resize-handle { display: none; }
+    /* Full-width handle that sits at the bottom of the MERGED Time &
+       Tasks container. Spans both grid columns so it visually anchors
+       the whole rectangle. Drag down → grow the gauge below the last
+       task bar. Drag up → shrink (drawTimeArea clamps to matrix bottom). */
+    .split-resize-handle { display: none; }
+    body.tt-split .split-resize-handle {
+      display: block;
+      grid-column: 1 / -1;          /* span both columns */
+      background: #f3f4f6;
+      border-top: 1px solid #e5e7eb;
+      border-radius: 0;             /* wrapper already clips to outer radius */
+      /* Inherit the existing .time-resize-handle look (height, ::before
+         grab-bar) from the rule earlier in the stylesheet — that selector
+         matches by class, so the visual is consistent. */
+    }
     /* Without the resize handle, the gauge needs its own bottom border
        so it doesn't look unfinished. Match the existing border-top look. */
     body.tt-split #time-panel .time-area {
@@ -1882,6 +1898,13 @@
       border: none; border-radius: 6px; padding: 8px 10px;
       font-weight: 600; cursor: pointer; text-align: left;
       font-size: .85rem;
+      /* Keep every quadrant choice on ONE line — the column is narrow so
+         "Important · x Urgent" (and friends) would otherwise wrap. We
+         shrink the font automatically when there isn't enough room, but
+         force no wrapping so the label never spans two lines. */
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     body.tt-split .quadrant-picker .qp.q1 { background: #F4BDBD; color: #7E2C2C; }
     body.tt-split .quadrant-picker .qp.q2 { background: #F6E2AA; color: #6E4F0E; }
@@ -1936,10 +1959,11 @@
       display: none !important;
     }
     body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row .task-bid,
-    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row .task-edit-pen,
-    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row > .x {
+    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row .task-edit-pen {
       display: inline-flex !important;
     }
+    /* × button intentionally NOT listed above — it's deleted from the
+       mobile UI per user spec. Delete via the ✎ edit popup instead. */
     /* Pomodoro display (timer) — ALWAYS visible when present, regardless
        of the $ ✎ × visibility toggle. The user wants to see active timers
        at all times. */
@@ -3568,6 +3592,13 @@
           <button class="add-task master-add-task" id="master-add-task" type="button">+ add task</button>
           <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
         </div>
+        <!-- Split-mode resize handle. Sits at the bottom of the merged
+             "Time & Tasks" container, full-width (spans both columns). Drag
+             down → extend the gauge viewport below the last task bar. Drag
+             up → shrink, but never below the last task bar's bottom edge
+             (drawTimeArea enforces that floor). Hidden outside split mode;
+             the per-Time-panel handle takes over in stacked layout. -->
+        <div class="time-resize-handle split-resize-handle" id="time-resize-handle-split" title="Drag to resize the Time &amp; Tasks area"></div>
         </div><!-- /.time-tasks-wrap -->
 
         <div class="panel" style="margin:0;">
@@ -8168,16 +8199,20 @@ function drawTimeArea() {
   if (durMs > TIME_MAX_MS) durMs = TIME_MAX_MS;
   state.timeArea.durationMs = durMs;
 
-  /* In SPLIT mode the gauge sits beside the stack of task bars and the
-     user wants the gauge's BOTTOM edge to be on the same line as the LAST
-     task bar's bottom edge — i.e. gauge length == task-bars stacked
-     length exactly. We measure both elements' bounding rects so the math
-     is layout-accurate even when headers / paddings / margins differ
-     between the two panels. Falls back to the saved durationMs when no
+  /* In SPLIT mode the gauge length is the MAX of:
+       (a) the task-bars stacked length (gauge bottom aligns with last
+           task bar's bottom — the floor / minimum), and
+       (b) the user's currently-dragged state.timeArea.durationMs (the
+           split-mode resize handle at the bottom of the merged container
+           lets the user extend the gauge past the matrix bottom).
+     This means the handle can ENLARGE the gauge below the task list but
+     can NEVER shrink it below the matrix bottom — drag up past the floor
+     is silently clamped. Falls back to the saved durationMs when no
      matrix is present or split is off. */
   let renderDurMs = durMs;
   if (state.focusSplitView) {
     const matrix = document.getElementById('focus-matrix');
+    let floorDurMs = 0;
     if (matrix && matrix.offsetHeight > 0) {
       // matrix.bottom (in viewport coords) − area.top = the exact pixel
       // height the gauge must have for its bottom edge to land on the
@@ -8187,13 +8222,15 @@ function drawTimeArea() {
       const targetPx = matrixRect.bottom - areaRect.top;
       if (targetPx > 30) {                              // sanity floor
         // Bypass TIME_MIN_MS so even a single task bar maps gauge length
-        // 1:1 to that bar's height (per user spec). TIME_MAX_MS still
-        // applies so an enormous list can't blow the viewport up.
-        let exactDurMs = Math.round((targetPx / TIME_PX_PER_HOUR) * 3600000);
-        if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
-        if (exactDurMs > 0) renderDurMs = exactDurMs;
+        // 1:1 to that bar's height (per user spec).
+        floorDurMs = Math.round((targetPx / TIME_PX_PER_HOUR) * 3600000);
       }
     }
+    // User-dragged duration (from the split-mode handle). Capped at MAX.
+    const userDurMs = state.timeArea.durationMs || 0;
+    let exactDurMs = Math.max(floorDurMs, userDurMs);
+    if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
+    if (exactDurMs > 0) renderDurMs = exactDurMs;
   }
 
   /* Viewport height = renderDurMs / 1h × PX_PER_HOUR */
@@ -8847,7 +8884,8 @@ function openEventModal(existing) {
    60 px ≙ 1 h, so dragging 60 px adds/removes 1 hour. */
 (function wireTimeResizeHandle() {
   const handle = document.getElementById('time-resize-handle');
-  if (!handle) return;
+  const splitHandle = document.getElementById('time-resize-handle-split');
+  if (!handle && !splitHandle) return;
   const PX_PER_HOUR = 60;
   const HOUR = 3600000;
   const MIN_MS = 1 * HOUR;
@@ -8900,15 +8938,23 @@ function openEventModal(existing) {
     }
   }
 
-  handle.addEventListener('mousedown', e => {
-    e.preventDefault();
-    startDrag(e.clientY, false);
-  });
-  handle.addEventListener('touchstart', e => {
-    if (!e.touches[0]) return;
-    e.preventDefault();
-    startDrag(e.touches[0].clientY, true);
-  }, { passive: false });
+  // Bind the same drag logic to BOTH handles. The stacked-layout handle
+  // lives inside #time-panel; the split-layout handle is a wrapper child
+  // that spans both grid columns. Only one is visible at a time (CSS).
+  function bindHandle(h) {
+    if (!h) return;
+    h.addEventListener('mousedown', e => {
+      e.preventDefault();
+      startDrag(e.clientY, false);
+    });
+    h.addEventListener('touchstart', e => {
+      if (!e.touches[0]) return;
+      e.preventDefault();
+      startDrag(e.touches[0].clientY, true);
+    }, { passive: false });
+  }
+  bindHandle(handle);
+  bindHandle(splitHandle);
 })();
 
 function openSegmentEditModal(seg) {
@@ -11893,24 +11939,32 @@ function openMasterQuadrantPicker(masterBtn) {
   if (parent.querySelector('.quadrant-picker')) return;
   const picker = document.createElement('div');
   picker.className = 'quadrant-picker';
+  // Negation is shown as a STRIKETHROUGH on the word itself instead of a
+  // "Not " prefix or "x " marker — keeps each label compact so all four
+  // fit on one line in the narrow split-mode column.
+  //   q1: Important · Urgent
+  //   q2: Important · ̶Urgent̶
+  //   q3: ̶Important̶ · Urgent
+  //   q4: ̶Important̶ · ̶Urgent̶
+  // Using innerHTML with <s> tags — the strings are static, no XSS risk.
   const labels = {
     q1: 'Important · Urgent',
-    q2: 'Important · Not Urgent',
-    q3: 'Not Important · Urgent',
-    q4: 'Not Important · Not Urgent'
+    q2: 'Important · <s>Urgent</s>',
+    q3: '<s>Important</s> · Urgent',
+    q4: '<s>Important</s> · <s>Urgent</s>'
   };
   ['q1','q2','q3','q4'].forEach(q => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'qp ' + q;
     b.dataset.q = q;
-    b.textContent = labels[q];
+    b.innerHTML = labels[q];
     picker.appendChild(b);
   });
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'qp-cancel';
-  cancel.textContent = '취소';
+  cancel.textContent = 'Cancel';
   picker.appendChild(cancel);
   // Swap master for picker.
   masterBtn.style.display = 'none';
@@ -13339,20 +13393,40 @@ setInterval(() => {
   };
 
   /* ================================================================
-     TOUCH DRAG — task handle → gauge (mobile)
+     TOUCH DRAG — task row → (a) gauge or (b) reorder within same quadrant (mobile)
      Uses touchstart/touchmove/touchend on document so any handle in
-     any quadrant is caught via event delegation.
+     any quadrant is caught via event delegation. The ghost is shaped
+     like the source task row so the user clearly sees what they're
+     dragging; the existing drop-indicator (between-rows 1 px line) is
+     reused from the PC drag-and-drop reorder code for consistency.
      ================================================================ */
   (function() {
-    // Small pill badge that tracks the finger while dragging
-    const badgeEl = document.createElement('div');
-    badgeEl.style.cssText = 'position:fixed;z-index:9999;pointer-events:none;display:none;' +
-      'background:rgba(15,23,42,.82);color:#fff;font-size:12px;font-weight:700;' +
-      'padding:5px 14px;border-radius:999px;white-space:nowrap;' +
-      'transform:translate(-50%,-140%);box-shadow:0 2px 8px rgba(0,0,0,.25);';
-    document.body.appendChild(badgeEl);
+    // Row-shaped ghost — a visual clone of the source task row that
+    // tracks the finger. Created lazily on the first touchmove that
+    // confirms a drag (after the 8 px threshold).
+    function makeRowGhost(srcRow) {
+      const g = srcRow.cloneNode(true);
+      // Strip interactive children so taps inside the ghost don't fire
+      // unexpected handlers (we route everything via the document-level
+      // touchmove instead).
+      g.querySelectorAll('input, button').forEach(el => {
+        try { el.disabled = true; } catch (_) {}
+      });
+      const rect = srcRow.getBoundingClientRect();
+      g.style.cssText =
+        'position:fixed;z-index:9999;pointer-events:none;' +
+        `width:${rect.width}px;` +
+        'opacity:0.92;' +
+        'box-shadow:0 6px 16px rgba(0,0,0,.25);' +
+        'transform:translate(-50%, -50%);' +
+        'border-radius:6px;' +
+        'background:#fff;';
+      g.classList.add('task-row-ghost');
+      document.body.appendChild(g);
+      return g;
+    }
 
-    let _td = null; // { q, idx, durMs } while touch drag is live
+    let _td = null; // { q, idx, durMs, rowGhost, ... } while touch drag is live
 
     /* Walk up from a task row to identify which task (q + idx) was touched. */
     function taskFromRow(row) {
@@ -13446,7 +13520,8 @@ setInterval(() => {
       const _task = state.tasks[info.q] && state.tasks[info.q][info.idx];
       const _taskDur = _task && typeof _task.durationMs === 'number' ? _task.durationMs : DEFAULT_MS;
       _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: _taskDur,
-              startX: t.clientX, startY: t.clientY, dragging: false };
+              startX: t.clientX, startY: t.clientY, dragging: false,
+              srcRow: row, rowGhost: null };
       _draggedTask = { q: info.q, idx: info.idx };
     }, { passive: false });
 
@@ -13459,20 +13534,30 @@ setInterval(() => {
         const dx = t.clientX - _td.startX, dy = t.clientY - _td.startY;
         if (dx * dx + dy * dy < 64) return;   // < 8 px — not a drag yet
         _td.dragging = true;
-        badgeEl.textContent = _td.taskName;
-        badgeEl.style.left    = t.clientX + 'px';
-        badgeEl.style.top     = t.clientY + 'px';
-        badgeEl.style.display = 'block';
+        // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
+        // never creates a stray ghost element on screen.
+        try {
+          _td.rowGhost = makeRowGhost(_td.srcRow);
+          _td.rowGhost.style.left = t.clientX + 'px';
+          _td.rowGhost.style.top  = t.clientY + 'px';
+        } catch (_) {}
       }
       ev.preventDefault();   // prevent scroll now that drag is confirmed
-      // Badge follows finger (slightly above so name is readable)
-      badgeEl.style.left = t.clientX + 'px';
-      badgeEl.style.top  = t.clientY + 'px';
-      // Show / update ghost when over the main gauge (PC) or Time area (mobile)
+      // Row-shaped ghost follows finger.
+      if (_td.rowGhost) {
+        _td.rowGhost.style.left = t.clientX + 'px';
+        _td.rowGhost.style.top  = t.clientY + 'px';
+      }
+      // Decide target priority:
+      //   1) Main gauge (PC layout)        → block-creation ghost
+      //   2) Mobile Time area              → time-block ghost
+      //   3) Another task row, same q      → between-rows drop indicator
+      //   4) None                          → clear everything
       if (isOverGauge(t)) {
         _ghost = { startMs: snapMs(yToMs(t.clientY)), durationMs: _td.durMs };
         placeGhost();
         hideTimeGhost();
+        _clearDropIndicator();
       } else if (isOverTimeArea(t)) {
         const startMs = snapMs(timeAreaYToMs(t.clientY));
         _ghost = { startMs, durationMs: _td.durMs, fromTimeArea: true };
@@ -13480,7 +13565,37 @@ setInterval(() => {
         // Make sure the main gauge ghost is hidden in case it was shown earlier
         const ghostEl2 = document.querySelector('.tg-ghost');
         if (ghostEl2) ghostEl2.style.display = 'none';
+        _clearDropIndicator();
       } else {
+        // Maybe over another task row → place the 1 px drop indicator so
+        // the user can drop it into the inter-row gap and reorder.
+        // elementFromPoint ignores the row ghost because its pointer-events
+        // is none. We require same-quadrant only — matches the PC drag-drop.
+        const elt = document.elementFromPoint(t.clientX, t.clientY);
+        const targetRow = elt && elt.closest && elt.closest('.task-row');
+        let placed = false;
+        if (targetRow && targetRow !== _td.srcRow && !targetRow.classList.contains('task-row-ghost')) {
+          const targetCell = targetRow.closest('.focus-cell');
+          const targetQ = targetCell && ['q1','q2','q3','q4'].find(k => targetCell.classList.contains(k));
+          if (targetQ === _td.q) {
+            const tasksDiv = targetCell.querySelector('.tasks');
+            if (tasksDiv) {
+              const rows = Array.from(tasksDiv.querySelectorAll(':scope > .task-row'));
+              const targetIdx = rows.indexOf(targetRow);
+              if (targetIdx >= 0) {
+                const rect = targetRow.getBoundingClientRect();
+                const isTopHalf = (t.clientY - rect.top) < rect.height / 2;
+                if (isTopHalf) {
+                  _placeDropIndicator(tasksDiv, targetRow, _td.q, targetIdx);
+                } else {
+                  _placeDropIndicator(tasksDiv, targetRow.nextSibling, _td.q, targetIdx + 1);
+                }
+                placed = true;
+              }
+            }
+          }
+        }
+        if (!placed) _clearDropIndicator();
         if (_ghost) { _ghost = null; placeGhost(); }
         hideTimeGhost();
       }
@@ -13488,7 +13603,22 @@ setInterval(() => {
 
     document.addEventListener('touchend', ev => {
       if (!_td) return;
-      badgeEl.style.display = 'none';
+      // Tear down the row-shaped ghost.
+      if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
+      // ----- Reorder branch -----
+      // If the drop indicator is showing AND it's for the same quadrant as
+      // the source row, commit a within-quadrant reorder (matches PC drag).
+      if (_td.dragging && _dropTarget && _dropTarget.q === _td.q) {
+        const fromIdx = _td.idx;
+        const insertAt = _dropTarget.insertAt;
+        _clearDropIndicator();
+        if (insertAt !== fromIdx && insertAt !== fromIdx + 1) {
+          _commitTaskMove(_td.q, fromIdx, insertAt);
+        }
+        _draggedTask = null;
+        _td = null;
+        return;
+      }
       // Only commit a gauge block if the user actually dragged (not just tapped).
       if (_td.dragging && _ghost) {
         const { startMs, durationMs } = _ghost;
@@ -13544,7 +13674,8 @@ setInterval(() => {
 
     document.addEventListener('touchcancel', () => {
       if (!_td) return;
-      badgeEl.style.display = 'none';
+      if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
+      _clearDropIndicator();
       hideTimeGhost();
       if (_ghost) { _ghost = null; placeGhost(); }
       _draggedTask = null;
