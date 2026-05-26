@@ -12761,30 +12761,17 @@ setInterval(() => {
   // The JSON dedupe in snapshotNow already prevents identical snapshots.
   function snapshotDebounced() { snapshotNow(); }
 
-  /* ---------- Trigger snapshots from multiple sources for reliability ----- */
-
-  /* (A) Wrap the global saveState. Most state mutations go through this. */
-  try {
-    if (typeof saveState === 'function') {
-      const _orig = saveState;
-      saveState = function() {
-        snapshotDebounced();
-        return _orig.apply(this, arguments);
-      };
-    }
-  } catch (_) {}
-
-  /* (B) Wrap localStorage.setItem as a belt-and-suspenders backup. Every
-        save ultimately calls setItem(STORAGE_KEY, …) — even paths that
-        bypass our saveState wrapper (e.g. async callbacks captured before
-        the wrap) still land here. */
-  try {
-    const _origSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(key, value) {
-      if (key === STORAGE_KEY) snapshotDebounced();
-      return _origSetItem(key, value);
-    };
-  } catch (_) {}
+  /* ---------- Snapshot strategy: pre-action only -------------------------
+     Snapshots are taken on mousedown / touchstart (capture phase) BEFORE
+     the click handler mutates state. This gives us a clean "before" state
+     per user action — each Cmd+Z reverts one user action. We deliberately
+     do NOT wrap saveState or localStorage.setItem, because those fire
+     AFTER the mutation and would push post-mutation snapshots that are
+     functionally identical (modulo tiny field changes) to the pre-mutation
+     ones, polluting the stack with snapshots that all undo to "the same
+     state". The earlier wrapping approach caused exactly that — Cmd+Z
+     restored to a snapshot that already contained the new block, so
+     nothing visibly changed. */
 
   function _rerenderEverything() {
     try { if (typeof drawGauge        === 'function') drawGauge();        } catch (_){}
@@ -12823,14 +12810,20 @@ setInterval(() => {
       const beforeN = (state.scheduledBlocks || []).length;
       const afterN  = (restored.scheduledBlocks || []).length;
       console.log('[undo] restoring: blocks ' + beforeN + ' → ' + afterN);
-      Object.keys(state).forEach(k => { if (!(k in restored)) delete state[k]; });
-      Object.assign(state, restored);
+      // _suppress kept TRUE through the entire restore + rerender so nothing
+      // (renderers, autosaves, etc.) can push a fresh snapshot of the just-
+      // restored state and pollute the stack. Reset in finally.
       _suppress = true;
-      saveState();
-      _suppress = false;
-      _rerenderEverything();
-      if (typeof markSettingsChanged   === 'function') markSettingsChanged();
-      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+      try {
+        Object.keys(state).forEach(k => { if (!(k in restored)) delete state[k]; });
+        Object.assign(state, restored);
+        if (typeof saveState === 'function') saveState();
+        _rerenderEverything();
+        if (typeof markSettingsChanged   === 'function') markSettingsChanged();
+        if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+      } finally {
+        _suppress = false;
+      }
       console.log('[undo] done. State now has ' +
                   (state.scheduledBlocks || []).length + ' blocks');
     } catch (e) {
