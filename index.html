@@ -2528,8 +2528,12 @@
     user-select: none;
   }
   .tg-block:active { cursor: grabbing; }
-  .tg-block.half-l { right: calc(50% + 2px); }
-  .tg-block.half-r { left: calc(50px + (100% - 54px) / 2 + 2px); right: 4px; }
+  /* Two blocks side-by-side — narrow 4 px gap centred on the inner area's
+     midpoint (50% + 23 px, derived from left:50px and right:4px). Each half
+     therefore gets ~(50% − 29 px) of horizontal space, which is much wider
+     than the previous layout (which left a ~27 px gap between halves). */
+  .tg-block.half-l { right: calc(50% - 21px); }
+  .tg-block.half-r { left:  calc(50% + 25px); right: 4px; }
   /* Selected state — shown while a block is the arrow-key / backspace target */
   .tg-block.selected {
     outline: 2px solid #3b82f6;
@@ -12498,6 +12502,118 @@ setInterval(() => {
     });
   })();
 
+})();
+
+/* =========================================================================
+   UNDO  —  Cmd+Z (Mac) / Ctrl+Z (Win/Linux)
+   ------------------------------------------------------------------------
+   Snapshots `state` (deep JSON) right BEFORE each saveState() call (debounced
+   ~700 ms so rapid successive changes collapse into a single undo step).
+   Cmd/Ctrl+Z pops the most recent past snapshot and restores it.
+   - Skip our handler when the user is typing in an <input>/<textarea> so the
+     browser's native text undo still works.
+   - Skip Cmd+Shift+Z (redo) — not implemented.
+   - The wrapping of saveState happens AFTER all initial app code has run; any
+     IIFE that calls saveState() via the global identifier picks up the
+     wrapped version automatically. (No code stashes saveState in a local var.)
+   ====================================================================== */
+(function setupUndo() {
+  const MAX_UNDO = 40;
+  const DEBOUNCE_MS = 700;
+  const _undoStack = [];
+  let _lastSnapMs = 0;
+  let _suppress = false;
+
+  function snapshotNow() {
+    if (_suppress) return;
+    try {
+      const snap = JSON.stringify(state);
+      const top = _undoStack[_undoStack.length - 1];
+      if (snap === top) return;
+      _undoStack.push(snap);
+      if (_undoStack.length > MAX_UNDO) _undoStack.shift();
+      _lastSnapMs = Date.now();
+    } catch (_) {}
+  }
+
+  function snapshotDebounced() {
+    const now = Date.now();
+    if (now - _lastSnapMs < DEBOUNCE_MS && _undoStack.length > 0) return;
+    snapshotNow();
+  }
+
+  /* Wrap the global saveState — every save triggers a (debounced) snapshot. */
+  if (typeof saveState === 'function') {
+    const _orig = saveState;
+    /* eslint-disable no-global-assign */
+    saveState = function() {
+      snapshotDebounced();
+      return _orig.apply(this, arguments);
+    };
+  }
+
+  function _rerenderEverything() {
+    try { if (typeof drawGauge        === 'function') drawGauge();        } catch (_){}
+    try { if (typeof renderFocusMatrix=== 'function') renderFocusMatrix();} catch (_){}
+    try { if (typeof renderTasks      === 'function') renderTasks();      } catch (_){}
+    try { if (typeof renderScores     === 'function') renderScores();     } catch (_){}
+    try { if (typeof renderManaLists  === 'function') renderManaLists();  } catch (_){}
+    try { if (typeof renderWatchLog   === 'function') renderWatchLog();   } catch (_){}
+    try { if (typeof renderImDoing    === 'function') renderImDoing();    } catch (_){}
+    try { if (typeof updateCountdowns === 'function') updateCountdowns(); } catch (_){}
+  }
+
+  function undo() {
+    if (_undoStack.length < 1) return;
+    const currentSnap = JSON.stringify(state);
+    let target;
+    if (_undoStack[_undoStack.length - 1] === currentSnap) {
+      // Top equals current — pop it and peek the next one
+      _undoStack.pop();
+      if (!_undoStack.length) return;
+      target = _undoStack[_undoStack.length - 1];
+    } else {
+      // Top is the most recent "before" state — restore it directly
+      target = _undoStack[_undoStack.length - 1];
+    }
+    try {
+      const restored = JSON.parse(target);
+      // Replace state's keys with restored values (keep same reference)
+      Object.keys(state).forEach(k => { if (!(k in restored)) delete state[k]; });
+      Object.assign(state, restored);
+      _suppress = true;
+      saveState();
+      _suppress = false;
+      _rerenderEverything();
+      if (typeof markSettingsChanged   === 'function') markSettingsChanged();
+      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+    } catch (e) {
+      _suppress = false;
+      console.warn('Undo failed:', e);
+    }
+  }
+
+  /* Expose for debugging / console */
+  window.__undo = undo;
+
+  document.addEventListener('keydown', (e) => {
+    // Cmd+Z (Mac) or Ctrl+Z (Win/Linux). Skip Shift (= redo, not implemented).
+    if (e.shiftKey) return;
+    if (!(e.metaKey || e.ctrlKey)) return;
+    if (e.key !== 'z' && e.key !== 'Z') return;
+    // Let the browser handle native text undo when typing in an input field.
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
+               ae.isContentEditable)) {
+      return;
+    }
+    e.preventDefault();
+    undo();
+  });
+
+  /* Seed history with the initial state on next idle tick so the user can
+     immediately undo their first change. */
+  setTimeout(snapshotNow, 0);
 })();
 </script>
 </body>
