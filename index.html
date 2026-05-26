@@ -12747,15 +12747,16 @@ setInterval(() => {
       _undoStack.push(snap);
       if (_undoStack.length > MAX_UNDO) _undoStack.shift();
       _lastSnapMs = Date.now();
-      if (window.__undoDebug) console.log('[undo] snap, stack:', _undoStack.length);
-    } catch (_) {}
+      console.log('[undo] snap pushed → stack=' + _undoStack.length +
+                  ' blocks=' + (state.scheduledBlocks || []).length);
+    } catch (e) {
+      console.error('[undo] snap error:', e);
+    }
   }
 
-  function snapshotDebounced() {
-    const now = Date.now();
-    if (now - _lastSnapMs < DEBOUNCE_MS && _undoStack.length > 0) return;
-    snapshotNow();
-  }
+  // No more debounce — every distinct state mutation creates an undo step.
+  // The JSON dedupe in snapshotNow already prevents identical snapshots.
+  function snapshotDebounced() { snapshotNow(); }
 
   /* ---------- Trigger snapshots from multiple sources for reliability ----- */
 
@@ -12794,21 +12795,31 @@ setInterval(() => {
   }
 
   function undo() {
-    if (_undoStack.length < 1) return;
+    console.log('[undo] called → stack=' + _undoStack.length +
+                ' current blocks=' + (state.scheduledBlocks || []).length);
+    if (_undoStack.length < 1) {
+      console.warn('[undo] stack empty, nothing to undo');
+      return;
+    }
     const currentSnap = JSON.stringify(state);
     let target;
     if (_undoStack[_undoStack.length - 1] === currentSnap) {
-      // Top equals current — pop it and peek the next one
       _undoStack.pop();
-      if (!_undoStack.length) return;
+      if (!_undoStack.length) {
+        console.warn('[undo] after pop, stack empty');
+        return;
+      }
       target = _undoStack[_undoStack.length - 1];
+      console.log('[undo] top == current, popped, restoring previous');
     } else {
-      // Top is the most recent "before" state — restore it directly
       target = _undoStack[_undoStack.length - 1];
+      console.log('[undo] top differs from current, restoring top directly');
     }
     try {
       const restored = JSON.parse(target);
-      // Replace state's keys with restored values (keep same reference)
+      const beforeN = (state.scheduledBlocks || []).length;
+      const afterN  = (restored.scheduledBlocks || []).length;
+      console.log('[undo] restoring: blocks ' + beforeN + ' → ' + afterN);
       Object.keys(state).forEach(k => { if (!(k in restored)) delete state[k]; });
       Object.assign(state, restored);
       _suppress = true;
@@ -12817,9 +12828,11 @@ setInterval(() => {
       _rerenderEverything();
       if (typeof markSettingsChanged   === 'function') markSettingsChanged();
       if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+      console.log('[undo] done. State now has ' +
+                  (state.scheduledBlocks || []).length + ' blocks');
     } catch (e) {
       _suppress = false;
-      console.warn('Undo failed:', e);
+      console.error('[undo] failed:', e);
     }
   }
 
