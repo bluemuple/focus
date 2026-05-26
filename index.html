@@ -5508,6 +5508,8 @@ function renderTasks() {
           if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) {
             stopActiveTimer('finish');
           }
+          // Drop future scheduled blocks; cut the current covering block at NOW.
+          trimFutureBlocksForTask(q, i);
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -6890,6 +6892,11 @@ function renderFocusMatrix() {
           if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) {
             stopActiveTimer('finish');
           }
+          // Drop any scheduled-block tail still ahead of the current time —
+          // a finished task shouldn't keep its future blocks on the gauge.
+          // The block currently being passed by the time line is cut at NOW;
+          // blocks entirely in the future are deleted.
+          trimFutureBlocksForTask(q, i);
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -6909,6 +6916,7 @@ function renderFocusMatrix() {
         saveState();
         markSettingsChanged(); debouncedPushSettings();
         renderFocusMatrix();
+        if (typeof drawGauge === 'function') drawGauge();
       };
       textEl.onclick = () => {
         const _tgNow = Date.now();
@@ -8233,6 +8241,35 @@ function fmtTimeBlockDur(ms) {
   if (min < 60) return min + 'm';
   const h = Math.floor(min / 60), m = min % 60;
   return m ? `${h}h${m}m` : `${h}h`;
+}
+
+/* Trim scheduled gauge blocks for a finished task:
+   • blocks ENTIRELY in the future  →  delete
+   • block being passed by the current time line  →  cut endMs at NOW,
+     freezing any open session so colour stops growing.
+   Used by the "mark task done" checkbox so future scheduled study sessions
+   don't sit on the gauge after the task is already finished. */
+function trimFutureBlocksForTask(q, i, atMs) {
+  if (!Array.isArray(state.scheduledBlocks)) return;
+  const now = atMs || Date.now();
+  for (let bi = state.scheduledBlocks.length - 1; bi >= 0; bi--) {
+    const b = state.scheduledBlocks[bi];
+    if (b.q !== q || b.taskIdx !== i) continue;
+    if (b.startMs >= now) {
+      // Entirely in the future — remove the block outright
+      state.scheduledBlocks.splice(bi, 1);
+    } else if (b.endMs > now) {
+      // Current-time line is INSIDE this block — chop the tail
+      if (b.activeAt && !b.activeEndMs) {
+        // Close any open session so worked time before the chop is preserved
+        if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+        b.workedSegments.push({ startMs: b.activeAt, endMs: now });
+        b.activeAt = null;
+      }
+      b.endMs = now;
+      if (!b.activeEndMs) b.activeEndMs = now;
+    }
+  }
 }
 
 /* Return the list of [startMs, endMs] segments that should be coloured on
