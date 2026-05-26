@@ -1702,6 +1702,28 @@
   /* Tasks header — title click toggles collapse (handled by collapsible logic);
      a separate button toggles the phone 2×2 layout. */
   .focus-tasks-title { display: flex; align-items: center; gap: 8px; }
+  /* ===== Time/Tasks wrapper & split-view toggle (phone-only feature) =====
+     PC default: behave as a transparent passthrough so layout is unchanged.
+     Phone default (stacked): vertical column. Phone split: 1:1 horizontal grid. */
+  .time-tasks-wrap { display: contents; }
+  .split-view-toggle {
+    /* Hidden on PC (matched by the same min-width: 701px rule below). */
+    background: transparent; border: none; padding: 4px;
+    cursor: pointer; color: #6b7280;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+  }
+  .split-view-toggle:hover { background: #f3f4f6; color: #111827; }
+  .split-view-toggle .sv-icon { display: none; }
+  body:not(.tt-split) .split-view-toggle .sv-split { display: inline-block; }  /* offer split */
+  body.tt-split       .split-view-toggle .sv-stack { display: inline-block; }  /* offer stack-back */
+  @media (min-width: 701px) { .split-view-toggle { display: none; } }
+  /* Make the Time-section header a flex row so the toggle button can sit
+     to the right of the "Time" h3. */
+  .time-head { display: flex; align-items: center; justify-content: space-between; }
+  /* Master add-task — only visible in split mode. */
+  .master-add-task { display: none; }
+
   .matrix-view-toggle {
     background: transparent; border: 1px solid transparent;
     padding: 4px 6px; border-radius: 6px; cursor: pointer;
@@ -1747,6 +1769,124 @@
     /* Phone (default stacked) — slightly tighter than PC. */
     .focus-cell { min-height: 110px; }
     .focus-cell .task-row .task-text { line-height: 1.25; }
+
+    /* ===== Phone split-view layout =====
+       Activated by body.tt-split. Time gauge on the LEFT, unified Tasks
+       column on the RIGHT, equal width, narrow gap. Inside the Tasks
+       column: per-quadrant titles + per-cell +add task are hidden; all
+       task rows from q1..q4 flow into a single grey-backed list with the
+       master +add task pinned at top. Each task row keeps its quadrant
+       colour so the user can still tell which quadrant a task belongs to. */
+    .time-tasks-wrap { display: flex; flex-direction: column; gap: 12px; }
+    body.tt-split .time-tasks-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      align-items: start;
+    }
+    /* Tasks panel — grey background to read as a unified container,
+       individual task bars carry the quadrant colour. */
+    body.tt-split #tasks-panel {
+      background: #f3f4f6;
+      padding: 8px;
+    }
+    body.tt-split #time-panel { padding: 8px; }
+    /* Hide per-quadrant headings + per-cell add-task in split mode —
+       a single master add-task at top of the unified list replaces them. */
+    body.tt-split #focus-matrix .focus-cell > h4 { display: none; }
+    body.tt-split #focus-matrix .focus-cell > button.add-task { display: none; }
+    body.tt-split #focus-matrix .focus-cell .add-task-input { display: block; }
+    /* Flatten the 4 cells into a single column. display:contents on the
+       cells lets each .tasks div flow directly into the matrix's flex
+       column without their own borders / padding. */
+    body.tt-split #focus-matrix {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-top: 8px;
+    }
+    body.tt-split #focus-matrix .focus-cell {
+      display: contents;
+    }
+    body.tt-split #focus-matrix .focus-cell .tasks {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    /* Master +add task at top of the unified list. Grey shape matches
+       the regular .add-task look. */
+    body.tt-split .master-add-task {
+      display: block;
+      width: 100%;
+      background: #e5e7eb;
+      color: #4b5563;
+      border: 1px dashed #cbd5e1;
+      border-radius: 6px;
+      padding: 7px 8px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      margin-top: 6px;
+    }
+    body.tt-split .master-add-task:hover { background: #d1d5db; color: #1f2937; }
+    /* Quadrant picker popup that appears in place of the master +add task
+       after it's clicked. Stacks the 4 quadrant choices vertically with
+       the corresponding pastel background tint. */
+    body.tt-split .quadrant-picker {
+      display: flex; flex-direction: column; gap: 4px;
+      margin-top: 6px;
+    }
+    body.tt-split .quadrant-picker .qp {
+      border: none; border-radius: 6px; padding: 8px 10px;
+      font-weight: 600; cursor: pointer; text-align: left;
+      font-size: .85rem;
+    }
+    body.tt-split .quadrant-picker .qp.q1 { background: #F4BDBD; color: #7E2C2C; }
+    body.tt-split .quadrant-picker .qp.q2 { background: #F6E2AA; color: #6E4F0E; }
+    body.tt-split .quadrant-picker .qp.q3 { background: #D0BCE2; color: #432878; }
+    body.tt-split .quadrant-picker .qp.q4 { background: #BCD0E8; color: #1A4376; }
+    body.tt-split .quadrant-picker .qp-cancel {
+      background: transparent; border: 1px dashed #cbd5e1;
+      color: #6b7280; border-radius: 6px; padding: 6px 8px;
+      cursor: pointer; font-size: .8rem;
+    }
+    /* Colour-tinted input that appears AFTER picking a quadrant. */
+    body.tt-split .qp-input {
+      width: 100%;
+      border: 1px solid;
+      border-radius: 6px; padding: 7px 9px;
+      font-size: .9rem; font-weight: 500;
+      margin-top: 6px;
+      outline: none;
+    }
+    body.tt-split .qp-input.q1 { background: #FCE7E7; border-color: #F4BDBD; color: #7E2C2C; }
+    body.tt-split .qp-input.q2 { background: #FCF2D6; border-color: #F6E2AA; color: #6E4F0E; }
+    body.tt-split .qp-input.q3 { background: #ECE0F4; border-color: #D0BCE2; color: #432878; }
+    body.tt-split .qp-input.q4 { background: #E2EBF4; border-color: #BCD0E8; color: #1A4376; }
+    /* Allow up to 2 lines of task text in split mode (taller bars are OK —
+       the column is narrower than full-width). */
+    body.tt-split #focus-matrix .task-row .task-text {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      overflow: hidden;
+      white-space: normal;
+      line-height: 1.2;
+    }
+    /* Task row tinted with quadrant colour family in split mode. */
+    body.tt-split #focus-matrix .focus-cell.q1 .task-row { background: #FCE7E7; }
+    body.tt-split #focus-matrix .focus-cell.q2 .task-row { background: #FCF2D6; }
+    body.tt-split #focus-matrix .focus-cell.q3 .task-row { background: #ECE0F4; }
+    body.tt-split #focus-matrix .focus-cell.q4 .task-row { background: #E2EBF4; }
+    /* Hide the matrix-view-toggle button in split mode — the grid/list
+       choice is moot when there's no matrix to show. */
+    body.tt-split #matrix-view-toggle { display: none; }
+    /* In split mode the per-quadrant title is hidden, so the user can't
+       toggle .show-actions by tapping it. Always show ✎ × in split mode so
+       editing / deleting tasks stays reachable. */
+    body.tt-split #focus-matrix .focus-cell .task-row .task-edit-pen,
+    body.tt-split #focus-matrix .focus-cell .task-row > .x {
+      display: inline-flex !important;
+    }
 
     /* When a pomodoro is running on phone — show the timer to the LEFT of
        the $bid pill so the bid stays visible (was previously hidden by the
@@ -3278,6 +3418,13 @@
           </div>
         </div>
 
+        <!-- ===== Time + Tasks wrapper (phone-only behavior) ============
+             By default this wrapper stacks Time gauge ON TOP of the Tasks
+             panel (current mobile behavior). When the user taps the split
+             toggle (next to the "Time" header), .split is added and the two
+             panels render side-by-side in a 1:1 grid. PC layout is
+             unaffected (the wrapper is transparent there). ============= -->
+        <div class="time-tasks-wrap" id="time-tasks-wrap">
         <!-- ===== Time area — mobile-only mini-gauge =====
              Replaces the left-side gauge on phones. Shows a configurable
              time window (1-12 h) with the current-time line locked at
@@ -3288,6 +3435,23 @@
             <h3 id="time-toggle" style="margin:0;cursor:pointer;user-select:none;" title="Tap to scroll back to current time">
               <span>Time</span>
             </h3>
+            <!-- Split-view toggle. Phone-only (CSS hides on PC). Click swaps
+                 the wrapper between stacked (Time on top, Tasks below) and
+                 split (Time | Tasks side-by-side). -->
+            <button class="split-view-toggle" id="split-view-toggle" type="button" title="Time / Tasks 양옆 배치 토글" aria-label="Toggle split view">
+              <!-- Side-by-side icon — visible when current mode is stacked;
+                   click → switch to split. -->
+              <svg class="sv-icon sv-split" viewBox="0 0 14 14" width="16" height="16" aria-hidden="true">
+                <rect x="1.25" y="1.25" width="5" height="11.5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                <rect x="7.75" y="1.25" width="5" height="11.5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+              </svg>
+              <!-- Stacked icon — visible when current mode is split;
+                   click → switch back to stacked. -->
+              <svg class="sv-icon sv-stack" viewBox="0 0 14 14" width="16" height="16" aria-hidden="true">
+                <rect x="1.25" y="1.25" width="11.5" height="5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+                <rect x="1.25" y="7.75" width="11.5" height="5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
+              </svg>
+            </button>
           </div>
           <!-- Outer = scrollable viewport, height = durationMs × 1px/min.
                Inner = 24h fixed content. iOS-style overflow scrolling lets
@@ -3310,7 +3474,7 @@
           <div class="time-resize-handle" id="time-resize-handle" title="Drag to resize"></div>
         </div>
 
-        <div class="panel" style="margin:0;">
+        <div class="panel" id="tasks-panel" style="margin:0;">
           <h3 class="focus-tasks-title" id="focus-tasks-title" style="margin:0;">
             <span>Tasks</span>
             <button class="matrix-view-toggle" id="matrix-view-toggle" type="button" title="레이아웃 전환" aria-label="Toggle matrix layout">
@@ -3328,8 +3492,16 @@
               </svg>
             </button>
           </h3>
+          <!-- Split-view-only "master" +add task button. Hidden in stacked /
+               PC modes (each quadrant cell has its own +add task there). In
+               split mode, this single button at the top of the unified flat
+               list opens a quadrant picker; once a quadrant is chosen the
+               grey button morphs into a colour-tinted input matching that
+               quadrant. -->
+          <button class="add-task master-add-task" id="master-add-task" type="button">+ add task</button>
           <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
         </div>
+        </div><!-- /.time-tasks-wrap -->
 
         <div class="panel" style="margin:0;">
           <h3>Habits &amp; Triggers</h3>
@@ -3956,6 +4128,7 @@ const defaultState = () => ({
   motivationalCurrent: null,  // { text, selectedAt }
   matrixExpanded: true,       // mobile: matrix starts in the larger size — tap ⤡ to compact
   focusMatrixListOnly: false, // phone: false = 2×2 grid (all cells), true = 1-column hide-empty
+  focusSplitView: false,      // phone: true = Time gauge | Tasks list side-by-side (false = stacked, current behaviour)
   // Cloud sync (Supabase) — all optional. Empty = local-only.
   sbUrl: '',
   sbKey: '',
@@ -11516,6 +11689,151 @@ if (_matrixViewBtn) {
   });
   // Apply saved state to body class so the icon swap CSS picks it up.
   if (state.focusMatrixListOnly) document.body.classList.add('fm-list-only');
+}
+
+/* ===== Split-view toggle (Time | Tasks side-by-side on phone) =====
+   Toggles body.tt-split. CSS keys off this class to switch the layout and
+   morph the Tasks side into a unified colour-coded flat list with a master
+   +add task at top. PC layout is unaffected (button is display:none on PC). */
+const _splitViewBtn = document.getElementById('split-view-toggle');
+if (_splitViewBtn) {
+  _splitViewBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.focusSplitView = !state.focusSplitView;
+    saveState();
+    document.body.classList.toggle('tt-split', !!state.focusSplitView);
+    // Re-render the matrix so .focus-cell.is-empty visibility and any
+    // mode-specific tweaks recompute (cells with no tasks still flow in
+    // split mode, but the title would be hidden anyway via CSS).
+    if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  });
+  // Apply saved preference on boot.
+  if (state.focusSplitView) document.body.classList.add('tt-split');
+}
+
+/* ===== Master "+add task" — split-view only =====
+   In split mode the per-quadrant +add task buttons are hidden; this single
+   button at the top of the unified Tasks column lets the user start a new
+   task with two taps: tap "+add task" → pick a quadrant from the popup → an
+   input tinted to that quadrant's pastel family appears. Enter commits and
+   re-renders so the regular task row replaces the input and the grey
+   master button comes back. Internally we re-use addTaskFromMasterPicker so
+   the bid + addLogged + activeTimer-idx-bump logic matches a normal add. */
+const _masterAddBtn = document.getElementById('master-add-task');
+if (_masterAddBtn) {
+  _masterAddBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Only meaningful in split mode (CSS hides it otherwise) but guard anyway.
+    if (!state.focusSplitView) return;
+    openMasterQuadrantPicker(_masterAddBtn);
+  });
+}
+function openMasterQuadrantPicker(masterBtn) {
+  // Replace the master button with a vertical 4-button picker (+ cancel).
+  const parent = masterBtn.parentNode;
+  if (!parent) return;
+  // Bail if a picker is already showing — repeated clicks shouldn't stack them.
+  if (parent.querySelector('.quadrant-picker')) return;
+  const picker = document.createElement('div');
+  picker.className = 'quadrant-picker';
+  const labels = {
+    q1: 'Important · Urgent',
+    q2: 'Important · Not Urgent',
+    q3: 'Not Important · Urgent',
+    q4: 'Not Important · Not Urgent'
+  };
+  ['q1','q2','q3','q4'].forEach(q => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'qp ' + q;
+    b.dataset.q = q;
+    b.textContent = labels[q];
+    picker.appendChild(b);
+  });
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'qp-cancel';
+  cancel.textContent = '취소';
+  picker.appendChild(cancel);
+  // Swap master for picker.
+  masterBtn.style.display = 'none';
+  parent.insertBefore(picker, masterBtn);
+  // Quadrant chosen → swap picker for a colour-tinted input.
+  picker.querySelectorAll('button[data-q]').forEach(b => {
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      const q = b.dataset.q;
+      showQuadrantInput(parent, picker, masterBtn, q);
+    };
+  });
+  cancel.onclick = (ev) => {
+    ev.stopPropagation();
+    picker.remove();
+    masterBtn.style.display = '';
+  };
+}
+function showQuadrantInput(parent, picker, masterBtn, q) {
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'qp-input ' + q;
+  input.placeholder = 'Task name';
+  input.maxLength = 200;
+  parent.insertBefore(input, picker);
+  picker.remove();
+  try { input.focus(); } catch (_) {}
+  let committed = false;
+  function commit(saveIt) {
+    if (committed) return;
+    committed = true;
+    if (saveIt) {
+      const v = (input.value || '').trim();
+      if (v) {
+        const bid = +(state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10;
+        const at = state.activeTimer;
+        // Same activeTimer.idx bump as the regular +add task path (a new
+        // task at index 0 shifts every existing task in this quadrant down).
+        if (at && at.type === 'pomodoro' && at.q === q && typeof at.idx === 'number') {
+          at.idx = at.idx + 1;
+        }
+        if (!state.tasks[q]) state.tasks[q] = [];
+        state.tasks[q].unshift({
+          text: v.slice(0, 200),
+          done: false, elapsedMs: 0, segments: [],
+          bid: bid, addLogged: false
+        });
+        if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
+        saveState();
+        markSettingsChanged(); pushSettingsToCloud();
+      }
+    }
+    // Restore the grey master button at the top and redraw the list.
+    input.remove();
+    masterBtn.style.display = '';
+    if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+  }
+  input.addEventListener('blur', () => commit(true));
+  input.addEventListener('keydown', (e) => {
+    // Korean IME guard — same as the per-quadrant +add task path. Without
+    // this, the first Enter mid-composition would commit the in-progress
+    // syllable and re-spawn a new input mid-IME, dropping the trailing jamo.
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit(true);
+      // Re-open the picker on commit so the user can rapid-fire tasks
+      // without finding the master button again.
+      if (input.value && (input.value || '').trim()) {
+        // After commit() ran, the master button is visible again — open the
+        // picker once more for continuous entry.
+        const freshMaster = document.getElementById('master-add-task');
+        if (freshMaster && state.focusSplitView) {
+          openMasterQuadrantPicker(freshMaster);
+        }
+      }
+    } else if (e.key === 'Escape') {
+      commit(false);
+    }
+  });
 }
 
 /* ===== Money/Mana mobile compact toggle =====
