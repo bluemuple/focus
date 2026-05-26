@@ -3747,8 +3747,34 @@
 
 <script>
 /* ===========================================================
-   STORAGE
+   EARLY UNDO HOTKEY  —  registered FIRST so no later capture-phase
+   handler can win the registration race. Delegates to window.__undo
+   which is wired up by the setupUndo IIFE at the bottom of this script.
+   Always console.logs on Cmd/Ctrl+Z so the user can confirm in DevTools
+   that the keystroke is being detected even before checking stack state.
 =========================================================== */
+window.__undoEarlyLoaded = true;
+(function _earlyUndoHotkey() {
+  function handler(e) {
+    if (e._undoFired) return;
+    if (e.shiftKey) return;
+    if (!(e.metaKey || e.ctrlKey)) return;
+    const isZ = (e.code === 'KeyZ') || e.key === 'z' || e.key === 'Z';
+    if (!isZ) return;
+    e._undoFired = true;
+    e.preventDefault();
+    e.stopPropagation();
+    console.log('[undo] Cmd/Ctrl+Z detected');
+    if (typeof window.__undo === 'function') {
+      window.__undo();
+    } else {
+      console.warn('[undo] __undo() not ready yet — try again in a moment');
+    }
+  }
+  window.addEventListener('keydown',   handler, true);
+  document.addEventListener('keydown', handler, true);
+})();
+
 const STORAGE_KEY = 'concentration-app-v1';
 const STATS_KEY   = 'concentration-stats-v1';
 
@@ -12667,6 +12693,10 @@ setInterval(() => {
   let _lastSnapMs = 0;
   let _suppress = false;
 
+  // Verification marker — type `window.__undoSetupRan` in DevTools to confirm
+  // this IIFE actually executed (i.e. no JS error stopped it prematurely).
+  window.__undoSetupRan = true;
+
   function snapshotNow() {
     if (_suppress) return;
     try {
@@ -12756,23 +12786,10 @@ setInterval(() => {
   window.__undo = undo;
   window.__undoStack = _undoStack;   // inspect via DevTools console
 
-  /* Capture-phase listener on window — fires BEFORE any bubble-phase handler,
-     so it can't be blocked by other code calling stopPropagation. We use
-     e.code instead of e.key so non-English IME layouts (Korean etc.) still
-     trigger Cmd+Z reliably. */
-  function _undoHotkeyHandler(e) {
-    if (e.shiftKey) return;            // Cmd+Shift+Z = redo (not implemented)
-    if (!(e.metaKey || e.ctrlKey)) return;
-    // Layout-independent — KeyZ is always the physical Z slot regardless of IME
-    const isZ = (e.code === 'KeyZ') || e.key === 'z' || e.key === 'Z';
-    if (!isZ) return;
-    e.preventDefault();
-    e.stopPropagation();
-    if (window.__undoDebug) console.log('[undo] hotkey fired, stack size:', _undoStack.length);
-    undo();
-  }
-  window.addEventListener('keydown', _undoHotkeyHandler, true);
-  document.addEventListener('keydown', _undoHotkeyHandler, true);
+  /* Keyboard registration moved to the EARLY hotkey IIFE at the top of this
+     script — that one delegates to window.__undo (set above). Registering up
+     there guarantees we win the capture-phase registration race even against
+     scripts that get parsed after this one. */
 
   /* Seed history with the initial state. Synchronous first call so undo works
      IMMEDIATELY after the script loads, plus a deferred call to catch any late
@@ -12783,6 +12800,14 @@ setInterval(() => {
   /* Periodic safety-net snapshot — even if every other trigger fails, this
      guarantees the user can undo to ~2 seconds ago. */
   setInterval(snapshotDebounced, 2000);
+
+  /* Also snapshot on every user interaction (mousedown / touchstart) so we
+     always have a "pre-action" state captured even if saveState wrappers fail
+     to fire for some reason. Idempotent thanks to the JSON dedupe in
+     snapshotNow. */
+  function _onUserAction() { snapshotDebounced(); }
+  document.addEventListener('mousedown',  _onUserAction, true);
+  document.addEventListener('touchstart', _onUserAction, true);
 })();
 </script>
 </body>
