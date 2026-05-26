@@ -1723,6 +1723,17 @@
   .time-head { display: flex; align-items: center; justify-content: space-between; }
   /* Master add-task — only visible in split mode. */
   .master-add-task { display: none; }
+  /* H3 text in stacked mode: just "Time". The " & Tasks" parts hide.
+     In split mode the same h3 reads "Time & Tasks", with each label
+     independently clickable. cursor:pointer on individual labels (not
+     the whole h3) so the gap between Time/Tasks doesn't feel clickable. */
+  #time-toggle { cursor: default; }
+  #time-toggle .tt-time { cursor: pointer; }
+  #time-toggle .tt-time:hover { color: #2563eb; }
+  body:not(.tt-split) #time-toggle .tt-amp,
+  body:not(.tt-split) #time-toggle .tt-tasks { display: none; }
+  body.tt-split #time-toggle .tt-tasks { cursor: pointer; }
+  body.tt-split #time-toggle .tt-tasks:hover { color: #2563eb; }
 
   .matrix-view-toggle {
     background: transparent; border: 1px solid transparent;
@@ -1771,26 +1782,49 @@
     .focus-cell .task-row .task-text { line-height: 1.25; }
 
     /* ===== Phone split-view layout =====
-       Activated by body.tt-split. Time gauge on the LEFT, unified Tasks
-       column on the RIGHT, equal width, narrow gap. Inside the Tasks
-       column: per-quadrant titles + per-cell +add task are hidden; all
-       task rows from q1..q4 flow into a single grey-backed list with the
-       master +add task pinned at top. Each task row keeps its quadrant
-       colour so the user can still tell which quadrant a task belongs to. */
+       Activated by body.tt-split. The Time + Tasks panels merge into a
+       SINGLE visual container: the Time panel keeps its header ("Time &
+       Tasks") and the gauge on the LEFT; the Tasks panel loses its own
+       header / border and sits flush to the RIGHT, sharing the row with
+       the gauge. Equal-width columns, narrow gap. All task rows from
+       q1..q4 flow into one grey-backed list with a master +add task at
+       top. Each task row keeps its quadrant colour family. */
     .time-tasks-wrap { display: flex; flex-direction: column; gap: 12px; }
     body.tt-split .time-tasks-wrap {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      align-items: start;
+      gap: 0;                       /* zero gap → looks like one box */
+      align-items: stretch;          /* both columns share row height */
     }
-    /* Tasks panel — grey background to read as a unified container,
-       individual task bars carry the quadrant colour. */
+    /* Tasks panel — strip its own header / border so it visually merges
+       into the Time panel's frame. Tile colour matches the grey base used
+       around individual coloured task rows. */
     body.tt-split #tasks-panel {
       background: #f3f4f6;
       padding: 8px;
+      border: none;
+      margin: 0;
+      border-radius: 0 8px 8px 0;   /* round only the OUTER right corners */
+      box-shadow: none;
     }
-    body.tt-split #time-panel { padding: 8px; }
+    /* Hide the entire Tasks h3 (incl. matrix-view-toggle) in split mode.
+       The merged container's single header lives in #time-toggle now. */
+    body.tt-split #tasks-panel > .focus-tasks-title { display: none; }
+    body.tt-split #time-panel {
+      padding: 8px;
+      border-radius: 8px 0 0 8px;   /* round only the OUTER left corners */
+      margin: 0;
+      /* Same grey chrome as #tasks-panel so the two halves read as a
+         single unified card. The actual gauge (.time-area) inside keeps
+         its own white background. */
+      background: #f3f4f6;
+      border-color: #e5e7eb;
+      border-right: none;            /* seam down the middle stays clean */
+      box-shadow: none;
+    }
+    /* Hide the resize handle in split mode — gauge height is now driven
+       by the matching tasks-list height (drawTimeArea takes care of it). */
+    body.tt-split #time-resize-handle { display: none; }
     /* Hide per-quadrant headings + per-cell add-task in split mode —
        a single master add-task at top of the unified list replaces them. */
     body.tt-split #focus-matrix .focus-cell > h4 { display: none; }
@@ -1881,10 +1915,25 @@
        choice is moot when there's no matrix to show. */
     body.tt-split #matrix-view-toggle { display: none; }
     /* In split mode the per-quadrant title is hidden, so the user can't
-       toggle .show-actions by tapping it. Always show ✎ × in split mode so
-       editing / deleting tasks stays reachable. */
+       toggle .show-actions by tapping it. Instead, the "Tasks" label in
+       the merged header (body.tt-show-actions) acts as the global toggle:
+       OFF (default) — $ ✎ × all hidden on every task bar. The pomodoro
+                       timer remains visible whenever a task is running.
+       ON  — $ ✎ × all shown on every task bar. */
+    body.tt-split #focus-matrix .focus-cell .task-row .task-bid,
     body.tt-split #focus-matrix .focus-cell .task-row .task-edit-pen,
     body.tt-split #focus-matrix .focus-cell .task-row > .x {
+      display: none !important;
+    }
+    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row .task-bid,
+    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row .task-edit-pen,
+    body.tt-split.tt-show-actions #focus-matrix .focus-cell .task-row > .x {
+      display: inline-flex !important;
+    }
+    /* Pomodoro display (timer) — ALWAYS visible when present, regardless
+       of the $ ✎ × visibility toggle. The user wants to see active timers
+       at all times. */
+    body.tt-split #focus-matrix .focus-cell .task-row .pomodoro-display {
       display: inline-flex !important;
     }
 
@@ -3432,13 +3481,21 @@
              edges independently. ============================================ -->
         <div class="panel time-panel" id="time-panel" style="margin:0;">
           <div class="time-head">
-            <h3 id="time-toggle" style="margin:0;cursor:pointer;user-select:none;" title="Tap to scroll back to current time">
-              <span>Time</span>
+            <h3 id="time-toggle" style="margin:0;user-select:none;">
+              <!-- "Time" span — click scrolls the gauge back to current time. -->
+              <span class="tt-time" id="tt-time-label" title="Tap to scroll back to current time">Time</span>
+              <!-- " & Tasks" appears only in split mode (CSS toggles via body.tt-split). -->
+              <span class="tt-amp"> &amp; </span>
+              <!-- "Tasks" span — in split mode, click toggles whether $ ✎ ×
+                   actions appear on every task bar. Timer remains visible. -->
+              <span class="tt-tasks" id="tt-tasks-label" title="Tap to show / hide $ ✎ × on task bars">Tasks</span>
             </h3>
             <!-- Split-view toggle. Phone-only (CSS hides on PC). Click swaps
                  the wrapper between stacked (Time on top, Tasks below) and
-                 split (Time | Tasks side-by-side). -->
-            <button class="split-view-toggle" id="split-view-toggle" type="button" title="Time / Tasks 양옆 배치 토글" aria-label="Toggle split view">
+                 split (Time | Tasks side-by-side). touch-action: manipulation
+                 prevents iOS Safari's double-tap zoom interpretation from
+                 firing the click handler twice. -->
+            <button class="split-view-toggle" id="split-view-toggle" type="button" title="Time / Tasks 양옆 배치 토글" aria-label="Toggle split view" style="touch-action:manipulation;">
               <!-- Side-by-side icon — visible when current mode is stacked;
                    click → switch to split. -->
               <svg class="sv-icon sv-split" viewBox="0 0 14 14" width="16" height="16" aria-hidden="true">
@@ -4129,6 +4186,7 @@ const defaultState = () => ({
   matrixExpanded: true,       // mobile: matrix starts in the larger size — tap ⤡ to compact
   focusMatrixListOnly: false, // phone: false = 2×2 grid (all cells), true = 1-column hide-empty
   focusSplitView: false,      // phone: true = Time gauge | Tasks list side-by-side (false = stacked, current behaviour)
+  splitActionsVisible: false, // split-mode: true = $ ✎ × visible on every task bar; false = hidden (default)
   // Cloud sync (Supabase) — all optional. Empty = local-only.
   sbUrl: '',
   sbKey: '',
@@ -7378,6 +7436,12 @@ function renderFocusMatrix() {
     if (typeof attachCellDragHandlers === 'function') attachCellDragHandlers(cell, q);
     root.appendChild(cell);
   });
+  // In split mode, the tasks list determines the gauge viewport height.
+  // Defer to the next frame so the browser has finished laying out the
+  // matrix DOM we just appended — otherwise offsetHeight reads as 0.
+  if (state.focusSplitView && typeof drawTimeArea === 'function') {
+    requestAnimationFrame(() => { try { drawTimeArea(); } catch (_) {} });
+  }
 }
 
 /* Open the ✎ "Edit task" popup for a focus-matrix task. Lets the user edit
@@ -8094,10 +8158,36 @@ function drawTimeArea() {
   if (durMs > TIME_MAX_MS) durMs = TIME_MAX_MS;
   state.timeArea.durationMs = durMs;
 
-  /* Viewport height = durationMs / 1h × PX_PER_HOUR */
-  const viewportPx = Math.round((durMs / 3600000) * TIME_PX_PER_HOUR);
+  /* In SPLIT mode the gauge sits beside a list of task bars and the user
+     wants both columns to be the same visual height: gauge starts at its
+     normal default (3 h) but stretches if the tasks list is taller. We
+     compute that here so the 1px-per-minute mapping stays intact (just
+     using a larger durMs locally — state.timeArea.durationMs is the user's
+     preferred minimum, not modified). Clamped to TIME_MAX_MS so a 50-task
+     list can't blow out the viewport.
+     Falls back to stacked behaviour when split is off. */
+  let renderDurMs = durMs;
+  if (state.focusSplitView) {
+    const tasksPanel = document.getElementById('tasks-panel');
+    if (tasksPanel) {
+      // 60 px = 1 hour, so the panel's pixel height converts to minutes,
+      // then to milliseconds, 1:1.
+      const tasksPxHeight = tasksPanel.offsetHeight;
+      const tasksDurMs = Math.round((tasksPxHeight / TIME_PX_PER_HOUR) * 3600000);
+      if (tasksDurMs > renderDurMs) {
+        renderDurMs = Math.min(tasksDurMs, TIME_MAX_MS);
+      }
+    }
+  }
+
+  /* Viewport height = renderDurMs / 1h × PX_PER_HOUR */
+  const viewportPx = Math.round((renderDurMs / 3600000) * TIME_PX_PER_HOUR);
   area.style.height = viewportPx + 'px';
   content.style.height = TIME_CONTENT_HEIGHT_PX + 'px';
+  // Tell the rest of drawTimeArea (which still reads `durMs` for the
+  // visible-range math) to use the stretched value so blocks, the now-line,
+  // and ghost line all map to the larger viewport in split mode.
+  durMs = renderDurMs;
 
   /* Content range = 24 h anchored to most recent 4 AM (matches main gauge) */
   const now = Date.now();
@@ -11475,7 +11565,10 @@ refreshMotivation(false);
   try { saved = JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') || {}; } catch (_) {}
   // Defaults: Activity log collapsed; everything else expanded.
   const defaults = { 'watch-log-panel': true };
-  const panels = focusRight.querySelectorAll(':scope > .panel');
+  // Include panels nested inside .time-tasks-wrap (the Time + Tasks wrapper
+  // we added so split-view can swap their layout side-by-side). Without
+  // this, those two panels lose their collapsibility entirely.
+  const panels = focusRight.querySelectorAll(':scope > .panel, :scope > .time-tasks-wrap > .panel');
   panels.forEach((panel) => {
     // Find the FIRST top-level h2/h3 inside the panel — that's the title row.
     const title = panel.querySelector(':scope > h2, :scope > h3');
@@ -11694,21 +11787,69 @@ if (_matrixViewBtn) {
 /* ===== Split-view toggle (Time | Tasks side-by-side on phone) =====
    Toggles body.tt-split. CSS keys off this class to switch the layout and
    morph the Tasks side into a unified colour-coded flat list with a master
-   +add task at top. PC layout is unaffected (button is display:none on PC). */
+   +add task at top. PC layout is unaffected (button is display:none on PC).
+   _splitToggleLock guards against iOS Safari's tap → click double-fire
+   (which previously meant the user had to tap the button 2-3 times to
+   actually switch modes — even runs cancelled each other out). */
+let _splitToggleLock = false;
 const _splitViewBtn = document.getElementById('split-view-toggle');
 if (_splitViewBtn) {
   _splitViewBtn.addEventListener('click', (e) => {
+    e.preventDefault();
     e.stopPropagation();
+    e.stopImmediatePropagation();
+    if (_splitToggleLock) return;
+    _splitToggleLock = true;
+    setTimeout(() => { _splitToggleLock = false; }, 350);
     state.focusSplitView = !state.focusSplitView;
     saveState();
     document.body.classList.toggle('tt-split', !!state.focusSplitView);
-    // Re-render the matrix so .focus-cell.is-empty visibility and any
-    // mode-specific tweaks recompute (cells with no tasks still flow in
-    // split mode, but the title would be hidden anyway via CSS).
+    // When leaving split mode, also clear the "show actions" subclass so
+    // re-entering later starts in the default hidden state.
+    if (!state.focusSplitView) {
+      document.body.classList.remove('tt-show-actions');
+      state.splitActionsVisible = false;
+    }
     if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+    // Resync gauge height to tasks list height (split-mode behaviour).
+    if (typeof drawTimeArea === 'function') drawTimeArea();
   });
   // Apply saved preference on boot.
   if (state.focusSplitView) document.body.classList.add('tt-split');
+  if (state.splitActionsVisible) document.body.classList.add('tt-show-actions');
+}
+
+/* ===== "Tasks" label click → toggle $ ✎ × visibility on task bars =====
+   Split-mode only. The "Tasks" half of the merged "Time & Tasks" header
+   is independently clickable. Tapping it toggles body.tt-show-actions
+   which the CSS uses to flip $ ✎ × from display:none to display:inline.
+   The pomodoro timer is exempt — it's always visible when a task is
+   running (kept via a more-specific selector in the CSS). */
+const _ttTasksLabel = document.getElementById('tt-tasks-label');
+if (_ttTasksLabel) {
+  _ttTasksLabel.addEventListener('click', (e) => {
+    if (!state.focusSplitView) return;     // ignore tap in stacked mode
+    e.preventDefault();
+    e.stopPropagation();
+    state.splitActionsVisible = !state.splitActionsVisible;
+    saveState();
+    document.body.classList.toggle('tt-show-actions', !!state.splitActionsVisible);
+  });
+}
+
+/* ===== "Time" label click → smooth-scroll the gauge back to current time
+   (preserves the existing wireTimeToggle behaviour after we restructured
+   the h3 to host two independent labels). Scoped to the .tt-time span so
+   it doesn't fire when the user clicks "Tasks" or the split toggle. */
+const _ttTimeLabel = document.getElementById('tt-time-label');
+if (_ttTimeLabel) {
+  _ttTimeLabel.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!state.timeArea) state.timeArea = { durationMs: 3 * 3600 * 1000 };
+    state.timeArea._needsScroll = 'smooth';
+    if (typeof drawTimeArea === 'function') drawTimeArea();
+  });
 }
 
 /* ===== Master "+add task" — split-view only =====
