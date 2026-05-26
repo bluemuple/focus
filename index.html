@@ -10035,19 +10035,34 @@ function renderDailyMoneyChart(container, summaryEl, scale) {
   if (!container) return;
   container.innerHTML = '';
   const now = Date.now();
+  // Anchor to the date the user has selected in the daily nav. For past days
+  // this shifts the entire window (D / W / H) back so the chart actually
+  // changes when they hit ←/→. Defaults to today when no date is selected.
+  const todayKey  = (typeof getCurrentDayKey === 'function') ? getCurrentDayKey() : null;
+  const anchorKey = dailyViewDate || todayKey;
+  const [anchorStart, anchorEnd] = getDayBoundsForKey(anchorKey);
+  const isToday = (anchorKey === todayKey);
+
   let xMin, xMax, gridSlots, xLabelFmt;
   if (scale === 'H') {
-    xMin = now - 60 * 60 * 1000;
-    xMax = now;
+    // For today: rolling "last hour". For past days: the final hour of that
+    // day (23:00 → 24:00) so the H view at least has a meaningful slice.
+    if (isToday) {
+      xMin = now - 60 * 60 * 1000;
+      xMax = now;
+    } else {
+      xMin = anchorEnd - 60 * 60 * 1000;
+      xMax = anchorEnd;
+    }
     gridSlots = [0, 15, 30, 45, 60].map(m => xMin + m * 60 * 1000);
     xLabelFmt = (t) => {
       const d = new Date(t);
       return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     };
   } else if (scale === 'W') {
-    const today = new Date(); today.setHours(0,0,0,0);
-    xMin = today.getTime() - 6 * 24 * 60 * 60 * 1000;
-    xMax = today.getTime() + 24 * 60 * 60 * 1000;
+    // 7-day window ending on the anchor day (anchor is the rightmost slot).
+    xMin = anchorStart - 6 * 24 * 60 * 60 * 1000;
+    xMax = anchorEnd;
     gridSlots = [];
     for (let i = 0; i <= 7; i++) gridSlots.push(xMin + i * 24 * 60 * 60 * 1000);
     xLabelFmt = (t) => {
@@ -10055,9 +10070,11 @@ function renderDailyMoneyChart(container, summaryEl, scale) {
       return ['S','M','T','W','T','F','S'][d.getDay()];
     };
   } else { // D
-    const today = new Date(); today.setHours(0,0,0,0);
-    xMin = today.getTime();
-    xMax = xMin + 24 * 60 * 60 * 1000;
+    // The anchor day from 00:00 → 24:00 (or that day's 04:00-anchor bounds —
+    // whichever getDayBoundsForKey returns, kept consistent with the rest
+    // of the daily stats).
+    xMin = anchorStart;
+    xMax = anchorEnd;
     gridSlots = [0, 6, 12, 18, 24].map(h => xMin + h * 60 * 60 * 1000);
     xLabelFmt = (t) => `${new Date(t).getHours()}`;
   }
@@ -10130,7 +10147,12 @@ function renderDailyMoneyChart(container, summaryEl, scale) {
     const cls  = netDelta > 0.005 ? 'up' : netDelta < -0.005 ? 'down' : 'flat';
     const start$ = '$' + startBalance.toFixed(2);
     const end$   = '$' + (startBalance + netDelta).toFixed(2);
-    summaryEl.innerHTML = `<span class="money-change ${cls}">${sign} ${Math.abs(netDelta).toFixed(2)}</span> <span class="help">${start$} → ${end$} (${scale === 'H' ? 'last hour' : scale === 'W' ? 'last 7 days' : 'today'})</span>`;
+    const periodLabel = scale === 'H'
+      ? (isToday ? 'last hour' : 'last hour of day')
+      : scale === 'W'
+        ? (isToday ? 'last 7 days' : '7 days ending ' + anchorKey)
+        : (isToday ? 'today' : anchorKey);
+    summaryEl.innerHTML = `<span class="money-change ${cls}">${sign} ${Math.abs(netDelta).toFixed(2)}</span> <span class="help">${start$} → ${end$} (${periodLabel})</span>`;
   }
 }
 
