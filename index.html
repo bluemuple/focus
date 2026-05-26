@@ -2826,6 +2826,28 @@
     color: #6b7280; opacity: 0.7;
     pointer-events: none;
   }
+  /* Tiny ▲▼ arrows just above the duration label. Tap to nudge the block's
+     bottom edge ±5 min. Subtle grey so they don't distract from the block
+     content; full-size touch target via padding. */
+  .time-block-nudge {
+    position: absolute; right: 2px; bottom: 14px;
+    display: flex; flex-direction: column;
+    gap: 1px;
+    z-index: 3;
+  }
+  .time-block-nudge button {
+    appearance: none;
+    background: transparent;
+    border: none;
+    padding: 1px 4px;
+    cursor: pointer;
+    color: #9ca3af;
+    line-height: 0.8;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  .time-block-nudge button:active { color: #374151; }
+  .time-block-nudge svg { display: block; }
   .time-now-line {
     position: absolute; left: 0; right: 0;
     height: 0;
@@ -3223,7 +3245,6 @@
           <div class="time-head">
             <h3 id="time-toggle" style="margin:0;cursor:pointer;user-select:none;" title="Tap to scroll back to current time">
               <span>Time</span>
-              <span class="compact-summary" id="time-summary"></span>
             </h3>
           </div>
           <!-- Outer = scrollable viewport, height = durationMs × 1px/min.
@@ -3266,7 +3287,6 @@
             </button>
           </h3>
           <div class="focus-matrix" id="focus-matrix" style="margin-top:10px;"></div>
-          <div class="double-tap-hint">Tap a task to start a 25-min Pomodoro (Work → Good Break → ...). Tap again to stop.</div>
         </div>
 
         <div class="panel" style="margin:0;">
@@ -7811,6 +7831,23 @@ function drawTimeArea() {
     durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
     div.appendChild(durEl);
 
+    /* ▲▼ Nudge buttons — adjust bottom edge ±5 min per tap. Positioned just
+       above the duration label in the bottom-right corner. */
+    const nudgeWrap = document.createElement('div');
+    nudgeWrap.className = 'time-block-nudge';
+    nudgeWrap.innerHTML =
+      '<button type="button" data-nudge="up"   aria-label="Shorten 5 min">' +
+        '<svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">' +
+          '<path d="M1 5 L5 1 L9 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+      '</button>' +
+      '<button type="button" data-nudge="down" aria-label="Lengthen 5 min">' +
+        '<svg viewBox="0 0 10 6" width="10" height="6" aria-hidden="true">' +
+          '<path d="M1 1 L5 5 L9 1" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>' +
+      '</button>';
+    div.appendChild(nudgeWrap);
+
     div.dataset.bid = String(b.id);
     const selected = (typeof window.__tgGetSelectedBlock === 'function')
       ? window.__tgGetSelectedBlock() : null;
@@ -7891,7 +7928,7 @@ function drawTimeArea() {
         dragSt = null;
       }
       div.addEventListener('mousedown', e => {
-        if (e.target.closest('.time-block-rb,.time-block-x')) return;
+        if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (e.button !== 0) return;
         e.preventDefault();
         startDrag(e.clientY);
@@ -7905,7 +7942,7 @@ function drawTimeArea() {
         window.addEventListener('mouseup', u);
       });
       div.addEventListener('touchstart', e => {
-        if (e.target.closest('.time-block-rb,.time-block-x')) return;
+        if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (!e.touches[0]) return;
         e.preventDefault();
         startDrag(e.touches[0].clientY);
@@ -8000,6 +8037,28 @@ function drawTimeArea() {
     }
     attachRbDrag();
 
+    /* ▲▼ Nudge button handlers — ±5 min on the bottom edge. Stops propagation
+       so tapping the button doesn't also fire body drag / select. */
+    nudgeWrap.querySelectorAll('button[data-nudge]').forEach(btn => {
+      btn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        ev.preventDefault();
+        const dir = btn.dataset.nudge === 'up' ? -1 : 1;
+        const STEP = 5 * 60 * 1000;
+        const newEnd = b.endMs + dir * STEP;
+        // Enforce minimum block size
+        if (newEnd < b.startMs + MIN_BLOCK_MS) return;
+        b.endMs = newEnd;
+        if (window.__tgSelectBlock) window.__tgSelectBlock(b);
+        saveState();
+        if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+        drawTimeArea();
+      });
+      // Block drag handlers from firing on touchstart of the nudge button
+      btn.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
+      btn.addEventListener('mousedown',  (ev) => { ev.stopPropagation(); });
+    });
+
     blocksEl.appendChild(div);
   });
 
@@ -8027,12 +8086,9 @@ function drawTimeArea() {
   placeTimeGoal(state.deadline, state.deadlineDate, 'Go home', '#3b82f6');
   placeTimeGoal(state.bedtime,  state.bedtimeDate,  'Sleep',   '#10b981');
 
-  /* ---- Header summary (current duration in hours) ---- */
-  const summary = document.getElementById('time-summary');
-  if (summary) {
-    const hrs = Math.round(durMs / 3600000 * 10) / 10;
-    summary.textContent = `${hrs}h`;
-  }
+  /* Header summary intentionally left empty — user removed the "(3h)" badge
+     next to the "Time" title because the bottom resize handle already conveys
+     the current duration via its drag position. */
 
   /* ---- Reset scroll position when explicitly requested (initial load,
          "Time" tap, or duration change) — now-line ends at 30 min from
