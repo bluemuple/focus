@@ -2050,15 +2050,15 @@
 
   function lpvRenderLine(line) {
     const esc = s => escapeHtml(s);
-    // display:flow-root on every <p> establishes a BFC so the block is
-    // pushed *beside* a preceding float instead of trying to indent its
-    // line-boxes (the same fix applied to .wc-lesson-text p on the
-    // lesson page).  Without this, text falls below the float image in
-    // the narrow preview pane.
-    let text = line, st = 'margin:.3em 0;display:flow-root;';
-    if (/^# /.test(text))   { text = text.slice(2);  st = 'font-size:1.4em;font-weight:800;margin:.5em 0;display:flow-root;'; }
-    else if (/^## /.test(text))  { text = text.slice(3);  st = 'font-size:1.15em;font-weight:700;margin:.4em 0;display:flow-root;'; }
-    else if (/^### /.test(text)) { text = text.slice(4);  st = 'font-size:1em;font-weight:600;margin:.3em 0;display:flow-root;'; }
+    // No display:flow-root — we WANT the corner-float image to escape its
+    // paragraph so that line-boxes in the following paragraphs continue to
+    // wrap around the image (classic multi-paragraph float wrap). With
+    // flow-root every <p> would trap the float, forcing the next sentence
+    // to start beneath the image.
+    let text = line, st = 'margin:.3em 0;';
+    if (/^# /.test(text))   { text = text.slice(2);  st = 'font-size:1.4em;font-weight:800;margin:.5em 0;'; }
+    else if (/^## /.test(text))  { text = text.slice(3);  st = 'font-size:1.15em;font-weight:700;margin:.4em 0;'; }
+    else if (/^### /.test(text)) { text = text.slice(4);  st = 'font-size:1em;font-weight:600;margin:.3em 0;'; }
     text = esc(text)
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/__(.*?)__/g,     '<u>$1</u>')

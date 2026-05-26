@@ -2658,16 +2658,12 @@
               onWordClick(sp, sp.dataset.word || '', sp.textContent || ''));
           });
         });
-        // If this block holds a corner float, make it a Block Formatting
-        // Context so the float is contained and text line-boxes are
-        // properly shortened — prevents adjacent lines from running
-        // behind the image.
-        if (el.querySelector(
-          '.wc-lesson-img.wc-corner-tl,.wc-lesson-img.wc-corner-tr,' +
-          '.wc-lesson-img.wc-corner-bl,.wc-lesson-img.wc-corner-br'
-        )) {
-          el.style.display = 'flow-root';
-        }
+        // Do NOT apply display:flow-root here. A corner-float image needs to
+        // ESCAPE the paragraph that holds its [[IMG:N]] marker so that text
+        // in the NEXT paragraphs ALSO wraps around the image — the classic
+        // multi-paragraph float wrap. flow-root would trap the float inside
+        // this <p>, forcing every following sentence to start BELOW the
+        // image instead of beside it.
         return;
       }
       // Block has inline emphasis (`<b>`, `<u>`, `<em>`, `<strong>`,
@@ -2687,19 +2683,13 @@
       if (!text || !text.trim()) return;
       const frag = buildSentenceFragment(text, globalSentIdx);
       globalSentIdx = frag.nextIdx;
-      // Check for corner floats BEFORE appendChild — the DocumentFragment
-      // is emptied when its children move to `el`, so query first.
-      const hasCornerFloat = !!frag.frag.querySelector(
-        '.wc-lesson-img.wc-corner-tl,.wc-lesson-img.wc-corner-tr,' +
-        '.wc-lesson-img.wc-corner-bl,.wc-lesson-img.wc-corner-br'
-      );
       // Replace ALL children with the sentence-wrapped fragment.
       while (el.firstChild) el.removeChild(el.firstChild);
       el.appendChild(frag.frag);
-      // Make the block a BFC so the float is fully contained inside it.
-      // This ensures text line-boxes are shortened around the image and
-      // no adjacent line can run behind the photo.
-      if (hasCornerFloat) el.style.display = 'flow-root';
+      // NOTE: do NOT make this block a BFC (display:flow-root). The float
+      // must extend past this <p>'s boundary so that line-boxes in the
+      // following paragraphs continue to wrap around the image — classic
+      // newspaper-style multi-paragraph float wrap.
     }
 
     // Per-text-node sentence wrapping that keeps the block's
