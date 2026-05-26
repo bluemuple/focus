@@ -6765,55 +6765,91 @@ function renderFocusMatrix() {
       };
       textEl.onclick = () => {
         const _tgNow = Date.now();
-        const isSameRunning = state.activeTimer &&
-                              state.activeTimer.q === q &&
-                              state.activeTimer.idx === i;
+        const at = state.activeTimer;
+        const isSameTask = at && at.q === q && at.idx === i;
 
-        if (isSameRunning) {
-          // Second / third / ... click on the SAME running task → toggle pause.
-          // The block's colour-fill respects the pomodoro paused state (frozen
-          // at pausedAt when paused, resuming when unpaused). No block is
-          // finalized — user can resume any number of times.
+        /* Helper — find any LIVE (activeAt set, activeEndMs unset) covering
+           block for this task. Used to decide whether to create a new 25-min
+           block on resume / start. */
+        function findCoveringBlock() {
+          let found = null;
+          (state.scheduledBlocks || []).forEach(b => {
+            if (b.q !== q || b.taskIdx !== i) return;
+            if (b.startMs <= _tgNow && _tgNow < b.endMs &&
+                b.activeAt && !b.activeEndMs) {
+              found = b;
+            }
+          });
+          return found;
+        }
+
+        /* Helper — finalize any open blocks for this task at the given time,
+           so the block's coloured fill stops growing. */
+        function freezeOpenBlocks(freezeMs) {
+          (state.scheduledBlocks || []).forEach(b => {
+            if (b.q === q && b.taskIdx === i && b.activeAt && !b.activeEndMs) {
+              b.activeEndMs = freezeMs;
+            }
+          });
+        }
+
+        /* Helper — create a new 25-min auto block at NOW. */
+        function spawn25Block() {
+          const task = state.tasks[q] && state.tasks[q][i];
+          state.scheduledBlocks.push({
+            id:          Date.now() + '_' + Math.random().toString(36).slice(2),
+            q,
+            taskIdx:     i,
+            taskName:    (task && task.text) || '',
+            startMs:     _tgNow,
+            endMs:       _tgNow + 25 * 60 * 1000,
+            activeAt:    _tgNow,
+            activeEndMs: null
+          });
+        }
+
+        /* CASE A — same task already running and NOT paused → pause it. */
+        if (isSameTask && !at.paused) {
           if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
           saveState(); debouncedPushSettings();
           drawGauge();
           renderFocusMatrix();
-        } else {
-          // First click → start timer. Approach A: every task session is captured
-          // by a gauge block — either an existing block that's LIVE and covers NOW,
-          // or a freshly auto-created 25-minute block. The gauge background never
-          // paints task colour anymore; the block fill IS the visual indicator.
-          const task = state.tasks[q] && state.tasks[q][i];
-          let hasLiveCoveringBlock = false;
-          (state.scheduledBlocks || []).forEach(b => {
-            if (b.q !== q || b.taskIdx !== i) return;
-            const coversNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
-            if (!b.activeAt) {
-              // Never-worked block → activate it (will fill when its time comes)
-              b.activeAt = _tgNow;
-              if (coversNow) hasLiveCoveringBlock = true;
-            } else if (!b.activeEndMs && coversNow) {
-              // Already live and covering NOW
-              hasLiveCoveringBlock = true;
-            }
-            // else: frozen from a previous session (activeAt + activeEndMs set) —
-            // leave alone; auto-create below will spawn a fresh block for this session.
-          });
-          if (!hasLiveCoveringBlock) {
-            // Auto-create a 25-minute pomodoro-sized block at the current time.
-            state.scheduledBlocks.push({
-              id:          Date.now() + '_' + Math.random().toString(36).slice(2),
-              q,
-              taskIdx:     i,
-              taskName:    (task && task.text) || '',
-              startMs:     _tgNow,
-              endMs:       _tgNow + 25 * 60 * 1000,
-              activeAt:    _tgNow,
-              activeEndMs: null
-            });
-          }
-          toggleTaskTimer(q, i);
+          return;
         }
+
+        /* CASE B — same task, but PAUSED → resume.
+           If the old open block no longer covers NOW (because user paused
+           long enough for it to expire), finalize it at the pause time and
+           spawn a fresh 25-min block before resuming. */
+        if (isSameTask && at.paused) {
+          if (!findCoveringBlock()) {
+            freezeOpenBlocks(at.pausedAt || _tgNow);
+            spawn25Block();
+          }
+          if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
+          saveState(); debouncedPushSettings();
+          drawGauge();
+          renderFocusMatrix();
+          return;
+        }
+
+        /* CASE C — no timer on this task (or a different task is running) →
+           start fresh on this task. Existing logic: activate any blocks for
+           this task; create new 25-min block only if none currently covers
+           NOW (matching the user's spec). */
+        let hasLiveCoveringBlock = false;
+        (state.scheduledBlocks || []).forEach(b => {
+          if (b.q !== q || b.taskIdx !== i) return;
+          const coversNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
+          if (!b.activeAt) {
+            b.activeAt = _tgNow;
+            if (coversNow) hasLiveCoveringBlock = true;
+          } else if (!b.activeEndMs && coversNow) {
+            hasLiveCoveringBlock = true;
+          }
+        });
+        if (!hasLiveCoveringBlock) spawn25Block();
+        toggleTaskTimer(q, i);
       };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
       // Inline pomodoro display when this task is currently running.
@@ -6987,10 +7023,14 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
     if (!at.pendingPhaseConfirm) {
       logPomodoroPhase(at, now);
     }
-    // Freeze colour-coding for any gauge blocks tied to this task.
+    // Freeze colour-coding for any gauge blocks tied to this task. If the
+    // timer was PAUSED at the time of stop (e.g. user switched tasks while
+    // paused), freeze color at pausedAt — not now — so the fill reflects
+    // actual work time and not the paused interval.
+    const freezeAt = (at.paused && at.pausedAt) ? at.pausedAt : now;
     (state.scheduledBlocks || []).forEach(b => {
       if (b.q === at.q && b.taskIdx === at.idx && b.activeAt && !b.activeEndMs) {
-        b.activeEndMs = now;
+        b.activeEndMs = freezeAt;
       }
     });
     state.activeTimer = null;
