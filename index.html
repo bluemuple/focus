@@ -5490,8 +5490,9 @@ function renderTasks() {
         <button class="task-bid" title="Bid for this task — money you earn when you finish">$${bidVal}</button>
         <button class="x" title="delete">×</button>`;
       const cb = row.children[0], txt = row.children[1], bidBtn = row.children[2], del = row.children[3];
-      // Paint task name with the per-task quadrant shade
-      txt.style.color = qTaskColor(q, i);
+      // Paint task name with the DARKER per-task shade (≈ 75 % contrast) so the
+      // text reads cleanly on white while staying in the gauge-fill family.
+      txt.style.color = qTaskTextColor(q, i);
       bidBtn.onclick = (ev) => {
         ev.stopPropagation();
         editTaskBid(q, i);
@@ -6869,9 +6870,9 @@ function renderFocusMatrix() {
         <span class="task-bid-wrap"></span>
         <button class="task-edit-pen" title="Edit task">✎</button>`;
       const cb = row.children[0], textEl = row.children[1], bidWrap = row.children[2], penBtn = row.children[3];
-      // Paint task name with the per-task quadrant shade so it visually
-      // matches the gauge fill and weekly view band for the same task.
-      textEl.style.color = qTaskColor(q, i);
+      // Paint task name with the DARKER per-task shade (≈ 75 % contrast) so the
+      // text reads cleanly on white while staying in the gauge-fill family.
+      textEl.style.color = qTaskTextColor(q, i);
       // Bid pill (always rendered) — placed inside bidWrap so it can sit under
       // the pomodoro timer when one is running on phone.
       const bidBtn = document.createElement('button');
@@ -8813,12 +8814,29 @@ const Q_TASK_PALETTES = {
   q3: ['#D0BCE2','#D8C4E8','#DABCD8','#C8B8DE','#CCB8D5','#D5BCE2','#C2B8E0','#D8BCE2'],  // pastel purple / lavender / lilac
   q4: ['#BCD0E8','#C8D2DE','#C2D8EC','#C8D5E2','#BCCCE5','#BFD8E2','#BCC8DE','#C5D2E2'],  // pastel blue / sky / powder
 };
+/* Parallel DARKER palette used for task-bar TEXT only (≈ 75 % contrast on white).
+   Same slot ordering as Q_TASK_PALETTES so the text colour is a 1-to-1 darker
+   counterpart of the corresponding gauge fill. */
+const Q_TASK_TEXT_PALETTES = {
+  q1: ['#A84545','#B25548','#9A4747','#A24560','#985240','#8B404C','#AC4D5A','#983A38'],  // dark red / rose
+  q2: ['#A87E28','#B58E38','#9E7628','#A88636','#998036','#AB8236','#9C8036','#B58A30'],  // dark amber / gold
+  q3: ['#5E407F','#6E5097','#7C4E72','#564578','#553A60','#6B4880','#52427C','#79548A'],  // dark purple
+  q4: ['#2D5994','#405F88','#366CAB','#4B6480','#36568F','#366D85','#2E5C7E','#436E96'],  // dark blue
+};
 function qTaskColor(q, taskIdx) {
   const arr = Q_TASK_PALETTES[q] || Q_TASK_PALETTES.q4;
   const idx = (typeof taskIdx === 'number' && taskIdx >= 0) ? taskIdx : 0;
   // Multiplier 37 + per-quadrant offset spreads sequential idx values across
   // non-adjacent palette slots → the matrix doesn't read as a gradient even
   // when tasks are added one after another.
+  const qOffset = ({ q1: 3, q2: 1, q3: 5, q4: 7 })[q] || 0;
+  const slot = Math.abs((idx * 37 + qOffset) % arr.length);
+  return arr[slot];
+}
+/* Darker text-colour pick that matches qTaskColor()'s slot mapping. */
+function qTaskTextColor(q, taskIdx) {
+  const arr = Q_TASK_TEXT_PALETTES[q] || Q_TASK_TEXT_PALETTES.q4;
+  const idx = (typeof taskIdx === 'number' && taskIdx >= 0) ? taskIdx : 0;
   const qOffset = ({ q1: 3, q2: 1, q3: 5, q4: 7 })[q] || 0;
   const slot = Math.abs((idx * 37 + qOffset) % arr.length);
   return arr[slot];
