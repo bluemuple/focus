@@ -2668,12 +2668,13 @@
     /* default height set by JS — fallback in case JS hasn't run */
     height: 180px;
   }
-  /* Inner content — 24h × 60 px/h = 1440 px tall. Tasks & grid are positioned
-     absolutely by pixel offset from content top. */
+  /* Inner content — 48 h × 60 px/h = 2880 px tall. Tasks & grid are positioned
+     absolutely by pixel offset from content top. Extra range past 24h prevents
+     scrollTop clamping when viewport grows to 10h near the bottom edge. */
   .time-content {
     position: relative;
     width: 100%;
-    height: 1440px;   /* CONTENT_HOURS × PX_PER_HOUR — see drawTimeArea() */
+    height: 2880px;   /* CONTENT_HOURS × PX_PER_HOUR — see drawTimeArea() */
   }
   .time-grid { position: absolute; inset: 0; pointer-events: none; }
   .time-hour-line {
@@ -2736,24 +2737,24 @@
     outline-offset: -1px;
     box-shadow: 0 0 0 3px rgba(59,130,246,.22), 0 1px 2px rgba(0,0,0,.08);
   }
-  /* Small × button appears only on the selected block */
+  /* Small × button appears only on the selected block — plain grey glyph,
+     no chrome (no border, no background). */
   .time-block-x {
-    position: absolute; top: 1px; right: 1px;
+    position: absolute; top: 0; right: 2px;
     width: 18px; height: 18px;
-    background: rgba(239,68,68,.92); color: #fff;
-    border: none; border-radius: 50%;
+    background: transparent; color: #6b7280;
+    border: none; border-radius: 0;
     cursor: pointer;
-    font-size: 13px; font-weight: 800;
+    font-size: 16px; font-weight: 700;
     line-height: 1;
     display: none;
     align-items: center; justify-content: center;
     padding: 0;
     z-index: 3;
-    box-shadow: 0 1px 2px rgba(0,0,0,.2);
     touch-action: none;
   }
   .time-block.selected .time-block-x { display: inline-flex; }
-  .time-block-x:active { background: #dc2626; transform: scale(.92); }
+  .time-block-x:active { color: #1f2937; transform: scale(.9); }
   /* Bottom-edge resize handle on every block */
   .time-block-rb {
     position: absolute; left: 0; right: 0; bottom: 0;
@@ -2770,6 +2771,16 @@
     background: #3b82f6;
     border-radius: 2px;
     opacity: 0.75;
+  }
+  /* While the bottom handle is being held / dragged → highlight the entire
+     bottom edge of the block in pink so the user sees what they're resizing. */
+  .time-block.rb-active {
+    border-bottom: 3px solid #ec4899;
+  }
+  .time-block.rb-active .time-block-rb::after {
+    background: #ec4899;
+    opacity: 1;
+    width: 32px; height: 4px;
   }
   .time-block-fill {
     position: absolute; left: 0; right: 0;
@@ -2795,6 +2806,22 @@
     pointer-events: none;
     z-index: 10;
   }
+  /* Drag / resize tooltips showing start / end times of the block being
+     manipulated. Positioned absolutely inside .time-content. */
+  .time-tip {
+    position: absolute; left: 2px;
+    transform: translateY(-50%);
+    background: rgba(15,23,42,.88);
+    color: #fff;
+    font-size: 10px; font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    line-height: 1.3;
+    z-index: 25;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .time-tip.hidden { display: none; }
   /* Goal lines (deadline = blue, bedtime = green) — rendered only when their
      time falls inside the visible window. */
   .time-goal-line {
@@ -3184,6 +3211,8 @@
               <div class="time-ghost" id="time-ghost">
                 <span class="time-ghost-label" id="time-ghost-label"></span>
               </div>
+              <div class="time-tip hidden" id="time-tip-top"></div>
+              <div class="time-tip hidden" id="time-tip-bot"></div>
             </div>
           </div>
           <!-- Drag this handle up/down to resize the viewport (1-10 h). -->
@@ -6741,11 +6770,11 @@ function renderFocusMatrix() {
                               state.activeTimer.idx === i;
 
         if (isSameRunning) {
-          // Second click → stop the timer but KEEP the colour frozen on gauge blocks.
-          // stopActiveTimer('reset') already sets activeEndMs = now on any open block,
-          // so the fill stays visible at exactly the time the user stopped.
-          // We intentionally do NOT clear activeAt/activeEndMs here.
-          stopActiveTimer('reset');
+          // Second / third / ... click on the SAME running task → toggle pause.
+          // The block's colour-fill respects the pomodoro paused state (frozen
+          // at pausedAt when paused, resuming when unpaused). No block is
+          // finalized — user can resume any number of times.
+          if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
           saveState(); debouncedPushSettings();
           drawGauge();
           renderFocusMatrix();
@@ -7541,8 +7570,11 @@ function drawGauge() {
        current-time line moves down inside the content
    ====================================================================== */
 const TIME_PX_PER_HOUR = 60;                       // 1 px ≙ 1 min
-const TIME_CONTENT_HOURS = 24;
-const TIME_CONTENT_HEIGHT_PX = TIME_CONTENT_HOURS * TIME_PX_PER_HOUR;  // 1440
+// 48 h of content (today 4 AM → day-after-tomorrow 4 AM) so the viewport can
+// grow up to 10 h without scrollTop clamping near the bottom edge. Clamping
+// was causing already-visible blocks to slide down with the resize handle.
+const TIME_CONTENT_HOURS = 48;
+const TIME_CONTENT_HEIGHT_PX = TIME_CONTENT_HOURS * TIME_PX_PER_HOUR;  // 2880
 const TIME_MIN_MS = 1 * 3600 * 1000;
 const TIME_MAX_MS = 10 * 3600 * 1000;
 const TIME_HEAD_OFFSET_MS = 30 * 60 * 1000;        // 30 min above current
@@ -7618,7 +7650,15 @@ function drawTimeArea() {
     div.style.height = (bPx - tPx) + 'px';
 
     if (b.activeAt) {
-      const colorEnd = b.activeEndMs ? Math.min(b.activeEndMs, now) : now;
+      // If pomodoro for this task is currently paused, freeze color growth
+      // at the moment of pause (state.activeTimer.pausedAt). Otherwise the
+      // color tracks wall-clock time as usual.
+      const _at = state.activeTimer;
+      const _pausedForThis = _at && _at.paused && _at.type === 'pomodoro' &&
+                             _at.q === b.q && _at.idx === b.taskIdx;
+      const colorEnd = b.activeEndMs
+        ? Math.min(b.activeEndMs, now)
+        : (_pausedForThis ? _at.pausedAt : now);
       const blockH   = b.endMs - b.startMs;
       if (blockH > 0 && colorEnd > b.activeAt) {
         const fStart = Math.max(b.startMs, b.activeAt);
@@ -7690,15 +7730,23 @@ function drawTimeArea() {
       function moveDrag(clientY) {
         if (!dragSt) return;
         const dy = clientY - dragSt.startY;
-        if (Math.abs(dy) >= 3) dragSt.moved = true;
+        // 2 px is plenty to distinguish a tap from a drag, and feels snappier
+        if (Math.abs(dy) >= 2) dragSt.moved = true;
         if (!dragSt.moved) return;
+        // Continuous 5-min snap: every drag step recomputes from the original
+        // start + cumulative dy. Block jumps 5 min at each boundary the finger
+        // crosses, with no lag.
         const dMs = dy * _msPerPx;
         const newStart = snap(dragSt.origStart + dMs);
-        b.startMs = newStart;
-        b.endMs   = newStart + dragSt.dur;
-        drawTimeArea();
+        if (newStart !== b.startMs) {
+          b.startMs = newStart;
+          b.endMs   = newStart + dragSt.dur;
+          drawTimeArea();
+        }
+        showTimeAreaTips(b.startMs, b.endMs);
       }
       function endDrag(wasTap) {
+        hideTimeAreaTips();
         if (dragSt && dragSt.moved) {
           saveState();
           if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
@@ -7753,6 +7801,9 @@ function drawTimeArea() {
         dragSt = { startY: clientY, origEnd: b.endMs, origStart: b.startMs };
         // Bottom-edge drag means user intends to interact — select for feedback
         if (window.__tgSelectBlock) window.__tgSelectBlock(b);
+        // Pink visual feedback on the bottom edge while the handle is held
+        div.classList.add('rb-active');
+        showTimeAreaTips(b.startMs, b.endMs);
       }
       function moveDrag(clientY) {
         if (!dragSt) return;
@@ -7760,10 +7811,19 @@ function drawTimeArea() {
         const dMs = dy * _msPerPx;
         let newEnd = snap(dragSt.origEnd + dMs);
         if (newEnd < dragSt.origStart + SNAP_MS) newEnd = dragSt.origStart + SNAP_MS;
-        b.endMs = newEnd;
-        drawTimeArea();
+        if (newEnd !== b.endMs) {
+          b.endMs = newEnd;
+          drawTimeArea();
+          // drawTimeArea re-creates `div` — re-apply rb-active to the new div
+          const newDiv = document.querySelector(`.time-block[data-bid="${b.id}"]`);
+          if (newDiv) newDiv.classList.add('rb-active');
+        }
+        showTimeAreaTips(b.startMs, b.endMs);
       }
       function endDrag() {
+        hideTimeAreaTips();
+        // Clear rb-active from any block carrying it
+        document.querySelectorAll('.time-block.rb-active').forEach(el => el.classList.remove('rb-active'));
         if (dragSt) {
           saveState();
           if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
@@ -7862,6 +7922,39 @@ function fmtTimeBlockDur(ms) {
   if (min < 60) return min + 'm';
   const h = Math.floor(min / 60), m = min % 60;
   return m ? `${h}h${m}m` : `${h}h`;
+}
+
+/* HH:MM helper for tooltips */
+function _hhmm(ms) {
+  const d = new Date(ms);
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+/* Show the top + bottom time tooltips next to a block being dragged/resized
+   in the mobile Time area. Positions are absolute within .time-content. */
+function showTimeAreaTips(startMs, endMs) {
+  const tipTop = document.getElementById('time-tip-top');
+  const tipBot = document.getElementById('time-tip-bot');
+  if (!tipTop || !tipBot) return;
+  const now = Date.now();
+  const anchor = new Date();
+  anchor.setHours(4, 0, 0, 0);
+  if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
+  const contentTopMs = anchor.getTime();
+  // 1 min = 1 px (matches TIME_PX_PER_HOUR = 60)
+  const msToPxLocal = (ms) => (ms - contentTopMs) / 60000;
+  tipTop.textContent = _hhmm(startMs);
+  tipTop.style.top   = msToPxLocal(startMs) + 'px';
+  tipTop.classList.remove('hidden');
+  tipBot.textContent = _hhmm(endMs);
+  tipBot.style.top   = msToPxLocal(endMs) + 'px';
+  tipBot.classList.remove('hidden');
+}
+function hideTimeAreaTips() {
+  const tipTop = document.getElementById('time-tip-top');
+  const tipBot = document.getElementById('time-tip-bot');
+  if (tipTop) tipTop.classList.add('hidden');
+  if (tipBot) tipBot.classList.add('hidden');
 }
 
 function addGaugeSegment(parent, pct, seg, isActive) {
@@ -8015,6 +8108,20 @@ function openEventModal(existing) {
   btn.addEventListener('click', () => openEventModal(null));
 })();
 
+/* Click anywhere outside a block (any kind) → deselect the active block.
+   Covers .tg-block (main gauge) and .time-block (mobile Time area). Resize
+   handles inside blocks count as "inside" so they don't accidentally deselect. */
+(function wireDeselectOnOutsideClick() {
+  document.addEventListener('click', (ev) => {
+    if (ev.target.closest('.tg-block, .time-block, .tg-block-rt, .tg-block-rb, .time-block-rb, .time-block-x')) return;
+    if (typeof window.__tgGetSelectedBlock !== 'function') return;
+    const sel = window.__tgGetSelectedBlock();
+    if (!sel) return;
+    window.__tgSelectBlock(null);
+    if (typeof drawGauge === 'function') drawGauge();
+  }, true);   // capture phase so we run before anything stops propagation
+})();
+
 /* "Time" header tap → smooth-scroll back so the current-time line is 30 min
    from the top of the visible area. */
 (function wireTimeToggle() {
@@ -8050,6 +8157,12 @@ function openEventModal(existing) {
       const dy = clientY - startY;
       const newDur = clampDur(startDur + (dy / PX_PER_HOUR) * HOUR);
       state.timeArea.durationMs = newDur;
+      // Re-anchor scroll so the top of the visible area stays at "now − 30 min".
+      // Without this, growing the viewport near the bottom of the 24h content
+      // causes scrollTop to clamp, which makes blocks visually slide down with
+      // the handle (the reported bug). Anchoring the top keeps existing
+      // visible blocks in place while new future time appears below.
+      state.timeArea._needsScroll = true;
       if (typeof drawTimeArea === 'function') drawTimeArea();
     }
     function onUp() {
@@ -11701,7 +11814,13 @@ setInterval(() => {
 
       /* -- Colour fill: grey base + task-colour stripe from activeAt onward -- */
       if (b.activeAt) {
-        const colorEnd = b.activeEndMs ? Math.min(b.activeEndMs, now) : now;
+        // Freeze color growth at pomodoro pause time when this task is paused
+        const _at = state.activeTimer;
+        const _pausedForThis = _at && _at.paused && _at.type === 'pomodoro' &&
+                               _at.q === b.q && _at.idx === b.taskIdx;
+        const colorEnd = b.activeEndMs
+          ? Math.min(b.activeEndMs, now)
+          : (_pausedForThis ? _at.pausedAt : now);
         const totalH   = b.endMs - b.startMs;
         if (totalH > 0 && colorEnd > b.activeAt) {
           const fillTop = Math.max(0, (b.activeAt - b.startMs) / totalH) * 100;
@@ -12190,14 +12309,20 @@ setInterval(() => {
       return touch.clientX >= r.left && touch.clientX <= r.right &&
              touch.clientY >= r.top  && touch.clientY <= r.bottom;
     }
+    // Read shared constants so this helper auto-tracks any future change
+    // to the Time area content range (currently 48h).
     function _timeAreaContentRange() {
+      const hours = (typeof TIME_CONTENT_HOURS === 'number') ? TIME_CONTENT_HOURS : 48;
       const now = Date.now();
       const anchor = new Date();
       anchor.setHours(4, 0, 0, 0);
       if (anchor.getTime() > now) anchor.setDate(anchor.getDate() - 1);
       const topMs = anchor.getTime();
-      const span  = 24 * 3600 * 1000;
+      const span  = hours * 3600 * 1000;
       return { topMs, botMs: topMs + span, span };
+    }
+    function _timeAreaContentPx() {
+      return (typeof TIME_CONTENT_HEIGHT_PX === 'number') ? TIME_CONTENT_HEIGHT_PX : 2880;
     }
     function timeAreaYToMs(clientY) {
       const ta = timeAreaEl();
@@ -12205,7 +12330,7 @@ setInterval(() => {
       const r = ta.getBoundingClientRect();
       const yInContent = ta.scrollTop + (clientY - r.top);
       const { topMs, span } = _timeAreaContentRange();
-      const PX_TOTAL = 24 * 60;
+      const PX_TOTAL = _timeAreaContentPx();
       const ratio = Math.max(0, Math.min(1, yInContent / PX_TOTAL));
       return topMs + ratio * span;
     }
@@ -12214,7 +12339,7 @@ setInterval(() => {
       const tgLbl = document.getElementById('time-ghost-label');
       if (!tg) return;
       const { topMs, span } = _timeAreaContentRange();
-      const PX_TOTAL = 24 * 60;
+      const PX_TOTAL = _timeAreaContentPx();
       const tPx = ((startMs - topMs) / span) * PX_TOTAL;
       const bPx = ((startMs + durMs - topMs) / span) * PX_TOTAL;
       tg.style.top    = Math.max(0, tPx) + 'px';
