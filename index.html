@@ -13401,27 +13401,35 @@ setInterval(() => {
      reused from the PC drag-and-drop reorder code for consistency.
      ================================================================ */
   (function() {
-    // Row-shaped ghost — a visual clone of the source task row that
-    // tracks the finger. Created lazily on the first touchmove that
-    // confirms a drag (after the 8 px threshold).
-    function makeRowGhost(srcRow) {
-      const g = srcRow.cloneNode(true);
-      // Strip interactive children so taps inside the ghost don't fire
-      // unexpected handlers (we route everything via the document-level
-      // touchmove instead).
-      g.querySelectorAll('input, button').forEach(el => {
-        try { el.disabled = true; } catch (_) {}
-      });
+    // Row-shaped ghost — a minimal element showing JUST the task name on a
+    // quadrant-tinted background (no checkbox / bid pill / timer / pen). The
+    // shape mirrors a task-row so the user reads it as the same object they
+    // grabbed, but stripped of UI noise so the indicator-between-rows feels
+    // crisp. Created lazily on the first touchmove that confirms a drag.
+    const QP_BG = { q1: '#FCE7E7', q2: '#FCF2D6', q3: '#ECE0F4', q4: '#E2EBF4' };
+    const QP_FG = { q1: '#7E2C2C', q2: '#6E4F0E', q3: '#432878', q4: '#1A4376' };
+    function makeRowGhost(srcRow, q, taskName) {
+      const g = document.createElement('div');
+      g.className = 'task-row-ghost';
+      g.textContent = taskName || '';
       const rect = srcRow.getBoundingClientRect();
+      const bg = QP_BG[q] || '#ffffff';
+      const fg = QP_FG[q] || '#374151';
       g.style.cssText =
         'position:fixed;z-index:9999;pointer-events:none;' +
         `width:${rect.width}px;` +
+        `height:${rect.height}px;` +
+        'display:flex;align-items:center;' +
+        'padding:6px 8px;' +
+        'box-sizing:border-box;' +
+        `background:${bg};` +
+        `color:${fg};` +
+        'font-weight:600;font-size:.9rem;' +
         'opacity:0.92;' +
         'box-shadow:0 6px 16px rgba(0,0,0,.25);' +
         'transform:translate(-50%, -50%);' +
         'border-radius:6px;' +
-        'background:#fff;';
-      g.classList.add('task-row-ghost');
+        'overflow:hidden;white-space:nowrap;text-overflow:ellipsis;';
       document.body.appendChild(g);
       return g;
     }
@@ -13537,7 +13545,7 @@ setInterval(() => {
         // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
         // never creates a stray ghost element on screen.
         try {
-          _td.rowGhost = makeRowGhost(_td.srcRow);
+          _td.rowGhost = makeRowGhost(_td.srcRow, _td.q, _td.taskName);
           _td.rowGhost.style.left = t.clientX + 'px';
           _td.rowGhost.style.top  = t.clientY + 'px';
         } catch (_) {}
@@ -13549,16 +13557,21 @@ setInterval(() => {
         _td.rowGhost.style.top  = t.clientY + 'px';
       }
       // Decide target priority:
-      //   1) Main gauge (PC layout)        → block-creation ghost
-      //   2) Mobile Time area              → time-block ghost
-      //   3) Another task row, same q      → between-rows drop indicator
-      //   4) None                          → clear everything
+      //   1) Main gauge (PC layout)        → hide row ghost, show time-block ghost
+      //   2) Mobile Time area              → hide row ghost, show time-block ghost
+      //   3) Tasks list (same q)           → show row ghost + between-rows indicator
+      //   4) None                          → clear time ghosts + indicator
       if (isOverGauge(t)) {
+        // Over the gauge: the task-row ghost disappears and the existing
+        // time-block (rectangle) ghost takes over as the drag visual.
+        if (_td.rowGhost) _td.rowGhost.style.display = 'none';
         _ghost = { startMs: snapMs(yToMs(t.clientY)), durationMs: _td.durMs };
         placeGhost();
         hideTimeGhost();
         _clearDropIndicator();
       } else if (isOverTimeArea(t)) {
+        // Same idea for the mobile Time area.
+        if (_td.rowGhost) _td.rowGhost.style.display = 'none';
         const startMs = snapMs(timeAreaYToMs(t.clientY));
         _ghost = { startMs, durationMs: _td.durMs, fromTimeArea: true };
         placeTimeGhost(startMs, _td.durMs);
@@ -13567,39 +13580,50 @@ setInterval(() => {
         if (ghostEl2) ghostEl2.style.display = 'none';
         _clearDropIndicator();
       } else {
-        // Maybe over another task row → place the 1 px drop indicator so
-        // the user can drop it into the inter-row gap and reorder.
-        // elementFromPoint ignores the row ghost because its pointer-events
-        // is none. We require same-quadrant only — matches the PC drag-drop.
-        const elt = document.elementFromPoint(t.clientX, t.clientY);
-        const targetRow = elt && elt.closest && elt.closest('.task-row');
-        let placed = false;
-        if (targetRow && targetRow !== _td.srcRow && !targetRow.classList.contains('task-row-ghost')) {
-          const targetCell = targetRow.closest('.focus-cell');
-          const targetQ = targetCell && ['q1','q2','q3','q4'].find(k => targetCell.classList.contains(k));
-          if (targetQ === _td.q) {
-            const tasksDiv = targetCell.querySelector('.tasks');
-            if (tasksDiv) {
-              const rows = Array.from(tasksDiv.querySelectorAll(':scope > .task-row'));
-              const targetIdx = rows.indexOf(targetRow);
-              if (targetIdx >= 0) {
-                const rect = targetRow.getBoundingClientRect();
-                const isTopHalf = (t.clientY - rect.top) < rect.height / 2;
-                if (isTopHalf) {
-                  _placeDropIndicator(tasksDiv, targetRow, _td.q, targetIdx);
-                } else {
-                  _placeDropIndicator(tasksDiv, targetRow.nextSibling, _td.q, targetIdx + 1);
-                }
-                placed = true;
-              }
-            }
-          }
+        // Outside any gauge — row ghost re-appears (in case we just left a gauge).
+        if (_td.rowGhost) _td.rowGhost.style.display = '';
+        // Find which inter-row gap the GHOST CENTER falls into, within the
+        // source quadrant's tasksDiv. Per user spec: indicator appears between
+        // two adjacent rows when ghost center sits below the upper row's
+        // center-line and above the lower row's center-line.
+        const gap = _findInsertGapByGhostCenter(_td);
+        if (gap) {
+          _placeDropIndicator(gap.tasksDiv, gap.beforeNode, _td.q, gap.insertAt);
+        } else {
+          _clearDropIndicator();
         }
-        if (!placed) _clearDropIndicator();
         if (_ghost) { _ghost = null; placeGhost(); }
         hideTimeGhost();
       }
     }, { passive: false });
+
+    /* Compute which inter-row gap (within the source quadrant) the ghost
+       CENTER currently sits in. Walks rows top-to-bottom and returns the
+       gap immediately ABOVE the first row whose centre-line is below the
+       ghost's centre — i.e. between adjacent rows whose centre-lines
+       bracket the ghost's centre. Above the first row → insertAt 0;
+       below the last row → insertAt length. Returns null when there's no
+       tasksDiv (no source cell visible / no rows). */
+    function _findInsertGapByGhostCenter(td) {
+      if (!td || !td.rowGhost) return null;
+      const sourceCell = document.querySelector('.focus-cell.' + td.q);
+      if (!sourceCell) return null;
+      const tasksDiv = sourceCell.querySelector('.tasks');
+      if (!tasksDiv) return null;
+      const rows = Array.from(tasksDiv.querySelectorAll(':scope > .task-row'))
+        .filter(r => !r.classList.contains('task-row-ghost'));
+      const gRect = td.rowGhost.getBoundingClientRect();
+      const cy = gRect.top + gRect.height / 2;
+      for (let k = 0; k < rows.length; k++) {
+        const r = rows[k];
+        const rect = r.getBoundingClientRect();
+        const rowCy = rect.top + rect.height / 2;
+        if (cy < rowCy) {
+          return { tasksDiv, beforeNode: r, insertAt: k };
+        }
+      }
+      return { tasksDiv, beforeNode: null, insertAt: rows.length };
+    }
 
     document.addEventListener('touchend', ev => {
       if (!_td) return;
