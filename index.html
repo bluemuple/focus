@@ -7971,13 +7971,27 @@ function drawTimeArea() {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (!e.touches[0]) return;
         e.preventDefault();
+        // Track which finger started this drag — document-level touchmove
+        // will only respond to that touch. Without this, a leaked listener
+        // from a previous drag would react to ANY new touch anywhere on the
+        // page and silently move this block (the reported bug).
+        const touchId = e.touches[0].identifier;
+        function findTouch(touchList) {
+          for (let i = 0; i < touchList.length; i++) {
+            if (touchList[i].identifier === touchId) return touchList[i];
+          }
+          return null;
+        }
         startDrag(e.touches[0].clientY);
         function m(ev) {
-          if (!ev.touches[0]) return;
+          const t = findTouch(ev.touches);
+          if (!t) return;                  // a different finger — ignore
           ev.preventDefault();
-          moveDrag(ev.touches[0].clientY);
+          moveDrag(t.clientY);
         }
-        function u() {
+        function u(ev) {
+          // Only end when OUR finger lifted
+          if (ev.changedTouches && !findTouch(ev.changedTouches)) return;
           endDrag(true);
           document.removeEventListener('touchmove', m);
           document.removeEventListener('touchend', u);
@@ -8044,13 +8058,22 @@ function drawTimeArea() {
       rbEl.addEventListener('touchstart', e => {
         if (!e.touches[0]) return;
         e.preventDefault(); e.stopPropagation();
+        const touchId = e.touches[0].identifier;
+        function findTouch(touchList) {
+          for (let i = 0; i < touchList.length; i++) {
+            if (touchList[i].identifier === touchId) return touchList[i];
+          }
+          return null;
+        }
         startDrag(e.touches[0].clientY);
         function m(ev) {
-          if (!ev.touches[0]) return;
+          const t = findTouch(ev.touches);
+          if (!t) return;
           ev.preventDefault();
-          moveDrag(ev.touches[0].clientY);
+          moveDrag(t.clientY);
         }
-        function u() {
+        function u(ev) {
+          if (ev.changedTouches && !findTouch(ev.changedTouches)) return;
           endDrag();
           document.removeEventListener('touchmove', m);
           document.removeEventListener('touchend', u);
