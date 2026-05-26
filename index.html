@@ -4448,7 +4448,23 @@ async function syncStatsBidi() {
 
 /* ---- Settings sync (motivational quotes, ext.others, int.others) ---- */
 const SB_SETTINGS_TABLE = 'user_settings';
+/* Set to true once openPushGate() runs (boot has either finished pulling from
+   cloud, definitively failed, or has nothing to pull because the user isn't
+   signed in). Until then, markSettingsChanged() refuses to inflate
+   state.settingsUpdatedAt — boot-time renderers (recomputeSlider, drawGauge,
+   renderFactorGroups, etc.) call markSettingsChanged from non-user code paths,
+   and persisting a "now" timestamp to localStorage during that window would
+   make the NEXT refresh load a phantom-newer ts and beat fresh cloud data on
+   the sync comparison (the very bug we're trying to fix). */
+let _bootSyncSettled = false;
 function markSettingsChanged() {
+  // Guard: skip the timestamp bump while boot is still settling. State.tasks
+  // and friends are still saved via other paths (saveState calls), so we don't
+  // lose user data — we just refuse to claim "this device is more recent than
+  // anyone else" until the boot sync has had its say.
+  if (!_bootSyncSettled) {
+    return;
+  }
   state.settingsUpdatedAt = Date.now();
   saveState();
 }
@@ -11140,6 +11156,12 @@ function runDailyChecksAfterSync() {
   // Called from EVERY exit path so we never leave the app in "no push" limbo.
   function openPushGate() {
     _initialPullDone = true;
+    // Boot rendering has settled — from here on, markSettingsChanged() is
+    // allowed to bump state.settingsUpdatedAt. Before this point, internal
+    // renderer churn would have inflated the timestamp and corrupted the
+    // hydrated value persisted by saveState (defeating the sync comparison
+    // on the next page load).
+    _bootSyncSettled = true;
     try { runDailyChecksAfterSync(); } catch (_) {}
     try { flushPendingPushes(); } catch (_) {}
   }
