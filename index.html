@@ -1825,6 +1825,16 @@
     /* Hide the resize handle in split mode — gauge height is now driven
        by the matching tasks-list height (drawTimeArea takes care of it). */
     body.tt-split #time-resize-handle { display: none; }
+    /* Without the resize handle, the gauge needs its own bottom border
+       so it doesn't look unfinished. Match the existing border-top look. */
+    body.tt-split #time-panel .time-area {
+      border-bottom: 1px solid #e5e7eb;
+      border-radius: 8px;
+      /* Use border-box so a JS-set style.height === the gauge's visible
+         outer height (border included). Otherwise the 1px border-top
+         pushes the gauge bottom 1px below the matrix bottom. */
+      box-sizing: border-box;
+    }
     /* Hide per-quadrant headings + per-cell add-task in split mode —
        a single master add-task at top of the unified list replaces them. */
     body.tt-split #focus-matrix .focus-cell > h4 { display: none; }
@@ -8158,24 +8168,30 @@ function drawTimeArea() {
   if (durMs > TIME_MAX_MS) durMs = TIME_MAX_MS;
   state.timeArea.durationMs = durMs;
 
-  /* In SPLIT mode the gauge sits beside a list of task bars and the user
-     wants both columns to be the same visual height: gauge starts at its
-     normal default (3 h) but stretches if the tasks list is taller. We
-     compute that here so the 1px-per-minute mapping stays intact (just
-     using a larger durMs locally — state.timeArea.durationMs is the user's
-     preferred minimum, not modified). Clamped to TIME_MAX_MS so a 50-task
-     list can't blow out the viewport.
-     Falls back to stacked behaviour when split is off. */
+  /* In SPLIT mode the gauge sits beside the stack of task bars and the
+     user wants the gauge's BOTTOM edge to be on the same line as the LAST
+     task bar's bottom edge — i.e. gauge length == task-bars stacked
+     length exactly. We measure both elements' bounding rects so the math
+     is layout-accurate even when headers / paddings / margins differ
+     between the two panels. Falls back to the saved durationMs when no
+     matrix is present or split is off. */
   let renderDurMs = durMs;
   if (state.focusSplitView) {
-    const tasksPanel = document.getElementById('tasks-panel');
-    if (tasksPanel) {
-      // 60 px = 1 hour, so the panel's pixel height converts to minutes,
-      // then to milliseconds, 1:1.
-      const tasksPxHeight = tasksPanel.offsetHeight;
-      const tasksDurMs = Math.round((tasksPxHeight / TIME_PX_PER_HOUR) * 3600000);
-      if (tasksDurMs > renderDurMs) {
-        renderDurMs = Math.min(tasksDurMs, TIME_MAX_MS);
+    const matrix = document.getElementById('focus-matrix');
+    if (matrix && matrix.offsetHeight > 0) {
+      // matrix.bottom (in viewport coords) − area.top = the exact pixel
+      // height the gauge must have for its bottom edge to land on the
+      // matrix's bottom edge. 60 px = 1 hour ⇒ px == minutes 1:1.
+      const matrixRect = matrix.getBoundingClientRect();
+      const areaRect = area.getBoundingClientRect();
+      const targetPx = matrixRect.bottom - areaRect.top;
+      if (targetPx > 30) {                              // sanity floor
+        // Bypass TIME_MIN_MS so even a single task bar maps gauge length
+        // 1:1 to that bar's height (per user spec). TIME_MAX_MS still
+        // applies so an enormous list can't blow the viewport up.
+        let exactDurMs = Math.round((targetPx / TIME_PX_PER_HOUR) * 3600000);
+        if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
+        if (exactDurMs > 0) renderDurMs = exactDurMs;
       }
     }
   }
