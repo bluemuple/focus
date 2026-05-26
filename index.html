@@ -4193,12 +4193,29 @@ function ensureTaskTimers(task) {
 // `let` here would throw a TDZ ReferenceError on a fresh client, halting the
 // entire script and breaking every button.
 var _wasFreshClient = false;
+/* Timestamp captured the moment we hydrate state from localStorage — BEFORE any
+   boot-time renderer (recomputeSlider, drawGauge, etc.) calls markSettingsChanged
+   and inflates state.settingsUpdatedAt to "now". The initial cloud bidi-sync
+   compares THIS value (not the live, possibly-inflated one) against the cloud's
+   updated_at, so a phone that opens the app with stale localStorage can never
+   beat freshly-pushed cloud data on the timestamp check.
+   `var` for the same hoisting reason as _wasFreshClient (loadState runs earlier
+   in the file than this declaration would normally execute). */
+var _hydratedSettingsUpdatedAt = null;
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (s && s.tasks && s.ext && s.int) return s;
+    if (s && s.tasks && s.ext && s.int) {
+      // Snapshot the on-disk timestamp BEFORE returning — anything after this
+      // is liable to bump state.settingsUpdatedAt during boot render.
+      _hydratedSettingsUpdatedAt = (typeof s.settingsUpdatedAt === 'number')
+        ? s.settingsUpdatedAt
+        : 0;
+      return s;
+    }
   } catch(e){}
   _wasFreshClient = true;
+  _hydratedSettingsUpdatedAt = 0;
   return defaultState();
 }
 function saveState() { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch(e){} }
@@ -4618,25 +4635,43 @@ async function fetchSettingsFromCloud() {
 }
 async function syncSettingsBidi() {
   const remote = await fetchSettingsFromCloud();
-  const localTs = state.settingsUpdatedAt || 0;
+  // CRITICAL: use the timestamp captured at hydration (BEFORE any boot-time
+  // recomputeSlider → markSettingsChanged inflated state.settingsUpdatedAt to
+  // "now"). Without this, a phone that opens the app with stale localStorage
+  // would always look newer than the cloud after boot — and we'd push the
+  // stale phone data over fresher PC data instead of pulling it.
+  const hydratedTs = (typeof _hydratedSettingsUpdatedAt === 'number' && _hydratedSettingsUpdatedAt !== null)
+    ? _hydratedSettingsUpdatedAt
+    : (state.settingsUpdatedAt || 0);
   if (remote) {
     const remoteTs = new Date(remote.updated_at).getTime();
     // Apply remote when:
-    //   1. Cloud is genuinely newer than local, OR
-    //   2. We're a brand-new / freshly-cleared client (no localStorage). In
-    //      that case `localTs` may have been bumped by the initial render's
-    //      recomputeSlider → markSettingsChanged, fooling the timestamp
-    //      check. Always trust the cloud over a client with no prior data.
-    if (_wasFreshClient || remoteTs > localTs) {
+    //   1. Cloud is genuinely newer than what was ON DISK at boot, OR
+    //   2. We're a brand-new / freshly-cleared client (no localStorage at all).
+    //   Either way, the cloud reflects the most-recent edit across all devices,
+    //   which is what the user wants ("최근 데이터가 우세하도록").
+    if (_wasFreshClient || remoteTs > hydratedTs) {
       applyRemoteSettings(remote);
+      // Pin local timestamp to cloud's so the next push doesn't carry a phantom
+      // boot-inflated ts that would clobber another device's later legitimate push.
       state.settingsUpdatedAt = remoteTs;
       saveState();
       renderEverythingFromState();
-      _wasFreshClient = false;   // hydrated once — no longer "fresh"
+      _wasFreshClient = false;
+      _hydratedSettingsUpdatedAt = null;  // consumed — future syncs use live ts
       return;
     }
+    // Cloud exists but is older / equal to what we had on disk. Snap the live
+    // timestamp back to the hydrated value so the boot-render inflation doesn't
+    // propagate to the cloud during the upcoming push. Subsequent genuine user
+    // actions will bump it cleanly from here.
+    if (typeof _hydratedSettingsUpdatedAt === 'number' && _hydratedSettingsUpdatedAt !== null) {
+      state.settingsUpdatedAt = _hydratedSettingsUpdatedAt;
+      saveState();
+    }
   }
-  // Cloud missing or older — push local
+  _hydratedSettingsUpdatedAt = null;
+  // Cloud missing or older than disk — push local
   await pushSettingsToCloud();
 }
 // Debounced settings push (useful for fast-typing in motivational textarea)
