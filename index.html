@@ -2505,6 +2505,19 @@
     from { opacity: 0; transform: scaleX(.08); }
     to   { opacity: 1; transform: scaleX(1);   }
   }
+  /* Reject animation — fires when a drop is denied because the target time
+     slot already holds 2 overlapping blocks (the max we allow). */
+  @keyframes tg-ghost-reject {
+    0%   { opacity: 1; transform: scale(1);   }
+    40%  { transform: scale(1.05);            }
+    100% { opacity: 0; transform: scale(.45); }
+  }
+  .tg-ghost.tg-rejected,
+  .time-ghost.tg-rejected {
+    animation: tg-ghost-reject .4s ease-out forwards !important;
+    border-color: #ef4444 !important;
+    background: rgba(239, 68, 68, .18) !important;
+  }
   .tg-ghost-label {
     position: absolute; top: 4px; left: 8px; right: 4px;
     font-size: 11px; font-weight: 700; color: #374151;
@@ -11905,6 +11918,46 @@ setInterval(() => {
     tipBotEl.classList.add('hidden');
   }
 
+  /* ---- Overlap-limit helper ----
+     Returns the max number of EXISTING blocks active at any instant within
+     [startMs, endMs]. Drop is rejected when this hits 2 (we cap stacking
+     at 2 blocks; a 3rd would have nowhere to render). Sweep-line over clipped
+     start / end events; END events are processed before START events at the
+     same timestamp so a block ending exactly when another starts doesn't
+     count as overlap. */
+  function _maxOverlapInRange(startMs, endMs, excludeId) {
+    const events = [];
+    (state.scheduledBlocks || []).forEach(b => {
+      if (excludeId && b.id === excludeId) return;
+      if (b.endMs <= startMs || b.startMs >= endMs) return;
+      const s = Math.max(b.startMs, startMs);
+      const e = Math.min(b.endMs,   endMs);
+      if (e <= s) return;
+      events.push({ t: s, type:  1 });
+      events.push({ t: e, type: -1 });
+    });
+    events.sort((a, b) => a.t - b.t || a.type - b.type);   // -1 before +1
+    let count = 0, maxC = 0;
+    for (const ev of events) {
+      count += ev.type;
+      if (count > maxC) maxC = count;
+    }
+    return maxC;
+  }
+
+  /* Trigger the reject fade-out on a ghost element. After the animation the
+     ghost is cleared so the next drag starts fresh. */
+  function _rejectGhost(ghElement) {
+    if (!ghElement) return;
+    ghElement.classList.add('tg-rejected');
+    setTimeout(() => {
+      ghElement.classList.remove('tg-rejected');
+      _ghost = null;
+      placeGhost();
+      if (typeof hideTimeGhost === 'function') hideTimeGhost();
+    }, 420);
+  }
+
   /* ---- Ghost rendering ---- */
   function placeGhost() {
     if (!_ghost) { ghostEl.style.display = 'none'; hideTips(); return; }
@@ -11957,6 +12010,12 @@ setInterval(() => {
     if (!_draggedTask || !_ghost) return;
     e.preventDefault();
     const { startMs, durationMs } = _ghost;
+    // Reject drop when adding this block would push the max simultaneous
+    // overlap past 2 (we only support up to 2 side-by-side blocks).
+    if (_maxOverlapInRange(startMs, startMs + durationMs) >= 2) {
+      _rejectGhost(ghostEl);
+      return;
+    }
     const tasks = state.tasks[_draggedTask.q] || [];
     const task  = tasks[_draggedTask.idx];
     if (!task) return;
@@ -12782,10 +12841,28 @@ setInterval(() => {
     document.addEventListener('touchend', ev => {
       if (!_td) return;
       badgeEl.style.display = 'none';
-      hideTimeGhost();
       // Only commit a gauge block if the user actually dragged (not just tapped).
       if (_td.dragging && _ghost) {
         const { startMs, durationMs } = _ghost;
+        // Reject when target slot already holds 2 overlapping blocks.
+        // The reject animation runs on whichever ghost is currently visible.
+        if (typeof _maxOverlapInRange === 'function' &&
+            _maxOverlapInRange(startMs, startMs + durationMs) >= 2) {
+          const tGhost = document.getElementById('time-ghost');
+          // Prefer the visible ghost (time-area on mobile, gauge on PC)
+          const ghEl = (tGhost && tGhost.style.display !== 'none') ? tGhost : ghostEl;
+          if (typeof _rejectGhost === 'function') {
+            _rejectGhost(ghEl);
+          } else {
+            hideTimeGhost();
+            _ghost = null;
+            placeGhost();
+          }
+          _draggedTask = null;
+          _td = null;
+          return;
+        }
+        hideTimeGhost();
         const task = (state.tasks[_td.q] || [])[_td.idx];
         if (task) {
           const _newTBlock = {
@@ -12809,6 +12886,7 @@ setInterval(() => {
         placeGhost();
         drawGauge();   // also redraws Time area via the chained call
       } else if (_ghost) {
+        hideTimeGhost();
         _ghost = null;
         placeGhost();
       }
