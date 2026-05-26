@@ -3691,6 +3691,17 @@
         <label>Ended   <input type="datetime-local" id="note-modal-end"></label>
       </div>
     </div>
+    <!-- Optional duration input — shown only when opts.duration is provided
+         (used by Edit task to set per-task default block duration). -->
+    <div id="note-modal-duration-wrap" style="display:none; margin: 0 0 12px;">
+      <label style="display:flex; align-items:center; gap:8px;">
+        <span style="font-weight:600;">Duration (min)</span>
+        <input type="number" id="note-modal-duration" min="1" max="600" step="1"
+               style="width: 80px; padding: 4px 8px; border:1px solid var(--line);
+                      border-radius:6px; font: inherit;">
+        <span class="help" style="font-size:.75rem;">Used when this task is dropped on the time gauge.</span>
+      </label>
+    </div>
     <div class="actions">
       <button class="btn danger" id="note-modal-delete">Delete</button>
       <button class="btn" id="note-modal-cancel">Cancel</button>
@@ -5731,6 +5742,8 @@ function openNoteEditor(initialText, opts) {
     const timesWrap = document.getElementById('note-modal-times');
     const startEl   = document.getElementById('note-modal-start');
     const endEl     = document.getElementById('note-modal-end');
+    const durWrap   = document.getElementById('note-modal-duration-wrap');
+    const durEl     = document.getElementById('note-modal-duration');
     if (!modal || !textEl || !okBtn || !cancelBtn) {
       resolve(window.prompt(opts.title || 'Note', initialText || ''));
       return;
@@ -5746,6 +5759,13 @@ function openNoteEditor(initialText, opts) {
     if (showTimes) {
       if (startEl) startEl.value = msToLocalInput(entry.startedAt);
       if (endEl)   endEl.value   = msToLocalInput(entry.endedAt || entry.startedAt);
+    }
+    // Duration editor — only when opts.duration is supplied. Value in minutes.
+    const showDuration = (opts.duration !== undefined && opts.duration !== null);
+    if (durWrap) durWrap.style.display = showDuration ? '' : 'none';
+    if (showDuration && durEl) {
+      const mins = Math.max(1, Math.round(+opts.duration / 60000)) || 25;
+      durEl.value = String(mins);
     }
     function updateCounter() {
       counterEl.textContent = maxLen > 0
@@ -5764,14 +5784,20 @@ function openNoteEditor(initialText, opts) {
       document.removeEventListener('keydown', onKey);
     }
     function buildOkResult() {
-      if (!showTimes) return textEl.value;
-      const s = startEl ? localInputToMs(startEl.value) : null;
-      const e = endEl   ? localInputToMs(endEl.value)   : null;
-      return {
-        text: textEl.value,
-        startedAt: s != null ? s : entry.startedAt,
-        endedAt:   e != null ? e : entry.endedAt
-      };
+      if (showTimes) {
+        const s = startEl ? localInputToMs(startEl.value) : null;
+        const e = endEl   ? localInputToMs(endEl.value)   : null;
+        return {
+          text: textEl.value,
+          startedAt: s != null ? s : entry.startedAt,
+          endedAt:   e != null ? e : entry.endedAt
+        };
+      }
+      if (showDuration) {
+        const mins = Math.max(1, Math.min(600, +durEl.value || 0));
+        return { text: textEl.value, durationMs: mins * 60 * 1000 };
+      }
+      return textEl.value;
     }
     function done(value) { cleanup(); resolve(value); }
     function onKey(e) {
@@ -5784,7 +5810,15 @@ function openNoteEditor(initialText, opts) {
     if (deleteBtn) {
       // Hide Delete when there's nothing to delete (creating a brand-new note)
       deleteBtn.style.display = (initialText && initialText.trim()) ? '' : 'none';
-      deleteBtn.onclick = () => done(showTimes ? { text: '', startedAt: entry.startedAt, endedAt: entry.endedAt } : '');
+      deleteBtn.onclick = () => {
+        if (showTimes) {
+          done({ text: '', startedAt: entry.startedAt, endedAt: entry.endedAt });
+        } else if (showDuration) {
+          done({ text: '', durationMs: null });
+        } else {
+          done('');
+        }
+      };
     }
     textEl.oninput    = updateCounter;
     document.addEventListener('keydown', onKey);
@@ -6734,7 +6768,7 @@ function renderFocusMatrix() {
         <input type="checkbox" ${t.done?'checked':''}>
         <span class="task-text ${t.done?'done':''} ${isPomo?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>
         <span class="task-bid-wrap"></span>
-        <button class="task-edit-pen" title="Edit task name">✎</button>`;
+        <button class="task-edit-pen" title="Edit task">✎</button>`;
       const cb = row.children[0], textEl = row.children[1], bidWrap = row.children[2], penBtn = row.children[3];
       // Bid pill (always rendered) — placed inside bidWrap so it can sit under
       // the pomodoro timer when one is running on phone.
@@ -6806,16 +6840,21 @@ function renderFocusMatrix() {
           });
         }
 
-        /* Helper — create a new 25-min auto block at NOW. */
+        /* Helper — create a new auto block at NOW.
+           Uses the task's per-task durationMs if set (configured via the
+           Edit task popup), else 25-min default (one pomodoro). */
         function spawn25Block() {
           const task = state.tasks[q] && state.tasks[q][i];
+          const dur = (task && typeof task.durationMs === 'number')
+            ? task.durationMs
+            : 25 * 60 * 1000;
           state.scheduledBlocks.push({
             id:          Date.now() + '_' + Math.random().toString(36).slice(2),
             q,
             taskIdx:     i,
             taskName:    (task && task.text) || '',
             startMs:     _tgNow,
-            endMs:       _tgNow + 25 * 60 * 1000,
+            endMs:       _tgNow + dur,
             activeAt:    _tgNow,
             activeEndMs: null
           });
@@ -6971,19 +7010,39 @@ function renderFocusMatrix() {
   });
 }
 
-/* Open the ✎ name-edit popup for a focus-matrix task. OK saves; Delete (red)
-   removes the task with the same reverse-money behavior as the × button. */
+/* Open the ✎ "Edit task" popup for a focus-matrix task. Lets the user edit
+   both the task NAME and its per-task DURATION (used when the task is dropped
+   onto the time gauge or auto-created via tap). OK saves; Delete (red) removes
+   the task with the same reverse-money behavior as the × button. */
 async function editTaskNameFromFocus(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
+  // Default duration when none set yet — 25 min (one pomodoro cycle).
+  const curDurMs = (typeof task.durationMs === 'number') ? task.durationMs : 25 * 60 * 1000;
   const v = await openNoteEditor(task.text || '', {
     title: 'Edit task',
     subtitle: 'Click Delete to remove this task.',
-    maxLength: 200
+    maxLength: 200,
+    duration: curDurMs
   });
   if (v === null) return;            // Cancel
-  if (v === '') {
-    // Delete button returns '' — interpret as "delete the task"
+  // openNoteEditor returns { text, durationMs } when duration was shown.
+  if (typeof v === 'object' && v !== null) {
+    if (v.text === '') {
+      // Delete button → remove task
+      deleteTaskAt(q, i);
+    } else {
+      task.text = (v.text || '').slice(0, 200);
+      // Save per-task duration (null = revert to default behavior)
+      if (v.durationMs == null) {
+        delete task.durationMs;
+      } else {
+        task.durationMs = v.durationMs;
+      }
+      if (!task.addLogged) firstTextLogIfNeeded(q, i);
+    }
+  } else if (v === '') {
+    // Legacy path (no duration shown) — Delete returns ''
     deleteTaskAt(q, i);
   } else {
     task.text = v.slice(0, 200);
@@ -11539,7 +11598,7 @@ setInterval(() => {
    TASK-GAUGE SCHEDULING  (drag task handle → gauge)
    =================================================== */
 (function taskGaugeScheduling() {
-  const DEFAULT_MS = 60 * 60 * 1000;   // 60-min default block
+  const DEFAULT_MS = 25 * 60 * 1000;   // 25-min default block (one pomodoro)
   const STEP_MS    =  5 * 60 * 1000;   // ↑/↓ arrow key step
   const SNAP_THR   =  5 * 60 * 1000;   // snap-to threshold
   const GRID_MS    = 15 * 60 * 1000;   // 15-min invisible grid
@@ -11680,7 +11739,10 @@ setInterval(() => {
     // causes browsers to reject the drop (drop event never fires).
     try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
     const startMs   = snapMs(yToMs(e.clientY));
-    const durMs     = _ghost ? _ghost.durationMs : DEFAULT_MS;
+    // Per-task duration if set, otherwise the global default (25 min).
+    const task = state.tasks[_draggedTask.q] && state.tasks[_draggedTask.q][_draggedTask.idx];
+    const taskDur = task && typeof task.durationMs === 'number' ? task.durationMs : DEFAULT_MS;
+    const durMs   = _ghost ? _ghost.durationMs : taskDur;
     _ghost = { startMs, durationMs: durMs };
     placeGhost();
   });
@@ -12414,7 +12476,10 @@ setInterval(() => {
       // Don't preventDefault here — let taps and scroll proceed naturally until
       // the movement threshold is crossed (handled in touchmove below).
       const t = ev.touches[0];
-      _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: DEFAULT_MS,
+      // Per-task duration if set, otherwise the global default (25 min).
+      const _task = state.tasks[info.q] && state.tasks[info.q][info.idx];
+      const _taskDur = _task && typeof _task.durationMs === 'number' ? _task.durationMs : DEFAULT_MS;
+      _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: _taskDur,
               startX: t.clientX, startY: t.clientY, dragging: false };
       _draggedTask = { q: info.q, idx: info.idx };
     }, { passive: false });
@@ -12519,7 +12584,7 @@ setInterval(() => {
    ====================================================================== */
 (function setupUndo() {
   const MAX_UNDO = 40;
-  const DEBOUNCE_MS = 700;
+  const DEBOUNCE_MS = 250;   // short — group rapid micro-saves within a single user action
   const _undoStack = [];
   let _lastSnapMs = 0;
   let _suppress = false;
@@ -12529,7 +12594,7 @@ setInterval(() => {
     try {
       const snap = JSON.stringify(state);
       const top = _undoStack[_undoStack.length - 1];
-      if (snap === top) return;
+      if (snap === top) return;      // dedupe identical states
       _undoStack.push(snap);
       if (_undoStack.length > MAX_UNDO) _undoStack.shift();
       _lastSnapMs = Date.now();
@@ -12595,21 +12660,24 @@ setInterval(() => {
 
   /* Expose for debugging / console */
   window.__undo = undo;
+  window.__undoStack = _undoStack;   // inspect via DevTools console
 
-  document.addEventListener('keydown', (e) => {
-    // Cmd+Z (Mac) or Ctrl+Z (Win/Linux). Skip Shift (= redo, not implemented).
-    if (e.shiftKey) return;
+  /* Capture-phase listener on window — fires BEFORE any bubble-phase handler,
+     so it can't be blocked by other code calling stopPropagation. We use
+     e.code instead of e.key so non-English IME layouts (Korean etc.) still
+     trigger Cmd+Z reliably. */
+  function _undoHotkeyHandler(e) {
+    if (e.shiftKey) return;            // Cmd+Shift+Z = redo (not implemented)
     if (!(e.metaKey || e.ctrlKey)) return;
-    if (e.key !== 'z' && e.key !== 'Z') return;
-    // Let the browser handle native text undo when typing in an input field.
-    const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' ||
-               ae.isContentEditable)) {
-      return;
-    }
+    // Layout-independent — KeyZ is always the physical Z slot regardless of IME
+    const isZ = (e.code === 'KeyZ') || e.key === 'z' || e.key === 'Z';
+    if (!isZ) return;
     e.preventDefault();
+    e.stopPropagation();
     undo();
-  });
+  }
+  window.addEventListener('keydown', _undoHotkeyHandler, true);
+  document.addEventListener('keydown', _undoHotkeyHandler, true);
 
   /* Seed history with the initial state on next idle tick so the user can
      immediately undo their first change. */
