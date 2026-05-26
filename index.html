@@ -6897,28 +6897,33 @@ function renderFocusMatrix() {
         const at = state.activeTimer;
         const isSameTask = at && at.q === q && at.idx === i;
 
-        /* Helper — find any LIVE (activeAt set, activeEndMs unset) covering
-           block for this task. Used to decide whether to create a new 25-min
-           block on resume / start. */
+        /* Helper — find any NOT-finalized covering block for this task.
+           A block counts as "covering" if NOW falls inside it AND it isn't
+           finalized (no activeEndMs). It MAY have activeAt=null when paused —
+           that's a valid covering block we want to resume on. */
         function findCoveringBlock() {
           let found = null;
           (state.scheduledBlocks || []).forEach(b => {
             if (b.q !== q || b.taskIdx !== i) return;
-            if (b.startMs <= _tgNow && _tgNow < b.endMs &&
-                b.activeAt && !b.activeEndMs) {
+            if (b.startMs <= _tgNow && _tgNow < b.endMs && !b.activeEndMs) {
               found = b;
             }
           });
           return found;
         }
 
-        /* Helper — finalize any open blocks for this task at the given time,
-           so the block's coloured fill stops growing. */
+        /* Helper — finalize any open blocks for this task at the given time
+           (push remaining open session to workedSegments, clear activeAt,
+           set activeEndMs so future ticks don't extend the colour). */
         function freezeOpenBlocks(freezeMs) {
           (state.scheduledBlocks || []).forEach(b => {
-            if (b.q === q && b.taskIdx === i && b.activeAt && !b.activeEndMs) {
-              b.activeEndMs = freezeMs;
+            if (b.q !== q || b.taskIdx !== i) return;
+            if (b.activeAt && !b.activeEndMs) {
+              if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+              b.workedSegments.push({ startMs: b.activeAt, endMs: freezeMs });
+              b.activeAt = null;
             }
+            if (!b.activeEndMs) b.activeEndMs = freezeMs;
           });
         }
 
@@ -6942,8 +6947,19 @@ function renderFocusMatrix() {
           });
         }
 
-        /* CASE A — same task already running and NOT paused → pause it. */
+        /* CASE A — same task already running and NOT paused → pause it.
+           Capture the open session into b.workedSegments and clear activeAt so
+           the paused interval stays GREY (not coloured) when resumed later. */
         if (isSameTask && !at.paused) {
+          const pauseAt = _tgNow;
+          (state.scheduledBlocks || []).forEach(b => {
+            if (b.q !== q || b.taskIdx !== i) return;
+            if (b.activeAt && !b.activeEndMs) {
+              if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+              b.workedSegments.push({ startMs: b.activeAt, endMs: pauseAt });
+              b.activeAt = null;
+            }
+          });
           if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
           saveState(); debouncedPushSettings();
           drawGauge();
@@ -6952,13 +6968,18 @@ function renderFocusMatrix() {
         }
 
         /* CASE B — same task, but PAUSED → resume.
-           If the old open block no longer covers NOW (because user paused
-           long enough for it to expire), finalize it at the pause time and
-           spawn a fresh 25-min block before resuming. */
+           Start a NEW open session at NOW on the covering block (or spawn a
+           fresh 25-min block if the previous one has expired). */
         if (isSameTask && at.paused) {
-          if (!findCoveringBlock()) {
+          let covering = findCoveringBlock();
+          if (!covering) {
+            // Old covering block expired during pause — finalize then spawn new
             freezeOpenBlocks(at.pausedAt || _tgNow);
             spawn25Block();
+            covering = findCoveringBlock();
+          } else {
+            // Start a new session on the existing covering block
+            if (!covering.activeAt) covering.activeAt = _tgNow;
           }
           if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
           saveState(); debouncedPushSettings();
@@ -7178,12 +7199,17 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logPomodoroPhase(at, now);
     }
     // Freeze colour-coding for any gauge blocks tied to this task. If the
-    // timer was PAUSED at the time of stop (e.g. user switched tasks while
-    // paused), freeze color at pausedAt — not now — so the fill reflects
-    // actual work time and not the paused interval.
+    // timer was PAUSED at the time of stop, freeze color at pausedAt — not
+    // now — so the fill reflects actual work time and not the paused interval.
+    // Also push the open session to workedSegments so it's preserved when
+    // re-rendering after the timer is gone.
     const freezeAt = (at.paused && at.pausedAt) ? at.pausedAt : now;
     (state.scheduledBlocks || []).forEach(b => {
-      if (b.q === at.q && b.taskIdx === at.idx && b.activeAt && !b.activeEndMs) {
+      if (b.q !== at.q || b.taskIdx !== at.idx) return;
+      if (b.activeAt && !b.activeEndMs) {
+        if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+        b.workedSegments.push({ startMs: b.activeAt, endMs: freezeAt });
+        b.activeAt = null;
         b.activeEndMs = freezeAt;
       }
     });
@@ -7843,28 +7869,25 @@ function drawTimeArea() {
     div.style.top    = tPx + 'px';
     div.style.height = (bPx - tPx) + 'px';
 
-    if (b.activeAt) {
-      // If pomodoro for this task is currently paused, freeze color growth
-      // at the moment of pause (state.activeTimer.pausedAt). Otherwise the
-      // color tracks wall-clock time as usual.
-      const _at = state.activeTimer;
-      const _pausedForThis = _at && _at.paused && _at.type === 'pomodoro' &&
-                             _at.q === b.q && _at.idx === b.taskIdx;
-      const colorEnd = b.activeEndMs
-        ? Math.min(b.activeEndMs, now)
-        : (_pausedForThis ? _at.pausedAt : now);
-      const blockH   = b.endMs - b.startMs;
-      if (blockH > 0 && colorEnd > b.activeAt) {
-        const fStart = Math.max(b.startMs, b.activeAt);
-        const fEnd   = Math.min(b.endMs,   colorEnd);
-        if (fEnd > fStart) {
-          const fill = document.createElement('div');
-          fill.className   = 'time-block-fill';
-          fill.style.top    = ((fStart - b.startMs) / blockH * 100) + '%';
-          fill.style.height = ((fEnd   - fStart   ) / blockH * 100) + '%';
-          fill.style.background = qColor(b.q);
-          div.appendChild(fill);
-        }
+    // Render one coloured fill per worked session. Paused intervals are
+    // not in workedSegments, so they stay grey — exactly what the user
+    // wants when they pause-then-resume.
+    {
+      const segments = getBlockColorSegments(b, now);
+      const blockH = b.endMs - b.startMs;
+      if (blockH > 0) {
+        segments.forEach(seg => {
+          const fStart = Math.max(b.startMs, seg.startMs);
+          const fEnd   = Math.min(b.endMs,   seg.endMs);
+          if (fEnd > fStart) {
+            const fill = document.createElement('div');
+            fill.className   = 'time-block-fill';
+            fill.style.top    = ((fStart - b.startMs) / blockH * 100) + '%';
+            fill.style.height = ((fEnd   - fStart   ) / blockH * 100) + '%';
+            fill.style.background = qColor(b.q);
+            div.appendChild(fill);
+          }
+        });
       }
     }
 
@@ -8183,6 +8206,26 @@ function fmtTimeBlockDur(ms) {
   if (min < 60) return min + 'm';
   const h = Math.floor(min / 60), m = min % 60;
   return m ? `${h}h${m}m` : `${h}h`;
+}
+
+/* Return the list of [startMs, endMs] segments that should be coloured on
+   this block. Uses b.workedSegments (closed past sessions) + any open
+   session (b.activeAt → pausedAt | activeEndMs | now). Pauses leave the
+   "paused" interval grey because it's not part of any segment. */
+function getBlockColorSegments(b, now) {
+  const segs = Array.isArray(b.workedSegments) ? b.workedSegments.slice() : [];
+  if (b.activeAt) {
+    const at = state.activeTimer;
+    const isPausedForThis = at && at.paused && at.type === 'pomodoro' &&
+                            at.q === b.q && at.idx === b.taskIdx;
+    const openEnd = b.activeEndMs
+      ? Math.min(b.activeEndMs, now)
+      : (isPausedForThis ? at.pausedAt : now);
+    if (openEnd > b.activeAt) {
+      segs.push({ startMs: b.activeAt, endMs: openEnd });
+    }
+  }
+  return segs;
 }
 
 /* HH:MM helper for tooltips */
@@ -12071,27 +12114,26 @@ setInterval(() => {
       div.style.height = htPct  + '%';
       div.dataset.bid  = String(b.id);
 
-      /* -- Colour fill: grey base + task-colour stripe from activeAt onward -- */
-      if (b.activeAt) {
-        // Freeze color growth at pomodoro pause time when this task is paused
-        const _at = state.activeTimer;
-        const _pausedForThis = _at && _at.paused && _at.type === 'pomodoro' &&
-                               _at.q === b.q && _at.idx === b.taskIdx;
-        const colorEnd = b.activeEndMs
-          ? Math.min(b.activeEndMs, now)
-          : (_pausedForThis ? _at.pausedAt : now);
-        const totalH   = b.endMs - b.startMs;
-        if (totalH > 0 && colorEnd > b.activeAt) {
-          const fillTop = Math.max(0, (b.activeAt - b.startMs) / totalH) * 100;
-          const fillBot = Math.min(100, (colorEnd  - b.startMs) / totalH) * 100;
-          if (fillBot > fillTop) {
-            const fill        = document.createElement('div');
-            fill.className    = 'tg-block-fill';
-            fill.style.top    = fillTop + '%';
-            fill.style.height = (fillBot - fillTop) + '%';
-            fill.style.background = qColor(b.q);
-            div.appendChild(fill);
-          }
+      /* -- Colour fill: one fill per worked session (b.workedSegments + open).
+         Paused intervals leave a grey gap because they're not in any session. */
+      {
+        const segments = getBlockColorSegments(b, now);
+        const totalH = b.endMs - b.startMs;
+        if (totalH > 0) {
+          segments.forEach(seg => {
+            const fStart = Math.max(b.startMs, seg.startMs);
+            const fEnd   = Math.min(b.endMs,   seg.endMs);
+            if (fEnd > fStart) {
+              const fillTop = ((fStart - b.startMs) / totalH) * 100;
+              const fillBot = ((fEnd   - b.startMs) / totalH) * 100;
+              const fill = document.createElement('div');
+              fill.className   = 'tg-block-fill';
+              fill.style.top    = fillTop + '%';
+              fill.style.height = (fillBot - fillTop) + '%';
+              fill.style.background = qColor(b.q);
+              div.appendChild(fill);
+            }
+          });
         }
       }
 
