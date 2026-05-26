@@ -6989,21 +6989,28 @@ function renderFocusMatrix() {
         }
 
         /* CASE C — no timer on this task (or a different task is running) →
-           start fresh on this task. Existing logic: activate any blocks for
-           this task; create new 25-min block only if none currently covers
-           NOW (matching the user's spec). */
-        let hasLiveCoveringBlock = false;
+           start fresh on this task. RULE: if a block of THIS task is being
+           passed by the current time line, reuse it (don't spawn a new one).
+           Reuse works even for blocks that were previously finalized
+           (activeEndMs set from an earlier stop) — we un-finalize and start
+           a new session at NOW, so colour-coding picks up from the current
+           time line forward. */
+        let hasCoveringBlock = false;
         (state.scheduledBlocks || []).forEach(b => {
           if (b.q !== q || b.taskIdx !== i) return;
           const coversNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
-          if (!b.activeAt) {
+          if (coversNow) {
+            // Same task + currently in progress → reuse this block.
+            if (b.activeEndMs) b.activeEndMs = null;     // un-finalize
+            if (!b.activeAt)   b.activeAt    = _tgNow;   // start a new session
+            hasCoveringBlock = true;
+          } else if (!b.activeAt) {
+            // Future block of the same task — prime activeAt so colour kicks
+            // in when the current-time line eventually enters it.
             b.activeAt = _tgNow;
-            if (coversNow) hasLiveCoveringBlock = true;
-          } else if (!b.activeEndMs && coversNow) {
-            hasLiveCoveringBlock = true;
           }
         });
-        if (!hasLiveCoveringBlock) spawn25Block();
+        if (!hasCoveringBlock) spawn25Block();
         toggleTaskTimer(q, i);
       };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
@@ -12003,6 +12010,68 @@ setInterval(() => {
       _arrowBlock = null;
       hideTips();
       drawGauge();
+      return;
+    }
+
+    /* ←/→ alone: hop to the LEFT or RIGHT peer block when the selected block
+       is paired with another in a half-l / half-r overlap. Two blocks are
+       "peers" if their time ranges overlap. Within an overlapping pair the
+       block placed first (smaller index in state.scheduledBlocks) renders on
+       the LEFT (half-l) and the other on the RIGHT (half-r). */
+    if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
+        _arrowBlock && !_tgBusy && !isTyping) {
+      e.preventDefault();
+      const all = state.scheduledBlocks || [];
+      const cur = _arrowBlock;
+      // Find blocks that overlap with the current one in TIME
+      const peers = all.filter(b =>
+        b !== cur &&
+        b.endMs > cur.startMs && cur.endMs > b.startMs
+      );
+      if (!peers.length) return;
+      // Reproduce the same half-l/half-r assignment as renderScheduledBlocks:
+      // the BLOCK that comes EARLIER in the state.scheduledBlocks array gets
+      // half-l (left side); later one(s) get half-r (right side).
+      const curIdx = all.indexOf(cur);
+      // The "left" block in an overlapping pair is the one with the lower
+      // array index. The "right" block has a higher array index.
+      let target = null;
+      if (e.key === 'ArrowLeft') {
+        // pick the peer with the LARGEST index that is still smaller than cur
+        let bestIdx = -1;
+        peers.forEach(p => {
+          const pIdx = all.indexOf(p);
+          if (pIdx < curIdx && pIdx > bestIdx) { bestIdx = pIdx; target = p; }
+        });
+        // If we are already the leftmost (no smaller-index peer), wrap to
+        // the rightmost peer instead so left/right still hop between visible
+        // overlapping siblings.
+        if (!target) {
+          let maxIdx = -1;
+          peers.forEach(p => {
+            const pIdx = all.indexOf(p);
+            if (pIdx > maxIdx) { maxIdx = pIdx; target = p; }
+          });
+        }
+      } else { /* ArrowRight */
+        let bestIdx = Infinity;
+        peers.forEach(p => {
+          const pIdx = all.indexOf(p);
+          if (pIdx > curIdx && pIdx < bestIdx) { bestIdx = pIdx; target = p; }
+        });
+        if (!target) {
+          let minIdx = Infinity;
+          peers.forEach(p => {
+            const pIdx = all.indexOf(p);
+            if (pIdx < minIdx) { minIdx = pIdx; target = p; }
+          });
+        }
+      }
+      if (target) {
+        _arrowBlock = target;
+        drawGauge();
+        showTips(target.startMs, target.endMs);
+      }
       return;
     }
 
