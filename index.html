@@ -7368,7 +7368,51 @@ function renderFocusMatrix() {
             b.activeAt = _tgNow;
           }
         });
-        if (!hasCoveringBlock) spawn25Block();
+        if (!hasCoveringBlock) {
+          /* Before spawning the new 25-min (or per-task-duration) block,
+             clear out OTHER tasks' blocks that would conflict:
+               (1) If a block of a different task is being passed by the
+                   current time line, trim its end to NOW so the new block
+                   can start cleanly at NOW (the past portion stays as
+                   history). Finalize any open session so colour-coding
+                   stops at NOW.
+               (2) If a block of a different task sits inside the new
+                   block's [NOW, NOW+dur) range, delete it (it'd be
+                   visually consumed by the new block).
+               (3) If a block of a different task starts inside the new
+                   range but extends past it, shift its start to NOW+dur
+                   so it sits flush AFTER the new block.
+             Same-task blocks are left alone — they're handled above. */
+          const _task = state.tasks[q] && state.tasks[q][i];
+          const _newDurMs = (_task && typeof _task.durationMs === 'number')
+            ? _task.durationMs
+            : 25 * 60 * 1000;
+          const _newEndMs = _tgNow + _newDurMs;
+          for (let bi = state.scheduledBlocks.length - 1; bi >= 0; bi--) {
+            const b = state.scheduledBlocks[bi];
+            if (b.q === q && b.taskIdx === i) continue;  // same task: handled
+            if (b.endMs <= _tgNow) continue;             // entirely before NOW
+            if (b.startMs >= _newEndMs) continue;        // entirely after new
+            const crossesNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
+            if (crossesNow) {
+              // (1) Trim its end to NOW; finalize any open session up to NOW.
+              if (b.activeAt && !b.activeEndMs) {
+                if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+                b.workedSegments.push({ startMs: b.activeAt, endMs: _tgNow });
+                b.activeAt = null;
+              }
+              b.endMs = _tgNow;
+              if (!b.activeEndMs) b.activeEndMs = _tgNow;
+            } else if (b.endMs <= _newEndMs) {
+              // (2) Entirely inside [_tgNow, _newEndMs) → delete.
+              state.scheduledBlocks.splice(bi, 1);
+            } else {
+              // (3) Starts inside, extends past → shift start to new-end.
+              b.startMs = _newEndMs;
+            }
+          }
+          spawn25Block();
+        }
         toggleTaskTimer(q, i);
       };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
