@@ -3096,6 +3096,20 @@
     color: #6b7280; opacity: 0.7;
     pointer-events: none;
   }
+  /* Short block layout (height ≲ 30 min). Name and duration would otherwise
+     overlap when centred + bottom-right. Switch to a SIDE-BY-SIDE layout:
+     name on the left (truncates with ellipsis), duration vertically
+     centred on the right. Name font shrinks so the row stays legible. */
+  .time-block.short .time-block-name {
+    left: 6px; right: 32px;     /* leave room for the duration label */
+    text-align: left;
+    font-size: 10px;
+  }
+  .time-block.short .time-block-dur {
+    top: 50%; bottom: auto;
+    right: 4px;
+    transform: translateY(-50%);
+  }
   /* ▲▼ arrows — visible ONLY when block is selected.
      ▲ sits at top-LEFT, ▼ at bottom-RIGHT (diagonal placement). Each button
      keeps the same edge distance (3 px from side, 15 px from top/bottom).
@@ -7449,7 +7463,9 @@ function renderFocusMatrix() {
         // background color (.work / .short-break / .long-break classes on
         // the pomodoro-display); the text was redundant and cost a line so
         // tasks were wrapping to 2 lines.
-        display.innerHTML = `<span class="time">${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s${at.paused?' ⏸':''}</span>`;
+        // Minutes only — seconds removed per user request. Single-digit
+        // minutes render as e.g. "5m" (no zero pad) for natural readability.
+        display.innerHTML = `<span class="time">${m}m${at.paused?' ⏸':''}</span>`;
         display.onclick = (e) => { e.stopPropagation(); togglePomodoroPause(); };
         // Insert ABOVE the bid pill so they stack vertically inside bidWrap.
         bidWrap.insertBefore(display, bidBtn);
@@ -7604,7 +7620,8 @@ function tickTaskTimers() {
       const totalSec = Math.max(0, Math.floor(remaining / 1000));
       const m = Math.floor(totalSec / 60), s = totalSec % 60;
       const timeEl = display.querySelector('.time');
-      if (timeEl) timeEl.textContent = `${String(m).padStart(2,'0')}m${String(s).padStart(2,'0')}s${at.paused?' ⏸':''}`;
+      // Minutes only — matches the initial render above (seconds removed).
+      if (timeEl) timeEl.textContent = `${m}m${at.paused?' ⏸':''}`;
       // Keep the q-q* class in sync so the tint matches the running task's quadrant.
       display.className = `pomodoro-display ${at.phase} q-${at.q}${at.paused?' paused':''}`;
       display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
@@ -8366,6 +8383,13 @@ function drawTimeArea() {
         });
       }
     }
+
+    // Tag short blocks (≤ 30 px ≈ 30 min) with .short so CSS can switch to
+    // a side-by-side layout (name LEFT, duration RIGHT on the same line)
+    // and shrink the name's font. Without this, on a 25-min block the
+    // vertically-centered name overlaps the bottom-right duration label.
+    const _blockPx = bPx - tPx;
+    if (_blockPx < 30) div.classList.add('short');
 
     const nameEl = document.createElement('div');
     nameEl.className = 'time-block-name';
