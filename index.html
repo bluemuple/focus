@@ -7850,18 +7850,19 @@ function drawTimeArea() {
       function moveDrag(clientY) {
         if (!dragSt) return;
         const dy = clientY - dragSt.startY;
-        // 2 px is plenty to distinguish a tap from a drag, and feels snappier
         if (Math.abs(dy) >= 2) dragSt.moved = true;
         if (!dragSt.moved) return;
-        // Continuous 5-min snap: every drag step recomputes from the original
-        // start + cumulative dy. Block jumps 5 min at each boundary the finger
-        // crosses, with no lag.
         const dMs = dy * _msPerPx;
         const newStart = snap(dragSt.origStart + dMs);
         if (newStart !== b.startMs) {
           b.startMs = newStart;
           b.endMs   = newStart + dragSt.dur;
-          drawTimeArea();
+          // PERF: update only the dragged block's position directly. Calling
+          // drawTimeArea() on every touchmove re-renders 48 hour labels +
+          // every block + every fill, which can drop frames on slower phones
+          // and makes the drag feel choppy. Full re-render happens once on
+          // endDrag so other blocks / overlaps / now-line stay in sync.
+          div.style.top = msToPx(b.startMs) + 'px';
         }
         showTimeAreaTips(b.startMs, b.endMs);
       }
@@ -7870,6 +7871,7 @@ function drawTimeArea() {
         if (dragSt && dragSt.moved) {
           saveState();
           if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+          drawTimeArea();   // one full sync at the end of the drag
         } else if (wasTap) {
           // No movement → treat as tap-to-select
           if (window.__tgSelectBlock) window.__tgSelectBlock(b);
@@ -7933,10 +7935,11 @@ function drawTimeArea() {
         if (newEnd < dragSt.origStart + MIN_BLOCK_MS) newEnd = dragSt.origStart + MIN_BLOCK_MS;
         if (newEnd !== b.endMs) {
           b.endMs = newEnd;
-          drawTimeArea();
-          // drawTimeArea re-creates `div` — re-apply rb-active to the new div
-          const newDiv = document.querySelector(`.time-block[data-bid="${b.id}"]`);
-          if (newDiv) newDiv.classList.add('rb-active');
+          // PERF: direct DOM update only (height) — skip full drawTimeArea
+          // re-render. Also keep durEl label in sync since duration changed.
+          const newHt = msToPx(b.endMs) - msToPx(b.startMs);
+          div.style.height = newHt + 'px';
+          if (durEl) durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
         }
         showTimeAreaTips(b.startMs, b.endMs);
       }
@@ -7947,6 +7950,7 @@ function drawTimeArea() {
         if (dragSt) {
           saveState();
           if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+          drawTimeArea();   // full sync once at the end
         }
         dragSt = null;
       }
