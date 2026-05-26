@@ -8801,26 +8801,32 @@ function activeTimerToSegment(at, now) {
   }
   return null;
 }
-/* Per-task colour palettes — each quadrant has a colour FAMILY and each task
-   inside that quadrant gets a different SHADE of that family. Used by the
-   time-gauge fills, the task-name font in the matrix, and the weekly view
-   bands. The palette wraps around (taskIdx % length) so quadrants with more
-   than 5 tasks keep colouring without crashing. */
+/* Per-task colour palettes — each quadrant has a colour FAMILY (8 shades).
+   The shade picked for a given task is RANDOM-LOOKING but STABLE: we hash
+   (q + taskIdx) so the same task always gets the same colour, and adjacent
+   tasks usually get NON-adjacent shades (no boring gradient down the list).
+   Used by the time-gauge fills, the task-name font in the matrix, and the
+   weekly view bands. */
 const Q_TASK_PALETTES = {
-  q1: ['#fca5a5', '#f87171', '#ef4444', '#dc2626', '#b91c1c'],  // red family
-  q2: ['#fde68a', '#fcd34d', '#fbbf24', '#f59e0b', '#d97706'],  // yellow family
-  q3: ['#d8b4fe', '#c084fc', '#a855f7', '#9333ea', '#7e22ce'],  // purple family
-  q4: ['#93c5fd', '#60a5fa', '#3b82f6', '#2563eb', '#1d4ed8'],  // blue family
+  q1: ['#C85A5A','#D46A5B','#B85C5C','#C05A72','#B8664F','#A94F5C','#D05F6A','#B94A48'],  // red family
+  q2: ['#D4A83E','#E0B84E','#C99A42','#D2B04C','#BFA94A','#D7A64A','#C7B04A','#E2AD43'],  // yellow family
+  q3: ['#7B5AA6','#8A6BBE','#9B6A8F','#75639A','#76507A','#8C5F9E','#6F5D9B','#9A72A6'],  // purple family
+  q4: ['#3F75B5','#5A7FA8','#4F8CC9','#607D9E','#4D72B8','#4E8FA8','#467AA0','#5C8DB8'],  // blue family
 };
 function qTaskColor(q, taskIdx) {
   const arr = Q_TASK_PALETTES[q] || Q_TASK_PALETTES.q4;
   const idx = (typeof taskIdx === 'number' && taskIdx >= 0) ? taskIdx : 0;
-  return arr[idx % arr.length];
+  // Multiplier 37 + per-quadrant offset spreads sequential idx values across
+  // non-adjacent palette slots → the matrix doesn't read as a gradient even
+  // when tasks are added one after another.
+  const qOffset = ({ q1: 3, q2: 1, q3: 5, q4: 7 })[q] || 0;
+  const slot = Math.abs((idx * 37 + qOffset) % arr.length);
+  return arr[slot];
 }
 function qColor(q, taskIdx) {
   // Backwards-compat overload: when called with a taskIdx, return the
-  // per-task shade. When called with just q (legacy callers), fall back to
-  // the family's lightest shade so nothing breaks.
+  // per-task shade. When called with just q (legacy callers), use the
+  // quadrant's first palette entry as a representative colour.
   if (typeof taskIdx === 'number') return qTaskColor(q, taskIdx);
   const arr = Q_TASK_PALETTES[q];
   return arr ? arr[0] : '#ddd';
