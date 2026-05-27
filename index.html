@@ -3326,8 +3326,8 @@
     <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 5 L8 12 L19 19 Z" fill="currentColor"/><rect x="5" y="5" width="2.4" height="14" rx="1" fill="currentColor"/></svg></button>
     <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 4 L19 12 L7 20 Z" fill="currentColor"/></svg></button>
     <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 5 L16 12 L5 19 Z" fill="currentColor"/><rect x="16.6" y="5" width="2.4" height="14" rx="1" fill="currentColor"/></svg></button>
-    <button id="tab-focus" class="active tab-page-btn" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">ƒ</span></button>
-    <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">Σ</span></button>
+    <button id="tab-focus" class="active tab-page-btn" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path d="M7 4 H13 C16 4 17.5 5.6 17.5 8 C17.5 9.7 16.6 10.9 15.2 11.5 C17.1 12 18.2 13.4 18.2 15.4 C18.2 18.2 16.4 20 13.2 20 H7 Z M10 6.5 V10.5 H12.6 C13.9 10.5 14.6 9.8 14.6 8.5 C14.6 7.2 13.9 6.5 12.6 6.5 Z M10 13 V17.5 H13 C14.5 17.5 15.3 16.7 15.3 15.3 C15.3 13.8 14.5 13 13 13 Z" fill="currentColor" fill-rule="evenodd"/></svg></span></button>
+    <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><rect x="4"    y="13" width="3.6" height="7"  rx="0.8" fill="currentColor"/><rect x="10.2" y="9"  width="3.6" height="11" rx="0.8" fill="currentColor"/><rect x="16.4" y="5"  width="3.6" height="15" rx="0.8" fill="currentColor"/></svg></span></button>
   </nav>
 </header>
 
@@ -3933,7 +3933,7 @@
               <li>Previous / Play-Pause / Next — Focus Music playback. Tracks live in <code>audio/focus/</code>; the playlist is read from <code>audio/focus/playlist.json</code>.</li>
             </ul>
           </li>
-          <li><em>Page tabs</em> — Focus and Statistics. On phone, both shrink to matched pill icons (italic <em>ƒ</em> / Σ). The Setup page was consolidated into Focus; there is no Setup tab.</li>
+          <li><em>Page tabs</em> — Focus and Statistics. On phone, both shrink to matched pill icons (a monogram <em>B</em> for Bidoro · a small bar-chart for Statistics). The Setup page was consolidated into Focus; there is no Setup tab.</li>
           <li><em>Manual</em> — opens this guide. It also lives inside the Account panel (Sign out · Manual line).</li>
         </ul>
       </li>
@@ -9453,6 +9453,24 @@ function openEventModal(existing) {
 
   function startDrag(startY, isTouch) {
     if (!state.timeArea) state.timeArea = { durationMs: 3 * HOUR };
+    // In SPLIT mode (Time & Tasks), drawTimeArea renders the gauge at
+    //   max(matrix-bottom-floor, state.timeArea.durationMs).
+    // If durationMs is currently SMALLER than the matrix floor, dragging
+    // the handle does increase durationMs but the gauge stays at the
+    // floor height (Math.max wins) — so the handle visibly doesn't move
+    // until durationMs exceeds the floor (the reported "100 px delay").
+    // Fix: snap durationMs up to the actual rendered viewport height the
+    // moment the drag starts, so every subsequent pixel of finger movement
+    // translates to one pixel of handle movement.
+    if (state.focusSplitView) {
+      const area = document.getElementById('time-area');
+      if (area && area.offsetHeight > 0) {
+        const renderedDurMs = Math.round((area.offsetHeight / PX_PER_HOUR) * HOUR);
+        if (renderedDurMs > state.timeArea.durationMs) {
+          state.timeArea.durationMs = renderedDurMs;
+        }
+      }
+    }
     const startDur = state.timeArea.durationMs;
     function onMove(clientY) {
       const dy = clientY - startY;
