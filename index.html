@@ -4455,6 +4455,64 @@ migrateState();
     saveState();
   }
 })();
+
+/* Orphan-block janitor — finalize ANY scheduledBlock that's still flagged
+   as "currently running" (activeAt set, no activeEndMs) but whose
+   associated active timer no longer exists. Without this, a tracker
+   block from a previous session can keep "growing" on the gauge
+   indefinitely (e.g. user started a Habit tracker, closed the app, came
+   back hours later — _growActiveTrackerBlocks would have extended endMs
+   each tick before close; the block remains as a multi-hour fossil on
+   the gauge). For pomodoro task blocks, freeze the open work / break
+   session at its existing endMs so colour-coding stops where it should.
+
+   The rule: a block is "active" only if state.activeTimer still matches
+   its task / tracker. Anything else gets sealed shut. */
+(function janitorFinalizeOrphanBlocks() {
+  if (!Array.isArray(state.scheduledBlocks)) return;
+  const at = state.activeTimer;
+  let touched = false;
+  state.scheduledBlocks.forEach(b => {
+    // Decide whether this block should still be "live" given the current
+    // activeTimer. If yes, leave it alone — the real ticks own it.
+    let stillLive = false;
+    if (at) {
+      if (b.kind === 'tracker') {
+        const expectedSide = (at.type === 'multiplier') ? 'multiplier'
+                          : (at.type === 'muncher')     ? 'muncher'
+                          : null;
+        if (expectedSide && b.trackerSide === expectedSide && b.trackerIdx === at.manaIdx) {
+          stillLive = true;
+        }
+      } else {
+        if (at.type === 'pomodoro' && b.q === at.q && b.taskIdx === at.idx) {
+          stillLive = true;
+        }
+      }
+    }
+    if (stillLive) return;
+    // Orphan: close any open work / break sessions and stamp activeEndMs.
+    let didEdit = false;
+    if (b.activeAt != null && !b.activeEndMs) {
+      if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+      const stopAt = Math.min(b.endMs || Date.now(), Date.now());
+      b.workedSegments.push({ startMs: b.activeAt, endMs: stopAt });
+      b.activeAt = null;
+      b.activeEndMs = stopAt;
+      didEdit = true;
+    }
+    if (b.activeBreakAt != null && !b.activeEndMs) {
+      if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
+      const stopAt = Math.min(b.endMs || Date.now(), Date.now());
+      b.breakSegments.push({ startMs: b.activeBreakAt, endMs: stopAt });
+      b.activeBreakAt = null;
+      b.activeEndMs = stopAt;
+      didEdit = true;
+    }
+    if (didEdit) touched = true;
+  });
+  if (touched) saveState();
+})();
 /* Remove duplicate habit entries that share the same label across the two
    lists (Money Habits / Energy Habits). Caused by an old race where one
    device defaulted "Unrelated news" into Energy Habits while another device
@@ -12080,6 +12138,19 @@ function runDailyChecksAfterSync() {
     _bootSyncSettled = true;
     try { runDailyChecksAfterSync(); } catch (_) {}
     try { flushPendingPushes(); } catch (_) {}
+    // If a pomodoro popup was pending when the user last closed the app
+    // (state.activeTimer.pendingPhaseConfirm = true) — re-invoke the
+    // "take a break?" confirm so the user can actually answer it. Without
+    // this, the timer stays stuck in "pending" forever and the gauge
+    // block doesn't extend, leading to the "feffes block frozen mid-air"
+    // bug the user reported.
+    try {
+      const at = state.activeTimer;
+      if (at && at.type === 'pomodoro' && at.pendingPhaseConfirm
+          && typeof showPomoPhaseConfirm === 'function') {
+        showPomoPhaseConfirm();
+      }
+    } catch (_) {}
   }
   // Default UI state = "not signed in" (signup popup + setup banner visible).
   // We call this synchronously BEFORE any await so that, even if the auth
