@@ -7937,7 +7937,7 @@ function logPomodoroPhase(at, phaseEndMs) {
   state.watchLog.push(entry);
   const seg = { startMs: phaseStart, endMs: phaseEnd, name: task.text || '(task)' };
   if (isWork) { seg.q = at.q; seg.taskIdx = at.idx; }
-  else        seg.color = '#d1fae5';   // light green for break phases
+  else        seg.color = '#BAE6FD';   // light sky blue for break phases (POMO_BREAK_COLOR)
   state.timeSegments.push(seg);
 }
 
@@ -8031,8 +8031,48 @@ async function showPomoPhaseConfirm() {
       if (wasLong) state.pomodoroSessionsInCycle = 0;
       else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     }
+    // ===== Extend the task's covering block by the NEW phase duration =====
+    // Close the just-ended phase's open segment in the block, then add a
+    // new open segment of the right type (work or break) starting at NOW.
+    // Block.endMs is pushed forward by nextDurMs so the visualisation
+    // reflects "existing 25-min block grew downward by the new phase".
+    const _resumeMs = Date.now();
+    const _wasWork  = (at2.phase === 'work');
+    if (typeof at2.q === 'string' && typeof at2.idx === 'number'
+        && Array.isArray(state.scheduledBlocks)) {
+      // Find the active block — one that currently has an open segment
+      // for this task; fall back to the closest-by-endMs match if none.
+      let block = state.scheduledBlocks.find(b =>
+        b.q === at2.q && b.taskIdx === at2.idx &&
+        (b.activeAt != null || b.activeBreakAt != null) &&
+        !b.activeEndMs);
+      if (!block) {
+        let best = Infinity;
+        for (const b of state.scheduledBlocks) {
+          if (b.q !== at2.q || b.taskIdx !== at2.idx) continue;
+          const d = Math.abs(b.endMs - _resumeMs);
+          if (d < best) { block = b; best = d; }
+        }
+      }
+      if (block) {
+        if (_wasWork && block.activeAt != null) {
+          if (!Array.isArray(block.workedSegments)) block.workedSegments = [];
+          block.workedSegments.push({ startMs: block.activeAt, endMs: _resumeMs });
+          block.activeAt = null;
+        } else if (!_wasWork && block.activeBreakAt != null) {
+          if (!Array.isArray(block.breakSegments)) block.breakSegments = [];
+          block.breakSegments.push({ startMs: block.activeBreakAt, endMs: _resumeMs });
+          block.activeBreakAt = null;
+        }
+        // Grow the block downward by the new phase's duration.
+        block.endMs = _resumeMs + nextDurMs;
+        // Start the new phase's open segment at NOW.
+        if (nextPhase === 'work') block.activeAt = _resumeMs;
+        else                       block.activeBreakAt = _resumeMs;
+      }
+    }
     at2.phase = nextPhase;
-    at2.phaseStartedAt = Date.now();
+    at2.phaseStartedAt = _resumeMs;
     at2.phaseDurationMs = nextDurMs;
     saveState();
     markSettingsChanged();
@@ -8053,8 +8093,35 @@ async function showPomoPhaseConfirm() {
     // earned the long break (counter would otherwise grow unbounded).
     state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     if (state.pomodoroSessionsInCycle > 3) state.pomodoroSessionsInCycle = 0;
+    // Same block-extension as the Yes branch — close the just-ended work
+    // segment at NOW and start a fresh work segment so the gauge block
+    // grows by another 25 min worth of work.
+    const _resumeMs = Date.now();
+    if (typeof at2.q === 'string' && typeof at2.idx === 'number'
+        && Array.isArray(state.scheduledBlocks)) {
+      let block = state.scheduledBlocks.find(b =>
+        b.q === at2.q && b.taskIdx === at2.idx &&
+        (b.activeAt != null || b.activeBreakAt != null) &&
+        !b.activeEndMs);
+      if (!block) {
+        let best = Infinity;
+        for (const b of state.scheduledBlocks) {
+          if (b.q !== at2.q || b.taskIdx !== at2.idx) continue;
+          const d = Math.abs(b.endMs - _resumeMs);
+          if (d < best) { block = b; best = d; }
+        }
+      }
+      if (block) {
+        if (block.activeAt != null) {
+          if (!Array.isArray(block.workedSegments)) block.workedSegments = [];
+          block.workedSegments.push({ startMs: block.activeAt, endMs: _resumeMs });
+        }
+        block.endMs = _resumeMs + POMO_WORK_MS;
+        block.activeAt = _resumeMs;
+      }
+    }
     at2.phase = 'work';
-    at2.phaseStartedAt = Date.now();
+    at2.phaseStartedAt = _resumeMs;
     at2.phaseDurationMs = POMO_WORK_MS;
     saveState();
     markSettingsChanged();
@@ -8069,6 +8136,21 @@ async function showPomoPhaseConfirm() {
     // Break-end + No → stop. The break has already been logged when the
     // popup first appeared (see tickPomodoro), so nothing else to record —
     // we just clear the active timer and push the cleared state to cloud.
+    // Finalize any open break segment on the task's block so the colour
+    // doesn't keep painting forward after the user said "no".
+    if (typeof at2.q === 'string' && typeof at2.idx === 'number'
+        && Array.isArray(state.scheduledBlocks)) {
+      const _stopMs = Date.now();
+      state.scheduledBlocks.forEach(b => {
+        if (b.q !== at2.q || b.taskIdx !== at2.idx) return;
+        if (b.activeBreakAt != null) {
+          if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
+          b.breakSegments.push({ startMs: b.activeBreakAt, endMs: _stopMs });
+          b.activeBreakAt = null;
+        }
+        if (!b.activeEndMs) b.activeEndMs = _stopMs;
+      });
+    }
     state.activeTimer = null;
     saveState();
     markSettingsChanged();
@@ -8409,9 +8491,11 @@ function drawTimeArea() {
     div.style.top    = tPx + 'px';
     div.style.height = (bPx - tPx) + 'px';
 
-    // Render one coloured fill per worked session. Paused intervals are
-    // not in workedSegments, so they stay grey — exactly what the user
-    // wants when they pause-then-resume.
+    // Render one coloured fill per worked / break session. Paused intervals
+    // are not in any segment so they stay grey — exactly what the user
+    // wants when they pause-then-resume. Break segments paint with the
+    // shared light-sky-blue (POMO_BREAK_COLOR) so they read distinctly
+    // from the per-task colour family.
     {
       const segments = getBlockColorSegments(b, now);
       const blockH = b.endMs - b.startMs;
@@ -8424,7 +8508,9 @@ function drawTimeArea() {
             fill.className   = 'time-block-fill';
             fill.style.top    = ((fStart - b.startMs) / blockH * 100) + '%';
             fill.style.height = ((fEnd   - fStart   ) / blockH * 100) + '%';
-            fill.style.background = qTaskColor(b.q, b.taskIdx);
+            fill.style.background = (seg.type === 'break')
+              ? POMO_BREAK_COLOR
+              : qTaskColor(b.q, b.taskIdx);
             div.appendChild(fill);
           }
         });
@@ -8784,12 +8870,22 @@ function trimFutureBlocksForTask(q, i, atMs) {
   }
 }
 
-/* Return the list of [startMs, endMs] segments that should be coloured on
-   this block. Uses b.workedSegments (closed past sessions) + any open
-   session (b.activeAt → pausedAt | activeEndMs | now). Pauses leave the
-   "paused" interval grey because it's not part of any segment. */
+/* Return the list of {startMs, endMs, type} segments that should be coloured
+   on this block. `type` is 'work' (default — paints with qTaskColor) or
+   'break' (paints with the shared light-sky-blue used on the gauge AND on
+   the Statistics weekly view). Pauses leave the "paused" interval grey
+   because it's not part of any segment. */
 function getBlockColorSegments(b, now) {
-  const segs = Array.isArray(b.workedSegments) ? b.workedSegments.slice() : [];
+  const segs = [];
+  // Closed work sessions
+  if (Array.isArray(b.workedSegments)) {
+    b.workedSegments.forEach(s => segs.push({ startMs: s.startMs, endMs: s.endMs, type: 'work' }));
+  }
+  // Closed break sessions (set when a pomodoro break ran inside this block)
+  if (Array.isArray(b.breakSegments)) {
+    b.breakSegments.forEach(s => segs.push({ startMs: s.startMs, endMs: s.endMs, type: 'break' }));
+  }
+  // Open work session
   if (b.activeAt) {
     const at = state.activeTimer;
     const isPausedForThis = at && at.paused && at.type === 'pomodoro' &&
@@ -8798,11 +8894,29 @@ function getBlockColorSegments(b, now) {
       ? Math.min(b.activeEndMs, now)
       : (isPausedForThis ? at.pausedAt : now);
     if (openEnd > b.activeAt) {
-      segs.push({ startMs: b.activeAt, endMs: openEnd });
+      segs.push({ startMs: b.activeAt, endMs: openEnd, type: 'work' });
+    }
+  }
+  // Open break session (current pomodoro is in a break phase on this task)
+  if (b.activeBreakAt) {
+    const at = state.activeTimer;
+    const isPausedForThis = at && at.paused && at.type === 'pomodoro' &&
+                            at.q === b.q && at.idx === b.taskIdx;
+    const openEnd = b.activeBreakEndMs
+      ? Math.min(b.activeBreakEndMs, now)
+      : (isPausedForThis ? at.pausedAt : now);
+    if (openEnd > b.activeBreakAt) {
+      segs.push({ startMs: b.activeBreakAt, endMs: openEnd, type: 'break' });
     }
   }
   return segs;
 }
+/* Shared light-sky-blue used wherever a Pomodoro BREAK is visualised:
+   - The break-segment fill inside a time-block on the gauge
+   - The break-phase band on the main vertical gauge / weekly view
+   - The pomodoro-display pill (initial render not affected; existing
+     phase-specific colours still apply there). */
+const POMO_BREAK_COLOR = '#BAE6FD';
 
 /* HH:MM helper for tooltips */
 function _hhmm(ms) {
@@ -9306,7 +9420,7 @@ function activeTimerToSegment(at, now) {
     const startMs = +at.phaseStartedAt || +at.startedAt;
     const isBreak = (at.phase === 'short-break' || at.phase === 'long-break');
     const seg = { startMs, endMs: now, name: t.text || '(task)' };
-    if (isBreak) seg.color = '#d1fae5';
+    if (isBreak) seg.color = '#BAE6FD';   // light sky blue (POMO_BREAK_COLOR)
     else       { seg.q = at.q; seg.taskIdx = at.idx; }
     return seg;
   } else if (at.type === 'muncher' || at.type === 'multiplier') {
@@ -9639,8 +9753,21 @@ function imDoingElapsedString(at) {
   const now = at.paused && at.pausedAt ? at.pausedAt : Date.now();
   let ms;
   if (at.type === 'pomodoro') {
+    // CAP elapsed at the phase boundary when the popup is waiting for a
+    // response. Without this, if the phone screen turned off and the user
+    // came back an hour after the 25-min work phase ended, the display
+    // would read "01:00:00" instead of "25:00" — wall-clock since startedAt
+    // is no longer meaningful once the phase has effectively stopped.
+    let endRef;
+    if (at.pendingPhaseConfirm) {
+      endRef = (+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0);
+    } else if (at.paused && at.pausedAt) {
+      endRef = at.pausedAt;
+    } else {
+      endRef = now;
+    }
     const pausedAccum = (at.totalPausedMs || 0) + (at.paused ? (now - at.pausedAt) : 0);
-    ms = Math.max(0, now - at.startedAt - pausedAccum);
+    ms = Math.max(0, endRef - at.startedAt - pausedAccum);
   } else {
     ms = Math.max(0, now - at.startedAt);
   }
@@ -10942,7 +11069,7 @@ function renderWeekView() {
     if (entry.type === 'pomodoro' && entry.q) {
       // pomodoro uses quadrant color via qColor()
     } else if (entry.type === 'pomodoro-break') {
-      color = '#d1fae5'; // light green for pomodoro break phases
+      color = '#BAE6FD'; // light sky blue for pomodoro break phases (POMO_BREAK_COLOR)
     } else if (entry.type === 'multiplier' || entry.type === 'muncher') {
       // For ANY tracker (Money Moments OR Mana Moments), color the band by
       // the actual sign of its effect — NOT by the side it lives on. After
@@ -13078,8 +13205,9 @@ setInterval(() => {
       div.style.height = htPct  + '%';
       div.dataset.bid  = String(b.id);
 
-      /* -- Colour fill: one fill per worked session (b.workedSegments + open).
-         Paused intervals leave a grey gap because they're not in any session. */
+      /* -- Colour fill: one fill per worked / break session. Paused
+         intervals leave a grey gap because they're not in any session.
+         Break segments paint with POMO_BREAK_COLOR. */
       {
         const segments = getBlockColorSegments(b, now);
         const totalH = b.endMs - b.startMs;
@@ -13094,7 +13222,9 @@ setInterval(() => {
               fill.className   = 'tg-block-fill';
               fill.style.top    = fillTop + '%';
               fill.style.height = (fillBot - fillTop) + '%';
-              fill.style.background = qTaskColor(b.q, b.taskIdx);
+              fill.style.background = (seg.type === 'break')
+                ? POMO_BREAK_COLOR
+                : qTaskColor(b.q, b.taskIdx);
               div.appendChild(fill);
             }
           });
