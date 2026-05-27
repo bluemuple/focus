@@ -1382,6 +1382,21 @@
     transition: background .15s ease, color .15s ease;
   }
   .im-doing-time:hover { background: rgba(37,99,235,.08); }
+  /* Daily pomodoro tally row inside the I'm-doing area. Compact pill-row
+     showing today's accumulated Work + Break counts. Visible at all times
+     so the user sees the running daily total even when no timer is active. */
+  .im-doing-day-counts {
+    display: flex; align-items: center; justify-content: center;
+    gap: 8px;
+    margin-top: 6px;
+    font-size: .8rem; font-weight: 700;
+    color: #6b7280;
+    font-variant-numeric: tabular-nums;
+  }
+  .im-doing-day-counts .dc-w { color: #dc2626; }   /* work — red family */
+  .im-doing-day-counts .dc-b { color: #0284c7; }   /* break — sky-blue family */
+  .im-doing-day-counts .dc-label { color: #9ca3af; font-weight: 600; }
+  .im-doing-day-counts:empty { display: none; }     /* hide row if no text rendered yet */
   /* Color the elapsed-time by the activity's effect on the user's score:
      red when the current activity RAISES money or mana (pomodoro work, +rate
      trackers); blue when it LOWERS money or mana (pomodoro break, -rate
@@ -3421,9 +3436,9 @@
       </div>
 
       <div class="panel" id="money-factors-panel">
-        <h2>Edit Earning for Tasks</h2>
-        <p class="help">Click any value to edit. These defaults drive the Money system on the Focus page.</p>
+        <h2>Settings</h2>
         <ul class="money-factors-list">
+          <li>Task Duration Default: <span class="mcf-val mcf-pos" data-mcf="taskDurationDefault">25 min</span></li>
           <li>Add task: <span class="mcf-val mcf-pos" data-mcf="addTask">+$5</span></li>
           <li>Finish task: <span class="mcf-val mcf-pos" data-mcf="finishTask">+$10</span></li>
           <li>Per minute: <span class="mcf-val mcf-pos" data-mcf="perMinuteCents">+10¢</span></li>
@@ -3437,7 +3452,6 @@
       <!-- Signed-in state (the only visible state on the setup page now) -->
       <div id="auth-logged-in" class="auth-section hidden">
         <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
-        <p class="help">Tasks, gauge, statistics — everything syncs automatically. If it doesn't sync, use the buttons below.</p>
         <!-- Daily backup list (auto-created at 3 AM, up to 4 kept). Only
              shown when 2+ versions exist. -->
         <div id="versions-list" class="versions-list hidden"></div>
@@ -3526,6 +3540,10 @@
                     <span class="im-doing-time" id="im-doing-time" title="Click to pause / resume">00:00:00</span>
                     <span class="im-doing-phase" id="im-doing-phase"></span>
                   </div>
+                  <!-- Daily pomodoro tally — always visible (idle or running).
+                       Resets at the 3 AM day rollover (same cutoff as
+                       _pomoCountsForToday). Format: "today 3w · 2b". -->
+                  <div class="im-doing-day-counts" id="im-doing-day-counts" title="오늘 누적된 Work / Break 횟수 (새벽 3시 reset)"></div>
                 </div>
               </div>
             </div>
@@ -4282,7 +4300,11 @@ const defaultState = () => ({
     addTask:        5,    // + when adding a task
     finishTask:     10,   // + when checking task done (or default per-task bid)
     perMinuteCents: 10,   // + cents per minute of pomodoro / tracker time
-    noTaskPenalty:  30    // − when Sleep wasn't clicked before bedtime (or midnight)
+    noTaskPenalty:  30,   // − when Sleep wasn't clicked before bedtime (or midnight)
+    // Default minutes for a NEW task block on the gauge — used when a task
+    // doesn't have its own durationMs override. Sits next to the money
+    // factors in the Settings panel so it inherits cloud sync for free.
+    taskDurationDefaultMin: 25
   },
   // Marker for the daily Sleep-button rule. YYYY-MM-DD of the day Sleep was last clicked.
   sleepClickedDate: '',
@@ -4472,13 +4494,14 @@ function migrateState() {
   if (typeof state.money !== 'number' || isNaN(state.money)) state.money = 200;
   if (!Array.isArray(state.moneyLog)) state.moneyLog = [];
   if (!state.moneyChangeFactors || typeof state.moneyChangeFactors !== 'object') {
-    state.moneyChangeFactors = { addTask: 5, finishTask: 10, perMinuteCents: 10, noTaskPenalty: 30 };
+    state.moneyChangeFactors = { addTask: 5, finishTask: 10, perMinuteCents: 10, noTaskPenalty: 30, taskDurationDefaultMin: 25 };
   } else {
     const mcf = state.moneyChangeFactors;
-    if (typeof mcf.addTask        !== 'number') mcf.addTask = 5;
-    if (typeof mcf.finishTask     !== 'number') mcf.finishTask = 10;
-    if (typeof mcf.perMinuteCents !== 'number') mcf.perMinuteCents = 10;
-    if (typeof mcf.noTaskPenalty  !== 'number') mcf.noTaskPenalty = 30;
+    if (typeof mcf.addTask                !== 'number') mcf.addTask = 5;
+    if (typeof mcf.finishTask             !== 'number') mcf.finishTask = 10;
+    if (typeof mcf.perMinuteCents         !== 'number') mcf.perMinuteCents = 10;
+    if (typeof mcf.noTaskPenalty          !== 'number') mcf.noTaskPenalty = 30;
+    if (typeof mcf.taskDurationDefaultMin !== 'number') mcf.taskDurationDefaultMin = 25;
   }
   if (typeof state.sleepClickedDate       !== 'string') state.sleepClickedDate = '';
   if (state.gender !== 'man' && state.gender !== 'woman') state.gender = 'man';
@@ -6029,12 +6052,25 @@ async function editQuadrantRate(q) {
   pushSettingsToCloud();
 }
 
-/* ===== Money Change Factors panel — editable defaults ===== */
+/* ===== Settings panel (was "Money Change Factors") — editable defaults ===== */
+/* Helper — the default block duration (ms) for a NEW task on the gauge.
+   Pulls from state.moneyChangeFactors.taskDurationDefaultMin (synced via
+   the same path as the money factors). Falls back to 25 min. */
+function getDefaultTaskDurationMs() {
+  const mcf = state.moneyChangeFactors || {};
+  const min = +mcf.taskDurationDefaultMin;
+  return (isFinite(min) && min >= 1 ? Math.round(min) : 25) * 60 * 1000;
+}
 function renderMoneyFactors() {
   const mcf = state.moneyChangeFactors || {};
   document.querySelectorAll('#money-factors-panel .mcf-val').forEach(el => {
     const k = el.dataset.mcf;
     if (!k) return;
+    if (k === 'taskDurationDefault') {
+      const min = +mcf.taskDurationDefaultMin || 25;
+      el.textContent = min + ' min';
+      return;
+    }
     const v = +mcf[k] || 0;
     if (k === 'perMinuteCents') {
       el.textContent = (v >= 0 ? '+' : '-') + Math.abs(v) + '¢';
@@ -6046,6 +6082,12 @@ function renderMoneyFactors() {
   });
 }
 async function editMoneyFactor(key) {
+  // Task-duration-default is a settings field too, but it lives under
+  // mcf.taskDurationDefaultMin and uses a minute unit (not dollars), so
+  // route it through a tiny dedicated editor instead of the money one.
+  if (key === 'taskDurationDefault') {
+    return editTaskDurationDefault();
+  }
   const mcf = state.moneyChangeFactors;
   if (!mcf || !(key in mcf)) return;
   const titles = {
@@ -6063,6 +6105,26 @@ async function editMoneyFactor(key) {
   const num = +v.trim();
   if (!isFinite(num)) return;
   mcf[key] = num;
+  saveState();
+  renderMoneyFactors();
+  markSettingsChanged();
+  pushSettingsToCloud();
+}
+/* Edit the Task Duration Default (minutes). Stored at
+   state.moneyChangeFactors.taskDurationDefaultMin so cloud sync covers it. */
+async function editTaskDurationDefault() {
+  const mcf = state.moneyChangeFactors;
+  if (!mcf) return;
+  const cur = +mcf.taskDurationDefaultMin || 25;
+  const v = await customPrompt(
+    'Task Duration Default',
+    'Default minutes for a new task block on the gauge (when a task has no per-task duration).',
+    String(cur)
+  );
+  if (v === null) return;
+  const num = Math.round(+v.trim());
+  if (!isFinite(num) || num < 1) return;
+  mcf.taskDurationDefaultMin = num;
   saveState();
   renderMoneyFactors();
   markSettingsChanged();
@@ -7372,7 +7434,7 @@ function renderFocusMatrix() {
           const task = state.tasks[q] && state.tasks[q][i];
           const dur = (task && typeof task.durationMs === 'number')
             ? task.durationMs
-            : 25 * 60 * 1000;
+            : (typeof getDefaultTaskDurationMs === 'function' ? getDefaultTaskDurationMs() : 25 * 60 * 1000);
           state.scheduledBlocks.push({
             id:          Date.now() + '_' + Math.random().toString(36).slice(2),
             q,
@@ -7466,7 +7528,7 @@ function renderFocusMatrix() {
           const _task = state.tasks[q] && state.tasks[q][i];
           const _newDurMs = (_task && typeof _task.durationMs === 'number')
             ? _task.durationMs
-            : 25 * 60 * 1000;
+            : (typeof getDefaultTaskDurationMs === 'function' ? getDefaultTaskDurationMs() : 25 * 60 * 1000);
           const _newEndMs = _tgNow + _newDurMs;
           for (let bi = state.scheduledBlocks.length - 1; bi >= 0; bi--) {
             const b = state.scheduledBlocks[bi];
@@ -7618,13 +7680,13 @@ function renderFocusMatrix() {
 async function editTaskNameFromFocus(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
-  // Default duration when none set yet — 25 min (one pomodoro cycle).
-  const curDurMs = (typeof task.durationMs === 'number') ? task.durationMs : 25 * 60 * 1000;
+  // Duration field intentionally NOT shown — the global "Task Duration
+  // Default" in the Settings panel covers this. Per-task overrides are no
+  // longer surfaced from this popup.
   const v = await openNoteEditor(task.text || '', {
     title: 'Edit task',
     subtitle: 'Click Delete to remove this task.',
-    maxLength: 200,
-    duration: curDurMs
+    maxLength: 200
   });
   if (v === null) return;            // Cancel
   // openNoteEditor returns { text, durationMs } when duration was shown.
@@ -7782,6 +7844,28 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       // gain → pink, loss → light blue (per spec).
       const segColor = (rate > 0) ? '#fecdd3' : (rate < 0) ? '#bfdbfe' : '#e5e7eb';
       state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: segColor, name: m.lbl });
+    }
+    // Finalize the gauge tracker block (the rectangle that was growing
+    // while the tracker ran). Close the open work session into
+    // workedSegments so its full coloured fill paints in renderings that
+    // rely on getBlockColorSegments.
+    if (Array.isArray(state.scheduledBlocks)) {
+      const _trkSide = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+      const _freezeAt = (at.paused && at.pausedAt) ? at.pausedAt : now;
+      for (const b of state.scheduledBlocks) {
+        if (b.kind === 'tracker'
+            && b.trackerSide === _trkSide
+            && b.trackerIdx === at.manaIdx
+            && b.activeAt != null
+            && !b.activeEndMs) {
+          if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+          b.workedSegments.push({ startMs: b.activeAt, endMs: _freezeAt });
+          b.activeAt    = null;
+          b.activeEndMs = _freezeAt;
+          b.endMs       = _freezeAt;
+          break;
+        }
+      }
     }
   }
   state.watchLog.push(logEntry);
@@ -8170,14 +8254,59 @@ function startManaTimer(side, manaIdx) {
   const m = list && list[manaIdx];
   const r = m && (typeof m.pointsPer5Min === 'number' ? m.pointsPer5Min : (side === 'multiplier' ? 3 : -3));
   playFx(r < 0 ? 'drain' : 'start');
+  const _now = Date.now();
   state.activeTimer = {
     type: (side === 'multiplier') ? 'multiplier' : 'muncher',
     manaIdx,
-    startedAt: Date.now(),
+    startedAt: _now,
     paused: false,
     pausedAt: null,
     totalPausedMs: 0
   };
+  // ===== Habit rectangle on the time gauge =====
+  // Per user spec: starting a tracker drops a coloured rectangle at the
+  // current-time line and grows it downward as time passes. Any existing
+  // block that the current-time line currently passes through gets its
+  // BOTTOM trimmed at NOW (top portion preserved as history).
+  if (Array.isArray(state.scheduledBlocks)) {
+    for (let bi = state.scheduledBlocks.length - 1; bi >= 0; bi--) {
+      const b = state.scheduledBlocks[bi];
+      if (b.endMs <= _now)  continue;          // entirely before NOW — keep
+      if (b.startMs >= _now) continue;          // entirely after — left alone for now
+      // Cross-NOW block: trim end to NOW, finalize any open work / break session.
+      if (b.activeAt && !b.activeEndMs) {
+        if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+        b.workedSegments.push({ startMs: b.activeAt, endMs: _now });
+        b.activeAt = null;
+      }
+      if (b.activeBreakAt && !b.activeEndMs) {
+        if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
+        b.breakSegments.push({ startMs: b.activeBreakAt, endMs: _now });
+        b.activeBreakAt = null;
+      }
+      b.endMs = _now;
+      if (!b.activeEndMs) b.activeEndMs = _now;
+    }
+  } else {
+    state.scheduledBlocks = [];
+  }
+  // Spawn a NEW tracker block at NOW. endMs grows each tick (via
+  // _growActiveTrackerBlocks) so the rectangle visually extends downward
+  // while the tracker is running. The colour is determined by the rate
+  // sign: +rate → light pink, −rate → light blue (matches Statistics
+  // weekly view band colours).
+  state.scheduledBlocks.push({
+    id:           _now + '_' + Math.random().toString(36).slice(2),
+    kind:         'tracker',
+    trackerSide:  side,
+    trackerIdx:   manaIdx,
+    trackerName:  (m && m.lbl) || '(tracker)',
+    trackerRate:  r,
+    startMs:      _now,
+    endMs:        _now + 60000,    // initial 1-min; grows each draw tick
+    activeAt:     _now,
+    activeEndMs:  null
+  });
   saveState();
   // Immediate cloud push so the other device sees the running tracker on next refresh.
   markSettingsChanged(); pushSettingsToCloud();
@@ -8249,6 +8378,9 @@ function getStartMs() {
   return state.sessionStartMs;
 }
 function drawGauge() {
+  // Grow any active habit-tracker block's endMs to NOW before layout so the
+  // rectangle visibly extends downward each tick while the tracker runs.
+  if (typeof _growActiveTrackerBlocks === 'function') _growActiveTrackerBlocks();
   const gridEl     = document.getElementById('gauge-grid');
   const segmentsEl = document.getElementById('gauge-segments');
   const lineEl     = document.getElementById('gauge-line');
@@ -8384,6 +8516,9 @@ const TIME_MAX_MS = 10 * 3600 * 1000;
 const TIME_HEAD_OFFSET_MS = 30 * 60 * 1000;        // 30 min above current
 
 function drawTimeArea() {
+  // Same tracker-grow tick as drawGauge — must run BEFORE we measure /
+  // render block positions so the rectangle catches up to NOW.
+  if (typeof _growActiveTrackerBlocks === 'function') _growActiveTrackerBlocks();
   const area = document.getElementById('time-area');
   if (!area || area.offsetParent === null) return;
   const content  = document.getElementById('time-content');
@@ -8508,9 +8643,20 @@ function drawTimeArea() {
             fill.className   = 'time-block-fill';
             fill.style.top    = ((fStart - b.startMs) / blockH * 100) + '%';
             fill.style.height = ((fEnd   - fStart   ) / blockH * 100) + '%';
-            fill.style.background = (seg.type === 'break')
-              ? POMO_BREAK_COLOR
-              : qTaskColor(b.q, b.taskIdx);
+            // Tracker blocks paint with pink/blue by rate sign;
+            // task blocks use the per-task quadrant colour;
+            // break segments inside a task block use the shared sky-blue.
+            let _fillColor;
+            if (b.kind === 'tracker') {
+              _fillColor = (b.trackerRate > 0)
+                ? TRACKER_POS_COLOR
+                : (b.trackerRate < 0 ? TRACKER_NEG_COLOR : '#e5e7eb');
+            } else if (seg.type === 'break') {
+              _fillColor = POMO_BREAK_COLOR;
+            } else {
+              _fillColor = qTaskColor(b.q, b.taskIdx);
+            }
+            fill.style.background = _fillColor;
             div.appendChild(fill);
           }
         });
@@ -8526,7 +8672,7 @@ function drawTimeArea() {
 
     const nameEl = document.createElement('div');
     nameEl.className = 'time-block-name';
-    nameEl.textContent = b.taskName || '';
+    nameEl.textContent = b.taskName || b.trackerName || '';
     div.appendChild(nameEl);
 
     const durEl = document.createElement('div');
@@ -8869,6 +9015,32 @@ function trimFutureBlocksForTask(q, i, atMs) {
     }
   }
 }
+
+/* While a tracker timer is running, grow its block's endMs to NOW so the
+   gauge rectangle visually extends downward each tick. Caller (drawGauge,
+   drawTimeArea) invokes this before reading b.endMs for layout. */
+function _growActiveTrackerBlocks() {
+  const at = state.activeTimer;
+  if (!at || (at.type !== 'muncher' && at.type !== 'multiplier')) return;
+  if (!Array.isArray(state.scheduledBlocks)) return;
+  const side = (at.type === 'multiplier') ? 'multiplier' : 'muncher';
+  const now = Date.now();
+  for (const b of state.scheduledBlocks) {
+    if (b.kind === 'tracker'
+        && b.trackerSide === side
+        && b.trackerIdx === at.manaIdx
+        && b.activeAt != null
+        && !b.activeEndMs) {
+      b.endMs = now;     // NOT persisted via saveState — purely ephemeral
+    }
+  }
+}
+
+/* Shared light-pink / light-blue used for HABIT TRACKER rectangles wherever
+   they appear (gauge + Statistics weekly view band). +rate → pink, −rate
+   → blue. Matches the colours timeSegments already records on stop. */
+const TRACKER_POS_COLOR = '#fecdd3';   // light pink (gain) — matches weekly view band
+const TRACKER_NEG_COLOR = '#bfdbfe';   // light blue (loss) — matches weekly view band
 
 /* Return the list of {startMs, endMs, type} segments that should be coloured
    on this block. `type` is 'work' (default — paints with qTaskColor) or
@@ -9664,6 +9836,23 @@ function renderImDoing() {
   const phaseEl = document.getElementById('im-doing-phase');
   const labelEl = wrap ? wrap.querySelector('.im-doing-label') : null;
   if (!wrap || !nameEl || !timeEl) return;
+  /* Daily pomodoro tally — always rendered (regardless of active-timer state)
+     so the user sees today's running total. Format: "오늘 3w · 2b". Resets
+     at the 3 AM day rollover via _pomoCountsForToday (the same cutoff that
+     the in-session "work N" label uses, so the counts stay in sync). */
+  const dayCountsEl = document.getElementById('im-doing-day-counts');
+  if (dayCountsEl) {
+    const dc = _pomoCountsForToday();
+    if (dc.workN > 0 || dc.breakN > 0) {
+      dayCountsEl.innerHTML =
+        '<span class="dc-label">오늘</span>' +
+        '<span class="dc-w">' + dc.workN + 'w</span>' +
+        '<span class="dc-label">·</span>' +
+        '<span class="dc-b">' + dc.breakN + 'b</span>';
+    } else {
+      dayCountsEl.textContent = '';     // :empty CSS hides the row entirely
+    }
+  }
   const at = state.activeTimer;
   if (!at) {
     // Idle: just one cheerful line, no time. The Sleep button stays put.
@@ -12772,7 +12961,12 @@ setInterval(() => {
    TASK-GAUGE SCHEDULING  (drag task handle → gauge)
    =================================================== */
 (function taskGaugeScheduling() {
-  const DEFAULT_MS = 25 * 60 * 1000;   // 25-min default block (one pomodoro)
+  // Default block duration — read DYNAMICALLY (not captured at IIFE init) so
+  // the user's edits to "Task Duration Default" in the Settings panel take
+  // effect immediately, without needing a reload.
+  const DEFAULT_MS_GET = () => (typeof getDefaultTaskDurationMs === 'function'
+    ? getDefaultTaskDurationMs()
+    : 25 * 60 * 1000);
   const STEP_MS    =  5 * 60 * 1000;   // ↑/↓ arrow key step
   const SNAP_THR   =  5 * 60 * 1000;   // snap-to threshold
   const GRID_MS    = 15 * 60 * 1000;   // 15-min invisible grid
@@ -12953,9 +13147,9 @@ setInterval(() => {
     // causes browsers to reject the drop (drop event never fires).
     try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
     const startMs   = snapMs(yToMs(e.clientY));
-    // Per-task duration if set, otherwise the global default (25 min).
+    // Per-task duration if set, otherwise the global default (from Settings).
     const task = state.tasks[_draggedTask.q] && state.tasks[_draggedTask.q][_draggedTask.idx];
-    const taskDur = task && typeof task.durationMs === 'number' ? task.durationMs : DEFAULT_MS;
+    const taskDur = task && typeof task.durationMs === 'number' ? task.durationMs : DEFAULT_MS_GET();
     const durMs   = _ghost ? _ghost.durationMs : taskDur;
     _ghost = { startMs, durationMs: durMs };
     placeGhost();
@@ -13222,9 +13416,19 @@ setInterval(() => {
               fill.className   = 'tg-block-fill';
               fill.style.top    = fillTop + '%';
               fill.style.height = (fillBot - fillTop) + '%';
-              fill.style.background = (seg.type === 'break')
-                ? POMO_BREAK_COLOR
-                : qTaskColor(b.q, b.taskIdx);
+              // Same colour-by-kind rule as the mobile mini-gauge:
+              // tracker → pink/blue, task-break → sky-blue, task-work → qTaskColor.
+              let _fillColor;
+              if (b.kind === 'tracker') {
+                _fillColor = (b.trackerRate > 0)
+                  ? TRACKER_POS_COLOR
+                  : (b.trackerRate < 0 ? TRACKER_NEG_COLOR : '#e5e7eb');
+              } else if (seg.type === 'break') {
+                _fillColor = POMO_BREAK_COLOR;
+              } else {
+                _fillColor = qTaskColor(b.q, b.taskIdx);
+              }
+              fill.style.background = _fillColor;
               div.appendChild(fill);
             }
           });
@@ -13788,9 +13992,9 @@ setInterval(() => {
       // Don't preventDefault here — let taps and scroll proceed naturally until
       // the movement threshold is crossed (handled in touchmove below).
       const t = ev.touches[0];
-      // Per-task duration if set, otherwise the global default (25 min).
+      // Per-task duration if set, otherwise the global default (from Settings).
       const _task = state.tasks[info.q] && state.tasks[info.q][info.idx];
-      const _taskDur = _task && typeof _task.durationMs === 'number' ? _task.durationMs : DEFAULT_MS;
+      const _taskDur = _task && typeof _task.durationMs === 'number' ? _task.durationMs : DEFAULT_MS_GET();
       _td = { q: info.q, idx: info.idx, taskName: info.taskName, durMs: _taskDur,
               startX: t.clientX, startY: t.clientY, dragging: false,
               srcRow: row, rowGhost: null };
