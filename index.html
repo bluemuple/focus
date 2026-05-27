@@ -2,7 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<!-- viewport-fit=cover lets the app extend under iPhone notch / home indicator
+     so the layout looks edge-to-edge inside the iOS WebView (Capacitor wrapper).
+     viewport units honour safe-area-insets we read in CSS. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+<!-- iOS PWA / WKWebView hints. The Capacitor iOS shell reads these too. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Bidoro">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#ffffff">
+<!-- PWA manifest — also helps "Add to Home Screen" on iOS Safari. -->
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
 <title>Bidoro — Bid on your time</title>
 <style>
   /* ============ BASE ============ */
@@ -1571,11 +1583,9 @@
       flex: 1; min-width: 0;
       overflow: hidden; text-overflow: ellipsis;
     }
-    /* ===== Compact-mode tweaks (phone, after tapping "Money") =====
-       1. GTD and Sleep rows go SIDE-BY-SIDE on one line, spread across the
-          collapsed Mana box width so they don't crowd each other.
-       2. "I'm doing" area inside the Money card switches to a centered
-          2-line grid: "I'm doing <name>" / "<hh:mm:ss> <phase>". */
+    /* ===== Compact-mode tweaks (phone, after tapping "Money") ===== */
+    /* GTD and Sleep rows go SIDE-BY-SIDE on one line, spread across the
+       collapsed Mana box width so they don't crowd each other. */
     .money-mana-row.compact .focus-time-goals.plain {
       display: flex;
       flex-direction: row;
@@ -1588,34 +1598,37 @@
       min-width: 0;
       justify-content: center;      /* centre each row's contents */
     }
-    .money-mana-row.compact .im-doing-main {
+    /* "I'm doing" 2-line centred grid layout. Applies on ALL mobile
+       (compact OR expanded), per user spec. Layout:
+         row 1:  "I'm doing"   <task name>
+         row 2:  HH:MM:SS      work N / break N
+       Column 1 (label, time) is RIGHT-aligned, column 2 (name, phase) is
+       LEFT-aligned, so the two cells meet in the middle and read as a
+       single centred phrase per line. */
+    .im-doing-main {
       display: grid;
       grid-template-columns: auto auto;
       justify-content: center;
       column-gap: 6px;
       row-gap: 2px;
-      /* Centre each row so the pair "I'm doing <name>" / "<time> <phase>"
-         reads as a single centred phrase per line. */
     }
-    .money-mana-row.compact .im-doing-label,
-    .money-mana-row.compact .im-doing-time {
+    .im-doing-label,
+    .im-doing-time {
       justify-self: end;            /* right-align col 1 */
     }
-    .money-mana-row.compact .im-doing-name,
-    .money-mana-row.compact .im-doing-phase {
+    .im-doing-name,
+    .im-doing-phase {
       justify-self: start;          /* left-align col 2 */
     }
-    /* Make the visible TEXT — not the element box — align to the column
-       edges. The default styling adds horizontal padding to .im-doing-time
-       (pill click target) and a margin-left to .im-doing-phase, both of
-       which would push the text away from the grid track edge and break
-       the requested "g of doing == s of :ss" / "[Task] == work/break"
-       vertical alignment. Zero those out for compact mode only. */
-    .money-mana-row.compact .im-doing-time {
+    /* Strip the default click-target padding / phase-margin so the visible
+       TEXT aligns to the column edge — without this the "g of doing" and
+       "s of :ss" don't actually line up because .im-doing-time has 8 px
+       horizontal padding and .im-doing-phase has 4 px left margin. */
+    .im-doing-time {
       padding-left: 0;
       padding-right: 0;
     }
-    .money-mana-row.compact .im-doing-phase {
+    .im-doing-phase {
       margin-left: 0;
     }
   }
@@ -1890,9 +1903,11 @@
        Tasks container. Spans both grid columns so it visually anchors
        the whole rectangle. Drag down → grow the gauge below the last
        task bar. Drag up → shrink (drawTimeArea clamps to matrix bottom). */
-    .split-resize-handle { display: none; }
+    /* (global .split-resize-handle { display: none !important } above hides
+       the handle outside split mode. Re-enable here with !important to win
+       the cascade in split mode on phone only.) */
     body.tt-split .split-resize-handle {
-      display: flex;                /* re-state flex so ::after sits in flow */
+      display: flex !important;     /* re-state flex so ::after sits in flow */
       flex-direction: column;       /* stack the two grab bars vertically ('=') */
       align-items: center;
       justify-content: center;
@@ -3049,6 +3064,12 @@
   /* Bottom drag handle — resize viewport (= duration). Taller hit-area (24 px)
      so the user's finger isn't competing with a block's rb-handle when a
      block ends right at the viewport bottom edge. */
+  /* Split-mode resize handle is mobile-only by design (it sits below the
+     merged Time & Tasks card that only exists on phone). Hide globally so
+     it never leaks onto PC / iPad — the mobile @media query below
+     re-enables it ONLY when body.tt-split is on. */
+  .split-resize-handle { display: none !important; }
+
   .time-resize-handle {
     height: 24px;
     background: #f3f4f6;
@@ -3301,10 +3322,10 @@
   <div class="brand" id="brand-home" role="button" tabindex="0" title="Go to Focus page">Bidoro<small>Bid on your time</small></div>
   <div class="motivation" id="motivation-display"></div>
   <nav class="tabs">
-    <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects">🔈</button>
-    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track">⏮</button>
-    <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause">▶</button>
-    <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track">⏭</button>
+    <button class="topbar-icon-btn sound-toggle"           id="sound-toggle" type="button" aria-label="Sound effects"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M3 9 H7 L12 5 V19 L7 15 H3 Z" fill="currentColor"/><path d="M15 9 Q17 12 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></button>
+    <button class="topbar-icon-btn music-btn music-prev-pc" id="music-prev"  type="button" aria-label="Previous track"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 5 L8 12 L19 19 Z" fill="currentColor"/><rect x="5" y="5" width="2.4" height="14" rx="1" fill="currentColor"/></svg></button>
+    <button class="topbar-icon-btn music-btn"              id="music-play"   type="button" aria-label="Play / pause"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 4 L19 12 L7 20 Z" fill="currentColor"/></svg></button>
+    <button class="topbar-icon-btn music-btn music-next-pc" id="music-next"  type="button" aria-label="Next track"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M5 5 L16 12 L5 19 Z" fill="currentColor"/><rect x="16.6" y="5" width="2.4" height="14" rx="1" fill="currentColor"/></svg></button>
     <button id="tab-focus" class="active tab-page-btn" aria-label="Focus"><span class="tab-text">Focus</span><span class="tab-ico" aria-hidden="true">ƒ</span></button>
     <button id="tab-stats" class="tab-page-btn" aria-label="Statistics"><span class="tab-text">Statistics</span><span class="tab-ico" aria-hidden="true">Σ</span></button>
   </nav>
@@ -3354,7 +3375,7 @@
             <label>Starting Date &amp; Time</label>
             <div class="goal-actions">
               <button class="quick-btn" id="start-now" type="button" title="Set to current date and time">Now</button>
-              <button class="reset-btn" data-reset="start" type="button" title="Clear">×</button>
+              <button class="reset-btn" data-reset="start" type="button" title="Clear"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>
             </div>
           </div>
           <input type="date" id="start-date">
@@ -3367,7 +3388,7 @@
             <div class="goal-actions">
               <button class="quick-btn" id="deadline-plus-30m" type="button" title="Add 30 minutes">+30m</button>
               <button class="quick-btn" id="deadline-plus-1h"  type="button" title="Add 1 hour">+1h</button>
-              <button class="reset-btn" data-reset="deadline" type="button" title="Clear">×</button>
+              <button class="reset-btn" data-reset="deadline" type="button" title="Clear"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>
             </div>
           </div>
           <input type="date" id="deadline-date">
@@ -3380,7 +3401,7 @@
             <div class="goal-actions">
               <button class="quick-btn" id="bedtime-plus-30m" type="button" title="Add 30 minutes">+30m</button>
               <button class="quick-btn" id="bedtime-plus-1h"  type="button" title="Add 1 hour">+1h</button>
-              <button class="reset-btn" data-reset="bedtime" type="button" title="Clear">×</button>
+              <button class="reset-btn" data-reset="bedtime" type="button" title="Clear"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>
             </div>
           </div>
           <input type="date" id="bedtime-date">
@@ -3478,9 +3499,9 @@
           </div>
           <div class="row-flex account-row-2">
             <button class="btn sync-btn" id="auth-push-now" title="Save a backup and push this device's data to the cloud">
-              <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true">📱</span>
+              <span class="word-device">Device</span><span class="emoji-device" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-0.18em" aria-hidden="true"><rect x="7" y="3" width="10" height="18" rx="2" stroke="currentColor" stroke-width="1.7" fill="none"/><line x1="11" y1="6" x2="13" y2="6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="12" cy="18" r="0.9" fill="currentColor"/></svg></span>
               <span class="arrow"> → </span>
-              <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true">☁️</span>
+              <span class="word-cloud">Cloud</span><span class="emoji-cloud" aria-hidden="true"><svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-0.18em" aria-hidden="true"><path d="M7 18.5 Q3 18.5 3 14.5 Q3 11.5 6 11 Q6.5 7.5 10 7.5 Q14 7.5 14.7 11 Q18.5 11 18.5 14.7 Q18.5 18.5 15.5 18.5 Z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/></svg></span>
             </button>
           </div>
           <span id="auth-status2" class="help"></span>
@@ -3517,7 +3538,7 @@
         <div class="gauge-controls">
           <button class="gauge-mode-toggle" id="gauge-mode-toggle" type="button" title="Cycle gauge range (Set / 2h / 4h)">Set</button>
           <button class="gauge-event-btn"   id="gauge-event-btn"  type="button" title="Add an event to the gauge">
-            <span class="ge-pc">+ Event</span><span class="ge-phone">+ 📅</span>
+            <span class="ge-pc">+ Event</span><span class="ge-phone">+ <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:-0.18em" aria-hidden="true"><rect x="4" y="5" width="16" height="15" rx="2" stroke="currentColor" stroke-width="1.7" fill="none"/><line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7"/><line x1="8.5" y1="3" x2="8.5" y2="6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="15.5" y1="3" x2="15.5" y2="6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
           </button>
           <span class="gauge-mode-tip" id="gauge-mode-tip"></span>
         </div>
@@ -3588,16 +3609,16 @@
                   <div class="focus-time-goals plain" id="focus-time-goals">
                     <div id="focus-deadline-row">
                       <button class="lbl tg-set-btn" type="button" title="Set deadline">
-                        <span class="tg-phone">⏰ GTD</span>
-                        <span class="tg-pc">Set GTD ⏰</span>
+                        <span class="tg-phone"><svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-0.13em" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 7.5 V12 L15 14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> GTD</span>
+                        <span class="tg-pc">Set GTD <svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-0.13em" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 7.5 V12 L15 14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                       </button>
                       <strong id="focus-deadline-time" hidden>--:--</strong>
                       <span class="cd" id="focus-deadline-cd">—</span>
                     </div>
                     <div id="focus-bedtime-row">
                       <button class="lbl tg-set-btn" type="button" title="Set bedtime">
-                        <span class="tg-phone">⏰ Sleep</span>
-                        <span class="tg-pc">Set Sleep ⏰</span>
+                        <span class="tg-phone"><svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-0.13em" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 7.5 V12 L15 14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg> Sleep</span>
+                        <span class="tg-pc">Set Sleep <svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-0.13em" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 7.5 V12 L15 14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
                       </button>
                       <strong id="focus-bedtime-time" hidden>--:--</strong>
                       <span class="cd" id="focus-bedtime-cd">—</span>
@@ -3632,7 +3653,7 @@
               <span class="tt-amp"> &amp; </span>
               <!-- "Tasks" span — in split mode, click toggles whether $ ✎ ×
                    actions appear on every task bar. Timer remains visible. -->
-              <span class="tt-tasks" id="tt-tasks-label" title="Tap to show / hide $ ✎ × on task bars">Tasks</span>
+              <span class="tt-tasks" id="tt-tasks-label" title="Tap to show / hide the $, edit, and delete buttons on task bars">Tasks</span>
             </h3>
             <!-- Split-view toggle. Phone-only (CSS hides on PC). Click swaps
                  the wrapper between stacked (Time on top, Tasks below) and
@@ -3866,7 +3887,7 @@
 <div class="modal hidden" id="manual-modal" aria-hidden="true">
   <div class="modal-backdrop" id="manual-modal-backdrop"></div>
   <div class="modal-content manual-modal-content">
-    <button class="manual-close" id="manual-close" type="button" aria-label="Close">×</button>
+    <button class="manual-close" id="manual-close" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>
     <h2 style="margin-top:0;">Bidoro — User Guide</h2>
 
     <!-- ============ Preview carousel ============ -->
@@ -3908,8 +3929,8 @@
           <li><em>Motivation slot</em> — a random quote from your list, re-picked every hour. Tap the quote to edit the list (one per line). When Focus Music is playing or you skip tracks, the slot briefly shows <span style="color:#ec4899; font-weight:700;">Focus Music:</span> <code>filename.mp3</code> for 3 seconds.</li>
           <li><em>Sound &amp; music controls</em> — five circular pill buttons, all the same shape:
             <ul>
-              <li><code>🔈 / 🔉 / 🔇</code> — sound mode toggle (loud · soft · none).</li>
-              <li><code>⏮  ▶  ⅠⅠ  ⏭</code> — Focus Music playback. Tracks live in <code>audio/focus/</code>; the playlist is read from <code>audio/focus/playlist.json</code>.</li>
+              <li>Speaker icon — sound mode toggle (loud · soft · mute). Tap to cycle.</li>
+              <li>Previous / Play-Pause / Next — Focus Music playback. Tracks live in <code>audio/focus/</code>; the playlist is read from <code>audio/focus/playlist.json</code>.</li>
             </ul>
           </li>
           <li><em>Page tabs</em> — Focus and Statistics. On phone, both shrink to matched pill icons (italic <em>ƒ</em> / Σ). The Setup page was consolidated into Focus; there is no Setup tab.</li>
@@ -3929,7 +3950,7 @@
         <ul>
           <li>Four quadrants colored by quadrant: <em>Important · Urgent</em> (pink), <em>Important · Not Urgent</em> (yellow), <em>Not Important · Urgent</em> (green), <em>Not Important · Not Urgent</em> (blue). Same colors paint the bands on the vertical gauge and the weekly view.</li>
           <li><em>+ add task</em> — every cell has its own button. Tapping it creates a row and immediately opens the name editor.</li>
-          <li><em>✎ pen</em> next to a task — opens an editor where you can rename or delete the task (red Delete button).</li>
+          <li><em>Pen icon</em> next to a task — opens an editor where you can rename or delete the task (red Delete button).</li>
           <li><em>$N pill</em> — that task's <strong>bid</strong> (money you earn when you check it done, or lose when you uncheck it). Tap it to open a popup with <code>+$10 / +$5 / +$1</code>, <code>−$1 / −$5</code>, and <code>↺ Reset</code> (back to the default in <em>Edit Earning for Tasks</em>). No free-form input — every change is in fixed steps.</li>
           <li><em>Drag to reorder</em> — drag a task bar from anywhere (avoid text inputs and buttons) to reorder it within its quadrant.</li>
           <li><em>Phone layout toggle</em> — the small <code>⤢ / ⤡</code> button next to the "Tasks" title flips between the default 4-cell vertical stack and a swipeable 2×2 grid. Tapping the title text instead toggles the whole panel collapsed.</li>
@@ -3975,9 +3996,9 @@
 
       <li><strong>Activity log</strong> (Focus page; collapsed by default)
         <ul>
-          <li>Each row: type badge · task name · journal note (if any) · time range · money/mana changes · ✎ note button · ✕ delete.</li>
+          <li>Each row: type badge · task name · journal note (if any) · time range · money/mana changes · pen note button · close-delete.</li>
           <li>Click the time range to edit start / end times.</li>
-          <li>Click ✎ (or the inline note text) to open the journal popup, which also includes datetime-local fields for editing the start / end time. Cancel discards everything; OK applies note + times atomically.</li>
+          <li>Click the pen icon (or the inline note text) to open the journal popup, which also includes datetime-local fields for editing the start / end time. Cancel discards everything; OK applies note + times atomically.</li>
           <li>Money badges are <span style="color:#1e3a8a; background:#dbeafe; padding:1px 6px; border-radius:999px; font-weight:700;">Money</span>; Mana badges use the muncher style.</li>
           <li>On PC, the log splits into two columns (Money | Mana). On phone, it stays a single combined list.</li>
         </ul>
@@ -4350,6 +4371,74 @@ const defaultState = () => ({
 });
 
 let state = loadState();
+// Expose the live state + a small set of helpers on window so the iOS shim
+// (a separate <script src>) can read state.activeTimer for scheduling
+// Capacitor LocalNotifications and re-hydrate after an iCloud-driven
+// localStorage replacement. Harmless on plain web; useful for debugging.
+window.state = state;
+window.loadState = loadState;
+
+/* Tiny haptic helper. Default impl uses the Web Vibration API (Android
+   Chrome supports it; iOS Safari does NOT). When running inside the
+   Capacitor iOS app, ios-shim.js overrides this with Capacitor Haptics so
+   we get real iOS haptic engine feedback. Style values: 'light', 'medium',
+   'heavy'. Always safe to call on any platform — no-op fallback. */
+window.bidoroHaptic = function (style) {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      const ms = style === 'heavy' ? 30 : style === 'medium' ? 18 : 8;
+      navigator.vibrate(ms);
+    }
+  } catch (_) {}
+};
+
+/* ===========================================================================
+   ICONS — inline SVG icon set that replaces every emoji / text-symbol used
+   as a UI affordance (⏸ ▶ 🔈 ⏰ 📅 ☁️ 📱 ⏱ × ✎ ✓ etc.). Reasons we don't
+   use emoji directly:
+     • Emoji render inconsistently across iOS / macOS / Android / older fonts
+     • Apple's iOS WebKit renders them in colour, breaking monochrome UI
+     • They don't inherit currentColor, can't be styled with CSS
+
+   Every icon is a 24×24 viewBox using `currentColor` for stroke/fill so a
+   parent's `color` controls it. Use `iconSvg(name, size)` to render with a
+   chosen pixel size; the default 1em scales with the parent's font-size.
+   ========================================================================= */
+const ICONS = {
+  // Pomodoro / playback
+  pause:   '<rect x="7"  y="5"  width="3" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="5"  width="3" height="14" rx="1" fill="currentColor" stroke="none"/>',
+  play:    '<path d="M7 4 L19 12 L7 20 Z" fill="currentColor" stroke="none"/>',
+  prev:    '<path d="M19 5 L8 12 L19 19 Z" fill="currentColor" stroke="none"/><rect x="5" y="5" width="2.4" height="14" rx="1" fill="currentColor" stroke="none"/>',
+  next:    '<path d="M5 5 L16 12 L5 19 Z" fill="currentColor" stroke="none"/><rect x="16.6" y="5" width="2.4" height="14" rx="1" fill="currentColor" stroke="none"/>',
+  // Sound modes
+  loud:    '<path d="M3 9 H7 L12 5 V19 L7 15 H3 Z" fill="currentColor" stroke="none"/><path d="M15 9 Q17 12 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M17.5 7 Q21 12 17.5 17" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  soft:    '<path d="M3 9 H7 L12 5 V19 L7 15 H3 Z" fill="currentColor" stroke="none"/><path d="M15 9 Q17 12 15 15" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  mute:    '<path d="M3 9 H7 L12 5 V19 L7 15 H3 Z" fill="currentColor" stroke="none"/><path d="M16 9 L21 14 M21 9 L16 14" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/>',
+  // Sync / device
+  phone:   '<rect x="7" y="3" width="10" height="18" rx="2" stroke="currentColor" stroke-width="1.7" fill="none"/><line x1="11" y1="6" x2="13" y2="6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="12" cy="18" r="0.9" fill="currentColor"/>',
+  cloud:   '<path d="M7 18.5 Q3 18.5 3 14.5 Q3 11.5 6 11 Q6.5 7.5 10 7.5 Q14 7.5 14.7 11 Q18.5 11 18.5 14.7 Q18.5 18.5 15.5 18.5 Z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/>',
+  // Calendar / clock / stopwatch
+  calendar:'<rect x="4" y="5" width="16" height="15" rx="2" stroke="currentColor" stroke-width="1.7" fill="none"/><line x1="4" y1="9.5" x2="20" y2="9.5" stroke="currentColor" stroke-width="1.7"/><line x1="8.5" y1="3" x2="8.5" y2="6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="15.5" y1="3" x2="15.5" y2="6.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+  clock:   '<circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 7.5 V12 L15 14" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  stopwatch:'<circle cx="12" cy="13.5" r="6.8" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12 9.5 V13.5 L14.7 15" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/><line x1="9.5" y1="3.5" x2="14.5" y2="3.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><line x1="12" y1="3.5" x2="12" y2="6.7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>',
+  // Generic actions
+  check:   '<path d="M5 12.5 L10 17.5 L19.5 7" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  close:   '<path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/>',
+  pen:     '<path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.7"/>',
+};
+function iconSvg(name, size) {
+  const body = ICONS[name];
+  if (!body) return '';
+  const s = size ? `width="${size}" height="${size}"` : 'width="1em" height="1em"';
+  return `<svg viewBox="0 0 24 24" ${s} aria-hidden="true" focusable="false" style="vertical-align:-0.15em;display:inline-block;">${body}</svg>`;
+}
+// Inject inline svg CSS — make sure default vertical alignment is consistent.
+(function injectIconStyles() {
+  const css = '.bd-icon { display: inline-block; vertical-align: -0.15em; }';
+  const s = document.createElement('style');
+  s.textContent = css;
+  document.head.appendChild(s);
+})();
 let stats = loadStats();
 migrateState();
 // Stuck-timer safeguard: if state.activeTimer claims to have started more
@@ -5585,7 +5674,8 @@ function syncMusicPlayBtn() {
   if (!btn) return;
   const playing = _musicState.audio && !_musicState.audio.paused;
   // Pause icon = double Roman numeral I (ⅠⅠ); play icon = ▶.
-  btn.textContent = playing ? 'ⅠⅠ' : '▶';
+  // Play/pause toggle uses inline SVG icons (no text symbol).
+  btn.innerHTML = playing ? iconSvg('pause', 18) : iconSvg('play', 18);
   btn.setAttribute('aria-label', playing ? 'Pause' : 'Play');
   btn.classList.toggle('is-playing', !!playing);
 }
@@ -5628,7 +5718,7 @@ async function playMusic(idx) {
     // mutating the play button's glyph. Falls back to the play button if the
     // motivation slot isn't available for some reason.
     if (typeof showMotivationFlash === 'function') {
-      showMotivationFlash('Music muted — tap 🔈 to enable', 3000);
+      showMotivationFlash('Music muted — tap the speaker icon to enable', 3000);
     } else {
       const btn = document.getElementById('music-play');
       if (btn) {
@@ -5767,6 +5857,14 @@ function _placeDropIndicator(tasksDiv, beforeNode, q, insertAt) {
   // thrash during rapid dragover events.
   if (ind.parentNode !== tasksDiv || ind.nextSibling !== beforeNode) {
     tasksDiv.insertBefore(ind, beforeNode || null);
+  }
+  // Tactile "tick" each time the indicator crosses into a NEW slot. We
+  // compare against the previous _dropTarget so dragover spam (called many
+  // times per second over the same gap) only fires once per actual gap
+  // change. Light style so a long drag doesn't feel buzzy.
+  const prev = _dropTarget;
+  if (!prev || prev.q !== q || prev.insertAt !== insertAt) {
+    if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
   }
   _dropTarget = { q, insertAt };
 }
@@ -5934,7 +6032,7 @@ function renderTasks() {
         <input type="checkbox" ${t.done?'checked':''}>
         <input type="text" class="task-text ${t.done?'done':''}" value="${escapeHTML(t.text)}">
         <button class="task-bid" title="Bid for this task — money you earn when you finish">$${bidVal}</button>
-        <button class="x" title="delete">×</button>`;
+        <button class="x" title="delete"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`;
       const cb = row.children[0], txt = row.children[1], bidBtn = row.children[2], del = row.children[3];
       // Paint task name with the DARKER per-task shade (≈ 75 % contrast) so the
       // text reads cleanly on white while staying in the gauge-fill family.
@@ -7145,7 +7243,7 @@ function renderOthers(side) {
   state[side].others.forEach((o, i) => {
     const div = document.createElement('div');
     div.className = 'other';
-    div.innerHTML = `<span style="flex:1">${escapeHTML(o.text)}</span><span class="scr">${o.score>0?'+':''}${o.score}</span><button>×</button>`;
+    div.innerHTML = `<span style="flex:1">${escapeHTML(o.text)}</span><span class="scr">${o.score>0?'+':''}${o.score}</span><button><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`;
     div.querySelector('button').onclick = () => {
       state[side].others.splice(i,1); saveState(); renderOthers(side); recomputeSlider(side);
       markSettingsChanged(); pushSettingsToCloud();
@@ -7271,7 +7369,7 @@ function renderFocusMatrix() {
         inputRow.className = 'task-row task-row-input';
         inputRow.innerHTML = `
           <input type="text" class="task-text-input" placeholder="Type task name…" maxlength="200">
-          <button class="task-cancel" title="Cancel" type="button">×</button>`;
+          <button class="task-cancel" title="Cancel" type="button"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`;
         const inp = inputRow.querySelector('.task-text-input');
         const cancel = inputRow.querySelector('.task-cancel');
         function commit() {
@@ -7353,7 +7451,7 @@ function renderFocusMatrix() {
         <input type="checkbox" ${t.done?'checked':''}>
         <span class="task-text ${t.done?'done':''} ${isPomo?'running':''}">${escapeHTML(t.text||'(unnamed)')}</span>
         <span class="task-bid-wrap"></span>
-        <button class="task-edit-pen" title="Edit task">✎</button>`;
+        <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>`;
       const cb = row.children[0], textEl = row.children[1], bidWrap = row.children[2], penBtn = row.children[3];
       // Paint task name with the DARKER per-task shade (≈ 75 % contrast) so the
       // text reads cleanly on white while staying in the gauge-fill family.
@@ -7586,7 +7684,9 @@ function renderFocusMatrix() {
         // tasks were wrapping to 2 lines.
         // Minutes only — seconds removed per user request. Single-digit
         // minutes render as e.g. "5m" (no zero pad) for natural readability.
-        display.innerHTML = `<span class="time">${m}m${at.paused?' ⏸':''}</span>`;
+        // Paused state: append a small inline pause SVG (no text symbol).
+        const _pausedMark = at.paused ? ' ' + iconSvg('pause', 12) : '';
+        display.innerHTML = `<span class="time">${m}m${_pausedMark}</span>`;
         display.onclick = (e) => { e.stopPropagation(); togglePomodoroPause(); };
         // Insert ABOVE the bid pill so they stack vertically inside bidWrap.
         bidWrap.insertBefore(display, bidBtn);
@@ -7601,7 +7701,7 @@ function renderFocusMatrix() {
         const del = document.createElement('button');
         del.className = 'x';
         del.title = 'Delete task';
-        del.textContent = '×';
+        del.innerHTML = iconSvg('close', 14);
         del.onclick = (ev) => { ev.stopPropagation(); deleteTaskAt(q, i); saveState(); renderFocusMatrix(); markSettingsChanged(); pushSettingsToCloud(); };
         row.appendChild(del);
         attachDragHandlers(row, q, i);
@@ -7742,7 +7842,8 @@ function tickTaskTimers() {
       const m = Math.floor(totalSec / 60), s = totalSec % 60;
       const timeEl = display.querySelector('.time');
       // Minutes only — matches the initial render above (seconds removed).
-      if (timeEl) timeEl.textContent = `${m}m${at.paused?' ⏸':''}`;
+      // Use innerHTML (not textContent) so the paused pause-icon SVG renders.
+      if (timeEl) timeEl.innerHTML = `${m}m${at.paused ? ' ' + iconSvg('pause', 12) : ''}`;
       // Keep the q-q* class in sync so the tint matches the running task's quadrant.
       display.className = `pomodoro-display ${at.phase} q-${at.q}${at.paused?' paused':''}`;
       display.title = at.paused ? 'Tap to resume' : 'Tap to pause (does not record yet)';
@@ -8741,7 +8842,7 @@ function drawTimeArea() {
     xBtn.className = 'time-block-x';
     xBtn.type = 'button';
     xBtn.setAttribute('aria-label', 'Delete block');
-    xBtn.textContent = '×';
+    xBtn.innerHTML = iconSvg('close', 14);
     div.appendChild(xBtn);
 
     /* ---- ms-per-pixel within the 24h content ---- */
@@ -8808,6 +8909,9 @@ function drawTimeArea() {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (e.button !== 0) return;
         e.preventDefault();
+        // Light haptic when the user "grabs" a block — tactile confirmation
+        // that the drag mode has started.
+        if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         startDrag(e.clientY);
         function m(ev) { moveDrag(ev.clientY); }
         function u() {
@@ -8822,6 +8926,8 @@ function drawTimeArea() {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (!e.touches[0]) return;
         e.preventDefault();
+        // Light haptic on block grab (mobile time gauge).
+        if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         // Track which finger started this drag — document-level touchmove
         // will only respond to that touch. Without this, a leaked listener
         // from a previous drag would react to ANY new touch anywhere on the
@@ -10300,17 +10406,19 @@ function buildActivityRow(entry, opts) {
   const manaTxt  = mana === 0 ? '' : (mana > 0 ? '+' : '') + mana + ' mana';
   const manaCls  = mana > 0 ? 'pen-pos' : mana < 0 ? 'pen-neg' : 'pen-zero';
 
+  // Activity-log badges use inline SVG icons instead of emoji / text symbols
+  // so they render identically on iOS Capacitor, Android web, and desktop.
   let badge = '';
-  if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">⏱ ${(entry.q||'').toUpperCase()}</span>`;
-  else if (entry.type === 'pomodoro-break') badge = `<span class="badge break-badge">☕ Break</span>`;
+  if      (entry.type === 'pomodoro')      badge = `<span class="badge ${entry.q||''}">${iconSvg('stopwatch', 12)} ${(entry.q||'').toUpperCase()}</span>`;
+  else if (entry.type === 'pomodoro-break') badge = `<span class="badge break-badge">${iconSvg('pause', 12)} Break</span>`;
   else if (entry.type === 'muncher')       badge = `<span class="badge muncher">Energy</span>`;
   else if (entry.type === 'multiplier')    badge = `<span class="badge money-mom">Money</span>`;
   else if (entry.type === 'mana-moment')   badge = `<span class="badge muncher">Energy</span>`;
   else if (entry.type === 'money-moment')  badge = `<span class="badge money-mom">Money</span>`;
   else if (entry.type === 'add-task')      badge = `<span class="badge ${entry.q||'q2'}">+task</span>`;
-  else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">✓</span>`;
+  else if (entry.type === 'finish-task')   badge = `<span class="badge ${entry.q||'q2'}">${iconSvg('check', 12)}</span>`;
   else if (entry.type === 'unfinish-task') badge = `<span class="badge ${entry.q||'q4'}">↺</span>`;
-  else if (entry.type === 'delete-task')   badge = `<span class="badge ${entry.q||'q4'}">×task</span>`;
+  else if (entry.type === 'delete-task')   badge = `<span class="badge ${entry.q||'q4'}">${iconSvg('close', 12)}task</span>`;
   else if (entry.type === 'no-sleep')      badge = `<span class="badge muncher">no sleep</span>`;
   else if (entry.type === 'event')         badge = `<span class="badge q3">event</span>`;
 
@@ -10346,10 +10454,10 @@ function buildActivityRow(entry, opts) {
       ${manaTxt  ? `<span class="pen pen-mana ${manaCls}" title="Mana change">${manaTxt}</span>` : ''}
     </span>
     ${allowNoteEdit
-      ? `<button class="note-btn note-pen" data-act="edit-note" title="${hasNote?'Edit':'Add'} note">✎</button>`
+      ? `<button class="note-btn note-pen" data-act="edit-note" title="${hasNote?'Edit':'Add'} note"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>`
       : `<span class="watch-action-btn-spacer"></span>`}
     ${allowDelete
-      ? `<button class="watch-action-btn danger" data-act="delete" title="Delete entry">×</button>`
+      ? `<button class="watch-action-btn danger" data-act="delete" title="Delete entry"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`
       : ''}`;
 
   // Wire handlers
@@ -10501,7 +10609,7 @@ function renderManaList(kind) {
         <span class="lbl" style="color:#111827; font-weight:${running?700:600};">${escapeHTML(m.lbl)}${running ? ' ' + fmtHMS(liveMs) : ''}</span>
         <span class="scr" style="color:${numColor};">${running?'●':'○'}<small style="margin-left:4px; font-weight:700;">${rateBadge}</small></span>
         <button class="move-side" title="${moveTitle}" type="button">${moveArrow}</button>
-        <button class="remove" title="Remove" type="button">×</button>`;
+        <button class="remove" title="Remove" type="button"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`;
       row.onclick = (e) => {
         if (e.target.tagName === 'BUTTON') return;
         clickManaTimer(kind, i);
@@ -10567,7 +10675,7 @@ function renderManaList(kind) {
     row.innerHTML = `<span class="lbl" style="color:#111827;">${escapeHTML(m.lbl)}</span>` +
                     `<span class="scr" style="color:${sColor};">${sStr}</span>` +
                     `<button class="move-side" title="${moveTitle}" type="button">${moveArrow}</button>` +
-                    `<button class="remove" title="Remove" type="button">×</button>`;
+                    `<button class="remove" title="Remove" type="button"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/></svg></button>`;
     row.onclick = (e) => {
       if (e.target.tagName === 'BUTTON') return;
       // Pass the bare label — the activity-log row already has a colored
@@ -11444,7 +11552,11 @@ function syncSoundToggleBtn() {
   const m = state.soundMode || 'soft';
   btn.classList.remove('mode-loud', 'mode-soft', 'mode-none');
   btn.classList.add('mode-' + m);
-  btn.textContent = m === 'loud' ? '🔊' : m === 'soft' ? '🔈' : '🔇';
+  // Sound-mode 3-state toggle: speaker-loud / speaker-soft / speaker-mute
+  // (no emoji — inline SVGs so the icon stays monochrome).
+  btn.innerHTML = m === 'loud' ? iconSvg('loud', 18)
+                : m === 'soft' ? iconSvg('soft', 18)
+                : iconSvg('mute', 18);
   btn.title = m === 'loud' ? 'Sound effects: loud (tap to switch)'
             : m === 'soft' ? 'Sound effects: soft (tap to switch)'
             : 'Sound effects off (tap to switch)';
@@ -12031,6 +12143,12 @@ function renderAll() {
   if (typeof renderMoneyFactors === 'function') renderMoneyFactors();
   if (typeof renderMoneyCard    === 'function') renderMoneyCard();
 }
+// Expose render helpers on window so the iOS shim can call them after an
+// iCloud-driven state replacement (the shim lives in a separate <script src>
+// and otherwise can't see these script-scope function names).
+window.renderAll         = renderAll;
+window.renderFocusMatrix = (typeof renderFocusMatrix === 'function') ? renderFocusMatrix : undefined;
+window.drawGauge         = (typeof drawGauge === 'function')         ? drawGauge         : undefined;
 renderAll();
 refreshMotivation(false);
 
@@ -13494,6 +13612,8 @@ setInterval(() => {
         if (ev.target === rtEl || ev.target === rbEl || ev.target === tailEl) return;
         if (ev.button !== 0) return;
         ev.preventDefault();
+        // Light haptic on grab (PC main gauge, mouse path).
+        if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         _arrowBlock = b;   // selecting this block enables arrow-key bottom-edge tuning
         _tgBusy = true;
         const offsetMs = yToMs(ev.clientY) - b.startMs;
@@ -13586,6 +13706,8 @@ setInterval(() => {
       div.addEventListener('touchstart', ev => {
         if (ev.target === rtEl || ev.target === rbEl || ev.target === tailEl) return;
         ev.preventDefault();
+        // Light haptic on grab (PC main gauge, touch path).
+        if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         _arrowBlock = b;   // mark as selected for arrow-key / backspace
         _tgBusy = true;
         const t0       = ev.touches[0];
@@ -14417,5 +14539,9 @@ setInterval(() => {
   document.addEventListener('touchstart', _onUserAction, true);
 })();
 </script>
+<!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
+     to hide the splash screen, style the status bar, schedule pomodoro-end
+     local notifications, and add haptic feedback. Safe to load everywhere. -->
+<script defer src="ios-shim.js?v=ios-1"></script>
 </body>
 </html>
