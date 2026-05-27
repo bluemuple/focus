@@ -900,6 +900,19 @@
   .mcf-val:hover { transform: scale(1.05); }
   .mcf-pos { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
   .mcf-neg { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+  /* Neutral grey tone — used for Task Duration (it's not a money rule,
+     just a default block length, so it shouldn't borrow the +money green). */
+  .mcf-neu { background: #f3f4f6; color: #374151; border: 1px solid #d1d5db; }
+  /* Top "Task Duration" row sits FULL-WIDTH above the 2×2 money grid. */
+  .money-factors-list.mcf-top {
+    grid-template-columns: 1fr;
+    margin-bottom: 6px;
+  }
+  /* Money rules tile in an explicit 2×2 grid (4 li items). */
+  .money-factors-list.mcf-grid {
+    grid-template-columns: 1fr 1fr;
+    margin-top: 0;
+  }
   .mcf-help { color: #6b7280; font-size: .78rem; }
 
   /* ===== Sync activity panel (bottom of Stats) ===== */
@@ -1382,21 +1395,6 @@
     transition: background .15s ease, color .15s ease;
   }
   .im-doing-time:hover { background: rgba(37,99,235,.08); }
-  /* Daily pomodoro tally row inside the I'm-doing area. Compact pill-row
-     showing today's accumulated Work + Break counts. Visible at all times
-     so the user sees the running daily total even when no timer is active. */
-  .im-doing-day-counts {
-    display: flex; align-items: center; justify-content: center;
-    gap: 8px;
-    margin-top: 6px;
-    font-size: .8rem; font-weight: 700;
-    color: #6b7280;
-    font-variant-numeric: tabular-nums;
-  }
-  .im-doing-day-counts .dc-w { color: #dc2626; }   /* work — red family */
-  .im-doing-day-counts .dc-b { color: #0284c7; }   /* break — sky-blue family */
-  .im-doing-day-counts .dc-label { color: #9ca3af; font-weight: 600; }
-  .im-doing-day-counts:empty { display: none; }     /* hide row if no text rendered yet */
   /* Color the elapsed-time by the activity's effect on the user's score:
      red when the current activity RAISES money or mana (pomodoro work, +rate
      trackers); blue when it LOWERS money or mana (pomodoro break, -rate
@@ -3450,8 +3448,13 @@
 
       <div class="panel" id="money-factors-panel">
         <h2>Settings</h2>
-        <ul class="money-factors-list">
-          <li>Task Duration Default: <span class="mcf-val mcf-pos" data-mcf="taskDurationDefault">25 min</span></li>
+        <!-- Task Duration sits at the TOP — neutral grey tone (it's not a
+             money rule, just a default block length). The 4 money factors
+             below tile in a 2×2 grid. -->
+        <ul class="money-factors-list mcf-top">
+          <li>Task Duration: <span class="mcf-val mcf-neu" data-mcf="taskDurationDefault">25 min</span></li>
+        </ul>
+        <ul class="money-factors-list mcf-grid">
           <li>Add task: <span class="mcf-val mcf-pos" data-mcf="addTask">+$5</span></li>
           <li>Finish task: <span class="mcf-val mcf-pos" data-mcf="finishTask">+$10</span></li>
           <li>Per minute: <span class="mcf-val mcf-pos" data-mcf="perMinuteCents">+10¢</span></li>
@@ -3553,10 +3556,6 @@
                     <span class="im-doing-time" id="im-doing-time" title="Click to pause / resume">00:00:00</span>
                     <span class="im-doing-phase" id="im-doing-phase"></span>
                   </div>
-                  <!-- Daily pomodoro tally — always visible (idle or running).
-                       Resets at the 3 AM day rollover (same cutoff as
-                       _pomoCountsForToday). Format: "today 3w · 2b". -->
-                  <div class="im-doing-day-counts" id="im-doing-day-counts" title="오늘 누적된 Work / Break 횟수 (새벽 3시 reset)"></div>
                 </div>
               </div>
             </div>
@@ -9865,23 +9864,6 @@ function renderImDoing() {
   const phaseEl = document.getElementById('im-doing-phase');
   const labelEl = wrap ? wrap.querySelector('.im-doing-label') : null;
   if (!wrap || !nameEl || !timeEl) return;
-  /* Daily pomodoro tally — always rendered (regardless of active-timer state)
-     so the user sees today's running total. Format: "오늘 3w · 2b". Resets
-     at the 3 AM day rollover via _pomoCountsForToday (the same cutoff that
-     the in-session "work N" label uses, so the counts stay in sync). */
-  const dayCountsEl = document.getElementById('im-doing-day-counts');
-  if (dayCountsEl) {
-    const dc = _pomoCountsForToday();
-    if (dc.workN > 0 || dc.breakN > 0) {
-      dayCountsEl.innerHTML =
-        '<span class="dc-label">오늘</span>' +
-        '<span class="dc-w">' + dc.workN + 'w</span>' +
-        '<span class="dc-label">·</span>' +
-        '<span class="dc-b">' + dc.breakN + 'b</span>';
-    } else {
-      dayCountsEl.textContent = '';     // :empty CSS hides the row entirely
-    }
-  }
   const at = state.activeTimer;
   if (!at) {
     // Idle: just one cheerful line, no time. The Sleep button stays put.
@@ -14046,19 +14028,48 @@ setInterval(() => {
       // Wait for an 8 px movement before committing to a drag — this lets
       // short taps still fire click events without interference.
       if (!_td.dragging) {
-        const dx = t.clientX - _td.startX, dy = t.clientY - _td.startY;
-        if (dx * dx + dy * dy < 64) return;   // < 8 px — not a drag yet
+        const dx0 = t.clientX - _td.startX, dy0 = t.clientY - _td.startY;
+        if (dx0 * dx0 + dy0 * dy0 < 64) return;   // < 8 px — not a drag yet
         _td.dragging = true;
-        // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
-        // never creates a stray ghost element on screen.
-        try {
-          _td.rowGhost = makeRowGhost(_td.srcRow, _td.q, _td.taskName);
-          _td.rowGhost.style.left = t.clientX + 'px';
-          _td.rowGhost.style.top  = t.clientY + 'px';
-        } catch (_) {}
+        // Decide which gesture this is:
+        //   swipe-left (predominantly leftward) → swipe-to-delete
+        //   anything else                        → drag (gauge / reorder)
+        // The 1.3× factor biases ties toward drag so an accidental diagonal
+        // doesn't fire delete unexpectedly.
+        const absDx = Math.abs(dx0), absDy = Math.abs(dy0);
+        if (dx0 < 0 && absDx > absDy * 1.3) {
+          _td.mode = 'swipe';
+          // Disable transition initially so the row tracks the finger 1:1.
+          // Re-enabled on touchend for the snap-back / fly-out animation.
+          if (_td.srcRow && _td.srcRow.style) {
+            _td.srcRow.style.transition = 'none';
+            _td.srcRow.style.willChange = 'transform, opacity';
+          }
+        } else {
+          _td.mode = 'drag';
+          // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
+          // never creates a stray ghost element on screen.
+          try {
+            _td.rowGhost = makeRowGhost(_td.srcRow, _td.q, _td.taskName);
+            _td.rowGhost.style.left = t.clientX + 'px';
+            _td.rowGhost.style.top  = t.clientY + 'px';
+          } catch (_) {}
+        }
       }
       ev.preventDefault();   // prevent scroll now that drag is confirmed
-      // Row-shaped ghost follows finger.
+      // ===== Swipe-to-delete branch =====
+      if (_td.mode === 'swipe') {
+        const dx = t.clientX - _td.startX;
+        const tx = Math.min(0, dx);                       // never pull right
+        const rowW = (_td.srcRow && _td.srcRow.offsetWidth) || 200;
+        const op = Math.max(0, 1 - (Math.abs(tx) / rowW));
+        if (_td.srcRow) {
+          _td.srcRow.style.transform = 'translateX(' + tx + 'px)';
+          _td.srcRow.style.opacity   = op.toFixed(2);
+        }
+        return;
+      }
+      // Row-shaped ghost follows finger (drag mode).
       if (_td.rowGhost) {
         _td.rowGhost.style.left = t.clientX + 'px';
         _td.rowGhost.style.top  = t.clientY + 'px';
@@ -14136,6 +14147,41 @@ setInterval(() => {
       if (!_td) return;
       // Tear down the row-shaped ghost.
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
+      // ===== Swipe-to-delete commit / snap-back =====
+      if (_td.dragging && _td.mode === 'swipe') {
+        const lastT = ev.changedTouches && ev.changedTouches[0];
+        const dx    = lastT ? (lastT.clientX - _td.startX) : 0;
+        const row   = _td.srcRow;
+        const rowW  = (row && row.offsetWidth) || 200;
+        const q     = _td.q;
+        const idx   = _td.idx;
+        // Commit threshold: > 40 % of row width swiped LEFT.
+        if (row && dx < -rowW * 0.4) {
+          // Fly the row OUT (translate full width left + fade to 0), then
+          // delete the underlying task. Re-render drops the row entirely
+          // and the rows below it naturally slide up to fill the gap.
+          row.style.transition = 'transform .22s ease-out, opacity .22s ease-out';
+          row.style.transform  = 'translateX(-' + (rowW + 20) + 'px)';
+          row.style.opacity    = '0';
+          setTimeout(() => {
+            try { deleteTaskAt(q, idx); } catch (_) {}
+            try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+            try { renderFocusMatrix(); } catch (_) {}
+          }, 220);
+        } else if (row) {
+          // Below threshold → snap back to resting position.
+          row.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+          row.style.transform  = '';
+          row.style.opacity    = '';
+          setTimeout(() => {
+            row.style.transition = '';
+            row.style.willChange = '';
+          }, 200);
+        }
+        _draggedTask = null;
+        _td = null;
+        return;
+      }
       // ----- Reorder branch -----
       // If the drop indicator is showing AND it's for the same quadrant as
       // the source row, commit a within-quadrant reorder (matches PC drag).
@@ -14206,6 +14252,18 @@ setInterval(() => {
     document.addEventListener('touchcancel', () => {
       if (!_td) return;
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
+      // If a swipe-to-delete was in progress, snap the row back instead of
+      // leaving it half-translated when the OS interrupts the touch.
+      if (_td.mode === 'swipe' && _td.srcRow) {
+        const row = _td.srcRow;
+        row.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
+        row.style.transform  = '';
+        row.style.opacity    = '';
+        setTimeout(() => {
+          row.style.transition = '';
+          row.style.willChange = '';
+        }, 200);
+      }
       _clearDropIndicator();
       hideTimeGhost();
       if (_ghost) { _ghost = null; placeGhost(); }
