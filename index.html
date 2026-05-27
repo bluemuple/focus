@@ -14420,12 +14420,31 @@ setInterval(() => {
   // this IIFE actually executed (i.e. no JS error stopped it prematurely).
   window.__undoSetupRan = true;
 
+  /* Return a comparison-only JSON of `state` with volatile fields stripped.
+     Fields like `settingsUpdatedAt` get bumped to Date.now() by
+     markSettingsChanged() AFTER every undo restore — without this strip,
+     every subsequent Cmd+Z would see "current state ≠ top of stack" (due
+     to the moving timestamp) and restore the same top in a loop, never
+     popping. Result: the 1st Cmd+Z works, the 2nd onward appears to do
+     nothing. We compare a stripped version for dedup / pop decisions but
+     still STORE the full JSON so restore is complete. */
+  const _VOLATILE_KEYS = ['settingsUpdatedAt', '_lastSnapshotAt'];
+  function _stripVolatile(json) {
+    try {
+      const o = JSON.parse(json);
+      _VOLATILE_KEYS.forEach(k => { delete o[k]; });
+      return JSON.stringify(o);
+    } catch (e) {
+      return json;     // malformed snapshot — fall back to raw comparison
+    }
+  }
+
   function snapshotNow() {
     if (_suppress) return;
     try {
       const snap = JSON.stringify(state);
-      const top = _undoStack[_undoStack.length - 1];
-      if (snap === top) return;      // dedupe identical states
+      const top  = _undoStack[_undoStack.length - 1];
+      if (top && _stripVolatile(snap) === _stripVolatile(top)) return;   // dedupe identical states
       _undoStack.push(snap);
       if (_undoStack.length > MAX_UNDO) _undoStack.shift();
       _lastSnapMs = Date.now();
@@ -14471,8 +14490,11 @@ setInterval(() => {
       return;
     }
     const currentSnap = JSON.stringify(state);
+    // Compare stripped versions so the post-restore settingsUpdatedAt bump
+    // doesn't fool us into "top != current" on every press — see _stripVolatile.
+    const currentStripped = _stripVolatile(currentSnap);
     let target;
-    if (_undoStack[_undoStack.length - 1] === currentSnap) {
+    if (_stripVolatile(_undoStack[_undoStack.length - 1]) === currentStripped) {
       _undoStack.pop();
       if (!_undoStack.length) {
         console.warn('[undo] after pop, stack empty');
