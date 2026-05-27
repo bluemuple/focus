@@ -2901,6 +2901,19 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     pointer-events: none; z-index: 1;
   }
+  /* Short block (< ~30 min): switch to side-by-side layout so the name
+     doesn't visually overlap the bottom-right duration label. Mirrors the
+     `.time-block.short` rule used on the mobile mini-gauge. */
+  .tg-block.short .tg-block-name {
+    left: 6px; right: 30px;       /* leave room for the duration label */
+    text-align: left;
+    font-size: 9px;
+  }
+  .tg-block.short .tg-block-dur {
+    top: 50%; bottom: auto;
+    right: 5px;
+    transform: translateY(-50%);
+  }
   .tg-block-rt, .tg-block-rb {
     position: absolute; left: 0; right: 0; height: 8px;
     cursor: ns-resize; z-index: 2;
@@ -7841,9 +7854,12 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
       logEntry.money = Math.round(logEntry.money * 100) / 100;
       logEntry.type = at.type;
       logEntry.name = m.lbl;
-      // gain → pink, loss → light blue (per spec).
-      const segColor = (rate > 0) ? '#fecdd3' : (rate < 0) ? '#bfdbfe' : '#e5e7eb';
-      state.timeSegments.push({ startMs: at.startedAt, endMs: now, color: segColor, name: m.lbl });
+      // NOTE: The legacy state.timeSegments push that drew a coloured
+      // "band" on the gauge outside the block has been removed per user
+      // request — the habit rectangle (scheduledBlocks tracker entry) is
+      // now the sole carrier of the colour-coding. Weekly view + Activity
+      // log still paint pink/blue based on watchLog entry penalty/money
+      // sign (separate, unchanged path).
     }
     // Finalize the gauge tracker block (the rectangle that was growing
     // while the tracker ran). Close the open work session into
@@ -8436,6 +8452,14 @@ function drawGauge() {
   segmentsEl.innerHTML = '';
   (state.timeSegments || []).forEach(seg => {
     if (seg.q) return;   // task segment — handled by blocks
+    // Legacy tracker bands (pre-rectangle-rendering era) used these exact
+    // pink/blue/gray hexes when pushed by stopActiveTimer. Skip them so the
+    // OUTSIDE-the-rectangle colour + name no longer paints — trackers are
+    // shown exclusively via their scheduledBlocks rectangle now.
+    if (seg.color) {
+      const c = String(seg.color).toLowerCase();
+      if (c === '#fecdd3' || c === '#bfdbfe' || c === '#e5e7eb') return;
+    }
     addGaugeSegment(segmentsEl, pct, seg, false);
   });
   // User-created events — light gray bands. Drawn UNDER pomodoro/tracker bands
@@ -8453,9 +8477,14 @@ function drawGauge() {
   if (state.activeTimer) {
     const seg = activeTimerToSegment(state.activeTimer, now);
     // Task timers (seg.q set) always show via block fill — never on the
-    // gauge background. Non-task timers (mana / multiplier / event-style)
-    // use seg.color and continue to paint as bands on the gauge.
-    if (seg && !seg.q) addGaugeSegment(segmentsEl, pct, seg, true);
+    // gauge background. Tracker timers (muncher / multiplier) now also
+    // render exclusively via their gauge BLOCK (scheduledBlocks entry
+    // with kind:'tracker'), per user request — the legacy band outside
+    // the rectangle has been suppressed here. Any non-task, non-tracker
+    // segment (e.g. event-style) still paints as a band.
+    const _atType = state.activeTimer && state.activeTimer.type;
+    const _isTracker = (_atType === 'muncher' || _atType === 'multiplier');
+    if (seg && !seg.q && !_isTracker) addGaugeSegment(segmentsEl, pct, seg, true);
   }
 
   // ---- Current-time red line ----
@@ -13435,10 +13464,10 @@ setInterval(() => {
         }
       }
 
-      /* -- Task name label -- */
+      /* -- Task / tracker name label -- */
       const nameEl       = document.createElement('div');
       nameEl.className   = 'tg-block-name';
-      nameEl.textContent = b.taskName || '';
+      nameEl.textContent = b.taskName || b.trackerName || '';
       div.appendChild(nameEl);
 
       /* -- Duration watermark (centred, 70 % of block height) -- */
@@ -13447,6 +13476,16 @@ setInterval(() => {
       durEl.textContent = fmtDur(b.endMs - b.startMs);
       durEl.style.fontSize = durFontSize(htPct);
       div.appendChild(durEl);
+
+      /* Tag short blocks (≤ ~30 min worth of duration) with .short so CSS
+         can switch to a side-by-side layout — name on the left, duration
+         on the right — and shrink the name font. Prevents the centred name
+         from overlapping the bottom-right duration label on small blocks
+         (especially live-growing tracker rectangles in their first
+         minutes). Same rule as the mobile mini-gauge but driven by
+         duration (PC gauge height is dynamic, not 1px=1min). */
+      const _blockMin = (b.endMs - b.startMs) / 60000;
+      if (_blockMin < 30) div.classList.add('short');
 
       /* -- Resize handles (top & bottom edge) -- */
       const rtEl = document.createElement('div'); rtEl.className = 'tg-block-rt';
