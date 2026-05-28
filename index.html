@@ -8745,9 +8745,14 @@ function drawGauge() {
     // pink/blue/gray hexes when pushed by stopActiveTimer. Skip them so the
     // OUTSIDE-the-rectangle colour + name no longer paints — trackers are
     // shown exclusively via their scheduledBlocks rectangle now.
+    // Also skip pomodoro BREAK bands (#BAE6FD / POMO_BREAK_COLOR): the break
+    // is already painted INSIDE its scheduled block by getBlockColorSegments,
+    // so an additional band stretching across the gauge column outside the
+    // block is redundant and visually confusing. Per user request, break
+    // colour-coding must stay confined to the rectangle.
     if (seg.color) {
       const c = String(seg.color).toLowerCase();
-      if (c === '#fecdd3' || c === '#bfdbfe' || c === '#e5e7eb') return;
+      if (c === '#fecdd3' || c === '#bfdbfe' || c === '#e5e7eb' || c === '#bae6fd') return;
     }
     addGaugeSegment(segmentsEl, pct, seg, false);
   });
@@ -8769,11 +8774,18 @@ function drawGauge() {
     // gauge background. Tracker timers (muncher / multiplier) now also
     // render exclusively via their gauge BLOCK (scheduledBlocks entry
     // with kind:'tracker'), per user request — the legacy band outside
-    // the rectangle has been suppressed here. Any non-task, non-tracker
-    // segment (e.g. event-style) still paints as a band.
+    // the rectangle has been suppressed here. Pomodoro BREAK phases are
+    // ALSO painted inside the task's covering block (getBlockColorSegments
+    // emits a break segment for the open break session), so the live break
+    // band that used to stretch across the gauge column outside the block
+    // is suppressed here too — break colour stays confined to the rectangle.
     const _atType = state.activeTimer && state.activeTimer.type;
     const _isTracker = (_atType === 'muncher' || _atType === 'multiplier');
-    if (seg && !seg.q && !_isTracker) addGaugeSegment(segmentsEl, pct, seg, true);
+    const _isLiveBreak = seg && seg.color &&
+                         String(seg.color).toLowerCase() === '#bae6fd';
+    if (seg && !seg.q && !_isTracker && !_isLiveBreak) {
+      addGaugeSegment(segmentsEl, pct, seg, true);
+    }
   }
 
   // ---- Current-time red line ----
