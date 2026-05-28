@@ -72,14 +72,21 @@
       ? 'Work session done. Time for a break?'
       : 'Break is over. Back to work?';
     try {
+      // iOS notification icon is ALWAYS the app icon automatically — no
+      // separate parameter to set. We deliberately do NOT pass smallIcon /
+      // largeIcon / iconColor here: those are Android-only fields and on iOS
+      // they're ignored at best, confusing at worst (the previous
+      // `smallIcon: 'ic_stat_icon'` referenced a non-existent Android drawable).
+      // The app icon comes from Assets.xcassets/AppIcon.appiconset, which is
+      // regenerated from resources/icon.png by `capacitor-assets generate --ios`
+      // on every Bidoro Build & Deploy run.
       P.LocalNotifications.schedule({
         notifications: [{
           id: 4242,
           title: 'Bidoro',
           body,
           schedule: { at: new Date(phaseEnd) },
-          sound: null,
-          smallIcon: 'ic_stat_icon'
+          sound: null
         }]
       });
       _scheduledForPhase = phaseEnd;
@@ -120,7 +127,23 @@
     }
   }
 
-  // ---- 6. iCloud Key-Value sync ----
+  // ---- 6. Scroll to top on first paint ----
+  // Inside the iOS Capacitor app, force the page back to the TOP after
+  // load. WKWebView sometimes restores a previous scroll offset OR ends up
+  // partway down because of dynamic content settling — both leave the
+  // user staring at the middle of the page on launch. Two-stage scroll
+  // (immediate + 500 ms) catches late-arriving block heights.
+  function _scrollToTop() {
+    try {
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    } catch (_) {}
+  }
+  window.addEventListener('load', () => {
+    setTimeout(_scrollToTop, 50);
+    setTimeout(_scrollToTop, 500);
+  });
+
+  // ---- 7. iCloud Key-Value sync ----
   // Mirrors a small set of localStorage keys into NSUbiquitousKeyValueStore
   // (via the custom Capacitor plugin ICloudKVPlugin). iCloud auto-syncs
   // these to every other device signed into the same Apple ID — so iPhone

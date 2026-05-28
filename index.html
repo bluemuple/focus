@@ -62,7 +62,10 @@
     /* Match the page's max-width: 1200px content region. The horizontal
        padding scales so the inner grid is exactly the same width as <main>'s
        padded content area, while the bg keeps spanning the full viewport. */
-    padding: 10px max(16px, calc((100vw - 1200px) / 2 + 16px));
+    padding: 10px
+             max(16px, calc((100vw - 1200px) / 2 + 16px))
+             10px
+             max(16px, calc((100vw - 1200px) / 2 + 16px));
     /* 3-col grid: brand fills the gauge column (20%), motivation fills the
        same area as .focus-right's left edge through the tabs' left edge,
        and tabs hug the right edge — i.e. they line up vertically with
@@ -72,6 +75,32 @@
     grid-template-columns: minmax(170px, 20%) 1fr auto;
     gap: 12px;
     align-items: center;
+  }
+  /* iOS Capacitor app — DO NOT add env(safe-area-inset-top) padding here.
+     Capacitor's StatusBar.overlaysWebView=false (set in capacitor.config.json)
+     already positions the WebView's top edge BELOW the iPhone status bar,
+     so the topbar is automatically clear of the clock. Adding env() padding
+     on top of that double-counts: the device's safe-area inset is reported
+     as ~47-59 px even when the WebView isn't extending under the status bar
+     (because viewport-fit=cover is set), creating a visible gap above the
+     topbar that the user saw as "pink whitespace".
+     The base 10 px padding-top from .topbar provides a small breathing-room
+     gap between the status bar and the topbar buttons — matches the look
+     in screenshot 1. If overlaysWebView is ever flipped to true, restore
+     env(safe-area-inset-top) here as a single source of truth. */
+  html.platform-ios header.topbar {
+    padding-top: 10px;
+  }
+  /* Disable iOS rubber-band overscroll. Pulling DOWN at the top of the page
+     used to reveal a blank strip above the topbar (WKWebView's elastic
+     bounce). With overscroll-behavior-y:none the scroll just stops at the
+     boundary instead of bouncing — the topbar's resting position is
+     unchanged, only the past-boundary stretch is suppressed.
+     Backed up by native code in AppDelegate.swift (scrollView.bounces=false)
+     since older WKWebView versions don't fully honour this CSS property. */
+  html.platform-ios,
+  html.platform-ios body {
+    overscroll-behavior-y: none;
   }
   /* Brand sits inside the topbar's first column (which matches the gauge
      column width). Left-aligned with a small indent so the text starts a
@@ -206,6 +235,47 @@
   .pomodoro-display.paused { opacity: .6; filter: grayscale(0.3); }
   .pomodoro-display .phase-name { font-size: .75rem; opacity: .8; }
   .focus-cell .task-row { flex-wrap: wrap; row-gap: 4px; }
+
+  /* Undo toast — shown briefly after window.__undo() runs, naming the change
+     that was just reversed (e.g. "Task removed: Buy groceries"). Triggered by
+     iPhone shake, ⌘Z on iPad / hardware keyboard, or in-page Cmd+Z. Auto-
+     dismisses after ~1 s with a fade-out. The transform-based scale-up gives
+     a subtle "pop" so the eye catches it before it fades. */
+  .undo-toast {
+    position: fixed;
+    top: 28%; left: 50%;
+    transform: translate(-50%, -50%) scale(.92);
+    background: rgba(17,24,39,0.92);
+    color: #fff;
+    padding: 12px 20px;
+    border-radius: 14px;
+    font-size: .95rem;
+    font-weight: 600;
+    z-index: 10000;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .18s ease, transform .18s ease;
+    max-width: 80vw;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    box-shadow: 0 8px 28px rgba(0,0,0,.35);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .undo-toast.show {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  .undo-toast .undo-toast-tag {
+    font-size: .68rem; font-weight: 800;
+    text-transform: uppercase; letter-spacing: .05em;
+    background: rgba(255,255,255,.18); color: #fff;
+    padding: 3px 7px; border-radius: 999px;
+    flex-shrink: 0;
+  }
+  .undo-toast .undo-toast-msg {
+    overflow: hidden; text-overflow: ellipsis;
+  }
 
   /* Modal */
   .modal {
@@ -1716,9 +1786,21 @@
     flex-shrink: 0;
   }
   .focus-cell .task-row .task-edit-pen:hover { color: #2563eb; }
-  /* Delete × on PC. Whole row is now the drag handle. */
-  .focus-cell .task-row { cursor: grab; }
-  .focus-cell .task-row:active { cursor: grabbing; }
+  /* Delete × on PC. Whole row is now the drag handle. Per user request we
+     keep the cursor as a finger-pointing 'pointer' at ALL times — including
+     during reorder drag and while a task is starting — instead of the
+     default grab → grabbing shape change. The drag still works (the row is
+     still draggable); only the cursor visual is locked.
+     CAVEAT: while a native HTML5 drag is actively in progress (mouse held +
+     moving), the cursor is OS-controlled based on dataTransfer.dropEffect —
+     CSS cannot reliably override it. The body.dragging-task escape hatch
+     below is best-effort; some browsers respect it, others don't. */
+  .focus-cell .task-row,
+  .focus-cell .task-row:hover,
+  .focus-cell .task-row:active,
+  .focus-cell .task-row.dragging,
+  body.dragging-task .focus-cell .task-row,
+  body.dragging-task .focus-cell .task-row * { cursor: pointer !important; }
   .focus-cell .task-row .x { background: transparent; border: none; color: #6b7280; padding: 0 4px; cursor: pointer; }
   .focus-cell .task-row .drag-handle { display: none; }   /* removed — whole row is draggable */
   /* Clicking the quadrant title (h4) toggles the row action buttons
@@ -1917,20 +1999,20 @@
       border-top: 1px solid #e5e7eb;
       border-radius: 0;             /* wrapper already clips to outer radius */
     }
-    /* Two stacked grab-bars (looks like '=') so the user instantly reads this
-       as a draggable resize handle. ::before inherits the single-bar style
-       from the generic .time-resize-handle rule; we override it here to
-       match the new ::after for visual consistency. */
+    /* Two stacked grab-bars (looks like '=') — 50 % of the original size
+       per user request so the indicator is subtler. Hit area (the parent
+       .split-resize-handle, 24 px tall) stays the same so drag is still
+       easy on touch. */
     body.tt-split .split-resize-handle::before {
-      width: 36px;
-      height: 3px;
+      width: 18px;
+      height: 2px;
     }
     body.tt-split .split-resize-handle::after {
       content: '';
-      width: 36px;
-      height: 3px;
+      width: 18px;
+      height: 2px;
       background: #9ca3af;
-      border-radius: 2px;
+      border-radius: 1px;
     }
     body.tt-split .split-resize-handle:active::after {
       background: #4b5563;
@@ -5973,10 +6055,17 @@ function attachDragHandlers(row, q, i) {
     } catch (_) {}
     try { e.dataTransfer.setDragImage(row, offX, offY); } catch (_){}
     row.classList.add('dragging');
+    // Best-effort: some browsers honour CSS cursor under this body class
+    // during a drag. Most modern browsers ignore CSS cursor during HTML5
+    // drag (the OS draws a move/copy/no-drop cursor based on dropEffect),
+    // but where this hint IS respected the cursor stays as the finger-
+    // pointing pointer the user asked for.
+    document.body.classList.add('dragging-task');
   };
   row.ondragend = () => {
     _draggedTask = null;
     row.classList.remove('dragging');
+    document.body.classList.remove('dragging-task');
     // Clean up any lingering indicator + legacy drag-over highlight.
     _clearDropIndicator();
     document.querySelectorAll('.task-row.drag-over').forEach(el => el.classList.remove('drag-over'));
@@ -6905,7 +6994,7 @@ function fmtDuration(diffMs) {
 
 function updateCountdowns() {
   // Universal goal-time formatter.
-  // Future → "HH:MM is left", past → "HH:MM over" (in red).
+  // Future → "HH:MM left", past → "HH:MM over" (in red).
   function fmtGoal(timeStr, dateStr) {
     if (!timeStr) return { text: '—', overdue: false };
     const target = combineDateTime(dateStr, timeStr);
@@ -6914,7 +7003,7 @@ function updateCountdowns() {
     if (target < now) {
       return { text: `${fmtDuration(now - target)} over`, overdue: true };
     }
-    return { text: `${fmtDuration(target - now)} is left`, overdue: false };
+    return { text: `${fmtDuration(target - now)} left`, overdue: false };
   }
   function setCd(elId, info) {
     const el = document.getElementById(elId);
@@ -7679,47 +7768,31 @@ function renderFocusMatrix() {
           }
         });
         if (!hasCoveringBlock) {
-          /* Before spawning the new 25-min (or per-task-duration) block,
-             clear out OTHER tasks' blocks that would conflict:
-               (1) If a block of a different task is being passed by the
-                   current time line, trim its end to NOW so the new block
-                   can start cleanly at NOW (the past portion stays as
-                   history). Finalize any open session so colour-coding
-                   stops at NOW.
-               (2) If a block of a different task sits inside the new
-                   block's [NOW, NOW+dur) range, delete it (it'd be
-                   visually consumed by the new block).
-               (3) If a block of a different task starts inside the new
-                   range but extends past it, shift its start to NOW+dur
-                   so it sits flush AFTER the new block.
-             Same-task blocks are left alone — they're handled above. */
-          const _task = state.tasks[q] && state.tasks[q][i];
-          const _newDurMs = (_task && typeof _task.durationMs === 'number')
-            ? _task.durationMs
-            : (typeof getDefaultTaskDurationMs === 'function' ? getDefaultTaskDurationMs() : 25 * 60 * 1000);
-          const _newEndMs = _tgNow + _newDurMs;
+          /* Before spawning the new block, ONLY trim a different-task block
+             that's currently being passed by the current-time line. The
+             portion of that block above the line stays as history; the
+             portion below is sliced off and disappears (its endMs becomes
+             NOW). Other future blocks of any task are left intact — even
+             if they overlap the new block's [_tgNow, _newEndMs) range —
+             per the user's "current-time-line tap rule": only the
+             SPANNING block loses its lower half; non-spanning future
+             blocks stay where they are (the renderer handles overlap via
+             half-l / half-r columns).
+             Same-task blocks are handled in the loop above (reuse path),
+             so they're skipped here. */
           for (let bi = state.scheduledBlocks.length - 1; bi >= 0; bi--) {
             const b = state.scheduledBlocks[bi];
-            if (b.q === q && b.taskIdx === i) continue;  // same task: handled
-            if (b.endMs <= _tgNow) continue;             // entirely before NOW
-            if (b.startMs >= _newEndMs) continue;        // entirely after new
-            const crossesNow = (b.startMs <= _tgNow && _tgNow < b.endMs);
-            if (crossesNow) {
-              // (1) Trim its end to NOW; finalize any open session up to NOW.
-              if (b.activeAt && !b.activeEndMs) {
-                if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
-                b.workedSegments.push({ startMs: b.activeAt, endMs: _tgNow });
-                b.activeAt = null;
-              }
-              b.endMs = _tgNow;
-              if (!b.activeEndMs) b.activeEndMs = _tgNow;
-            } else if (b.endMs <= _newEndMs) {
-              // (2) Entirely inside [_tgNow, _newEndMs) → delete.
-              state.scheduledBlocks.splice(bi, 1);
-            } else {
-              // (3) Starts inside, extends past → shift start to new-end.
-              b.startMs = _newEndMs;
+            if (b.q === q && b.taskIdx === i) continue;  // same task: handled above
+            if (b.endMs <= _tgNow) continue;             // entirely past — leave history alone
+            if (b.startMs >= _tgNow) continue;           // entirely future — DO NOT touch
+            // Remaining: b.startMs < _tgNow < b.endMs  → spanning block, trim end at NOW.
+            if (b.activeAt && !b.activeEndMs) {
+              if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+              b.workedSegments.push({ startMs: b.activeAt, endMs: _tgNow });
+              b.activeAt = null;
             }
+            b.endMs = _tgNow;
+            if (!b.activeEndMs) b.activeEndMs = _tgNow;
           }
           spawn25Block();
         }
@@ -8280,58 +8353,85 @@ async function showPomoPhaseConfirm() {
   if (!at2 || at2.type !== 'pomodoro') return;
   at2.pendingPhaseConfirm = false;
   if (yes) {
-    // The popup wait time is intentionally kept as part of the pomodoro
-    // session — the gauge band, the activity log duration, and the per-minute
-    // money all stay consistent (we never paused the timer in tickPomodoro).
+    // NEW (per user spec):  popup-wait time is NOT counted into the pomodoro
+    // session. Each phase paints colour for its DEFAULT duration only; if the
+    // user answers late, the previous block ends at its phase boundary and a
+    // BRAND-NEW block appears at the moment the user pressed Yes.
     // Going from break → work increments (or resets if long-break) the counter.
     if (at2.phase !== 'work' && nextPhase === 'work') {
       const wasLong = at2.phase === 'long-break';
       if (wasLong) state.pomodoroSessionsInCycle = 0;
       else state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     }
-    // ===== Extend the task's covering block by the NEW phase duration =====
-    // Close the just-ended phase's open segment in the block, then add a
-    // new open segment of the right type (work or break) starting at NOW.
-    // Block.endMs is pushed forward by nextDurMs so the visualisation
-    // reflects "existing 25-min block grew downward by the new phase".
     const _resumeMs = Date.now();
     const _wasWork  = (at2.phase === 'work');
+    // The boundary where the just-finished phase actually ended (NOT NOW).
+    // For "user answered immediately" this is ~equal to _resumeMs. For "user
+    // slept and answered hours later" this is far in the past — what we want
+    // so the old colour band ends where work actually stopped.
+    const _phaseBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
     if (typeof at2.q === 'string' && typeof at2.idx === 'number'
         && Array.isArray(state.scheduledBlocks)) {
-      // Find the active block — one that currently has an open segment
-      // for this task; fall back to the closest-by-endMs match if none.
-      let block = state.scheduledBlocks.find(b =>
+      // Find the old block — the one whose phase just ended.
+      let oldBlock = state.scheduledBlocks.find(b =>
         b.q === at2.q && b.taskIdx === at2.idx &&
         (b.activeAt != null || b.activeBreakAt != null) &&
         !b.activeEndMs);
-      if (!block) {
+      if (!oldBlock) {
         let best = Infinity;
         for (const b of state.scheduledBlocks) {
           if (b.q !== at2.q || b.taskIdx !== at2.idx) continue;
-          const d = Math.abs(b.endMs - _resumeMs);
-          if (d < best) { block = b; best = d; }
+          const d = Math.abs(b.endMs - _phaseBoundary);
+          if (d < best) { oldBlock = b; best = d; }
         }
       }
-      if (block) {
-        if (_wasWork && block.activeAt != null) {
-          if (!Array.isArray(block.workedSegments)) block.workedSegments = [];
-          block.workedSegments.push({ startMs: block.activeAt, endMs: _resumeMs });
-          block.activeAt = null;
-        } else if (!_wasWork && block.activeBreakAt != null) {
-          if (!Array.isArray(block.breakSegments)) block.breakSegments = [];
-          block.breakSegments.push({ startMs: block.activeBreakAt, endMs: _resumeMs });
-          block.activeBreakAt = null;
+      let taskName = '';
+      if (oldBlock) {
+        taskName = oldBlock.taskName || '';
+        // Close the old block at the PHASE BOUNDARY — popup-wait time does
+        // NOT bleed into the colour band. If the popup was answered late,
+        // this caps everything at the actual phase end.
+        if (_wasWork && oldBlock.activeAt != null) {
+          if (!Array.isArray(oldBlock.workedSegments)) oldBlock.workedSegments = [];
+          oldBlock.workedSegments.push({ startMs: oldBlock.activeAt, endMs: _phaseBoundary });
+          oldBlock.activeAt = null;
+        } else if (!_wasWork && oldBlock.activeBreakAt != null) {
+          if (!Array.isArray(oldBlock.breakSegments)) oldBlock.breakSegments = [];
+          oldBlock.breakSegments.push({ startMs: oldBlock.activeBreakAt, endMs: _phaseBoundary });
+          oldBlock.activeBreakAt = null;
         }
-        // Grow the block downward by the new phase's duration.
-        block.endMs = _resumeMs + nextDurMs;
-        // Start the new phase's open segment at NOW.
-        if (nextPhase === 'work') block.activeAt = _resumeMs;
-        else                       block.activeBreakAt = _resumeMs;
+        // Truncate the block to its boundary so its rectangle doesn't extend
+        // visually past where the phase actually ended.
+        if (oldBlock.endMs > _phaseBoundary) oldBlock.endMs = _phaseBoundary;
+        // Finalize so future ticks can't re-open this block.
+        if (!oldBlock.activeEndMs) oldBlock.activeEndMs = _phaseBoundary;
       }
+      // Fallback for taskName if we couldn't find an old block.
+      if (!taskName) {
+        const t = state.tasks[at2.q] && state.tasks[at2.q][at2.idx];
+        taskName = (t && t.text) || '';
+      }
+      // Create a NEW block for the next phase starting at _resumeMs.
+      const newBlock = {
+        id:           _resumeMs + '_' + Math.random().toString(36).slice(2),
+        q:            at2.q,
+        taskIdx:      at2.idx,
+        taskName:     taskName,
+        startMs:      _resumeMs,
+        endMs:        _resumeMs + nextDurMs,
+        activeAt:     nextPhase === 'work' ? _resumeMs : null,
+        activeBreakAt:nextPhase !== 'work' ? _resumeMs : null,
+        activeEndMs:  null
+      };
+      state.scheduledBlocks.push(newBlock);
     }
     at2.phase = nextPhase;
     at2.phaseStartedAt = _resumeMs;
     at2.phaseDurationMs = nextDurMs;
+    // Reset startedAt + pausedAccum so imDoingElapsedString + _pomoTotalsForToday
+    // don't carry over the old phase's accumulated time into the new one.
+    at2.startedAt = _resumeMs;
+    at2.totalPausedMs = 0;
     saveState();
     markSettingsChanged();
     // IMMEDIATE push (not debounced) — flush any pending debounced push so
@@ -8345,42 +8445,60 @@ async function showPomoPhaseConfirm() {
     renderFocusMatrix(); renderImDoing(); drawGauge();
   } else if (at2.phase === 'work') {
     // Work-end + No → skip the break and start the next Work session.
-    // (Popup wait time is naturally part of the session — see Yes branch.)
-    // Skipping a break still counts as a completed work segment for the
-    // long-break-after-3 cadence. Increment, and reset to 0 once we've
-    // earned the long break (counter would otherwise grow unbounded).
+    // Same phase-boundary handling as the Yes branch: close old block at the
+    // boundary (popup-wait time does NOT extend the colour band), spawn a
+    // fresh 25-min block starting at _resumeMs.
     state.pomodoroSessionsInCycle = (state.pomodoroSessionsInCycle || 0) + 1;
     if (state.pomodoroSessionsInCycle > 3) state.pomodoroSessionsInCycle = 0;
-    // Same block-extension as the Yes branch — close the just-ended work
-    // segment at NOW and start a fresh work segment so the gauge block
-    // grows by another 25 min worth of work.
     const _resumeMs = Date.now();
+    const _phaseBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
     if (typeof at2.q === 'string' && typeof at2.idx === 'number'
         && Array.isArray(state.scheduledBlocks)) {
-      let block = state.scheduledBlocks.find(b =>
+      let oldBlock = state.scheduledBlocks.find(b =>
         b.q === at2.q && b.taskIdx === at2.idx &&
         (b.activeAt != null || b.activeBreakAt != null) &&
         !b.activeEndMs);
-      if (!block) {
+      if (!oldBlock) {
         let best = Infinity;
         for (const b of state.scheduledBlocks) {
           if (b.q !== at2.q || b.taskIdx !== at2.idx) continue;
-          const d = Math.abs(b.endMs - _resumeMs);
-          if (d < best) { block = b; best = d; }
+          const d = Math.abs(b.endMs - _phaseBoundary);
+          if (d < best) { oldBlock = b; best = d; }
         }
       }
-      if (block) {
-        if (block.activeAt != null) {
-          if (!Array.isArray(block.workedSegments)) block.workedSegments = [];
-          block.workedSegments.push({ startMs: block.activeAt, endMs: _resumeMs });
+      let taskName = '';
+      if (oldBlock) {
+        taskName = oldBlock.taskName || '';
+        if (oldBlock.activeAt != null) {
+          if (!Array.isArray(oldBlock.workedSegments)) oldBlock.workedSegments = [];
+          oldBlock.workedSegments.push({ startMs: oldBlock.activeAt, endMs: _phaseBoundary });
+          oldBlock.activeAt = null;
         }
-        block.endMs = _resumeMs + POMO_WORK_MS;
-        block.activeAt = _resumeMs;
+        if (oldBlock.endMs > _phaseBoundary) oldBlock.endMs = _phaseBoundary;
+        if (!oldBlock.activeEndMs) oldBlock.activeEndMs = _phaseBoundary;
       }
+      if (!taskName) {
+        const t = state.tasks[at2.q] && state.tasks[at2.q][at2.idx];
+        taskName = (t && t.text) || '';
+      }
+      const newBlock = {
+        id:           _resumeMs + '_' + Math.random().toString(36).slice(2),
+        q:            at2.q,
+        taskIdx:      at2.idx,
+        taskName:     taskName,
+        startMs:      _resumeMs,
+        endMs:        _resumeMs + POMO_WORK_MS,
+        activeAt:     _resumeMs,
+        activeBreakAt:null,
+        activeEndMs:  null
+      };
+      state.scheduledBlocks.push(newBlock);
     }
     at2.phase = 'work';
     at2.phaseStartedAt = _resumeMs;
     at2.phaseDurationMs = POMO_WORK_MS;
+    at2.startedAt = _resumeMs;
+    at2.totalPausedMs = 0;
     saveState();
     markSettingsChanged();
     if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
@@ -8394,19 +8512,27 @@ async function showPomoPhaseConfirm() {
     // Break-end + No → stop. The break has already been logged when the
     // popup first appeared (see tickPomodoro), so nothing else to record —
     // we just clear the active timer and push the cleared state to cloud.
-    // Finalize any open break segment on the task's block so the colour
-    // doesn't keep painting forward after the user said "no".
+    // Close the open break segment at the PHASE BOUNDARY (not NOW) so the
+    // break colour band ends where the break actually ended, even if the
+    // user took a long time before saying "no".
     if (typeof at2.q === 'string' && typeof at2.idx === 'number'
         && Array.isArray(state.scheduledBlocks)) {
-      const _stopMs = Date.now();
+      const _phaseBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
       state.scheduledBlocks.forEach(b => {
         if (b.q !== at2.q || b.taskIdx !== at2.idx) return;
         if (b.activeBreakAt != null) {
           if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
-          b.breakSegments.push({ startMs: b.activeBreakAt, endMs: _stopMs });
+          b.breakSegments.push({ startMs: b.activeBreakAt, endMs: _phaseBoundary });
           b.activeBreakAt = null;
         }
-        if (!b.activeEndMs) b.activeEndMs = _stopMs;
+        if (b.activeAt != null) {
+          if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+          b.workedSegments.push({ startMs: b.activeAt, endMs: _phaseBoundary });
+          b.activeAt = null;
+        }
+        // Truncate end + finalize at the boundary.
+        if (b.endMs > _phaseBoundary) b.endMs = _phaseBoundary;
+        if (!b.activeEndMs) b.activeEndMs = _phaseBoundary;
       });
     }
     state.activeTimer = null;
@@ -8762,6 +8888,12 @@ function drawTimeArea() {
     let exactDurMs = Math.max(floorDurMs, userDurMs);
     if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
     if (exactDurMs > 0) renderDurMs = exactDurMs;
+    // CRITICAL: keep state.timeArea.durationMs SYNCED with what was actually
+    // rendered. Otherwise the next drag's startDur would equal the user-
+    // preferred value (e.g. 3 h default) while the screen shows the matrix
+    // floor (e.g. 5 h worth of pixels) — every drag would need to traverse
+    // the gap before producing visible motion (the "70 px delay" symptom).
+    state.timeArea.durationMs = renderDurMs;
   }
 
   /* Viewport height = renderDurMs / 1h × PX_PER_HOUR */
@@ -8810,6 +8942,10 @@ function drawTimeArea() {
     if (bPx - tPx < 2) return;
     const div = document.createElement('div');
     div.className = 'time-block';
+    // Attach the block's stable id so drag handlers can re-find this DOM
+    // node after a touchstart-time split + drawTimeArea() destroys the
+    // original element (see attachBodyDrag's spanning-block branch).
+    if (b.id) div.setAttribute('data-block-id', b.id);
     div.style.top    = tPx + 'px';
     div.style.height = (bPx - tPx) + 'px';
 
@@ -8924,12 +9060,94 @@ function drawTimeArea() {
       else drawTimeArea();
     });
 
-    /* ---- Body drag → move block (tap → select if no movement) ---- */
+    /* ---- Body drag → move block (tap → select if no movement) ----------
+       Three time-line-aware behaviors:
+         * Block entirely in the past (endMs <= NOW) → drag refused.
+         * Block spans NOW + finger lands above the line → drag refused
+           (the past portion is immutable).
+         * Block spans NOW + finger lands below the line → SPLIT: the
+           original block's endMs is clamped to NOW (its lower portion is
+           archived as historical), and the block being dragged is mutated
+           to a fresh same-duration block starting at the finger's time.
+       Plus continuous step-based haptic while moving (5-min steps). */
+    const BLOCK_HAPTIC_STEP_MS = 5 * 60 * 1000;
     function attachBodyDrag() {
       let dragSt = null;
+      let activeDiv = div;   // may be re-targeted after a split + redraw
+
+      /* Convert a viewport Y coordinate into the time (ms) it represents
+         inside the time-content scroll container. Used to find where the
+         finger landed relative to the now-line. */
+      function _clientYToTimeMs(clientY) {
+        const content = document.getElementById('time-content');
+        if (!content) return Date.now();
+        const r = content.getBoundingClientRect();
+        const yInContent = content.scrollTop + (clientY - r.top);
+        return contentTopMs + yInContent * msPerPx;
+      }
+
+      /* Returns one of: 'refuse' | 'split' | 'normal'. On 'split' the
+         function mutates b in place (so the existing closure + dragSt math
+         continue to work) and pushes an archive block holding the
+         past portion. drawTimeArea() is then called to repaint so the
+         user immediately sees both pieces; the new div for b is looked up
+         by data-block-id and stashed in activeDiv so per-move perf updates
+         continue working on the new element. */
+      function classifyTouchAndMaybeSplit(clientY) {
+        const now = Date.now();
+        if (b.endMs <= now) return 'refuse';        // entirely past
+        if (b.startMs >= now) return 'normal';       // entirely future
+        // Spanning the now-line — finger position decides next move.
+        const fingerTime = _clientYToTimeMs(clientY);
+        if (fingerTime < now) return 'refuse';       // touched the past half
+        // Split: archive the past portion, mutate b to be the new draggable
+        const dur = b.endMs - b.startMs;
+        const archive = Object.assign({}, b, {
+          id: (b.id || ('blk_' + Date.now())) + '_past_' + Date.now(),
+          endMs: now,
+          // workedSegments etc. carry over via Object.assign; clip any open
+          // session to NOW so colour-coding doesn't keep growing past it.
+        });
+        if (archive.activeAt && !archive.activeEndMs) {
+          if (!Array.isArray(archive.workedSegments)) archive.workedSegments = [];
+          archive.workedSegments.push({ startMs: archive.activeAt, endMs: now });
+          archive.activeAt = null;
+        }
+        if (archive.activeBreakAt && !archive.activeBreakEndMs) {
+          if (!Array.isArray(archive.breakSegments)) archive.breakSegments = [];
+          archive.breakSegments.push({ startMs: archive.activeBreakAt, endMs: now });
+          archive.activeBreakAt = null;
+        }
+        // Mutate b → a fresh block of the same total duration anchored to
+        // where the finger touched. Drag math from here on uses b.startMs.
+        b.startMs = fingerTime;
+        b.endMs   = fingerTime + dur;
+        b.activeAt = null;
+        b.activeEndMs = null;
+        b.activeBreakAt = null;
+        b.activeBreakEndMs = null;
+        b.workedSegments = [];
+        b.breakSegments  = [];
+        state.scheduledBlocks.push(archive);
+        // Repaint immediately so the user sees the truncated original AND
+        // the freshly-positioned new block under their finger. The original
+        // div (held in the outer closure as `div`) is destroyed by this
+        // redraw, so re-bind activeDiv to the new node.
+        if (typeof drawTimeArea === 'function') drawTimeArea();
+        const newDiv = document.querySelector('.time-block[data-block-id="' + b.id + '"]');
+        if (newDiv) activeDiv = newDiv;
+        return 'split';
+      }
+
       function startDrag(clientY) {
         const dur = b.endMs - b.startMs;
-        dragSt = { startY: clientY, origStart: b.startMs, dur, moved: false };
+        dragSt = {
+          startY: clientY,
+          origStart: b.startMs,
+          dur,
+          moved: false,
+          lastHapticStep: Math.round(b.startMs / BLOCK_HAPTIC_STEP_MS),
+        };
       }
       function moveDrag(clientY) {
         if (!dragSt) return;
@@ -8946,7 +9164,18 @@ function drawTimeArea() {
           // every block + every fill, which can drop frames on slower phones
           // and makes the drag feel choppy. Full re-render happens once on
           // endDrag so other blocks / overlaps / now-line stay in sync.
-          div.style.top = msToPx(b.startMs) + 'px';
+          if (!activeDiv || !activeDiv.isConnected) {
+            activeDiv = document.querySelector('.time-block[data-block-id="' + b.id + '"]') || activeDiv;
+          }
+          if (activeDiv) activeDiv.style.top = msToPx(b.startMs) + 'px';
+          // Continuous haptic: fire a light tap each time the snapped start
+          // crosses a 5-min boundary. Step-based dedup keeps it from
+          // queueing up on fast drags.
+          const step = Math.round(newStart / BLOCK_HAPTIC_STEP_MS);
+          if (step !== dragSt.lastHapticStep) {
+            dragSt.lastHapticStep = step;
+            try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
+          }
         }
         showTimeAreaTips(b.startMs, b.endMs);
       }
@@ -8967,6 +9196,11 @@ function drawTimeArea() {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (e.button !== 0) return;
         e.preventDefault();
+        // Past / spanning-line gating. 'refuse' = no drag at all; 'split' =
+        // archive past portion, mutate b to a fresh same-duration block at
+        // finger time, continue drag.
+        const _gate = classifyTouchAndMaybeSplit(e.clientY);
+        if (_gate === 'refuse') return;
         // Light haptic when the user "grabs" a block — tactile confirmation
         // that the drag mode has started.
         if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
@@ -8984,6 +9218,9 @@ function drawTimeArea() {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (!e.touches[0]) return;
         e.preventDefault();
+        // Past / spanning-line gating (mobile). See mousedown handler comment.
+        const _gate = classifyTouchAndMaybeSplit(e.touches[0].clientY);
+        if (_gate === 'refuse') return;
         // Light haptic on block grab (mobile time gauge).
         if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         // Track which finger started this drag — document-level touchmove
@@ -9249,14 +9486,29 @@ function getBlockColorSegments(b, now) {
   if (Array.isArray(b.breakSegments)) {
     b.breakSegments.forEach(s => segs.push({ startMs: s.startMs, endMs: s.endMs, type: 'break' }));
   }
+  // Freeze the colour band at the phase boundary the moment wall-clock time
+  // has passed it — whether or not tickPomodoro has already noticed and set
+  // pendingPhaseConfirm. This handles the iPhone-screen-off case where the JS
+  // engine is suspended past the boundary: the next paint after wake-up still
+  // shows the band capped at the 25-min mark instead of growing into the gap.
+  // Matches the imDoingElapsedString cap.
+  const _at = state.activeTimer;
+  const _isForThis = _at && _at.type === 'pomodoro'
+                     && _at.q === b.q && _at.idx === b.taskIdx;
+  let _phaseBoundary = null;
+  if (_isForThis) {
+    const _pEnd = (+_at.phaseStartedAt || +_at.startedAt) + (+_at.phaseDurationMs || 0);
+    if (_at.pendingPhaseConfirm || now >= _pEnd) _phaseBoundary = _pEnd;
+  }
   // Open work session
   if (b.activeAt) {
     const at = state.activeTimer;
     const isPausedForThis = at && at.paused && at.type === 'pomodoro' &&
                             at.q === b.q && at.idx === b.taskIdx;
-    const openEnd = b.activeEndMs
+    let openEnd = b.activeEndMs
       ? Math.min(b.activeEndMs, now)
       : (isPausedForThis ? at.pausedAt : now);
+    if (_phaseBoundary != null) openEnd = Math.min(openEnd, _phaseBoundary);
     if (openEnd > b.activeAt) {
       segs.push({ startMs: b.activeAt, endMs: openEnd, type: 'work' });
     }
@@ -9266,9 +9518,10 @@ function getBlockColorSegments(b, now) {
     const at = state.activeTimer;
     const isPausedForThis = at && at.paused && at.type === 'pomodoro' &&
                             at.q === b.q && at.idx === b.taskIdx;
-    const openEnd = b.activeBreakEndMs
+    let openEnd = b.activeBreakEndMs
       ? Math.min(b.activeBreakEndMs, now)
       : (isPausedForThis ? at.pausedAt : now);
+    if (_phaseBoundary != null) openEnd = Math.min(openEnd, _phaseBoundary);
     if (openEnd > b.activeBreakAt) {
       segs.push({ startMs: b.activeBreakAt, endMs: openEnd, type: 'break' });
     }
@@ -10039,6 +10292,47 @@ function _pomoCountsForToday() {
   }
   return { workN, breakN };
 }
+
+/* Total ACCUMULATED work / break time since today's 3 AM rollover. Mirrors
+   _pomoCountsForToday (same cutoff rule + same watchLog source), but sums
+   each entry's durationMs instead of counting entries. Also adds the
+   currently-running phase's in-progress elapsed time so the display ticks
+   forward second-by-second while a pomodoro is live.
+   The in-progress portion is capped at the phase boundary — matches the
+   imDoingElapsedString cap so a phone-screen-off scenario doesn't inflate
+   the totals past 25 min on a still-pending phase. Returns { workMs, breakMs }. */
+function _pomoTotalsForToday() {
+  const now = new Date();
+  const cutoff = new Date(now);
+  cutoff.setHours(3, 0, 0, 0);
+  if (now.getTime() < cutoff.getTime()) cutoff.setDate(cutoff.getDate() - 1);
+  const since = cutoff.getTime();
+  let workMs = 0, breakMs = 0;
+  const log = state.watchLog;
+  if (Array.isArray(log)) {
+    for (let i = 0; i < log.length; i++) {
+      const e = log[i];
+      if (!e) continue;
+      const t = +e.startedAt || +e.endedAt || 0;
+      if (t < since) continue;
+      const d = +e.durationMs || 0;
+      if (e.type === 'pomodoro') workMs += d;
+      else if (e.type === 'pomodoro-break') breakMs += d;
+    }
+  }
+  // In-progress phase — counts toward whichever side it belongs to.
+  const at = state.activeTimer;
+  if (at && at.type === 'pomodoro' && !at.pendingPhaseConfirm) {
+    const phaseStart = +at.phaseStartedAt || +at.startedAt;
+    const phaseEnd   = phaseStart + (+at.phaseDurationMs || 0);
+    const nowMs      = Date.now();
+    const endRef = (at.paused && at.pausedAt) ? at.pausedAt : Math.min(nowMs, phaseEnd);
+    const elapsed = Math.max(0, endRef - phaseStart);
+    if (at.phase === 'work') workMs += elapsed;
+    else                     breakMs += elapsed;
+  }
+  return { workMs, breakMs };
+}
 function renderImDoing() {
   const wrap = document.getElementById('im-doing');
   const nameEl = document.getElementById('im-doing-name');
@@ -10128,29 +10422,18 @@ function renderImDoing() {
     : 'Click to stop the tracker';
 }
 function imDoingElapsedString(at) {
-  // Mirrors the corresponding focus-page timer (pomodoro/muncher/multiplier).
-  // For pomodoro we show how much WORK time has elapsed (excluding paused),
-  // matching what the inline pomodoro display shows. For muncher/multiplier we
-  // show the running duration from startedAt.
-  const now = at.paused && at.pausedAt ? at.pausedAt : Date.now();
+  // Pomodoro: show TODAY's accumulated total of the current phase type — i.e.
+  // when running a work phase, the timer ticks up through "all work done
+  // today so far" (including the in-progress phase); when running a break
+  // phase, it shows the equivalent break total. This makes the bar reads as
+  // a daily progress meter rather than a per-session stopwatch.
+  // Muncher / multiplier: unchanged — still the session's running duration.
   let ms;
   if (at.type === 'pomodoro') {
-    // CAP elapsed at the phase boundary when the popup is waiting for a
-    // response. Without this, if the phone screen turned off and the user
-    // came back an hour after the 25-min work phase ended, the display
-    // would read "01:00:00" instead of "25:00" — wall-clock since startedAt
-    // is no longer meaningful once the phase has effectively stopped.
-    let endRef;
-    if (at.pendingPhaseConfirm) {
-      endRef = (+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0);
-    } else if (at.paused && at.pausedAt) {
-      endRef = at.pausedAt;
-    } else {
-      endRef = now;
-    }
-    const pausedAccum = (at.totalPausedMs || 0) + (at.paused ? (now - at.pausedAt) : 0);
-    ms = Math.max(0, endRef - at.startedAt - pausedAccum);
+    const totals = _pomoTotalsForToday();   // already caps in-progress at phase boundary
+    ms = (at.phase === 'work') ? totals.workMs : totals.breakMs;
   } else {
+    const now = at.paused && at.pausedAt ? at.pausedAt : Date.now();
     ms = Math.max(0, now - at.startedAt);
   }
   const totalSec = Math.floor(ms / 1000);
@@ -14136,6 +14419,22 @@ setInterval(() => {
 
     let _td = null; // { q, idx, durMs, rowGhost, ... } while touch drag is live
 
+    /* Haptic granularity while a task ghost is being dragged across the
+       gauge / time area. The user requested 5-min steps; with light taps
+       (iOS UIImpactFeedbackGenerator.light = short ~5 ms blip) and step-based
+       dedup, this feels like a slider-style tick at every 5-min mark without
+       buzzing during fast motion. lastHapticStep on _td makes sure we only
+       fire when the snapped position actually crosses a new 5-min boundary. */
+    const HAPTIC_STEP_MS = 5 * 60 * 1000;
+    function _hapticStep(ms) { return Math.round(ms / HAPTIC_STEP_MS); }
+    function _maybeFireDragHaptic(startMs) {
+      if (!_td) return;
+      const step = _hapticStep(startMs);
+      if (_td.lastHapticStep === step) return;
+      _td.lastHapticStep = step;
+      try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
+    }
+
     /* Walk up from a task row to identify which task (q + idx) was touched. */
     function taskFromRow(row) {
       const cell = row.closest('.focus-cell');
@@ -14236,6 +14535,14 @@ setInterval(() => {
     document.addEventListener('touchmove', ev => {
       if (!_td) return;
       const t = ev.touches[0];
+      // The finger is already on a task row. The moment the finger moves AT
+      // ALL we must lock out page scroll — otherwise iOS Safari (and the
+      // Capacitor WKWebView wrapper) can begin a momentum scroll before the
+      // 8 px threshold below is reached, which manifests as "the whole page
+      // jumps a bit while I'm dragging a task." preventDefault on touchmove
+      // does NOT suppress the subsequent `click` event for short taps, so
+      // tap-to-toggle still works.
+      ev.preventDefault();
       // Wait for an 8 px movement before committing to a drag — this lets
       // short taps still fire click events without interference.
       if (!_td.dragging) {
@@ -14243,12 +14550,12 @@ setInterval(() => {
         if (dx0 * dx0 + dy0 * dy0 < 64) return;   // < 8 px — not a drag yet
         _td.dragging = true;
         // Decide which gesture this is:
-        //   swipe-left (predominantly leftward) → swipe-to-delete
-        //   anything else                        → drag (gauge / reorder)
+        //   swipe-right (predominantly rightward) → swipe-to-delete
+        //   anything else                         → drag (gauge / reorder)
         // The 1.3× factor biases ties toward drag so an accidental diagonal
         // doesn't fire delete unexpectedly.
         const absDx = Math.abs(dx0), absDy = Math.abs(dy0);
-        if (dx0 < 0 && absDx > absDy * 1.3) {
+        if (dx0 > 0 && absDx > absDy * 1.3) {
           _td.mode = 'swipe';
           // Disable transition initially so the row tracks the finger 1:1.
           // Re-enabled on touchend for the snap-back / fly-out animation.
@@ -14267,11 +14574,11 @@ setInterval(() => {
           } catch (_) {}
         }
       }
-      ev.preventDefault();   // prevent scroll now that drag is confirmed
+      // (page scroll already prevented at top of this handler)
       // ===== Swipe-to-delete branch =====
       if (_td.mode === 'swipe') {
         const dx = t.clientX - _td.startX;
-        const tx = Math.min(0, dx);                       // never pull right
+        const tx = Math.max(0, dx);                       // never pull left
         const rowW = (_td.srcRow && _td.srcRow.offsetWidth) || 200;
         const op = Math.max(0, 1 - (Math.abs(tx) / rowW));
         if (_td.srcRow) {
@@ -14294,10 +14601,13 @@ setInterval(() => {
         // Over the gauge: the task-row ghost disappears and the existing
         // time-block (rectangle) ghost takes over as the drag visual.
         if (_td.rowGhost) _td.rowGhost.style.display = 'none';
-        _ghost = { startMs: snapMs(yToMs(t.clientY)), durationMs: _td.durMs };
+        const _gStart = snapMs(yToMs(t.clientY));
+        _ghost = { startMs: _gStart, durationMs: _td.durMs };
         placeGhost();
         hideTimeGhost();
         _clearDropIndicator();
+        // Tick haptic when the snapped position crosses a 5-min boundary.
+        _maybeFireDragHaptic(_gStart);
       } else if (isOverTimeArea(t)) {
         // Same idea for the mobile Time area.
         if (_td.rowGhost) _td.rowGhost.style.display = 'none';
@@ -14308,6 +14618,7 @@ setInterval(() => {
         const ghostEl2 = document.querySelector('.tg-ghost');
         if (ghostEl2) ghostEl2.style.display = 'none';
         _clearDropIndicator();
+        _maybeFireDragHaptic(startMs);
       } else {
         // Outside any gauge — row ghost re-appears (in case we just left a gauge).
         if (_td.rowGhost) _td.rowGhost.style.display = '';
@@ -14323,6 +14634,8 @@ setInterval(() => {
         }
         if (_ghost) { _ghost = null; placeGhost(); }
         hideTimeGhost();
+        // Reset so re-entering the gauge fires a fresh entry haptic.
+        _td.lastHapticStep = null;
       }
     }, { passive: false });
 
@@ -14366,13 +14679,13 @@ setInterval(() => {
         const rowW  = (row && row.offsetWidth) || 200;
         const q     = _td.q;
         const idx   = _td.idx;
-        // Commit threshold: > 40 % of row width swiped LEFT.
-        if (row && dx < -rowW * 0.4) {
-          // Fly the row OUT (translate full width left + fade to 0), then
+        // Commit threshold: > 40 % of row width swiped RIGHT.
+        if (row && dx > rowW * 0.4) {
+          // Fly the row OUT (translate full width right + fade to 0), then
           // delete the underlying task. Re-render drops the row entirely
           // and the rows below it naturally slide up to fill the gap.
           row.style.transition = 'transform .22s ease-out, opacity .22s ease-out';
-          row.style.transform  = 'translateX(-' + (rowW + 20) + 'px)';
+          row.style.transform  = 'translateX(' + (rowW + 20) + 'px)';
           row.style.opacity    = '0';
           setTimeout(() => {
             try { deleteTaskAt(q, idx); } catch (_) {}
@@ -14571,11 +14884,24 @@ setInterval(() => {
     try { if (typeof updateCountdowns === 'function') updateCountdowns(); } catch (_){}
   }
 
+  let _lastUndoMs = 0;
   function undo() {
+    // Dedupe rapid double-calls: when the iOS app intercepts ⌘Z via its
+    // native UIKeyCommand AND the in-page keydown handler somehow also fires
+    // (or shake + keypress fire near-simultaneously), we'd otherwise undo
+    // twice on a single user action. 50 ms is comfortably tighter than the
+    // shortest human re-press but wider than the native→JS round-trip.
+    const _undoNowMs = Date.now();
+    if (_undoNowMs - _lastUndoMs < 50) {
+      console.log('[undo] ignored — fired too soon after previous');
+      return;
+    }
+    _lastUndoMs = _undoNowMs;
     console.log('[undo] called → stack=' + _undoStack.length +
                 ' current blocks=' + (state.scheduledBlocks || []).length);
     if (_undoStack.length < 1) {
       console.warn('[undo] stack empty, nothing to undo');
+      _showUndoToast('Nothing to undo');
       return;
     }
     const currentSnap = JSON.stringify(state);
@@ -14587,6 +14913,7 @@ setInterval(() => {
       _undoStack.pop();
       if (!_undoStack.length) {
         console.warn('[undo] after pop, stack empty');
+        _showUndoToast('Nothing to undo');
         return;
       }
       target = _undoStack[_undoStack.length - 1];
@@ -14616,11 +14943,114 @@ setInterval(() => {
       }
       console.log('[undo] done. State now has ' +
                   (state.scheduledBlocks || []).length + ' blocks');
+      // Haptic + toast: confirm the action visibly AND tactilely. The
+      // description is computed from a diff between currentSnap (state just
+      // before this restore) and target (what we restored to), so the user
+      // sees WHAT was reversed, not just that "something" changed.
+      try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
+      _showUndoToast(_describeUndoChange(currentSnap, target));
     } catch (e) {
       _suppress = false;
       console.error('[undo] failed:', e);
     }
   }
+
+  /* ------------ Undo description helpers ----------------------------------
+     Compares before/after state JSON and returns a short, user-readable
+     phrase naming the thing that was reversed. Falls back to "Action undone"
+     when no obvious diff is detectable (e.g. a small numeric tweak buried
+     deep in factors). Order of checks is most-visible → least: tasks first
+     (they're what users mutate most), then blocks, then money. */
+  function _describeUndoChange(beforeJson, afterJson) {
+    try {
+      const b = JSON.parse(beforeJson);
+      const a = JSON.parse(afterJson);
+      // 1. Task added / removed / renamed
+      const taskDiff = _diffTaskLists(b.tasks, a.tasks);
+      if (taskDiff) return taskDiff;
+      // 2. Time block added / removed
+      const bBlocks = Array.isArray(b.scheduledBlocks) ? b.scheduledBlocks : [];
+      const aBlocks = Array.isArray(a.scheduledBlocks) ? a.scheduledBlocks : [];
+      if (aBlocks.length > bBlocks.length) return 'Block restored';
+      if (aBlocks.length < bBlocks.length) return 'Block removed';
+      if (bBlocks.length && aBlocks.length) {
+        const bSig = bBlocks.map(x => (x.startMs|0) + ':' + (x.endMs|0)).join(',');
+        const aSig = aBlocks.map(x => (x.startMs|0) + ':' + (x.endMs|0)).join(',');
+        if (bSig !== aSig) return 'Block moved';
+      }
+      // 3. Money change (always renders visibly in the Money card)
+      if (typeof b.money === 'number' && typeof a.money === 'number' && b.money !== a.money) {
+        const sign = a.money > b.money ? '+' : '−';
+        const delta = Math.abs(a.money - b.money).toFixed(2);
+        return `Money ${sign}$${delta}`;
+      }
+      // 4. Mana / score adjustment
+      if (b.ext && a.ext && b.ext.adjustment !== a.ext.adjustment) return 'External mana change';
+      if (b.int && a.int && b.int.adjustment !== a.int.adjustment) return 'Internal mana change';
+      return 'Action undone';
+    } catch (e) {
+      return 'Action undone';
+    }
+  }
+
+  /* Diff task arrays across all 4 quadrants. Returns a description string of
+     the first noticeable change found, or null if every quadrant matches. */
+  function _diffTaskLists(beforeTasks, afterTasks) {
+    const QS = ['q1','q2','q3','q4'];
+    for (const q of QS) {
+      const bList = ((beforeTasks && beforeTasks[q]) || []).map(t => (t && t.text) || '');
+      const aList = ((afterTasks  && afterTasks [q]) || []).map(t => (t && t.text) || '');
+      if (bList.length > aList.length) {
+        const removed = bList.find(t => !aList.includes(t)) || '';
+        return removed ? `Task removed: ${removed}` : 'Task removed';
+      }
+      if (bList.length < aList.length) {
+        const added = aList.find(t => !bList.includes(t)) || '';
+        return added ? `Task restored: ${added}` : 'Task restored';
+      }
+      // Same length, but a rename swaps a text for another
+      for (let i = 0; i < bList.length; i++) {
+        if (bList[i] !== aList[i] && !aList.includes(bList[i]) && !bList.includes(aList[i])) {
+          return `Task renamed: ${aList[i]}`;
+        }
+      }
+    }
+    return null;
+  }
+
+  /* Show the toast: pop in, hold ~1 s, fade out. Idempotent — repeated calls
+     while the toast is still visible cancel the previous timer and reset the
+     hold so the new message gets its own full visible window. */
+  function _escForToast(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+    }[c]));
+  }
+  function _showUndoToast(message) {
+    let el = document.getElementById('undo-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'undo-toast';
+      el.className = 'undo-toast';
+      document.body.appendChild(el);
+    }
+    el.innerHTML =
+      '<span class="undo-toast-tag">Undid</span>' +
+      '<span class="undo-toast-msg">' + _escForToast(message || 'Action undone') + '</span>';
+    // Force layout, then add .show so the transition runs (cleared/added in
+    // separate frames so opacity 0 → 1 actually animates).
+    requestAnimationFrame(() => {
+      el.classList.add('show');
+    });
+    clearTimeout(el._hideTimer);
+    // 3 s visible, then remove .show — the CSS opacity transition handles the
+    // fade-out smoothly afterwards.
+    el._hideTimer = setTimeout(() => {
+      el.classList.remove('show');
+    }, 3000);
+  }
+  // Expose for native iOS code that might want to fire it standalone
+  window.__showUndoToast = _showUndoToast;
 
   /* Expose for debugging / console */
   window.__undo = undo;
