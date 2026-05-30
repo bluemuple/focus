@@ -302,6 +302,69 @@
     box-shadow: 0 4px 32px rgba(0,0,0,.25);
   }
   .modal-content h3 { font-size: 1.1rem; }
+  /* Top-right circular ✕ dismiss inside the modal. Sits over the top-right
+     corner with a subtle gray background that brightens on hover so the
+     button reads as tappable but doesn't fight the title for attention. */
+  .confirm-cancel-x {
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 28px; height: 28px;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: #f3f4f6;
+    color: #6b7280;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    cursor: pointer; padding: 0;
+    transition: background .12s ease, color .12s ease, border-color .12s ease, transform .08s ease;
+  }
+  .confirm-cancel-x:hover {
+    background: #e5e7eb;
+    color: #111827;
+    border-color: #d1d5db;
+  }
+  .confirm-cancel-x:active { transform: scale(.92); }
+  .confirm-cancel-x:focus-visible {
+    outline: 2px solid #2563eb; outline-offset: 2px;
+  }
+
+  /* ===== iOS native-feel modal polish =====
+     The Capacitor app reuses the SAME modal as the PC homepage (no native
+     UIAlertController — see X-button discussion). To make it feel less
+     "web-modal" and more "iOS sheet" on iPhone, we layer on:
+       - heavier backdrop blur (10 px vs the web 2 px) — iOS sheets blur the
+         room behind the modal a lot more
+       - larger rounded corners (18 px vs 12 px) — matches iOS UIAlert
+       - Apple's system font stack — picks up SF Pro on iOS / iPadOS
+       - larger touch target on the ✕ (36 px vs 28 px), still circular
+       - tap-highlight removed so taps don't flash gray
+     These rules ONLY apply inside Capacitor (html.platform-ios), so the PC
+     homepage keeps its original look. */
+  html.platform-ios .modal-backdrop {
+    background: rgba(15, 23, 42, 0.35);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  html.platform-ios .modal-content {
+    border-radius: 18px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.30);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Helvetica Neue", system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html.platform-ios .modal-content h3 {
+    font-weight: 700;
+    text-align: center;
+  }
+  html.platform-ios .modal-content .help {
+    text-align: center;
+  }
+  html.platform-ios .confirm-cancel-x {
+    width: 36px; height: 36px;        /* bigger thumb target on phones */
+    top: 8px; right: 8px;
+  }
+  html.platform-ios .confirm-cancel-x svg {
+    width: 16px; height: 16px;
+  }
 
   /* ==== Task-bid popup widget ==== */
   .bid-widget {
@@ -4224,7 +4287,22 @@
 <!-- Custom confirm modal (Yes/No) — used by the pomodoro phase prompt -->
 <div class="modal hidden" id="custom-confirm-modal" aria-hidden="true">
   <div class="modal-backdrop" id="custom-confirm-backdrop"></div>
-  <div class="modal-content" style="width: 380px;">
+  <div class="modal-content" style="width: 380px; position: relative;">
+    <!-- Top-right circular ✕ dismiss. Resolves the customConfirm Promise with
+         `null` so callers can distinguish "user cancelled" from Yes / No. The
+         pomodoro phase-confirm handler treats null as "stop timer + no new
+         block", per user spec ("창 닫히고, 아무런 네모 만들지 않음"). -->
+    <button type="button"
+            id="custom-confirm-cancel"
+            class="confirm-cancel-x"
+            aria-label="Dismiss"
+            title="Dismiss">
+      <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+        <path d="M3 3 L11 11 M11 3 L3 11"
+              stroke="currentColor" stroke-width="2"
+              stroke-linecap="round"/>
+      </svg>
+    </button>
     <h3 id="custom-confirm-title" style="margin: 0 0 8px;">Confirm</h3>
     <p id="custom-confirm-message" class="help" style="margin: 0 0 16px; white-space: pre-line;"></p>
     <div class="actions">
@@ -6732,6 +6810,7 @@ function customConfirm(title, message, opts) {
     const msgEl   = document.getElementById('custom-confirm-message');
     const yesBtn  = document.getElementById('custom-confirm-yes');
     const noBtn   = document.getElementById('custom-confirm-no');
+    const cancelBtn = document.getElementById('custom-confirm-cancel');
     const backdrop = document.getElementById('custom-confirm-backdrop');
     if (!modal || !titleEl || !msgEl || !yesBtn || !noBtn) {
       resolve(window.confirm(message || title || ''));
@@ -6748,18 +6827,23 @@ function customConfirm(title, message, opts) {
       modal.setAttribute('aria-hidden', 'true');
       yesBtn.onclick = null;
       noBtn.onclick = null;
+      if (cancelBtn) cancelBtn.onclick = null;
       backdrop.onclick = null;
       document.removeEventListener('keydown', onKey);
       if (_openConfirmCloser === _closerRef) _openConfirmCloser = null;
     }
     function done(value) { cleanup(); resolve(value); }
     function onKey(e) {
+      // Escape and backdrop click are treated as "dismiss" (null), not "No",
+      // so the caller can distinguish accidental-close from a real No answer.
+      // The pomodoro phase-confirm code treats null as "stop timer, no new block".
       if (e.key === 'Enter')  { e.preventDefault(); done(true); }
-      if (e.key === 'Escape') { e.preventDefault(); done(false); }
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
     }
     yesBtn.onclick = () => done(true);
     noBtn.onclick  = () => done(false);
-    backdrop.onclick = () => done(false);
+    if (cancelBtn) cancelBtn.onclick = () => done(null);
+    backdrop.onclick = () => done(null);
     document.addEventListener('keydown', onKey);
     // Expose dismisser so cloud-sync can close it remotely.
     _closerRef = (val) => done(val);
@@ -8352,10 +8436,50 @@ async function showPomoPhaseConfirm() {
   // another device via cloud sync. State has already been updated remotely;
   // we do nothing locally and let the next polling cycle render the result.
   if (answer === 'remote') return;
-  const yes = !!answer;
   // Re-fetch — user may have stopped the timer some other way during the prompt
   const at2 = state.activeTimer;
   if (!at2 || at2.type !== 'pomodoro') return;
+  // ✕ button / Escape / backdrop click → answer === null. Treat as "stop the
+  // pomodoro session entirely; the previous phase's block is already capped
+  // at its boundary in tickPomodoro, NO new block is spawned for the next
+  // phase". Matches the user's "popup ignored → no further blocks" spec but
+  // explicit: clears pendingPhaseConfirm + activeTimer so the popup won't
+  // auto-re-fire on the next tick / app launch.
+  if (answer === null) {
+    at2.pendingPhaseConfirm = false;
+    const _phaseBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
+    if (typeof at2.q === 'string' && typeof at2.idx === 'number'
+        && Array.isArray(state.scheduledBlocks)) {
+      state.scheduledBlocks.forEach(b => {
+        if (b.q !== at2.q || b.taskIdx !== at2.idx) return;
+        if (b.activeAt != null) {
+          if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+          b.workedSegments.push({ startMs: b.activeAt, endMs: _phaseBoundary });
+          b.activeAt = null;
+        }
+        if (b.activeBreakAt != null) {
+          if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
+          b.breakSegments.push({ startMs: b.activeBreakAt, endMs: _phaseBoundary });
+          b.activeBreakAt = null;
+        }
+        if (b.endMs > _phaseBoundary) b.endMs = _phaseBoundary;
+        if (!b.activeEndMs) b.activeEndMs = _phaseBoundary;
+      });
+    }
+    state.activeTimer = null;
+    saveState();
+    markSettingsChanged();
+    if (typeof _settingsPushTimer !== 'undefined' && _settingsPushTimer) {
+      clearTimeout(_settingsPushTimer);
+      _settingsPushTimer = null;
+    }
+    pushSettingsToCloud();
+    if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
+    if (typeof renderImDoing     === 'function') renderImDoing();
+    if (typeof drawGauge         === 'function') drawGauge();
+    return;
+  }
+  const yes = !!answer;
   at2.pendingPhaseConfirm = false;
   if (yes) {
     // NEW (per user spec):  popup-wait time is NOT counted into the pomodoro
