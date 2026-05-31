@@ -327,6 +327,240 @@
     outline: 2px solid #2563eb; outline-offset: 2px;
   }
 
+  /* ===== 7-side rainbow bucket =====
+     Sits between Time & Tasks and Habits & Triggers. Layout: bucket SVG on
+     the LEFT, button column on the RIGHT. The buttons live as siblings of
+     the stage (not absolute-positioned inside it) so they can't overlap the
+     bucket no matter how wide the bucket renders. touch-action:none on the
+     SVG so JS pointer handlers own every drag gesture — without it
+     vertical-finger-drag would scroll the page instead of rotating /
+     lowering a panel. */
+  .bucket-section {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    /* Column layout: bucket on top (centred), button row at the bottom.
+       Smaller bottom padding than top so the section hugs the buttons. */
+    padding: 12px 12px 6px;
+    margin-top: 12px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+  .bucket-stage {
+    position: relative;
+    width: 84%;                 /* bucket occupies 84% of section width */
+    aspect-ratio: 1 / 1;
+    margin: 0 auto;             /* centred horizontally in the section */
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .bucket-svg {
+    width: 100%; height: 100%;
+    display: block;
+    /* pan-y = vertical drag is the BROWSER's job (page scroll); horizontal
+       drag stays with our JS (bucket rotate). Tap is unaffected — tap still
+       reaches pointerdown/up unchanged. */
+    touch-action: pan-y;
+    cursor: grab;
+  }
+  /* While a wall is SELECTED, the user wants vertical drag to LOWER that
+     wall (not scroll the page). JS toggles .has-selection on the SVG when
+     selectedFace flips between -1 and a real face — and we override
+     touch-action to none so the browser doesn't intercept vertical pan. */
+  .bucket-svg.has-selection { touch-action: none; }
+  .bucket-svg:active { cursor: grabbing; }
+
+  /* ===== Task bar 3D "open side" effect on tick =====
+     When a task checkbox is ticked, the row briefly tilts in 3D space and
+     a "door" pseudo-element on the gap-side edge rotates outward — the
+     visual story is "2D bar momentarily becomes a 3D box, opens its side,
+     water pours from the opening". After ~0.5s the row settles back to 2D.
+     The OPEN side is the same edge the water spawns from (see JS):
+       - Time & Tasks (split): tasks on right → door on LEFT (.door-left)
+       - Matrix q1/q3 (left col): door on RIGHT (.door-right)
+       - Matrix q2/q4 (right col): door on LEFT (.door-left) */
+  .task-row.is-pouring {
+    position: relative;
+    transform-style: preserve-3d;
+    perspective: 600px;
+    animation: task-row-tilt 0.55s ease-in-out;
+    z-index: 10;
+  }
+  @keyframes task-row-tilt {
+    0%   { transform: rotateY(0deg)   rotateX(0deg)   translateZ(0); }
+    35%  { transform: rotateY(-8deg)  rotateX(4deg)   translateZ(8px); }
+    100% { transform: rotateY(0deg)   rotateX(0deg)   translateZ(0); }
+  }
+  /* Door element — appended by JS during the pour. Sits flush with one edge
+     of the row, rotates open like a hinged panel, then disappears. */
+  .task-row-door {
+    position: fixed;
+    pointer-events: none;
+    z-index: 5001;
+    background: linear-gradient(135deg,
+      rgba(125,211,252,0.85) 0%,
+      rgba(56,189,248,0.75) 60%,
+      rgba(14,165,233,0.6) 100%);
+    border-radius: 3px;
+    box-shadow: 0 2px 6px rgba(14,165,233,0.4);
+    transform-origin: var(--door-origin, right center);
+    animation: task-door-open 0.55s ease-out forwards;
+  }
+  @keyframes task-door-open {
+    0%   { transform: rotateY(0deg);   opacity: 0; }
+    25%  { transform: rotateY(-70deg); opacity: 0.95; }
+    80%  { transform: rotateY(-70deg); opacity: 0.95; }
+    100% { transform: rotateY(0deg);   opacity: 0; }
+  }
+  /* Mid-air splash — fired when a falling droplet passes through the
+     "white gap" zone, visual cue for collision/momentum. */
+  .task-water-bump {
+    position: fixed;
+    pointer-events: none;
+    z-index: 5000;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at center,
+                rgba(125,211,252,0.85) 0%,
+                rgba(56,189,248,0.0) 70%);
+    animation: task-water-bump 0.4s ease-out forwards;
+  }
+  @keyframes task-water-bump {
+    0%   { transform: translate(-50%, -50%) scale(0.2); opacity: 0; }
+    40%  { transform: translate(-50%, -50%) scale(1);   opacity: 0.9; }
+    100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+  }
+  /* Button column — vertical stack, fixed-width, never grows. All three
+     buttons share .bucket-btn for consistent 40×40 size and shape. */
+  .bucket-buttons {
+    display: flex;
+    flex-direction: row;        /* horizontal row at the bottom */
+    justify-content: center;    /* centred under the bucket */
+    gap: 14px;
+    flex-shrink: 0;
+  }
+  .bucket-btn {
+    width: 40px; height: 40px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 999px;
+    cursor: pointer;
+    padding: 0;
+    border: 1px solid transparent;
+    transition: background .12s ease, color .12s ease,
+                border-color .12s ease, transform .08s ease;
+  }
+  .bucket-btn:active { transform: scale(.92); }
+  /* 💧 fill (water) — sky-blue family */
+  .bucket-fill-btn {
+    background: #f0f9ff;
+    color: #0284c7;
+    border-color: #bae6fd;
+    box-shadow: 0 2px 6px rgba(56,189,248,.25);
+  }
+  .bucket-fill-btn:hover { background: #e0f2fe; }
+  .bucket-fill-btn.is-pouring {
+    background: #38BDF8; border-color: #38BDF8;
+  }
+  .bucket-fill-btn.is-pouring svg path { fill: #fff; }
+  /* ✕ drain — red family */
+  .bucket-drain-btn {
+    background: #fef2f2;
+    color: #b91c1c;
+    border-color: #fecaca;
+    box-shadow: 0 2px 6px rgba(248,113,113,.20);
+  }
+  .bucket-drain-btn:hover { background: #fee2e2; }
+  .bucket-drain-btn.is-draining {
+    background: #ef4444; color: #fff; border-color: #ef4444;
+  }
+  /* $ money — amber/gold family */
+  .bucket-money-btn {
+    background: #fffbeb;
+    color: #b45309;
+    border-color: #fde68a;
+    box-shadow: 0 2px 6px rgba(251,191,36,.25);
+  }
+  .bucket-money-btn:hover { background: #fef3c7; }
+  .bucket-money-btn.is-pouring {
+    background: #f59e0b; color: #fff; border-color: #f59e0b;
+  }
+
+  /* ===== Task-tick water droplets =====
+     When a task is ticked, ~12 blue droplets shoot from the ✓ checkbox
+     toward the bucket on a water-gun parabola: X leads Y early (the
+     "shot"), then gravity pulls them down into the bucket. --arc-x and
+     --fall-px are set per droplet by JS to the exact source→bucket vector.
+     Pure CSS — cheaper + more water-like than a WebGL particle system. */
+  .task-water-droplet {
+    position: fixed;
+    width: 8px; height: 12px;
+    pointer-events: none;
+    z-index: 5000;
+    background: radial-gradient(ellipse at 50% 30%,
+                #BAE6FD 0%, #38BDF8 55%, #0EA5E9 100%);
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    box-shadow: 0 0 4px rgba(56,189,248,0.4);
+    animation: task-droplet-fall 0.85s linear forwards;
+  }
+  @keyframes task-droplet-fall {
+    /* Water-gun arc: X advances faster than Y in the first half (the shot
+       rising/flying out), then Y catches up as gravity arcs it down into
+       the bucket. The uneven X-vs-Y progression is what makes it read as a
+       launched jet rather than a straight diagonal fall. */
+    0%   { transform: translate(0, 0) scaleY(0.6); opacity: 0; }
+    12%  { transform: translate(calc(var(--arc-x, 0px) * 0.35),
+                                 calc(var(--fall-px) * 0.05)) scaleY(1); opacity: 1; }
+    50%  { transform: translate(calc(var(--arc-x, 0px) * 0.72),
+                                 calc(var(--fall-px) * 0.32)) scaleY(1.25); opacity: 1; }
+    85%  { transform: translate(var(--arc-x, 0px), var(--fall-px)) scaleY(1.5); opacity: 1; }
+    100% { transform: translate(var(--arc-x, 0px), var(--fall-px)) scaleY(1.6); opacity: 0; }
+  }
+  /* Splash — small expanding ring at the bucket landing point. Fires once
+     per task tick (not per droplet, to keep visual noise down). */
+  .task-water-splash {
+    position: fixed;
+    pointer-events: none;
+    z-index: 5000;
+    border-radius: 50%;
+    background: radial-gradient(circle at center,
+                rgba(56,189,248,0.7) 0%,
+                rgba(56,189,248,0.0) 70%);
+    animation: task-water-splash 0.7s ease-out forwards;
+  }
+  @keyframes task-water-splash {
+    0%   { transform: translate(-50%, -50%) scale(0);   opacity: 0; }
+    25%  { transform: translate(-50%, -50%) scale(0.6); opacity: 0.9; }
+    100% { transform: translate(-50%, -50%) scale(1.8); opacity: 0; }
+  }
+  /* Splash-burst droplets — small blobs flung up & out from the impact
+     point, arcing back down. --sx/--sy are the launch velocity vector set
+     per droplet by JS; the keyframe shoots out then a gravity pull adds
+     downward drift at the end. */
+  .task-splash-droplet {
+    position: fixed;
+    width: 6px; height: 6px;
+    pointer-events: none;
+    z-index: 5001;
+    border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    background: radial-gradient(ellipse at 50% 30%,
+                #BAE6FD 0%, #38BDF8 60%, #0EA5E9 100%);
+    box-shadow: 0 0 3px rgba(56,189,248,0.45);
+    animation: task-splash-fly 0.52s ease-out forwards;
+  }
+  @keyframes task-splash-fly {
+    0%   { transform: translate(-50%, -50%); opacity: 0; }
+    15%  { opacity: 1; }
+    /* fly out to ~3.5× the launch vector, then gravity pulls it ~20px down */
+    100% {
+      transform: translate(
+        calc(-50% + var(--sx, 0px) * 3.5),
+        calc(-50% + var(--sy, 0px) * 3.5 + 26px));
+      opacity: 0;
+    }
+  }
+
   /* ===== iOS native-feel modal polish =====
      The Capacitor app reuses the SAME modal as the PC homepage (no native
      UIAlertController — see X-button discussion). To make it feel less
@@ -414,6 +648,15 @@
 
   /* Login modal styling — compact, fits without scroll */
   .login-modal-content { width: 400px; max-width: 92vw; padding: 18px 20px; }
+  /* Top-align the login modal (the shared .modal vertically centres its
+     content). On iOS, when the keyboard slides up the WebView shrinks and a
+     centred modal RE-CENTRES — that mid-focus jump makes iOS dismiss the
+     keyboard the moment you tap the email field. Pinning the modal near the
+     top means tapping a field doesn't move it, so the keyboard stays up.
+     The smaller (feature-list-removed) popup also clears the keyboard. */
+  #login-modal { align-items: flex-start; }
+  #login-modal .login-modal-content { margin-top: 6vh; }
+  html.platform-ios #login-modal .login-modal-content { margin-top: 24px; }
   .feature-list {
     list-style: none; padding: 0; margin: 0 0 6px;
     display: grid; gap: 6px;
@@ -3882,6 +4125,55 @@
         <div class="time-resize-handle split-resize-handle" id="time-resize-handle-split" title="Drag to resize the Time &amp; Tasks area"></div>
         </div><!-- /.time-tasks-wrap -->
 
+        <!-- ===== 7-side rainbow bucket =====
+             Heptagonal prism with 7 pastel side panels, open top, bottom face.
+             Horizontal drag → rotate around Y axis (3D feel).
+             Vertical drag on any side → that side's top edge moves down only
+             (bottom edge fixed), letting water spill out at the lowest panel.
+             Top-right droplet button starts a 2D water fill animation that
+             stops at min(panelHeights). All rendering is via inline SVG with
+             a tiny manual 3D projection in JS — no canvas, no libraries. -->
+        <div class="bucket-section" id="bucket-section">
+          <div class="bucket-stage">
+            <svg class="bucket-svg" id="bucket-svg"
+                 viewBox="-150 -160 300 300"
+                 preserveAspectRatio="xMidYMid meet"
+                 aria-label="7-sided pastel bucket"></svg>
+          </div>
+          <!-- Right-side button column. Vertical stack, identical 40×40
+               rounded squares, all aligned on the same right edge. Sits
+               OUTSIDE the bucket SVG (sibling rather than absolute child)
+               so the buttons can't overlap the bucket no matter how wide
+               the bucket is rendered. -->
+          <div class="bucket-buttons">
+            <button class="bucket-btn bucket-fill-btn" id="bucket-fill-btn"
+                    type="button" aria-label="물 채우기" title="물 채우기">
+              <svg viewBox="0 0 20 24" width="18" height="22" aria-hidden="true">
+                <path d="M10 1 C10 1 3 11 3 16 C3 20.4 6.1 23 10 23
+                         C13.9 23 17 20.4 17 16 C17 11 10 1 10 1 Z"
+                      fill="#38BDF8"/>
+              </svg>
+            </button>
+            <button class="bucket-btn bucket-drain-btn" id="bucket-drain-btn"
+                    type="button" aria-label="물 빼기" title="물 빼기">
+              <svg viewBox="0 0 14 14" width="14" height="14" aria-hidden="true">
+                <path d="M3 3 L11 11 M11 3 L3 11"
+                      stroke="currentColor" stroke-width="2.2"
+                      stroke-linecap="round"/>
+              </svg>
+            </button>
+            <button class="bucket-btn bucket-money-btn" id="bucket-money-btn"
+                    type="button" aria-label="돈 쌓기" title="돈 쌓기">
+              <svg viewBox="0 0 14 20" width="14" height="18" aria-hidden="true">
+                <text x="7" y="15" text-anchor="middle"
+                      font-size="16" font-weight="800"
+                      fill="currentColor"
+                      font-family="-apple-system, system-ui, sans-serif">$</text>
+              </svg>
+            </button>
+          </div>
+        </div>
+
         <div class="panel" style="margin:0;">
           <h3>Habits &amp; Triggers</h3>
           <p class="help" style="margin: 4px 0 0;">Tap anything here to move your Money or Mana.</p>
@@ -3997,29 +4289,10 @@
 <div class="modal hidden" id="login-modal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-content login-modal-content">
-    <h3 style="margin: 0 0 4px;">Welcome to Bidoro</h3>
-    <p class="help" style="margin: 0 0 8px; font-size: .78rem;">Three powerful tools — hover or tap each for details:</p>
-    <ul class="feature-list">
-      <li class="feature-item" tabindex="0">
-        <span class="feature-ico q1">▦</span>
-        <strong>Eisenhower Matrix + Pomodoro</strong>
-        <div class="feature-tooltip">Plan tasks by urgency &amp; importance in the 4-quadrant matrix. Tap a task to start a 25-min Work → 5-min Break cycle. Long 15-min break after every 4th work session. Tapping the task name again restarts from the beginning of the cycle.</div>
-      </li>
-      <li class="feature-item" tabindex="0">
-        <span class="feature-ico gauge">▥</span>
-        <strong>Vertical Time Gauge</strong>
-        <div class="feature-tooltip">Calendar-style timeline of your day. See exactly when you worked on what; click any colored band to edit its start/end times.</div>
-      </li>
-      <li class="feature-item" tabindex="0">
-        <span class="feature-ico score">●</span>
-        <strong>Focus Score</strong>
-        <div class="feature-tooltip">Measure your focus level by external factors (internet, devices, location) and internal factors (sleep, emotional wellness, energy). Pixel-art houses &amp; faces visualize your score.</div>
-      </li>
-    </ul>
-    <div style="text-align: right; margin: 4px 0 6px;">
-      <button class="btn-link" id="open-manual" type="button">In detail →</button>
-    </div>
-    <hr class="modal-sep">
+    <h3 style="margin: 0 0 8px;">Welcome to Bidoro</h3>
+    <!-- Feature list removed so the popup is short enough to sit above the
+         iOS keyboard. The full feature walkthrough is still reachable via
+         "In detail →" below the sign-in buttons. -->
     <div class="auth-form">
       <input type="email" id="login-email" placeholder="Email" autocomplete="email">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
@@ -4029,6 +4302,9 @@
         <button class="btn btn-try-it" id="login-try-it" type="button" title="Use the app without signing in (data stays on this device only)">Try it →</button>
         <span id="login-status" class="help"></span>
       </div>
+    </div>
+    <div style="text-align: right; margin: 8px 0 0;">
+      <button class="btn-link" id="open-manual" type="button">In detail →</button>
     </div>
   </div>
 </div>
@@ -6285,6 +6561,9 @@ function renderTasks() {
           }
           // Drop future scheduled blocks; cut the current covering block at NOW.
           trimFutureBlocksForTask(q, i);
+          // Visual reward: blue water stream pouring from the row down into
+          // the bucket. See window.bidoroTaskWaterDrop for direction logic.
+          try { if (typeof window.bidoroTaskWaterDrop === 'function') window.bidoroTaskWaterDrop(row, q); } catch (_) {}
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -7717,6 +7996,10 @@ function renderFocusMatrix() {
           // The block currently being passed by the time line is cut at NOW;
           // blocks entirely in the future are deleted.
           trimFutureBlocksForTask(q, i);
+          // Visual reward: blue water stream pouring from the row down into
+          // the bucket. Fired BEFORE the re-render below so the geometry is
+          // captured from the row that actually got ticked.
+          try { if (typeof window.bidoroTaskWaterDrop === 'function') window.bidoroTaskWaterDrop(row, q); } catch (_) {}
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -9026,7 +9309,11 @@ function drawTimeArea() {
     }
     // User-dragged duration (from the split-mode handle). Capped at MAX.
     const userDurMs = state.timeArea.durationMs || 0;
-    let exactDurMs = Math.max(floorDurMs, userDurMs);
+    // Hard MINIMUM of 3 hours when dragging the handle UP — the gauge must
+    // always show at least a 3-hour window even if the task list (matrix
+    // floor) is shorter. So the floor is max(matrix-bottom, 3h).
+    const SPLIT_MIN_MS = 3 * 3600 * 1000;
+    let exactDurMs = Math.max(floorDurMs, userDurMs, SPLIT_MIN_MS);
     if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
     if (exactDurMs > 0) renderDurMs = exactDurMs;
     // CRITICAL: keep state.timeArea.durationMs SYNCED with what was actually
@@ -13081,9 +13368,26 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   input.className = 'qp-input ' + q;
   input.placeholder = 'Task name';
   input.maxLength = 200;
+  input.autocapitalize = 'sentences';
+  input.setAttribute('autocomplete', 'off');
+  input.setAttribute('autocorrect', 'off');
+  // ORDER MATTERS on iOS: insert + focus the input FIRST, THEN remove the
+  // picker. iOS only summons the keyboard when focus() runs inside a live
+  // user-gesture call stack; removing the picker (which contains the tapped
+  // button = the gesture's target) BEFORE focus() breaks that context and
+  // the keyboard is dismissed immediately. Focusing while the button still
+  // exists keeps the gesture valid.
   parent.insertBefore(input, picker);
+  try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
   picker.remove();
-  try { input.focus(); } catch (_) {}
+  // iOS WKWebView (Capacitor) can still fire a SPURIOUS blur during the
+  // keyboard's slide-in animation right after a programmatic focus. The old
+  // code committed (and removed the input) on ANY blur → the keyboard popped
+  // up then immediately closed and you couldn't type. Guard: ignore blurs in
+  // the first 700 ms and re-focus instead. A real tap-away after that window
+  // still commits normally.
+  const _focusedAtMs = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
   let committed = false;
   function commit(saveIt) {
     if (committed) return;
@@ -13114,7 +13418,16 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
     masterBtn.style.display = '';
     if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
   }
-  input.addEventListener('blur', () => commit(true));
+  input.addEventListener('blur', () => {
+    const nowMs = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now() : Date.now();
+    // Ignore the spurious early blur — re-grab focus so the keyboard stays up.
+    if (nowMs - _focusedAtMs < 700) {
+      setTimeout(() => { try { if (!committed) input.focus(); } catch (_) {} }, 0);
+      return;
+    }
+    commit(true);
+  });
   input.addEventListener('keydown', (e) => {
     // Korean IME guard — same as the per-quadrant +add task path. Without
     // this, the first Enter mid-composition would commit the in-progress
@@ -15219,6 +15532,1034 @@ setInterval(() => {
   function _onUserAction() { snapshotDebounced(); }
   document.addEventListener('mousedown',  _onUserAction, true);
   document.addEventListener('touchstart', _onUserAction, true);
+})();
+
+/* ================================================================
+   7-SIDE RAINBOW BUCKET  (below Tasks area)
+   ----------------------------------------------------------------
+   A heptagonal prism with 7 pastel side panels, an open top, and a
+   solid bottom. Rendered as inline SVG <polygon>s with a manual 3D
+   projection (rotateY → tiltX → perspective project). Three gestures:
+
+     1. Horizontal pointer drag on background   → rotation += dx*k
+     2. Vertical pointer drag on a side panel   → that panel's TOP
+        edge moves down (bottom edge stays put), so the panel shrinks
+     3. Tap the droplet button (top-right)      → 2D water animation
+        fills the bucket; water level caps at min(panelHeights), and
+        any "overflow" simply doesn't appear (matches user spec:
+        "내려간 윗부분까지만 물이 담겨").
+
+   Pure-JS / no libraries / no canvas. Animation runs in rAF and
+   suspends when offscreen so the bucket is cheap when the user is
+   on Focus or Stats. State (panel heights, rotation, water level)
+   lives in-module — not synced to cloud (the bucket is a local
+   playful widget). Re-renders only when state changes.
+   ================================================================ */
+/* ================================================================
+   TASK-TICK WATER DROP — exposed as window.bidoroTaskWaterDrop so the
+   two task-row renderers (matrix-wrap renderer at ~line 6390 and the
+   focus-page renderer at ~line 7820) can both call it without
+   duplicating the geometry math. Spawns one CSS-animated stream + a
+   landing splash; both auto-remove after the animation completes.
+   Direction (which row edge water pours from) follows the user's spec:
+     - Time & Tasks mode (state.focusSplitView): tasks live on the
+       right column → pour LEFT into the gauge/tasks gap
+     - PC matrix mode, q2 or q4 (right column): pour LEFT into the
+       quadrants' centre gap
+     - PC matrix mode, q1 or q3 (left column): pour RIGHT into the
+       same centre gap
+   ================================================================ */
+window.bidoroTaskWaterDrop = function (row, q) {
+  if (!row || !row.getBoundingClientRect) return;
+  try {
+    // Source = the tick CHECKBOX itself (the ✓ icon acts like a punched
+    // hole). Water shoots from there toward the bucket like a water gun,
+    // no matter where the task row sits on screen.
+    const cb = row.querySelector('input[type="checkbox"]');
+    const srcRect = (cb || row).getBoundingClientRect();
+    if (srcRect.width <= 0 || srcRect.height <= 0) return;
+    const startX = srcRect.left + srcRect.width / 2;
+    const startY = srcRect.top + srcRect.height / 2;
+
+    // Target = the WATER SURFACE CENTRE (top of the water column), not the
+    // bucket floor. bidoroBucketSurfacePoint() returns the predicted-post-fill
+    // surface centre in screen coords so the droplet lands right on the
+    // surface. Fall back to the floor-centre (0.533 of the stage) if the
+    // bucket isn't ready.
+    let endX, endY;
+    const surf = (typeof window.bidoroBucketSurfacePoint === 'function')
+      ? window.bidoroBucketSurfacePoint() : null;
+    if (surf) {
+      endX = surf.x;
+      endY = surf.y;
+    } else {
+      const bEl = document.getElementById('bucket-section');
+      const stageEl = bEl ? bEl.querySelector('.bucket-stage') : null;
+      const stageRect = stageEl ? stageEl.getBoundingClientRect() : null;
+      if (stageRect && stageRect.height > 0) {
+        endY = stageRect.top + stageRect.height * 0.533;
+        endX = stageRect.left + stageRect.width / 2;
+      } else {
+        endY = window.innerHeight - 80;
+        endX = startX;
+      }
+    }
+    if (endY - startY < 20) return;
+    const centerX = endX;
+    const arcX = endX - startX;
+
+    // Tiny "squirt" feedback on the checkbox itself — a quick scale pop.
+    if (cb) {
+      try {
+        cb.style.transition = 'transform .12s ease';
+        cb.style.transform = 'scale(1.25)';
+        setTimeout(() => { try { cb.style.transform = ''; } catch (_) {} }, 130);
+      } catch (_) {}
+    }
+
+    const DROPLET_COUNT = 12;
+    const STAGGER_MS    = 55;
+    const FALL_MS       = 850;
+    const SPLASH_DELAY  = FALL_MS - 50;
+
+    function spawnDroplet(extraDelay, jitterX) {
+      setTimeout(() => {
+        try {
+          const drop = document.createElement('div');
+          drop.className = 'task-water-droplet';
+          drop.style.left = (startX + jitterX - 4) + 'px';
+          drop.style.top  = startY + 'px';
+          drop.style.setProperty('--fall-px', (endY - startY) + 'px');
+          drop.style.setProperty('--arc-x', (arcX - jitterX) + 'px');
+          document.body.appendChild(drop);
+          setTimeout(() => { try { drop.remove(); } catch (_) {} }, FALL_MS + 80);
+        } catch (_) {}
+      }, extraDelay);
+    }
+
+    for (let i = 0; i < DROPLET_COUNT; i++) {
+      const jitter = (Math.random() - 0.5) * 6;
+      spawnDroplet(i * STAGGER_MS, jitter);
+    }
+
+    // Landing impact at the water SURFACE — a ring + a burst of small
+    // droplets that fly up & outward then fall back (water splashing on
+    // impact). Each successive stream droplet that lands re-triggers a small
+    // burst so the splashing reads as continuous while the stream pours.
+    function splashAt(x, y) {
+      try {
+        // Expanding ring
+        const sp = document.createElement('div');
+        sp.className = 'task-water-splash';
+        sp.style.left   = x + 'px';
+        sp.style.top    = y + 'px';
+        sp.style.width  = '26px';
+        sp.style.height = '26px';
+        document.body.appendChild(sp);
+        setTimeout(() => { try { sp.remove(); } catch (_) {} }, 650);
+        // Burst droplets — 5 little blobs flung up/out with random spread,
+        // arcing back down (CSS keyframe task-splash-fly uses --sx/--sy).
+        const N = 5;
+        for (let k = 0; k < N; k++) {
+          const ang = (-Math.PI * 0.5) + (Math.random() - 0.5) * 2.0; // mostly upward
+          const speed = 14 + Math.random() * 16;
+          const sxv = Math.cos(ang) * speed;
+          const syv = Math.sin(ang) * speed;          // negative = up
+          const b = document.createElement('div');
+          b.className = 'task-splash-droplet';
+          b.style.left = x + 'px';
+          b.style.top  = y + 'px';
+          b.style.setProperty('--sx', sxv.toFixed(1) + 'px');
+          b.style.setProperty('--sy', syv.toFixed(1) + 'px');
+          document.body.appendChild(b);
+          setTimeout(() => { try { b.remove(); } catch (_) {} }, 560);
+        }
+      } catch (_) {}
+    }
+    // Splash on the first landing, then a couple more as the stream keeps
+    // arriving (lighter follow-up bursts).
+    setTimeout(() => splashAt(endX, endY), SPLASH_DELAY);
+    setTimeout(() => splashAt(endX + (Math.random()-0.5)*10, endY), SPLASH_DELAY + 180);
+    setTimeout(() => splashAt(endX + (Math.random()-0.5)*10, endY), SPLASH_DELAY + 360);
+
+    // Bucket auto-fill 7% — starts the moment the first droplet lands at the
+    // heptagon centre (per spec "떨어진 순간부터 물이 차오름"). The fill
+    // itself is now half-speed (see bidoroBucketAddWater duration).
+    setTimeout(() => {
+      try {
+        if (typeof window.bidoroBucketAddWater === 'function') {
+          window.bidoroBucketAddWater(0.07);
+        }
+      } catch (_) {}
+    }, FALL_MS - 80);
+  } catch (_) {}
+};
+
+(function bucketModule() {
+  /* ================================================================
+     SVG 7-side rainbow bucket (manual 3D projection)
+     ----------------------------------------------------------------
+     Camera-above-looking-down view: TILT_RAD = -0.55 rad ≈ 31°. The
+     user sees the top opening as a clear ellipse, with the side walls
+     dominant. All polygons are projected by hand (rotateY → tiltX →
+     perspective) and Z-sorted so painters' algorithm gives correct
+     overlap with 80%-transparent walls.
+
+     State:
+       - heights[FACE_COUNT]    each side's height; drag-DOWN on a
+                                selected face lowers its top edge
+       - rotation                horizontal drag on the bucket spins
+                                it; finger LEFT → bucket LEFT
+       - selectedFace            tap a wall to select (white outline);
+                                tap empty space to deselect
+       - waterLevel + fillType   shared 0..max level; type decides
+                                what mesh shows (water vs coin stack)
+       - drainOpen               X opens a white hole at floor centre,
+                                grows over 350 ms; water drains 2.5 s
+
+     Public API:
+       window.bidoroBucketAddWater(ratio) — bump water level by
+                                ratio×DEFAULT_H, animate 500 ms ease-out.
+     ================================================================ */
+  const FACE_COUNT   = 7;
+  const OUTER_R      = 105;
+  const WALL         = 9;
+  const INNER_R      = OUTER_R - WALL;
+  const DEFAULT_H    = 150;
+  const MIN_H        = 20;
+  const TILT_RAD     = -0.55;
+  const FOCAL        = 280;
+  const CAMERA_Z     = 360;
+  const ROT_PER_PX   = 0.012;
+  const TAP_THRESH   = 6;
+  const WALL_OPACITY = 0.20;
+  const SEL_OPACITY  = 0.90;
+  const HOLE_GROW_MS   = 350;
+  const HOLE_SHRINK_MS = 350;
+  const HOLE_DRAIN_DELAY_MS = 1000;   // X click → hole opens → wait 1 s → drain
+  const HOLE_RX        = 7;
+  const HOLE_RY        = 5;
+  /* When a side panel is lowered below the current water cap, water pours
+     over its top edge and runs down the OUTER face as a falling SHEET — a
+     constant-height blue rectangle that starts at the wall top (connected
+     to the water inside) and descends. Its leading (top) edge fades as it
+     goes; once the bottom reaches the floor the rectangle shrinks from the
+     top until gone. Water also wets the thin top RIM of the lowered face.
+       SPILL_SHEET_H = the constant height of the falling rectangle
+       SPILL_DURATION = full descent + drain time. Re-armed on each drag tick. */
+  const SPILL_SHEET_H  = 80;
+  const SPILL_DURATION = 1100;
+
+  const FACE_COLORS = [
+    '#F4B5C7', '#F7C5A1', '#F6E1A0', '#B9E2B8',
+    '#A8DCE0', '#B3CBED', '#D2B8E8'
+  ];
+  const RIM_COLORS    = FACE_COLORS.map(c => _shade(c, 0.92));
+  const INSIDE_COLORS = FACE_COLORS.map(c => _shade(c, 1.10));
+  const FLOOR_COLOR   = '#F5EEDC';
+  const SELECT_GLOW   = '#FFFFFF';
+  const SELECT_LIGHT  = (c) => _shade(c, 1.18);
+
+  /* ----- State ----- */
+  let rotation         = 0;
+  const heights        = Array.from({ length: FACE_COUNT }, () => DEFAULT_H);
+  let selectedFace     = -1;
+  let waterLevel       = 0;
+  /* Tilting water surface: when a wall is lowered through the water, the
+     surface doesn't drop uniformly — water near the LOWERED face spills
+     out first (drops to that wall's new top = waterLevel), while the far
+     side keeps its old level for a moment, then settles. We model this as:
+       waterLevel    = the LOW side level (= spill-face wall top, drops now)
+       waterFarLevel = the HIGH side level (lags, decays toward waterLevel)
+       tiltFace      = the spill face index (-1 = flat, no tilt)
+     Each surface vertex interpolates between the two by its angular
+     distance from the spill face. waterFarLevel eases toward waterLevel
+     every frame → the surface visibly settles flat. */
+  let waterFarLevel    = 0;
+  let tiltFace         = -1;
+  let fillType         = 'water';
+  let isFilling        = false;
+  let fillRafId        = 0;
+  let rippleT          = 0;
+  let rippleRafId      = 0;
+  let isMounted        = false;
+  /* Slosh amplitude — spikes when a droplet lands, decays to 0 each frame.
+     At 0 the surface is perfectly flat (no ripple). Bumped by
+     bidoroBucketAddWater so every task-drop makes the water jiggle, then
+     gradually calm — per user spec "떨어진 직후 더 출렁, 점점 덜, 나중엔 안". */
+  let sloshAmp         = 0;
+  let drainOpen          = false;
+  let isDraining         = false;
+  let drainRafId         = 0;
+  let drainDelayTimeoutId = 0;          // X→drain 1 s delay timer handle
+  let holeGrowStartMs    = 0;
+  let holeShrinkStartMs  = null;        // non-null = hole is currently closing
+  const spills = {};                    // faceIdx → { startMs }   (active spills)
+
+  let svgEl = null, fillBtnEl = null, drainBtnEl = null, moneyBtnEl = null;
+  let drag = null;
+
+  function init() {
+    svgEl       = document.getElementById('bucket-svg');
+    fillBtnEl   = document.getElementById('bucket-fill-btn');
+    drainBtnEl  = document.getElementById('bucket-drain-btn');
+    moneyBtnEl  = document.getElementById('bucket-money-btn');
+    if (!svgEl || !fillBtnEl || !drainBtnEl || !moneyBtnEl || isMounted) return;
+    isMounted = true;
+    render();
+    attachHandlers();
+    startRippleLoop();
+  }
+
+  /* ----- 3D math ----- */
+  function transform(p) {
+    const cy = Math.cos(rotation), sy = Math.sin(rotation);
+    const x1 = p[0] * cy + p[2] * sy;
+    const z1 = -p[0] * sy + p[2] * cy;
+    const cx = Math.cos(TILT_RAD), sx = Math.sin(TILT_RAD);
+    const y2 = p[1] * cx - z1 * sx;
+    const z2 = p[1] * sx + z1 * cx;
+    const f = FOCAL / (CAMERA_Z + z2);
+    return { x: x1 * f, y: -y2 * f, z: z2 };
+  }
+
+  function vertex(i, isTop, isRight, isInner) {
+    const step = (Math.PI * 2) / FACE_COUNT;
+    const angle = -Math.PI / 2 + (i + (isRight ? 1 : 0)) * step;
+    const r = isInner ? INNER_R : OUTER_R;
+    return [
+      r * Math.cos(angle),
+      isTop ? heights[i] : 0,
+      r * Math.sin(angle),
+    ];
+  }
+
+  /* Water surface height at a given perimeter angle. Flat (= waterLevel)
+     unless a tilt is active, in which case it interpolates from waterLevel
+     at the spill face (frac 0) up to waterFarLevel at the opposite face
+     (frac 1). frac = (1 - cos(Δθ)) / 2 — a smooth low→high ramp around the
+     heptagon, mimicking how a real water surface slopes toward the leak. */
+  function waterHeightAtAngle(theta) {
+    if (tiltFace < 0 || Math.abs(waterFarLevel - waterLevel) < 0.3) {
+      return waterLevel;
+    }
+    const step = (Math.PI * 2) / FACE_COUNT;
+    const thetaF = -Math.PI / 2 + tiltFace * step + step / 2;  // spill face centre
+    const frac = (1 - Math.cos(theta - thetaF)) / 2;
+    return waterLevel + (waterFarLevel - waterLevel) * frac;
+  }
+
+  /* ----- Render ----- */
+  function render() {
+    if (!svgEl) return;
+    while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+
+    const NS = 'http://www.w3.org/2000/svg';
+    const defs = document.createElementNS(NS, 'defs');
+    defs.innerHTML =
+      '<linearGradient id="bucket-water-grad" x1="0" y1="0" x2="0" y2="1">' +
+      '  <stop offset="0%"   stop-color="#7DD3FC" stop-opacity="0.95"/>' +
+      '  <stop offset="100%" stop-color="#38BDF8" stop-opacity="0.85"/>' +
+      '</linearGradient>' +
+      // Spill sheet gradient — TRANSPARENT at the top (the trailing edge
+      // fades) → solid sky-blue at the bottom (the leading edge). objectBB
+      // maps y 0→1 onto the quad's top→bottom, so the spill's upper edge
+      // fades out as the user wants ("위에서부터 점점 fade away").
+      '<linearGradient id="bucket-spill-grad" x1="0" y1="0" x2="0" y2="1">' +
+      '  <stop offset="0%"   stop-color="#7DD3FC" stop-opacity="0.05"/>' +
+      '  <stop offset="45%"  stop-color="#38BDF8" stop-opacity="0.55"/>' +
+      '  <stop offset="100%" stop-color="#0EA5E9" stop-opacity="0.92"/>' +
+      '</linearGradient>';
+    svgEl.appendChild(defs);
+
+    /* Floor (inner heptagon) — drawn first, sits below everything. */
+    const floorPts = [];
+    for (let i = 0; i < FACE_COUNT; i++) {
+      floorPts.push(transform(vertex(i, false, false, true)));
+    }
+    appendPoly(floorPts, FLOOR_COLOR, '#E5D9B6', 0.5);
+
+    /* Build all renderables (wall quads + water side-fills + water surface)
+       with each one's center-Z for back-to-front painting. */
+    const renderables = [];
+    const step = (Math.PI * 2) / FACE_COUNT;
+    // `cap` is the flat-water reference used by MONEY (which never tilts) and
+    // as the "is there any water?" gate. Water rendering uses the per-corner
+    // waterHeightAtAngle() instead, so it can show a tilted surface.
+    const cap = (waterLevel > 0.1 || waterFarLevel > 0.1)
+      ? Math.min(Math.max(waterLevel, waterFarLevel), Math.max.apply(null, heights))
+      : 0;
+    const hasWater = (fillType === 'water') && (waterLevel > 0.1 || waterFarLevel > 0.1);
+    // Shared water height at corner `c` (the perimeter vertex at angle
+    // -π/2 + c·step, shared by face c-1 and face c). BOTH the top surface and
+    // every side-fill read their top edge from this SAME function, so the
+    // surface polygon and the side-fill quads always meet at identical points
+    // — no white gap between a wobbling surface and a static wall fill. The
+    // slosh sine is keyed to the corner index (not face index) so adjacent
+    // faces sharing a corner wobble in unison. Clamped to the corner's two
+    // adjacent walls so water never pokes above a lowered wall.
+    function cornerWaterY(c) {
+      const ci = ((c % FACE_COUNT) + FACE_COUNT) % FACE_COUNT;
+      const theta = -Math.PI / 2 + ci * step;
+      const faceA = ci;
+      const faceB = (ci - 1 + FACE_COUNT) % FACE_COUNT;
+      let h = waterHeightAtAngle(theta) + Math.sin(rippleT * 0.012 + ci * 1.9) * sloshAmp;
+      return Math.min(h, heights[faceA], heights[faceB]);
+    }
+    for (let i = 0; i < FACE_COUNT; i++) {
+      const obl = transform(vertex(i, false, false, false));
+      const obr = transform(vertex(i, false, true,  false));
+      const otr = transform(vertex(i, true,  true,  false));
+      const otl = transform(vertex(i, true,  false, false));
+      const ibl = transform(vertex(i, false, false, true));
+      const ibr = transform(vertex(i, false, true,  true));
+      const itr = transform(vertex(i, true,  true,  true));
+      const itl = transform(vertex(i, true,  false, true));
+      const innerCz = (itl.z + itr.z + ibr.z + ibl.z) / 4;
+      const outerCz = (obl.z + obr.z + otr.z + otl.z) / 4;
+      renderables.push({ kind: 'outer', i, pts: [obl, obr, otr, otl], cz: outerCz });
+      renderables.push({ kind: 'inner', i, pts: [itl, itr, ibr, ibl], cz: innerCz });
+      renderables.push({ kind: 'rim',   i, pts: [otl, otr, itr, itl],
+                         cz: (otl.z + otr.z + itr.z + itl.z) / 4 });
+
+      // Side fill — water tint up the inner wall, using per-corner heights so
+      // the fill top edge follows the tilted surface. Money uses the flat cap.
+      if (fillType === 'money' && cap > 0.1) {
+        const sideCap = Math.min(cap, heights[i]);
+        if (sideCap > 0.1) {
+          const tl = transform([vertex(i, false, false, true)[0], sideCap, vertex(i, false, false, true)[2]]);
+          const tr = transform([vertex(i, false, true,  true)[0], sideCap, vertex(i, false, true,  true)[2]]);
+          renderables.push({ kind: 'sidefill', i, pts: [ibl, ibr, tr, tl], cz: (innerCz + outerCz) / 2 });
+        }
+      } else if (hasWater) {
+        const vL = vertex(i, false, false, true);
+        const vR = vertex(i, false, true,  true);
+        // Top corners read from the SHARED cornerWaterY so they coincide
+        // exactly with the surface polygon's corners → no white gap.
+        const hL = cornerWaterY(i);
+        const hR = cornerWaterY(i + 1);
+        if (hL > 0.1 || hR > 0.1) {
+          const tl = transform([vL[0], Math.max(0.05, hL), vL[2]]);
+          const tr = transform([vR[0], Math.max(0.05, hR), vR[2]]);
+          renderables.push({ kind: 'sidefill', i, pts: [ibl, ibr, tr, tl], cz: (innerCz + outerCz) / 2 });
+        }
+      }
+    }
+
+    // Top SURFACE — water uses per-corner heights (tilt-aware) + ripple;
+    // money is a flat heptagon at the flat cap.
+    if (fillType === 'money' && cap > 0.1) {
+      const surface = [];
+      let centerZ = 0;
+      for (let i = 0; i < FACE_COUNT; i++) {
+        const v = vertex(i, false, false, true);
+        v[1] = cap;
+        const p = transform(v);
+        surface.push(p);
+        centerZ += p.z;
+      }
+      centerZ /= FACE_COUNT;
+      renderables.push({ kind: 'surface', i: -1, pts: surface, cz: centerZ });
+    } else if (hasWater) {
+      const surface = [];
+      let centerZ = 0;
+      for (let i = 0; i < FACE_COUNT; i++) {
+        const v = vertex(i, false, false, true);
+        // Same shared corner height the side-fills use → seamless, no gap.
+        v[1] = cornerWaterY(i);
+        const p = transform(v);
+        surface.push(p);
+        centerZ += p.z;
+      }
+      centerZ /= FACE_COUNT;
+      renderables.push({ kind: 'surface', i: -1, pts: surface, cz: centerZ });
+    }
+
+    /* Money-only — horizontal layer-line heptagons (hollow rings) inside
+       the gold body. Reads as a stack of coin/bill layers. */
+    const MONEY_LAYER_H = 14;
+    if (fillType === 'money' && cap > 0.1) {
+      for (let h = MONEY_LAYER_H; h < cap - 1; h += MONEY_LAYER_H) {
+        const ring = [];
+        let zSum = 0;
+        for (let i = 0; i < FACE_COUNT; i++) {
+          const v = vertex(i, false, false, true);
+          v[1] = h;
+          const p = transform(v);
+          ring.push(p);
+          zSum += p.z;
+        }
+        renderables.push({
+          kind: 'moneylayer', i: -1, pts: ring, cz: zSum / FACE_COUNT,
+        });
+      }
+    }
+
+    /* Drain HOLE — drawn between back walls and front walls in Z-sort so the
+       translucent front wall draws OVER the white hole (wall colour tints
+       the hole + wall outline stays on top). Conveys "hole is on the floor
+       UNDER the side walls". Grows on X press (HOLE_GROW_MS), then optionally
+       shrinks (HOLE_SHRINK_MS) once water has fully drained. */
+    if (drainOpen) {
+      let scale;
+      if (holeShrinkStartMs != null) {
+        const tt = Math.min(1, (rippleT - holeShrinkStartMs) / HOLE_SHRINK_MS);
+        scale = 1 - (1 - Math.pow(1 - tt, 2));   // shrinks 1 → 0 (ease-out)
+        if (tt >= 1) {
+          drainOpen = false;
+          holeShrinkStartMs = null;
+          if (drainBtnEl) drainBtnEl.classList.remove('is-draining');
+          scale = 0;
+        }
+      } else {
+        const elapsed = Math.max(0, rippleT - holeGrowStartMs);
+        const tt = Math.min(1, elapsed / HOLE_GROW_MS);
+        scale = 1 - Math.pow(1 - tt, 2);          // grows 0 → 1 (ease-out)
+      }
+      if (scale > 0.01) {
+        const hp = transform([0, 0, 0]);
+        renderables.push({
+          kind: 'hole', i: -1,
+          cx: hp.x, cy: hp.y,
+          rx: HOLE_RX * scale, ry: HOLE_RY * scale,
+          cz: 0,                                  // floor centre → between back / front walls
+        });
+      }
+    }
+
+    /* SPILL — a constant-height water SHEET that descends the lowered wall's
+       OUTER face. Phase 1: the rectangle's HIGH edge starts at the wall top
+       (heights[fi], connected to the inside water) and slides down at fixed
+       height. Phase 2: once its LOW edge reaches the floor (y=0), the low
+       edge pins to the floor and the rectangle shrinks from the top until
+       gone. The top edge fades via a vertical gradient (transparent at top).
+       A separate translucent overlay wets the thin top RIM of the face. */
+    const nowMs = (typeof rippleT === 'number' && rippleT > 0) ? rippleT : performance.now();
+    for (const fiStr in spills) {
+      const fi = +fiStr;
+      const sp = spills[fi];
+      const age = nowMs - sp.startMs;
+      if (age > SPILL_DURATION) { delete spills[fi]; continue; }
+      const intensity = Math.max(0.25, Math.min(1, sp.intensity || 1));
+      const step = (Math.PI * 2) / FACE_COUNT;
+      const aL = -Math.PI / 2 + fi * step;
+      const aR = aL + step;
+      const wallTop = heights[fi];
+
+      // Progress 0→1 over the spill's life. The sheet's HIGH edge travels
+      // from the wall top (wallTop) down to 0. Sheet height is constant
+      // (SPILL_SHEET_H) until the low edge hits the floor, then the sheet
+      // shrinks from the top.
+      const p = age / SPILL_DURATION;
+      const sheetH = Math.min(SPILL_SHEET_H, wallTop);
+      const highY = wallTop * (1 - p);                 // descends wallTop → 0
+      let lowY = highY - sheetH;
+      if (lowY < 0) lowY = 0;                            // pinned at floor
+      if (highY <= 0.5) continue;                        // fully drained
+      const tl = transform([OUTER_R * Math.cos(aL), highY, OUTER_R * Math.sin(aL)]);
+      const tr = transform([OUTER_R * Math.cos(aR), highY, OUTER_R * Math.sin(aR)]);
+      const br = transform([OUTER_R * Math.cos(aR), lowY,  OUTER_R * Math.sin(aR)]);
+      const bl = transform([OUTER_R * Math.cos(aL), lowY,  OUTER_R * Math.sin(aL)]);
+      const cz = (tl.z + tr.z + br.z + bl.z) / 4;
+      // Overall opacity eases out only in the last 25% of the life so the
+      // descent stays vivid; intensity scales the peak.
+      const lifeFade = (p > 0.75) ? (1 - (p - 0.75) / 0.25) : 1;
+      renderables.push({
+        kind: 'spill', i: fi,
+        pts: [tl, tr, br, bl],
+        opacity: lifeFade * (0.55 + 0.45 * intensity),
+        cz: cz - 1,                              // just in FRONT of its outer wall
+      });
+
+      // RIM overlay — water glazing the thin top EDGE of the lowered face
+      // while it's actively pouring (first ~45% of the spill life). The rim
+      // quad spans outer→inner radius at the wall's current top height.
+      if (p < 0.45) {
+        const rtl = transform([OUTER_R * Math.cos(aL), wallTop, OUTER_R * Math.sin(aL)]);
+        const rtr = transform([OUTER_R * Math.cos(aR), wallTop, OUTER_R * Math.sin(aR)]);
+        const ritr = transform([INNER_R * Math.cos(aR), wallTop, INNER_R * Math.sin(aR)]);
+        const ritl = transform([INNER_R * Math.cos(aL), wallTop, INNER_R * Math.sin(aL)]);
+        const rimCz = (rtl.z + rtr.z + ritr.z + ritl.z) / 4;
+        renderables.push({
+          kind: 'spillrim', i: fi,
+          pts: [rtl, rtr, ritr, ritl],
+          opacity: (1 - p / 0.45) * (0.4 + 0.4 * intensity),
+          cz: rimCz - 2,                          // on top of the rim panel
+        });
+      }
+    }
+
+    renderables.sort((a, b) => b.cz - a.cz);
+
+    for (const r of renderables) {
+      const isSel = (r.i >= 0 && r.i === selectedFace);
+      if (r.kind === 'hole') {
+        const NS = 'http://www.w3.org/2000/svg';
+        const hole = document.createElementNS(NS, 'ellipse');
+        hole.setAttribute('cx', r.cx.toFixed(2));
+        hole.setAttribute('cy', r.cy.toFixed(2));
+        hole.setAttribute('rx', r.rx.toFixed(2));
+        hole.setAttribute('ry', r.ry.toFixed(2));
+        hole.setAttribute('fill', '#ffffff');
+        hole.setAttribute('stroke', 'rgba(0,0,0,0.20)');
+        hole.setAttribute('stroke-width', '0.8');
+        hole.setAttribute('pointer-events', 'none');
+        svgEl.appendChild(hole);
+        continue;
+      }
+      if (r.kind === 'spillrim') {
+        // Water glaze on the thin top edge of the lowered face.
+        const node = appendPoly(r.pts, 'rgba(56,189,248,0.85)', 'transparent', 0);
+        node.setAttribute('fill-opacity', String(Math.max(0.1, r.opacity)));
+        node.setAttribute('pointer-events', 'none');
+        continue;
+      }
+      if (r.kind === 'spill') {
+        // Falling sheet — top-fading gradient so the trailing edge dissolves
+        // as the rectangle descends.
+        const node = appendPoly(r.pts, 'url(#bucket-spill-grad)', 'transparent', 0);
+        node.setAttribute('fill-opacity', String(Math.max(0.1, r.opacity)));
+        node.setAttribute('pointer-events', 'none');
+        // Vertical "flow streaks" — thin lighter-blue lines down the sheet,
+        // also fading from the top (lower opacity near the trailing edge).
+        const STREAK_COUNT = 4;
+        const NS = 'http://www.w3.org/2000/svg';
+        for (let s = 0; s < STREAK_COUNT; s++) {
+          const u = (s + 0.5) / STREAK_COUNT;
+          const tlp = r.pts[0], trp = r.pts[1], brp = r.pts[2], blp = r.pts[3];
+          const x1 = tlp.x + (trp.x - tlp.x) * u;
+          const y1 = tlp.y + (trp.y - tlp.y) * u;
+          const x2 = blp.x + (brp.x - blp.x) * u;
+          const y2 = blp.y + (brp.y - blp.y) * u;
+          // Start the streak a little below the top edge so it shares the
+          // sheet's top fade.
+          const sx1 = x1 + (x2 - x1) * 0.18;
+          const sy1 = y1 + (y2 - y1) * 0.18;
+          const line = document.createElementNS(NS, 'line');
+          line.setAttribute('x1', sx1.toFixed(2));
+          line.setAttribute('y1', sy1.toFixed(2));
+          line.setAttribute('x2', x2.toFixed(2));
+          line.setAttribute('y2', y2.toFixed(2));
+          line.setAttribute('stroke', 'rgba(255,255,255,0.55)');
+          line.setAttribute('stroke-width', '1.3');
+          line.setAttribute('stroke-linecap', 'round');
+          line.setAttribute('opacity', String(Math.max(0.1, r.opacity * 0.8)));
+          line.setAttribute('pointer-events', 'none');
+          svgEl.appendChild(line);
+        }
+        continue;
+      }
+      if (r.kind === 'sidefill') {
+        const color = (fillType === 'money')
+          ? 'rgba(245,158,11,0.92)'
+          : 'rgba(56,189,248,0.55)';
+        const node = appendPoly(r.pts, color, 'transparent', 0);
+        node.setAttribute('pointer-events', 'none');
+        continue;
+      }
+      if (r.kind === 'surface') {
+        const fill   = (fillType === 'money') ? '#FCD34D' : 'url(#bucket-water-grad)';
+        const stroke = (fillType === 'money') ? '#92400E' : '#0EA5E9';
+        const node = appendPoly(r.pts, fill, stroke, 0.6);
+        node.setAttribute('pointer-events', 'none');
+        continue;
+      }
+      if (r.kind === 'moneylayer') {
+        const node = appendPoly(r.pts, 'transparent',
+                                'rgba(146,64,14,0.55)', 0.8);
+        node.setAttribute('pointer-events', 'none');
+        continue;
+      }
+      let fill;
+      if      (r.kind === 'outer') fill = isSel ? SELECT_LIGHT(FACE_COLORS[r.i])   : FACE_COLORS[r.i];
+      else if (r.kind === 'inner') fill = isSel ? SELECT_LIGHT(INSIDE_COLORS[r.i]) : INSIDE_COLORS[r.i];
+      else                         fill = isSel ? SELECT_LIGHT(RIM_COLORS[r.i])    : RIM_COLORS[r.i];
+      const isWall = (r.kind === 'outer' || r.kind === 'inner');
+      const opacity = isSel
+        ? (isWall ? SEL_OPACITY : 1)
+        : (isWall ? WALL_OPACITY : 1);
+      const stroke = isSel ? SELECT_GLOW : 'rgba(0,0,0,.06)';
+      const sw     = isSel ? 2.4 : 0.6;
+      const node = appendPoly(r.pts, fill, stroke, sw);
+      if (opacity < 1) node.setAttribute('fill-opacity', String(opacity));
+      if (r.kind === 'outer' || r.kind === 'rim') {
+        node.setAttribute('data-face-idx', String(r.i));
+        node.style.cursor = selectedFace === r.i ? 'ns-resize' : 'pointer';
+      } else {
+        node.setAttribute('pointer-events', 'none');
+      }
+    }
+
+  }
+
+  function appendPoly(pts, fill, stroke, strokeW) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const node = document.createElementNS(NS, 'polygon');
+    node.setAttribute('points',
+      pts.map(p => p.x.toFixed(2) + ',' + p.y.toFixed(2)).join(' '));
+    node.setAttribute('fill', fill);
+    if (stroke && strokeW) {
+      node.setAttribute('stroke', stroke);
+      node.setAttribute('stroke-width', String(strokeW));
+      node.setAttribute('stroke-linejoin', 'round');
+    }
+    svgEl.appendChild(node);
+    return node;
+  }
+
+  function _shade(hex, k) {
+    const r = Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(1, 3), 16) * k)));
+    const g = Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(3, 5), 16) * k)));
+    const b = Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(5, 7), 16) * k)));
+    return '#' +
+      r.toString(16).padStart(2, '0') +
+      g.toString(16).padStart(2, '0') +
+      b.toString(16).padStart(2, '0');
+  }
+
+  /* ----- Pointer handlers ----- */
+  function attachHandlers() {
+    svgEl.addEventListener('pointerdown',   onDown);
+    svgEl.addEventListener('pointermove',   onMove);
+    svgEl.addEventListener('pointerup',     onUp);
+    svgEl.addEventListener('pointercancel', onUp);
+    fillBtnEl.addEventListener('click',  onFillClick);
+    drainBtnEl.addEventListener('click', onDrainClick);
+    moneyBtnEl.addEventListener('click', onMoneyClick);
+  }
+
+  function getFaceIdxAt(evt) {
+    const t = evt.target;
+    const a = t && t.getAttribute && t.getAttribute('data-face-idx');
+    return a == null ? -1 : +a;
+  }
+
+  function onDown(e) {
+    drag = {
+      startX:   e.clientX,
+      startY:   e.clientY,
+      startRot: rotation,
+      faceAt:   getFaceIdxAt(e),
+      startH:   (selectedFace >= 0) ? heights[selectedFace] : null,
+      moved:    false,
+      mode:     null,
+      isTouch:  (e.pointerType === 'touch'),
+    };
+    // DON'T preventDefault here — let the browser see the touch so that, on
+    // mobile, vertical drag is treated as a page scroll (touch-action:pan-y
+    // on the SVG). preventDefault on pointerdown would block that.
+    // Pointer capture is also deferred: setPointerCapture happens only when
+    // we commit to handling the gesture (rotate or adjust) in onMove.
+  }
+
+  function onMove(e) {
+    if (!drag) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved) {
+      if (Math.abs(dx) < TAP_THRESH && Math.abs(dy) < TAP_THRESH) return;
+      drag.moved = true;
+      // Direction decides mode. Vertical-dominant motion with a face
+      // SELECTED → adjust that face's height. The CSS .has-selection
+      // override sets touch-action:none on the SVG when a face is selected,
+      // so the browser doesn't try to scroll mid-adjust. Otherwise →
+      // rotate (default, works for both touch and mouse).
+      if (selectedFace >= 0 && Math.abs(dy) > Math.abs(dx)) {
+        drag.mode = 'adjust';
+      } else {
+        drag.mode = 'rotate';
+      }
+      // Now that we know we're handling this gesture, claim the pointer so
+      // touchend / touchcancel definitely reach us — and start preventing
+      // default so the browser doesn't try to also handle it.
+      try { svgEl.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    if (drag.mode === 'rotate') {
+      // Finger LEFT → bucket LEFT (front face follows the finger).
+      rotation = drag.startRot - dx * ROT_PER_PX;
+    } else if (drag.mode === 'adjust') {
+      let next = drag.startH - dy;
+      if (next < MIN_H)     next = MIN_H;
+      if (next > DEFAULT_H) next = DEFAULT_H;
+      heights[selectedFace] = next;
+      // Spill ONLY happens when the wall is dragged BELOW the current water
+      // level (real overflow). Intensity scales with how much was lost so
+      // a small dip past the surface = thin trickle, slamming the wall
+      // down through a full bucket = thick cascade (matches user spec
+      // "줄어든 옆면에 비례하여 물이 떨어짐, 많이 줄이면 더 많이").
+      if (waterLevel > next + 0.5) {
+        const oldLevel = waterLevel;
+        const overflow = oldLevel - next;
+        const intensity = Math.min(1, overflow / (DEFAULT_H * 0.5));
+        spills[selectedFace] = {
+          startMs: performance.now(),
+          intensity: intensity,
+        };
+        // --- Tilt the surface ---
+        // The LOW side (waterLevel) drops immediately to the new wall top.
+        // The FAR side (waterFarLevel) keeps the OLD level and lags — so the
+        // surface tilts down toward the lowered face, then eases flat in the
+        // render loop. Starting/continuing a tilt on this face keeps the far
+        // side at least as high as the old level.
+        tiltFace = selectedFace;
+        waterFarLevel = Math.max(waterFarLevel, oldLevel);
+        cancelAnimationFrame(fillRafId);
+        isFilling = false;
+        waterLevel = next;
+      }
+    }
+    render();
+    e.preventDefault();
+  }
+
+  function onUp(e) {
+    if (drag && !drag.moved) {
+      if (drag.faceAt >= 0) {
+        selectedFace = (selectedFace === drag.faceAt) ? -1 : drag.faceAt;
+      } else {
+        selectedFace = -1;
+      }
+      _syncSelectionClass();
+      render();
+    }
+    drag = null;
+    try { svgEl.releasePointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  /* Mirror selectedFace state to a CSS class so .bucket-svg.has-selection
+     can override touch-action — when a face is selected, vertical drag must
+     be ours (face-adjust) rather than the browser's (page scroll). */
+  function _syncSelectionClass() {
+    if (!svgEl) return;
+    if (selectedFace >= 0) svgEl.classList.add('has-selection');
+    else                   svgEl.classList.remove('has-selection');
+  }
+
+  /* ----- Fill engine (water or money) ----- */
+  function runFill(type, btn) {
+    if (isFilling) return;
+    if (drainOpen) {
+      clearTimeout(drainDelayTimeoutId);   // cancel any pending drain-after-1s
+      cancelAnimationFrame(drainRafId);
+      isDraining = false;
+      drainOpen  = false;
+      holeShrinkStartMs = null;
+      drainBtnEl.classList.remove('is-draining');
+    }
+    if (fillType !== type) waterLevel = 0;
+    fillType = type;
+    // A button fill is a flat fill — clear any leftover surface tilt.
+    tiltFace = -1;
+    waterFarLevel = waterLevel;
+    isFilling = true;
+    btn.classList.add('is-pouring');
+    const startMs   = performance.now();
+    const fromLevel = waterLevel;
+    const target    = Math.min.apply(null, heights);
+    const duration  = 1800;
+    cancelAnimationFrame(fillRafId);
+    function step(now) {
+      const t = Math.min(1, (now - startMs) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      waterLevel = fromLevel + (target - fromLevel) * eased;
+      waterFarLevel = waterLevel;     // stay flat during a button fill
+      render();
+      if (t < 1) {
+        fillRafId = requestAnimationFrame(step);
+      } else {
+        isFilling = false;
+        btn.classList.remove('is-pouring');
+      }
+    }
+    fillRafId = requestAnimationFrame(step);
+  }
+  function onFillClick()  { runFill('water', fillBtnEl); }
+  function onMoneyClick() { runFill('money', moneyBtnEl); }
+
+  /* ----- Drain — sequence: open hole → wait 1 s → drain → close hole ----- */
+  function onDrainClick() {
+    if (isDraining || drainOpen) return;
+    if (isFilling) return;
+    // (1) Hole opens immediately — grows over HOLE_GROW_MS via render().
+    drainOpen = true;
+    holeGrowStartMs = performance.now();
+    holeShrinkStartMs = null;
+    // Drain drops the level uniformly — clear any leftover surface tilt.
+    tiltFace = -1;
+    waterFarLevel = waterLevel;
+    drainBtnEl.classList.add('is-draining');
+    render();
+    // No water → just open the hole, hold it briefly, then close.
+    if (waterLevel <= 0.1) {
+      clearTimeout(drainDelayTimeoutId);
+      drainDelayTimeoutId = setTimeout(startHoleShrink,
+                                       HOLE_DRAIN_DELAY_MS + 200);
+      return;
+    }
+    // (2) Wait HOLE_DRAIN_DELAY_MS before water starts flowing — gives the
+    //     viewer a beat to see the hole open before water begins draining.
+    clearTimeout(drainDelayTimeoutId);
+    drainDelayTimeoutId = setTimeout(() => {
+      isDraining = true;
+      const startMs   = performance.now();
+      const fromLevel = waterLevel;
+      const duration  = 2500;
+      cancelAnimationFrame(drainRafId);
+      function step(now) {
+        const t = Math.min(1, (now - startMs) / duration);
+        const eased = 1 - Math.pow(1 - t, 2);
+        waterLevel = fromLevel * (1 - eased);
+        waterFarLevel = waterLevel;     // stay flat through the drain
+        render();
+        if (t < 1) {
+          drainRafId = requestAnimationFrame(step);
+        } else {
+          // (4) Drain done → hole shrinks back to 0 (handled in render).
+          waterLevel = 0;
+          waterFarLevel = 0;
+          isDraining = false;
+          startHoleShrink();
+        }
+      }
+      drainRafId = requestAnimationFrame(step);
+    }, HOLE_DRAIN_DELAY_MS);
+  }
+
+  function startHoleShrink() {
+    if (!drainOpen) return;
+    holeShrinkStartMs = performance.now();
+    render();
+  }
+
+  /* ----- Public: bump water level by a fraction of bucket height ----- */
+  /* Screen-space point of the WATER SURFACE CENTRE — where a falling
+     task droplet should land (the centre of the top of the water column,
+     not the bucket floor). Returns {x, y} in client coords, or null if the
+     bucket isn't mounted. The level is PREDICTED to be post-fill (current
+     level + this drop's 7%, capped at the lowest wall) so the droplet lands
+     exactly on the surface as it rises to meet it. The SVG viewBox is
+     "-150 -160 300 300"; transform() yields user-space coords centred at 0,
+     which we map onto the live canvas rect. */
+  window.bidoroBucketSurfacePoint = function () {
+    if (!isMounted || !svgEl) return null;
+    const rect = svgEl.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    const predicted = Math.min(waterLevel + DEFAULT_H * 0.07,
+                               Math.min.apply(null, heights));
+    const lvl = Math.max(8, predicted);
+    const p = transform([0, lvl, 0]);
+    const sx = rect.left + ((p.x + 150) / 300) * rect.width;
+    const sy = rect.top  + ((p.y + 160) / 300) * rect.height;
+    return { x: sx, y: sy };
+  };
+
+  window.bidoroBucketAddWater = function (ratio) {
+    if (typeof ratio !== 'number' || ratio <= 0) return;
+    if (!isMounted) return;
+    if (drainOpen) {
+      clearTimeout(drainDelayTimeoutId);
+      cancelAnimationFrame(drainRafId);
+      isDraining = false;
+      drainOpen  = false;
+      holeShrinkStartMs = null;
+      drainBtnEl.classList.remove('is-draining');
+    }
+    if (fillType !== 'water') {
+      waterLevel = 0;
+      fillType = 'water';
+    }
+    // Task fill is flat — clear any leftover tilt before raising the level.
+    tiltFace = -1;
+    waterFarLevel = waterLevel;
+    // The droplet just landed → kick the slosh. Each drop adds to the
+    // amplitude (capped) so rapid ticks slosh harder; it decays to 0 in the
+    // render loop so the surface eventually goes still.
+    sloshAmp = Math.min(9, sloshAmp + 6);
+    const maxLevel    = Math.min.apply(null, heights);
+    const fromLevel   = waterLevel;
+    const desired     = waterLevel + DEFAULT_H * ratio;
+    const targetLevel = Math.min(maxLevel, desired);
+    // OVERFLOW: the 7% we tried to add exceeds the lowest wall → the excess
+    // spills over the wall(s) that ARE the cap. Trigger a spill on each
+    // wall whose height equals the current minimum. Intensity scales with
+    // how much actually overflowed so 1 tick over a tall stack = thin spill,
+    // 1 tick when bucket was already full = full 7% spill.
+    if (desired > maxLevel + 0.5) {
+      const overflowAmount = desired - maxLevel;
+      const intensity = Math.min(1, overflowAmount / (DEFAULT_H * 0.07));
+      const now = performance.now();
+      for (let i = 0; i < FACE_COUNT; i++) {
+        if (heights[i] <= maxLevel + 0.5) {
+          spills[i] = { startMs: now, intensity: intensity };
+        }
+      }
+    }
+    if (targetLevel <= fromLevel + 0.05) return;
+    cancelAnimationFrame(fillRafId);
+    isFilling = true;
+    const startMs  = performance.now();
+    // Half-speed rise (was 500 ms) per user request — water creeps up more
+    // gently so the fill reads clearly.
+    const duration = 1000;
+    function step(now) {
+      const t = Math.min(1, (now - startMs) / duration);
+      const eased = 1 - Math.pow(1 - t, 2);
+      waterLevel = fromLevel + (targetLevel - fromLevel) * eased;
+      waterFarLevel = waterLevel;     // flat during a task fill
+      render();
+      if (t < 1) {
+        fillRafId = requestAnimationFrame(step);
+      } else {
+        isFilling = false;
+      }
+    }
+    fillRafId = requestAnimationFrame(step);
+  };
+
+  /* Continuous tick — drives water-surface ripple, hole grow / shrink, and
+     wall-spill fade. Skips re-rendering when nothing is animating to keep
+     this widget cheap when the bucket is just sitting there. */
+  function startRippleLoop() {
+    cancelAnimationFrame(rippleRafId);
+    (function tick(now) {
+      rippleT = now;
+      // Settle the tilted surface: the lagging FAR side eases toward the LOW
+      // side a little each frame (~6%/frame ≈ 0.9 s to flatten). When the gap
+      // closes, clear the tilt so render() goes back to the cheap flat path.
+      if (tiltFace >= 0) {
+        waterFarLevel += (waterLevel - waterFarLevel) * 0.06;
+        if (Math.abs(waterFarLevel - waterLevel) < 0.3) {
+          waterFarLevel = waterLevel;
+          tiltFace = -1;
+        }
+      }
+      const tilting = (tiltFace >= 0);
+      // Slosh decay — ~4%/frame → settles to still in ~1.5 s.
+      let sloshing = false;
+      if (sloshAmp > 0.05) {
+        sloshAmp *= 0.96;
+        if (sloshAmp < 0.05) sloshAmp = 0;
+        else sloshing = true;
+      }
+      const holeAnimating = drainOpen && (
+        (holeShrinkStartMs == null && (now - holeGrowStartMs) < HOLE_GROW_MS)
+        || (holeShrinkStartMs != null && (now - holeShrinkStartMs) < HOLE_SHRINK_MS)
+      );
+      let spillActive = false;
+      for (const fi in spills) {
+        if ((now - spills[fi].startMs) < SPILL_DURATION) { spillActive = true; break; }
+      }
+      const needs = (waterLevel > 0.1) || tilting || sloshing || holeAnimating || spillActive;
+      if (needs) render();
+      rippleRafId = requestAnimationFrame(tick);
+    })(performance.now());
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 })();
 </script>
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
