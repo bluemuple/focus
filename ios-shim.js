@@ -37,10 +37,14 @@
   }
 
   // ---- 2. Status-bar styling ----
+  // overlay:true → the WebView is full-screen (under the status bar) and the
+  // bar is a transparent overlay. The topbar's own env(safe-area-inset-top)
+  // padding (in index.html) is the SINGLE inset source, so content stays clear
+  // of the clock from first paint. (Pairs with capacitor.config.json
+  // contentInset:"never" + StatusBar.overlaysWebView:true.)
   if (P.StatusBar) {
     try { P.StatusBar.setStyle({ style: 'DEFAULT' }); } catch (_) {}
-    try { P.StatusBar.setBackgroundColor({ color: '#ffffff' }); } catch (_) {}
-    try { P.StatusBar.setOverlaysWebView({ overlay: false }); } catch (_) {}
+    try { P.StatusBar.setOverlaysWebView({ overlay: true }); } catch (_) {}
   }
 
   // ---- 3. Local notifications for pomodoro phase boundaries ----
@@ -94,13 +98,22 @@
   }
 
   // ---- 4. Keyboard body-class hooks ----
+  // On keyboardWillShow the plugin reports the keyboard's pixel height. We
+  // publish it as the CSS variable --kb-height on <html> and add the
+  // body.ios-kb-open class. CSS (in index.html) uses these to lift every
+  // .modal up so it sits just above the keyboard with a small gap, and to
+  // cap the modal's height (scroll-if-taller) so it never runs off the top.
   if (P.Keyboard) {
     try {
-      P.Keyboard.addListener('keyboardWillShow', () => {
+      P.Keyboard.addListener('keyboardWillShow', (info) => {
+        const h = (info && typeof info.keyboardHeight === 'number')
+          ? info.keyboardHeight : 300;
+        document.documentElement.style.setProperty('--kb-height', h + 'px');
         document.body.classList.add('ios-kb-open');
       });
       P.Keyboard.addListener('keyboardWillHide', () => {
         document.body.classList.remove('ios-kb-open');
+        document.documentElement.style.setProperty('--kb-height', '0px');
       });
     } catch (_) {}
   }
