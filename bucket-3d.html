@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Bucket — CSS 3D prototype</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    min-height: 100%; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    background: #fbfcff; color: #475569; user-select: none; -webkit-user-select: none;
+    overflow: hidden;
+  }
+  h1 { font-size: 15px; font-weight: 700; margin: 0; color: #334155; }
+  .hint { font-size: 12px; color: #94a3b8; text-align: center; line-height: 1.5; }
+  .ctrls { display: flex; gap: 10px; align-items: center; font-size: 12px; color: #64748b; flex-wrap: wrap; justify-content: center; max-width: 360px; }
+  .ctrls label { display: flex; gap: 6px; align-items: center; }
+  .seg, .btn { font: inherit; font-size: 12px; padding: 4px 11px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff; color: #475569; cursor: pointer; }
+  .seg.on { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  .btn { background: #38bdf8; color: #fff; border-color: #38bdf8; font-weight: 700; }
+  .btn:active, .seg:active { transform: translateY(1px); }
+  .ctrls textarea { font: inherit; font-size: 12px; padding: 5px 9px; border-radius: 8px; border: 1px solid #cbd5e1; color: #334155; width: 210px; height: 44px; resize: none; line-height: 1.3; }
+  .ctrls textarea:disabled { background: #f1f5f9; color: #94a3b8; }
+  .ctrls select { font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 8px; border: 1px solid #cbd5e1; color: #334155; }
+  .cnt { font-size: 10px; color: #94a3b8; min-width: 44px; }
+  .txtlabel { font-size: 11px; color: #94a3b8; min-width: 78px; text-align: right; }
+  /* text PAINTED on a 3D face → it inherits the face's perspective/foreshortening for free; pre-line keeps the typed line breaks */
+  .face-title { position: absolute; left: 3%; right: 3%; text-align: center; font-weight: 800;
+                white-space: pre-line; letter-spacing: -.02em; pointer-events: none; backface-visibility: hidden; }
+  .face-desc  { position: absolute; left: 7%; right: 7%; text-align: center; font-weight: 600;
+                white-space: pre-line; line-height: 1.25; pointer-events: none; backface-visibility: hidden; }
+  /* level number above a top corner of the SELECTED face (face colour, bold, opaque) */
+  .face-num   { position: absolute; font-weight: 900; opacity: 1; line-height: 1; white-space: nowrap; pointer-events: none; backface-visibility: hidden;
+                transform: translateZ(60px);   /* pull well in front of the water + bucket faces so it isn't occluded */
+                text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 1px 1px rgba(0,0,0,.25); }   /* white halo so the colour pops on any backdrop */
+  .layout { display: flex; flex-direction: row; align-items: center; gap: 30px; flex-wrap: wrap; justify-content: center; }
+  .settings { display: flex; flex-direction: column; gap: 9px; align-items: flex-start; width: 342px; }
+  .settings .ctrls { width: 100%; justify-content: flex-start; max-width: none; }
+  .settings .hint { width: 100%; text-align: left; }
+  .scene { position: relative; flex: 0 0 auto; width: 320px; height: 340px; perspective: 194px; perspective-origin: 50% 50%; touch-action: none; cursor: grab; }
+  .scene:active { cursor: grabbing; }
+  .world {
+    position: absolute; left: 50%; top: 50%; width: 0; height: 0;
+    transform-style: preserve-3d;
+    transform: rotateX(-6deg) rotateY(0deg);   /* default: looking UP from below at 6° (controls override); flat face front */
+  }
+  .wall {
+    position: absolute; transform-style: preserve-3d;
+    border: 1px solid rgba(255,255,255,.5);
+    box-shadow: inset 0 0 18px rgba(255,255,255,.25);
+    backface-visibility: hidden;   /* a wall + its label hide once it turns away → no reversed text */
+  }
+  /* the label is a child of the 3D wall → TRUE perspective for free */
+  .wall .lbl {
+    position: absolute; left: 0; right: 0; text-align: center;
+    font-weight: 800; white-space: nowrap; letter-spacing: -.01em;
+    pointer-events: none; backface-visibility: hidden;
+  }
+  .wall .num { position: absolute; font-weight: 900; pointer-events: none; backface-visibility: hidden; }
+  .floor { position: absolute; }
+  .rim   { position: absolute; }
+  .spill { position: absolute; pointer-events: none; }
+  /* water pouring over a lowered wall — a sheet that drops down the outer face + fades */
+  @keyframes spill-fall {
+    0%   { opacity: .9; transform: translateY(-6px) scaleY(.5); }
+    100% { opacity: 0;  transform: translateY(42px) scaleY(1.15); }
+  }
+  /* water RUNNING DOWN a face: the sheet spans the whole face (top edge → floor); streaks flow downward */
+  @keyframes water-run {
+    0%   { opacity: 0;   background-position-y: 0; }
+    20%  { opacity: .85; }
+    100% { opacity: 0;   background-position-y: 26px; }
+  }
+  /* the WHOLE water mass (body + surface) sways as ONE block, pivoted at the floor
+     (translateY 58 = H/2, so the bottom stays planted and the surface swings most → no gap) */
+  @keyframes water-mass-slosh {
+    0%, 100% { transform: translateY(58px) rotateX(3deg)    rotateZ(2deg)    translateY(-58px); }
+    33%      { transform: translateY(58px) rotateX(-2.4deg) rotateZ(-2.2deg) translateY(-58px); }
+    66%      { transform: translateY(58px) rotateX(2deg)    rotateZ(1.3deg)  translateY(-58px); }
+  }
+</style>
+</head>
+<body>
+  <h1>CSS 3D Bucket (vs. SVG version)</h1>
+  <div class="layout">
+  <div class="scene" id="scene">
+    <div class="world" id="world"></div>
+  </div>
+  <div class="settings">
+  <div class="ctrls">
+    <label>Faces <input id="nSides" type="range" min="3" max="8" value="7" /></label>
+    <span id="nVal">7</span>
+    <button id="fillTop" class="btn">Fill up</button>
+    <button id="pour" class="btn" style="background:#0ea5e9;border-color:#0ea5e9">Pour</button>
+    <button id="sidePour" class="btn" style="background:#0284c7;border-color:#0284c7">Side-Pour</button>
+  </div>
+  <div class="ctrls">
+    <span>View</span>
+    <button id="viewAbove" class="seg">Above</button>
+    <button id="viewBelow" class="seg on">Below</button>
+    <label>Angle <input id="angle" type="range" min="0" max="75" value="6" /></label>
+    <span id="angleVal">6°</span>
+  </div>
+  <div class="ctrls">
+    <label>Perspective <input id="persp" type="range" min="120" max="800" value="194" /></label>
+    <span id="perspVal">194px</span>
+  </div>
+  <div class="ctrls">
+    <label>Height <input id="bheight" type="range" min="60" max="210" value="116" /></label>
+    <span id="bheightVal">116</span>
+    <label>Width <input id="bwidth" type="range" min="45" max="130" value="78" /></label>
+    <span id="bwidthVal">156</span>
+  </div>
+  <div class="ctrls">
+    <label>Wall <input id="thick" type="range" min="0" max="18" value="3" /></label>
+    <span id="thickVal">3px</span>
+  </div>
+  <div class="ctrls">
+    <label>Line <input id="lineSl" type="range" min="0" max="100" value="0" /></label>
+    <span id="lineSlVal">0</span>
+  </div>
+  <div class="ctrls">
+    <label>Line 2 <input id="lineSl2" type="range" min="0" max="100" value="0" /></label>
+    <span id="lineSl2Val">0</span>
+  </div>
+  <div class="ctrls">
+    <label>Drops <input id="dropsSl" type="range" min="0" max="100" value="60" /></label>
+    <span id="dropsSlVal">60</span>
+  </div>
+  <div class="ctrls">
+    <label>Drop Size <input id="dropSizeSl" type="range" min="6" max="70" value="20" /></label>
+    <span id="dropSizeSlVal">20px</span>
+  </div>
+  </div>
+  <div class="settings">
+  <div class="ctrls" style="margin-top:6px"><span class="txtlabel">Select</span><select id="faceSel"></select></div>
+  <div class="ctrls"><span class="txtlabel">Title</span><textarea id="ftTitle" rows="2" maxlength="16" placeholder="title"></textarea><span class="cnt" id="cTitle">0/16</span></div>
+  <div class="ctrls"><span class="txtlabel">Low (1–3)</span><textarea id="ftD1" rows="2" maxlength="60" placeholder="height 1–3"></textarea><span class="cnt" id="cD1">0/60</span></div>
+  <div class="ctrls"><span class="txtlabel">Mid (4–7)</span><textarea id="ftD2" rows="2" maxlength="60" placeholder="height 4–7"></textarea><span class="cnt" id="cD2">0/60</span></div>
+  <div class="ctrls"><span class="txtlabel">High (8–10)</span><textarea id="ftD3" rows="2" maxlength="60" placeholder="height 8–10"></textarea><span class="cnt" id="cD3">0/60</span></div>
+  <div class="hint">Tap a face to select it (tap again to deselect) · drag the selected face up/down to set its level · drag empty space to rotate · "Fill up" raises the water.</div>
+  </div>
+  </div>
+
+<script>
+(function () {
+  const PI = Math.PI;
+  const COLORS = ['#F4B5C7','#F7C5A1','#F6E1A0','#B9E2B8','#A8DCE0','#B3CBED','#D2B8E8','#F2B8D0'];
+  const COLOR_NAMES = ['Red','Orange','Yellow','Green','Cyan','Blue','Purple','Pink'];   // dropdown labels each face by its colour
+  const COLOR_VIVID = ['#E23B5A','#E07820','#C99100','#2FA043','#0E9CB0','#2E6FE0','#9038C8','#E0478A'];   // vivid version of each face colour — readable as the level number on a light bg
+  const NAMES  = ['Mind','Body','Growth','People','Money','Joy','Study / Work','Rest'];
+  let R_BOT = 78, R_TOP = 78, H = 116;   // R = circumradius (max width = 2R), H = height — both slider-driven; R_TOP=R_BOT → equal top/bottom areas
+  const RIM = 4;
+
+  const world = document.getElementById('world');
+  const scene = document.getElementById('scene');
+  const overlay = document.createElement('div');   // 2D layer painted OVER the 3D scene → number + grey box are never occluded by the 3D water/faces
+  overlay.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;pointer-events:none;z-index:6;';
+  scene.appendChild(overlay);
+  let spin = 0, tilt = 6, viewAbove = false, persp = 194;   // view-angle magnitude + above/below + perspective px
+  let wallT = 3;                     // side-wall thickness (px)
+  let pourTilt = 0, pourAxis = 'x', pourTimer = null, drainTimer = null, standTimer = null;   // pour: tilt (deg, 0=upright) + axis ('x'=forward toward viewer, 'z'=sideways) + timers (tilt/drain/stand-up)
+  let N = 7, heights = [], waterLvl = 0.42;   // per-wall height fraction (0..1) + water level (0..1 of H)
+  const BOT = 0;                     // inner-floor height: water lives in [BOT, waterLvl]. 0 = floor at the true bottom, so even
+                                     // water height 1 (level-1 face) still holds a level's worth of water (each level = 10% of H).
+  let pourLine = 0;                  // "Line" slider 0..100: a white line at the lowest face's TOP-edge height, swept from
+                                     // that edge (0) across to the opposite vertex/face (100), parallel to the edge
+  let line2Val = 0;                  // "Line 2" slider 0..100: same sweep but at the lowest face's BOTTOM-edge height (bucket floor)
+  let dropAmt = 60;                  // "Drops" slider 0..100: how many water droplets fall from the pouring surface
+  let dropSize = 20;                 // "Drop Size" slider: AVERAGE droplet diameter (px) at full water; each drop = dropSize·(0.5..1.5)
+  let textSel = 0, heightSel = -1, faceText = [];   // textSel = dropdown (edits text only, no bucket effect); heightSel = tapped face (opaque + height-adjustable); per-face { title, d1, d2, d3 }
+  const WATER = {};                  // cached water-body refs; the slosh loop varies only their TOPS (bottom stays planted)
+  let sloshMs = 0, sloshExtra = 0, _lastTs = 0;
+  let pouring = false;               // forward Pour drives the water surface itself (gravity-level) → slosh loop stands down
+
+  function shade(hex, k) {
+    const c = i => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * k)));
+    return '#' + [c(1), c(3), c(5)].map(x => x.toString(16).padStart(2, '0')).join('');
+  }
+  const levelOf = h => Math.max(1, Math.min(10, Math.round(h * 10)));   // top face = 10, bottom = 0; discrete 1..10
+  // shrink an (already-appended) text element's font until its widest word fits horizontally → no clipped words.
+  // Normally a no-op (one measurement): only a too-long word (e.g. "accomplishment") triggers the shrink loop.
+  function fitFont(el, startPx, minPx) {
+    let f = startPx; el.style.fontSize = f.toFixed(1) + 'px';
+    for (let g = 0; g < 26 && el.scrollWidth > el.clientWidth + 0.5 && f > minPx; g++) {
+      f = Math.max(minPx, f - 0.4); el.style.fontSize = f.toFixed(1) + 'px';
+    }
+    return f;
+  }
+  // default content = the 7 Pillars (English): title + low(1-3) / mid(4-7) / high(8-10) anchors.
+  // ORDER = by face colour: Red→Mind, Orange→Body, Yellow→Joy, Green→Money, Cyan→Growth, Blue→Study/Work, Purple→People
+  const PILLARS = [
+    { title: 'Mind',         d1: 'Strong mood swings, frequent anxiety', d2: 'Flat, numbed emotions',                            d3: 'Aware of and able to manage emotions' },
+    { title: 'Body',         d1: 'Sleep-deprived, skipping meals',       d2: 'Only partly handled (e.g. exercise yes, sleep no)', d3: 'Sleep, movement, and food all steady' },
+    { title: 'Joy',          d1: 'Almost no fun or play',                d2: 'About one breather a week',                        d3: 'Recharged by activities you love' },
+    { title: 'Money',        d1: 'Impulse spending, always short',       d2: 'Spends loosely but no real problems',              d3: 'Spends to plan and saves' },
+    { title: 'Growth',       d1: 'Nothing new learned/binge-watching',   d2: 'Occasional reading/videos',                        d3: 'Consistently learning and improving' },
+    { title: 'Study / Work', d1: 'Burnt out, no drive',                  d2: 'Doing it only because you have to',                d3: 'Motivated, with a sense of accomplishment' },
+    { title: 'People',       d1: 'Lonely or lots of conflict',           d2: 'Only one side covered (just friends/just family)', d3: 'Healthy connections across the board' }
+  ];
+  function initFaceText() {
+    faceText = Array.from({ length: N }, (_, i) => {
+      const p = PILLARS[i] || { title: 'Pillar ' + (i + 1), d1: '', d2: '', d3: '' };
+      return { title: p.title, d1: p.d1, d2: p.d2, d3: p.d3 };
+    });
+  }
+
+  function build() {
+    if (heights.length !== N) heights = Array.from({ length: N }, () => 1);
+    // keep live spill elements across rebuilds; remove everything else
+    Array.from(world.children).forEach(c => { if (!c.classList.contains('spill')) c.remove(); });
+
+    // POUR: the WHOLE bucket — water INCLUDED — tips FORWARD toward the viewer (rotateX), so the water is
+    // ATTACHED and tilts together. (Draining is done by masking the now-frontal water from the top down — see drain().)
+    const bucketG = document.createElement('div');
+    bucketG.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;';
+    // pour tilt is applied on the WORLD in apply() (SCREEN space) so it always tips to the screen's right / forward,
+    // no matter how the bucket is spun. bucketG just groups bucket + water so they tip as one rigid body.
+    world.appendChild(bucketG);
+    const mouth = document.createElement('div'); mouth.id = 'mouthMark';   // mouth = top-centre of the bucket (droplet origin)
+    mouth.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;';
+    mouth.style.transform = 'translateY(' + (-H / 2) + 'px)';
+    bucketG.appendChild(mouth);
+
+    const cN = Math.cos(PI / N), sN = Math.sin(PI / N);
+    const slant     = Math.atan2((R_TOP - R_BOT) * cN, H) * 180 / PI;          // outward lean (constant)
+    const fullSlant = Math.hypot(H, (R_TOP - R_BOT) * cN);                     // full-height panel length
+    const apo    = r => r * cN;                          // apothem (perpendicular dist to a wall)
+    const side   = r => 2 * r * sN;                      // a side's chord length
+    const topRad = h => R_BOT + (R_TOP - R_BOT) * h;     // circumradius at a wall top (flare)
+    const topY   = h => H / 2 - h * H;                   // CSS-Y of a wall top (opening = -H/2 at h=1)
+
+    // a flat N-gon laid horizontal at a height (floor / water surface)
+    function ngon(radius, yOff, bg, op, slosh, parent) {
+      const el = document.createElement('div'); el.className = 'floor';
+      const pts = [];
+      for (let i = 0; i < N; i++) {                       // vertices at the wall CORNERS → edges align with walls
+        const g = (i + 0.5) * 2 * PI / N;
+        pts.push((50 + 50 * Math.sin(g)).toFixed(1) + '% ' + (50 + 50 * Math.cos(g)).toFixed(1) + '%');
+      }
+      el.style.width = (2 * radius) + 'px'; el.style.height = (2 * radius) + 'px';
+      el.style.left = (-radius) + 'px'; el.style.top = (-radius) + 'px';
+      el.style.transform = 'translateY(' + yOff + 'px) rotateX(90deg)';
+      if (slosh) {                                         // water surface: gently sloshing animated inner
+        el.style.transformStyle = 'preserve-3d';
+        const inner = document.createElement('div'); inner.className = 'wsurf';
+        inner.style.position = 'absolute'; inner.style.inset = '0';
+        inner.style.clipPath = 'polygon(' + pts.join(',') + ')';
+        inner.style.background = bg; inner.style.opacity = String(op);
+        inner.style.transformOrigin = '50% 50%';
+        inner.style.animation = 'water-slosh 2.8s ease-in-out infinite';
+        el.appendChild(inner);
+      } else {
+        el.style.clipPath = 'polygon(' + pts.join(',') + ')';
+        el.style.background = bg; el.style.opacity = String(op);
+      }
+      (parent || world).appendChild(el);
+      return el;
+    }
+
+    // one flared wall of height fraction h, ANCHORED AT THE BOTTOM so lowering it
+    // shortens it from the top (the floor edge stays put).
+    function wall(i, rBotW, rTopW, h, col, op, withLbl, withRim, parent) {
+      const theta = i * 360 / N, sTop = side(rTopW), sBot = side(rBotW);
+      const panelH = Math.max(0.5, h * fullSlant);
+      const inset = sTop > 0 ? Math.max(0, (sTop - sBot) / 2 / sTop * 100) : 0;
+      const w = document.createElement('div'); w.className = 'wall';
+      if (withLbl) w.dataset.i = i;                       // only the bucket walls are draggable
+      if (!withRim) { w.style.border = 'none'; w.style.boxShadow = 'none'; }
+      w.style.width = sTop + 'px'; w.style.height = panelH + 'px';
+      w.style.left = (-sTop / 2) + 'px'; w.style.top = (-panelH) + 'px';
+      w.style.transformOrigin = '50% 100%';               // bottom-anchored
+      w.style.background = col; w.style.opacity = String(op);
+      w.style.clipPath = 'polygon(0% 0%, 100% 0%, ' + (100 - inset).toFixed(1) + '% 100%, ' + inset.toFixed(1) + '% 100%)';
+      w.style.transform = 'rotateY(' + theta + 'deg) translateZ(' + apo(rBotW) + 'px) translateY(' + (H / 2) + 'px) rotateX(' + (-slant) + 'deg)';
+      if (withLbl) {
+        const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = NAMES[i % NAMES.length];
+        lbl.style.top = Math.max(8, panelH * 0.30) + 'px';
+        lbl.style.fontSize = Math.min(15, sTop * 0.17) + 'px'; lbl.style.color = shade(col, 0.5);
+        w.appendChild(lbl);
+        const num = document.createElement('div'); num.className = 'num'; num.textContent = levelOf(h);
+        num.style.left = '50%'; num.style.top = Math.max(28, panelH * 0.30 + 20) + 'px';
+        num.style.transform = 'translateX(-50%)'; num.style.fontSize = '18px'; num.style.color = col;
+        w.appendChild(num);
+      }
+      (parent || world).appendChild(w);
+      if (withRim) {                                      // 4px top rim → visible thickness from above
+        const rim = document.createElement('div'); rim.className = 'rim';
+        rim.style.width = sTop + 'px'; rim.style.height = RIM + 'px';
+        rim.style.left = (-sTop / 2) + 'px'; rim.style.top = (-RIM / 2) + 'px';
+        rim.style.background = shade(col, 0.82); rim.style.opacity = '0.92';
+        rim.style.transform = 'rotateY(' + theta + 'deg) translateZ(' + (apo(rTopW) - RIM / 2) + 'px) translateY(' + topY(h) + 'px) rotateX(90deg)';
+        (parent || world).appendChild(rim);
+      }
+      return w;
+    }
+
+    // each crystal wall has THICKNESS wallT → a cuboid: inner face (touches the water), top rim, side cross-sections
+    function addThickness(i, h, col) {
+      if (wallT <= 0.5) return;
+      const theta = i * 360 / N;
+      const aOut = apo(R_BOT), aIn = Math.max(2, aOut - wallT), sOut = side(R_BOT);
+      const Rin = aIn / cN, sIn = 2 * Rin * sN;
+      const hpx = Math.max(0.5, h * H), ty = topY(h);
+      const mk = (w, hh, bg, op, tf, bottom, bf) => {
+        const el = document.createElement('div');
+        el.style.position = 'absolute'; el.style.width = w + 'px'; el.style.height = hh + 'px';
+        el.style.left = (-w / 2) + 'px'; el.style.top = (bottom ? -hh : -hh / 2) + 'px';
+        el.style.transformOrigin = bottom ? '50% 100%' : '50% 50%';
+        el.style.background = bg; el.style.opacity = String(op); el.style.transform = tf;
+        el.style.pointerEvents = 'none';                       // clicks pass through to the draggable outer face behind
+        if (bf) el.style.backfaceVisibility = 'hidden';
+        bucketG.appendChild(el);                               // thickness faces tilt with the bucket
+      };
+      mk(sIn, hpx, shade(col, 0.92), 0.30,                       // inner face (faces inward, meets the water)
+         'rotateY(' + theta + 'deg) translateZ(' + aIn + 'px) translateY(' + (H / 2) + 'px) rotateY(180deg)', true, true);
+      mk(sOut, wallT, shade(col, 0.86), 0.95,                    // top rim (full thickness aIn→aOut)
+         'rotateY(' + theta + 'deg) translateZ(' + (aOut - wallT / 2) + 'px) translateY(' + ty + 'px) rotateX(90deg)', false, false);
+      for (const sgn of [-1, 1])                                 // left + right side cross-sections (visible at corners / where a neighbour is lower)
+        mk(wallT, hpx, shade(col, 0.72), 0.62,
+           'rotateY(' + theta + 'deg) translateX(' + (sgn * sOut / 2) + 'px) translateZ(' + (aOut - wallT / 2) + 'px) translateY(' + (H / 2) + 'px) rotateY(90deg)', true, false);
+    }
+
+    // text PAINTED onto a face (HTML children of the 3D face → true perspective). Title just under the top
+    // edge (1 line, font shrinks if the face is short); description = the band for the current height (1-3 / 4-7 / 8-10).
+    const pendingDescs = [];   // descriptions to height-check after layout (if they overflow the short face → float ABOVE it)
+    function addFaceText(el, i, h) {
+      const ft = faceText[i]; if (!ft || !ft.title) return;
+      const lvl = levelOf(h), sel = (heightSel === i);
+      const sTop = side(R_BOT), panelH = Math.max(2, h * H), top0 = Math.max(3, panelH * 0.05);
+      const tlen = Math.max(1, Math.max.apply(null, ft.title.split('\n').map(function (s) { return s.length; })));  // longest line
+      const tf = Math.max(5, Math.min(16, Math.min(sTop * 0.92 / (tlen * 0.58), panelH * 0.30)));   // fit longest line + shrink-when-short
+      const t = document.createElement('div'); t.className = 'face-title';
+      t.textContent = ft.title; t.style.fontSize = tf.toFixed(1) + 'px'; t.style.top = top0 + 'px';
+      t.style.color = shade(COLORS[i % COLORS.length], sel ? 0.30 : 0.42);
+      el.appendChild(t);
+      const band = lvl <= 3 ? ft.d1 : (lvl <= 7 ? ft.d2 : ft.d3);
+      if (band) {
+        const df = Math.max(5, Math.min(9.5, sTop * 0.115));                                        // width-based start font
+        const d = document.createElement('div'); d.className = 'face-desc';
+        const descTop = top0 + tf + 3;
+        d.textContent = band; d.style.fontSize = df.toFixed(1) + 'px'; d.style.top = descTop + 'px';
+        d.style.color = shade(COLORS[i % COLORS.length], sel ? 0.34 : 0.46);
+        el.appendChild(d);
+        fitFont(d, df, 4.5);                                                    // shrink if a long word (e.g. "accomplishment") would clip
+        pendingDescs.push({ el: d, panelH: panelH, descTop: descTop, i: i });   // height-checked after the build pass
+      }
+    }
+
+    ngon(R_BOT, topY(BOT), '#D2D7E0', 0.66, false, bucketG);                              // bottom face (pale cool-gray, translucent) at height BOT
+    // water sits INSIDE the wall thickness (radius pulled in by wallT so it touches the inner faces).
+    // The slosh loop varies only each body wall's TOP; the BOTTOM is planted on the raised floor (BOT) → so a face
+    // lowered to its minimum (= BOT) leaves zero water.
+    const Rw = Math.max(8, R_BOT - wallT / cN), botY = ((1 - BOT) * 100).toFixed(2);
+    WATER.walls = []; WATER.surfInner = null; WATER.base = waterLvl; WATER.wr = Rw; WATER.apo = apo(Rw); WATER.cN = cN; WATER.botY = botY;
+    // the water lives in its OWN group inside bucketG → at rest it's identity (water sits inside the bucket, depth-
+    // interleaved with the translucent walls), but during a SIDE-pour waterPivot() shifts it so it rotates around the
+    // MOUTH (outflow) centre instead of the bucket centre — the bucket still tips around its own centre.
+    const waterG = document.createElement('div');
+    waterG.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;';
+    bucketG.appendChild(waterG); WATER.g = waterG;
+    if (waterLvl > BOT + 0.012) {                              // at/below the raised floor → render NO water (fully drained)
+      const y0 = ((1 - waterLvl) * 100).toFixed(2);
+      for (let i = 0; i < N; i++) {
+        const el = wall(i, Rw, Rw, 1, '#39BDF8', 0.48, false, false, waterG);             // FULL-height body wall → waterG
+        el.style.willChange = 'clip-path';
+        el.style.clipPath = 'polygon(0% ' + y0 + '%, 100% ' + y0 + '%, 100% ' + botY + '%, 0% ' + botY + '%)'; // top=level (rAF tilts it); bottom=raised floor
+        WATER.walls.push({ el: el, phiL: (i - 0.5) * 2 * PI / N, phiR: (i + 0.5) * 2 * PI / N });
+      }
+      const surf = ngon(Rw, topY(waterLvl), 'linear-gradient(#86D4F5,#3DBAF1)', 0.66, true, waterG);   // surface → waterG
+      WATER.surfInner = surf.querySelector('.wsurf');
+      if (WATER.surfInner) WATER.surfInner.style.animation = 'none';
+    }
+    // water stays GLUED inside the bucket (waterG keeps no transform) → it tips with the bucket as one rigid body
+    for (let i = 0; i < N; i++) {
+      const op = (heightSel === i) ? 1 : 0.30;                                            // tap-selected face → fully opaque
+      const el = wall(i, R_BOT, R_BOT, heights[i], COLORS[i % COLORS.length], op, false, false, bucketG);  // OUTER crystal face → bucket
+      el.dataset.i = i;                                                                   // selectable / draggable
+      addFaceText(el, i, heights[i]);                                                     // title + band description painted on the face
+      addThickness(i, heights[i], COLORS[i % COLORS.length]);                              // + thickness (inner face, rim, side caps)
+    }
+    // the level number (selected face) is drawn in the 2D overlay (placeOverlays) so it's never occluded by the 3D water.
+    // description that can't fully fit on its (short) face:
+    //   • SELECTED face → a GREY PANEL (width = face top edge) IN THE SAME PLANE as the face (rotateY(theta)
+    //     translateZ(apo) — coplanar, rotates with the bucket). Its TOP edge hangs from the ORIGINAL max height (the
+    //     rim, topY(1) — level with neighbouring full faces); height is unchanged, so a GAP opens between the panel's
+    //     bottom and the lowered face's top edge. Rebuilt every frame → vanishes on deselect / when it fits.
+    //   • non-selected face → hide it (it "doesn't show on the face").
+    for (const pd of pendingDescs) {
+      if (pd.descTop + pd.el.offsetHeight <= pd.panelH - 1) continue;   // fits on the face → leave it there
+      pd.el.style.display = 'none';                                     // doesn't fit → hide the on-face version
+      if (pd.i !== heightSel) continue;                                 // only the SELECTED face gets the floating panel
+      const theta = pd.i * 360 / N, sTop = side(R_BOT);
+      const panel = document.createElement('div'); panel.className = 'face-overflow';
+      panel.style.cssText = 'position:absolute;box-sizing:border-box;background:#9ca3af;color:#fff;text-align:center;'
+        + 'border-radius:4px 4px 0 0;padding:3px 4px;line-height:1.22;white-space:pre-line;font-weight:600;backface-visibility:hidden;';
+      panel.style.width = sTop + 'px'; panel.style.left = (-sTop / 2) + 'px';
+      panel.textContent = pd.el.textContent;
+      bucketG.appendChild(panel);
+      fitFont(panel, Math.max(6, Math.min(10, sTop * 0.12)), 4.5);       // shrink if a long word would clip in the grey box too
+      const ph = panel.offsetHeight;                                    // measure; the box's TOP edge sits at the rim (topY(1)),
+      panel.style.top = (-ph) + 'px'; panel.style.transformOrigin = '50% 100%';   // so its bottom-anchor sits ph BELOW the rim
+      panel.style.transform = 'rotateY(' + theta + 'deg) translateZ(' + apo(R_BOT) + 'px) translateY(' + (topY(1) + ph).toFixed(2) + 'px)';
+    }
+    redrawLines();                                                     // Line + Line 2 (+ the connectors joining their endpoints)
+    placeOverlays();                                                    // draw the level number above the panel / face top
+  }
+
+  // Draw "Line" (lowest face TOP edge) + "Line 2" (inner floor) as 1px white chords (ends pulled in by the wall thickness),
+  // PLUS two white connectors joining their left endpoints and their right endpoints — the pour "water-surface" outline.
+  // Standalone (module-level) so the Pour animation can re-draw it every frame without a full build().
+  const LINE_CSS = 'position:absolute;height:1px;background:#fff;pointer-events:none;backface-visibility:hidden;box-shadow:0 0 2px rgba(0,0,0,.55);';
+  function redrawLines() {
+    const g = WATER.g; if (!g) return;
+    g.querySelectorAll('.sweepline,.sweepfill').forEach(function (e) { e.remove(); });
+    if (WATER.surfInner && !pouring) WATER.surfInner.style.visibility = '';   // not pouring → build's full surface stands
+    if (!pouring || !heights.length) return;                        // Line/Line2 + quad fill are HIDDEN until Pour is pressed
+    const cN = Math.cos(PI / N);
+    const lowIdx = heights.indexOf(Math.min.apply(null, heights));
+    const thetaL = lowIdx * 360 / N, tr = thetaL * PI / 180, sT = Math.sin(tr), cT = Math.cos(tr);
+    const apoR = R_BOT * cN;
+    const vts = [];                                                  // N-gon vertices in (u,v): u runs along thetaL (toward the lowest wall)
+    for (let k = 0; k < N; k++) { const a = (k - lowIdx + 0.5) * 2 * PI / N; vts.push({ u: R_BOT * Math.cos(a), v: R_BOT * Math.sin(a) }); }
+    let uEnd = Infinity; for (const p of vts) if (p.u < uEnd) uEnd = p.u;
+    function geom(val) {                                             // {u (depth), half (½ chord − wallT), cen} or null
+      const u = apoR + (val / 100) * (uEnd - apoR);
+      let vMin = Infinity, vMax = -Infinity;
+      for (let k = 0; k < N; k++) { const p = vts[k], q = vts[(k + 1) % N]; if (p.u === q.u) continue; const t = (u - p.u) / (q.u - p.u); if (t >= -1e-4 && t <= 1 + 1e-4) { const v = p.v + t * (q.v - p.v); if (v < vMin) vMin = v; if (v > vMax) vMax = v; } }
+      return isFinite(vMin) ? { u: u, half: Math.max(0.5, (vMax - vMin) / 2 - wallT), cen: (vMin + vMax) / 2 } : null;
+    }
+    const yTu = H / 2 - heights[lowIdx] * H, yBu = H / 2 - BOT * H;   // ACTUAL surface / inner-floor heights = the cut plane
+    const gL = geom(pourLine), gL2 = geom(line2Val);
+    if (!gL || !gL2) return;
+    const u1 = gL.u, u2 = gL2.u;
+    // the ORIGINAL flat surface is NOT hidden — it's clipped to the part NOT yet cut (depth u ≥ u1 = in front of Line), so
+    // it shrinks from the back as the trapezoid sweeps in (the original water is sliced from the top, never vanishing).
+    if (WATER.surfInner) {
+      WATER.surfInner.style.visibility = ''; WATER.surfInner.style.transform = 'none';   // drop the gentle slosh tilt
+      const c = u1 * 50 / WATER.wr + 50 * (sT + cT), poly = [];                            // half-plane sT·px + cT·py ≥ c (disc %)
+      for (let k = 0; k < N; k++) { const g = (k + 0.5) * 2 * PI / N; poly.push([50 + 50 * Math.sin(g), 50 + 50 * Math.cos(g)]); }
+      const out = [];                                                                      // Sutherland–Hodgman vs the half-plane
+      for (let i = 0; i < poly.length; i++) {
+        const p = poly[i], q = poly[(i + 1) % poly.length], dp = sT * p[0] + cT * p[1] - c, dq = sT * q[0] + cT * q[1] - c;
+        if (dp >= 0) out.push(p);
+        if ((dp >= 0) !== (dq >= 0)) { const t = dp / (dp - dq); out.push([p[0] + t * (q[0] - p[0]), p[1] + t * (q[1] - p[1])]); }
+      }
+      WATER.surfInner.style.clipPath = out.length >= 3 ? 'polygon(' + out.map(function (pp) { return pp[0].toFixed(1) + '% ' + pp[1].toFixed(1) + '%'; }).join(',') + ')' : 'polygon(0 0,0 0,0 0)';
+    }
+    // CUT: clip every body wall so water remains only BELOW the quad plane (plane height = linear in depth u, ⟂ to v)
+    if (WATER.walls) {
+      const botY = (1 - BOT) * 100;
+      const planeFrac = function (uc) {                             // quad-plane height at depth uc → wall fraction (clamped surface..floor)
+        let py = (Math.abs(u2 - u1) < 0.01) ? (uc >= u1 - 0.01 ? yTu : yBu) : yTu + (yBu - yTu) * (uc - u1) / (u2 - u1);
+        py = Math.max(yTu, Math.min(yBu, py)); return (py + H / 2) / H * 100;
+      };
+      for (const w of WATER.walls) {
+        const fL = Math.max(0, Math.min(botY, planeFrac(WATER.wr * Math.cos(w.phiL - tr))));
+        const fR = Math.max(0, Math.min(botY, planeFrac(WATER.wr * Math.cos(w.phiR - tr))));
+        w.el.style.clipPath = 'polygon(0% ' + fL.toFixed(2) + '%, 100% ' + fR.toFixed(2) + '%, 100% ' + botY.toFixed(2) + '%, 0% ' + botY.toFixed(2) + '%)';
+      }
+    }
+    // FILL: the quad = the cut water SURFACE. Same colour as the side water (#39BDF8) but lighter; clipped to the Line→Line2
+    // trapezoid. (No white outline lines / connectors — just the translucent fill.)
+    const midU = (u1 + u2) / 2, midY = (yTu + yBu) / 2, du = u2 - u1, dy = yBu - yTu;
+    const s2 = Math.max(1, Math.hypot(du, dy)), ang = Math.atan2(du, dy) * 180 / PI, W = Math.max(1, 2 * Math.max(gL.half, gL2.half));
+    const xl = function (h) { return ((W / 2 - h) / W * 100).toFixed(2); }, xr = function (h) { return ((W / 2 + h) / W * 100).toFixed(2); };
+    const fill = document.createElement('div'); fill.className = 'sweepfill';
+    fill.style.cssText = 'position:absolute;background:#39bdf8;opacity:.28;pointer-events:none;';   // water colour, light; no backface-hidden → both sides
+    fill.style.width = W.toFixed(2) + 'px'; fill.style.height = s2.toFixed(2) + 'px'; fill.style.left = (-W / 2).toFixed(2) + 'px'; fill.style.top = (-s2 / 2).toFixed(2) + 'px'; fill.style.transformOrigin = '50% 50%';
+    fill.style.clipPath = 'polygon(' + xl(gL.half) + '% 0%, ' + xr(gL.half) + '% 0%, ' + xr(gL2.half) + '% 100%, ' + xl(gL2.half) + '% 100%)';
+    fill.style.transform = 'rotateY(' + thetaL + 'deg) translateZ(' + midU.toFixed(2) + 'px) translateY(' + midY.toFixed(2) + 'px) rotateX(' + ang.toFixed(2) + 'deg)';
+    g.appendChild(fill);
+  }
+
+  // SELECTED face: draw the level NUMBER at a top corner in a 2D overlay (always in front, never occluded). It sits
+  // just above the (lowered) FACE's own top edge — the overflow grey box hangs separately up at the rim.
+  function placeOverlays() {
+    overlay.innerHTML = '';
+    if (heightSel < 0) return;
+    const face = world.querySelector('.wall[data-i="' + heightSel + '"]');
+    if (!face) return;
+    const sr = scene.getBoundingClientRect();
+    const ref = face.getBoundingClientRect();                          // number sits just above the (lowered) FACE's top edge — NOT the grey box
+    if (ref.width < 2 || ref.height < 2) return;                       // turned away / not visible
+    const col = COLOR_VIVID[heightSel % COLOR_VIVID.length];
+    const ea = ((heightSel * 360 / N + spin) % 360 + 540) % 360 - 180; // face angle from front
+    const num = document.createElement('div');                          // level number — face colour (vivid), bold, opaque
+    num.style.cssText = 'position:absolute;font-weight:900;font-size:16px;line-height:1;color:' + col + ';text-shadow:0 0 3px #fff,0 0 3px #fff,0 1px 1px rgba(0,0,0,.3);';
+    num.textContent = levelOf(heights[heightSel]);
+    overlay.appendChild(num);
+    num.style.top = (ref.top - sr.top - num.offsetHeight - 5) + 'px';   // 5px above the panel/face top
+    if (ea > 0) num.style.left = (ref.left - sr.left) + 'px';           // turned right → LEFT corner
+    else num.style.left = (ref.right - sr.left - num.offsetWidth) + 'px';// front / turned left → RIGHT corner
+  }
+
+  // a water sheet pouring over a lowered wall's outer face (refs the SVG bucket spill)
+  function spawnSpill(i, lvl) {
+    const cN = Math.cos(PI / N);
+    const slant = Math.atan2((R_TOP - R_BOT) * cN, H) * 180 / PI;
+    const r = R_BOT + (R_TOP - R_BOT) * lvl;
+    const w = 2 * r * Math.sin(PI / N) * 0.92, theta = i * 360 / N;
+    const ht = Math.max(2, lvl * H);                          // sheet TOP = face top edge; BOTTOM = floor → spans the whole face (height = lvl*H)
+    const wrap = document.createElement('div'); wrap.className = 'spill';
+    wrap.style.transformStyle = 'preserve-3d';
+    wrap.style.width = w + 'px'; wrap.style.height = ht + 'px';
+    wrap.style.left = (-w / 2) + 'px'; wrap.style.top = '0px'; wrap.style.transformOrigin = '50% 0%';
+    wrap.style.transform = 'rotateY(' + theta + 'deg) translateZ(' + (r * cN + 1.5) + 'px) translateY(' + (H / 2 - lvl * H) + 'px) rotateX(' + (-slant) + 'deg)';
+    const sheet = document.createElement('div');
+    sheet.style.position = 'absolute'; sheet.style.inset = '0';
+    sheet.style.background = 'repeating-linear-gradient(0deg, rgba(186,230,253,.8) 0 4px, rgba(56,189,248,.3) 4px 13px)';   // vertical streaks
+    sheet.style.backgroundSize = '100% 13px';
+    sheet.style.borderRadius = '0 0 ' + Math.min(8, w * 0.15).toFixed(0) + 'px ' + Math.min(8, w * 0.15).toFixed(0) + 'px';
+    sheet.style.animation = 'water-run .8s linear forwards';   // streaks flow downward + fade (sheet extent stays top→floor)
+    wrap.appendChild(sheet);
+    world.appendChild(wrap);
+    setTimeout(() => { try { wrap.remove(); } catch (_) {} }, 820);
+  }
+
+  // SIDE-pour: the bucket tips around its centre, but the WATER should gather toward the spout (outflow) and pour out
+  // there. As the bucket tips, the water leans toward the spout side — equivalent to pivoting the water group around a
+  // point a half-height BELOW centre (the rigid "rotate around the mouth" sends water the opposite way, off the spout).
+  // The lean differs from the bucket's centre-rotation by a pure SCREEN translate t = (I − Rz)·pivot; we re-express that
+  // translate in the water group's local frame (undo world = rotateZ·rotateX(cam)·rotateY(spin)) and apply it to waterG.
+  function waterPivot() {
+    if (!WATER.g) return;
+    if (pourAxis !== 'z' || !pourTilt) { WATER.g.style.transform = ''; return; }   // forward / upright → water stays attached
+    const D = PI / 180, th = pourTilt * D, camX = (viewAbove ? tilt : -tilt) * D, sp = spin * D, pivotY = H / 2;
+    const x1 = pivotY * Math.sin(th), y1 = -pivotY * (1 - Math.cos(th));            // screen translate, then undo rotateZ(θ)
+    const Y2 = y1 * Math.cos(camX), Z2 = -y1 * Math.sin(camX);                      // undo rotateX(cam)
+    const X3 = x1 * Math.cos(sp) - Z2 * Math.sin(sp), Z3 = x1 * Math.sin(sp) + Z2 * Math.cos(sp);   // undo rotateY(spin)
+    WATER.g.style.transform = 'translate3d(' + X3.toFixed(2) + 'px,' + Y2.toFixed(2) + 'px,' + Z3.toFixed(2) + 'px)';
+  }
+
+  function apply() {                                  // camera + pour tilt. The pour tilt is OUTERMOST → applied in screen
+    // space (after the spin), so 'z' always tips to the screen's RIGHT and 'x' always tips FORWARD, for any spin.
+    const pourT = pourTilt ? ((pourAxis === 'z') ? 'rotateZ(' + pourTilt + 'deg) ' : 'rotateX(' + (-pourTilt) + 'deg) ') : '';
+    world.style.transform = pourT + 'rotateX(' + (viewAbove ? tilt : -tilt) + 'deg) rotateY(' + spin + 'deg)';
+    scene.style.perspective = persp + 'px';
+    placeOverlays();                                  // re-place the number for the rotated/tilted selected face
+  }
+
+  let drag = null, lastSpill = 0;
+  scene.addEventListener('pointerdown', e => {
+    const wEl = e.target.closest ? e.target.closest('.wall[data-i]') : null;
+    const fi = wEl ? +wEl.dataset.i : -1;
+    drag = { x: e.clientX, y: e.clientY, spin0: spin, mode: null,
+             i: fi, h0: fi >= 0 ? heights[fi] : 0 };
+    try { scene.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  scene.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (!drag.mode) {
+      if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+      // ONLY the tap-selected (heightSel) face is height-adjustable; any other drag rotates the bucket
+      drag.mode = (drag.i >= 0 && drag.i === heightSel && Math.abs(dy) > Math.abs(dx)) ? 'adjust' : 'rotate';
+    }
+    if (drag.mode === 'rotate') { spin = drag.spin0 + dx * 0.55; apply(); return; }
+    // adjust: dragging up/down changes the selected face's level in DISCRETE 1..10 steps
+    const lvl = Math.max(1, Math.min(10, Math.round((drag.h0 - dy / H) * 10)));
+    heights[drag.i] = lvl / 10;
+    if (heights[drag.i] < waterLvl - 0.003) {    // face dropped below the water → it spills out
+      const now = Date.now();
+      if (now - lastSpill > 110) { spawnSpill(drag.i, heights[drag.i]); lastSpill = now; }
+      waterLvl = heights[drag.i]; drag.spilled = true;
+    }
+    build();
+  });
+  function bigSlosh() { sloshExtra = 0.06; }      // overflow → spike the slosh energy (surface heaves big, then settles)
+  scene.addEventListener('pointerup', e => {
+    if (drag) {
+      if (!drag.mode && drag.i >= 0) {            // a TAP on a face → toggle its selection (tap again to deselect); only the selected face is adjustable
+        heightSel = (heightSel === drag.i) ? -1 : drag.i;
+        build();
+      }
+      if (drag.spilled) bigSlosh();
+    }
+    drag = null;
+  });
+  scene.addEventListener('pointercancel', () => { drag = null; });
+
+  const nSides = document.getElementById('nSides'), nVal = document.getElementById('nVal');
+  nSides.addEventListener('input', () => {
+    nVal.textContent = nSides.value; N = +nSides.value;
+    heights = Array.from({ length: N }, () => 1); waterLvl = 0.42;
+    initFaceText(); textSel = 0; heightSel = -1; buildFaceSelect(); syncInputs(); build();
+  });
+
+  // Fill up: water RISES from its current level toward the top over D ms. It can only rise to the LOWEST face;
+  // if a low face caps it below the brim, the excess keeps POURING DOWN that face for the same duration D.
+  let fillTimer = null, spillTimer = null;
+  document.getElementById('fillTop').addEventListener('click', () => {
+    if (fillTimer) { clearInterval(fillTimer); fillTimer = null; }
+    if (spillTimer) { clearInterval(spillTimer); spillTimer = null; }
+    const D = 1400;
+    const minH = Math.min.apply(null, heights);          // water cannot exceed the lowest face
+    const lowIdx = heights.indexOf(minH);
+    const start = waterLvl, t0 = Date.now();
+    fillTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D);
+      waterLvl = start + (minH - start) * p;             // rising animation (bottom → up)
+      build();
+      if (p >= 1) {
+        clearInterval(fillTimer); fillTimer = null; waterLvl = minH; build();
+        if (minH < 0.985) {                              // capped by a low face → pour down that face for the same D
+          const s0 = Date.now();
+          spillTimer = setInterval(() => {
+            if (Date.now() - s0 >= D) { clearInterval(spillTimer); spillTimer = null; return; }
+            spawnSpill(lowIdx, minH);
+          }, 120);
+        }
+      }
+    }, 16);
+  });
+
+  // POUR: tip the bucket 90° right; water drains to empty while droplets pour from the mouth to a target 200px below + splash.
+  function spawnDrop(mx, my) {
+    const wf = Math.max(0.1, Math.min(1, waterLvl));          // water-level factor (물 높이): 0.1 (level 1) → 1.0 (level 10)
+    const size = Math.max(3, dropSize * (0.6 + 0.4 * wf) * (0.5 + Math.random()));   // size scales with the water level, but GENTLY (0.64..1×)
+    const t = Math.random();                                  // colour random: white → the WATER colour (#39BDF8); never darker than the water
+    const col = 'rgb(' + Math.round(255 - 198 * t) + ',' + Math.round(255 - 66 * t) + ',' + Math.round(255 - 7 * t) + ')';
+    const d = document.createElement('div');
+    d.style.cssText = 'position:fixed;border-radius:50%;pointer-events:none;z-index:9999;';
+    d.style.width = size + 'px'; d.style.height = size + 'px'; d.style.background = col;
+    d.style.left = (mx - size / 2) + 'px'; d.style.top = (my - size / 2) + 'px';
+    document.body.appendChild(d);
+    const a = d.animate([{ transform: 'translateY(0)' }, { transform: 'translateY(200px)' }],   // target = 200px straight below
+      { duration: 640 + Math.random() * 280, easing: 'cubic-bezier(.42,0,.85,.5)' });            // slow near the bucket → accelerates to the target
+    a.onfinish = () => { splash(mx, my + 200, size); d.remove(); };
+  }
+  function splash(x, y, size) {                               // droplet hits the target → splash (scaled to the droplet)
+    const w = Math.max(12, (size || 14) * 1.1);
+    const s = document.createElement('div');
+    s.style.cssText = 'position:fixed;border-radius:50%;pointer-events:none;z-index:9999;background:radial-gradient(rgba(186,230,253,.9),rgba(186,230,253,0));';
+    s.style.left = (x - w / 2) + 'px'; s.style.top = (y - w / 4) + 'px'; s.style.width = w + 'px'; s.style.height = (w / 2) + 'px';
+    document.body.appendChild(s);
+    s.animate([{ transform: 'scale(.3)', opacity: .9 }, { transform: 'scale(1.9)', opacity: 0 }], { duration: 380, easing: 'ease-out' }).onfinish = () => s.remove();
+  }
+  function drain() {
+    if (drainTimer) clearInterval(drainTimer);
+    const D2 = 2200, t0 = Date.now(); let lastDrop = 0;
+    const side = (pourAxis === 'z');
+    drainTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D2);
+      if (side) {
+        // SIDE-POUR: cut the water by ONE flat plane = the bucket's local-horizontal plane (every wall sliced at the
+        // same height → the plane spans the whole shape down to the floor). Because the bucket is tipped 90° to the
+        // screen's right, that plane reads as a VERTICAL plane, PERPENDICULAR to the forward-pour (top-down) cut. The
+        // plane sweeps from the water's top down to the bottom over the drain.
+        const cb = (100 - waterLvl * 100 * (1 - p)).toFixed(2);   // cut line (% from a wall's top): clear above, water below
+        const bm = 'linear-gradient(to bottom, transparent ' + cb + '%, #000 ' + cb + '%)';
+        if (WATER.walls) WATER.walls.forEach(function (w) { w.el.style.webkitMaskImage = bm; w.el.style.maskImage = bm; });
+        if (WATER.surfInner) WATER.surfInner.style.opacity = (0.6 * (1 - p)).toFixed(2);   // surface disk fades as the level falls
+      } else {
+        // FORWARD-POUR: the now-frontal water disappears from the SCREEN TOP down — a horizontal mask eats the surface
+        // from the top, and the body fades.
+        if (WATER.surfInner) {
+          const keep = ((1 - p) * 100).toFixed(1);              // bottom 'keep'% stays visible; the top is masked away
+          const m = 'linear-gradient(to top, #000 ' + keep + '%, transparent ' + keep + '%)';
+          WATER.surfInner.style.webkitMaskImage = m; WATER.surfInner.style.maskImage = m;
+        }
+        if (WATER.walls) WATER.walls.forEach(function (w) { w.el.style.opacity = (0.4 * (1 - p)).toFixed(2); });
+      }
+      if (p < 0.98) {                                          // droplets pour from the mouth while there is still water
+        const now = Date.now();
+        if (now - lastDrop > 75) {
+          const m2 = document.getElementById('mouthMark');
+          if (m2) { const r = m2.getBoundingClientRect(); spawnDrop(r.left, r.top); }
+          lastDrop = now;
+        }
+      }
+      if (p >= 1) { clearInterval(drainTimer); drainTimer = null; waterLvl = 0; build(); standUp(); }   // empty → tip back upright
+    }, 16);
+  }
+  // Pour = tip the bucket with the water GLUED inside (one rigid body) and HOLD that pose ("붙은채로 가만히"). The water
+  // just follows the bucket — no draining, levelling, pivoting or cutting. Forward Pour first SPINS the LOWEST face to
+  // the FRONT (you pour over the lowest wall), THEN tips. Press again (either button) → stand back upright.
+  function startPour(axis) {
+    if (pourTimer) { clearInterval(pourTimer); pourTimer = null; }
+    if (drainTimer) { clearInterval(drainTimer); drainTimer = null; }
+    if (standTimer) { clearInterval(standTimer); standTimer = null; }
+    if (pourTilt > 0.5) { pouring = false; build(); tiltTo(0); return; }   // tipped → restore full water + hide lines/quad, stand up
+    pourAxis = axis;
+    // forward ('x') and side ('z') share the SAME mechanism: reveal Line/Line2, spin the lowest wall into the pour
+    // direction (FRONT for 'x', the bucket's RIGHT for 'z'), then tip 90° (forward / right) while sweeping + cutting.
+    heightSel = -1;                                          // a tapped/selected face → Pour clears the selection first
+    pouring = true; setLines(100, 100); build();             // build() re-renders the now-deselected faces (+ the quad at L=100)
+    const lowIdx = heights.indexOf(Math.min.apply(null, heights));
+    let target = (axis === 'z' ? 90 : 0) - lowIdx * 360 / N;  // 'x' → lowest wall faces the front; 'z' → faces the RIGHT (+x)
+    while (target - spin > 180) target -= 360;                // take the shorter way round
+    while (target - spin < -180) target += 360;
+    const spin0 = spin, t0 = Date.now(), DS = 480;
+    pourTimer = setInterval(() => {                            // phase 0: spin the lowest wall into place
+      const p = Math.min(1, (Date.now() - t0) / DS);
+      spin = spin0 + (target - spin0) * p; apply();
+      if (p >= 1) { clearInterval(pourTimer); pourTimer = null; spin = target; apply(); pourTiltDrain(); }   // phase 1: tip + sweep
+    }, 16);
+  }
+  function tiltTo(target) {                                    // animate pourTilt → target (water glued → tips with the bucket), then hold
+    if (pourTimer) { clearInterval(pourTimer); pourTimer = null; }
+    const start = pourTilt, t0 = Date.now(), D = 750;
+    pourTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D);
+      pourTilt = start + (target - start) * p; apply();
+      if (p >= 1) { clearInterval(pourTimer); pourTimer = null; pourTilt = target; apply(); }
+    }, 16);
+  }
+  function setLines(l1, l2) {                                   // set Line / Line 2 values + reflect them in the two sliders
+    pourLine = l1; line2Val = l2;
+    const e1 = document.getElementById('lineSl'), v1 = document.getElementById('lineSlVal');
+    const e2 = document.getElementById('lineSl2'), v2 = document.getElementById('lineSl2Val');
+    if (e1) { e1.value = l1; v1.textContent = Math.round(l1); }
+    if (e2) { e2.value = l2; v2.textContent = Math.round(l2); }
+  }
+  // Forward-Pour line sweep, redrawn EVERY frame (smooth, constant speed — never stepped):
+  //   TILT 0°→90° (2s, constant angular speed): Line = max(0, 100 − 1.5·θ)  [FASTER than Line 2], Line 2 = min(100, 110 − θ)
+  //   then HOLD at 90° for 2s: Line stays 0 (already drained), Line 2 20→0 over the full 2s
+  function pourTiltDrain() {
+    const D_TILT = 2000, t0 = Date.now(); let lastDrop = t0;
+    drainTimer = setInterval(function () {
+      const e = Date.now() - t0;
+      if (e < D_TILT) {                                        // TILT phase (angle-driven)
+        const theta = 90 * (e / D_TILT);
+        pourTilt = theta; apply();
+        setLines(Math.max(0, 100 - 1.2 * theta), Math.min(100, 110 - theta));   // Line 1.2× (a bit slower than before)
+      } else {                                                 // HOLD phase (time-driven)
+        if (pourTilt !== 90) { pourTilt = 90; apply(); }
+        const t = (e - D_TILT) / 1000;
+        setLines(0, Math.max(0, 20 - 10 * t));
+        if (t >= 2) { clearInterval(drainTimer); drainTimer = null; setLines(0, 0); redrawLines(); return; }
+      }
+      redrawLines();
+      // DROPLETS: fall from the (shrinking) cut surface — the quad fill — at a rate set by the "Drops" slider, scaled by the
+      // water level (more water → more drops). The size scales too (in spawnDrop) but more gently than the amount.
+      if (dropAmt > 0) {
+        const wf = Math.max(0.1, Math.min(1, waterLvl));       // water-level factor (물 높이): full → 1, level 1 → 0.1
+        const now = Date.now(), interval = 1000 / ((dropAmt / 100) * 26 * wf), fe = WATER.g && WATER.g.querySelector('.sweepfill');
+        let guard = 0;
+        while (now - lastDrop >= interval && guard++ < 12) {   // catch up by real elapsed time (cap avoids a burst after a throttled gap)
+          lastDrop += interval;
+          if (fe) { const fr = fe.getBoundingClientRect(); if (fr.width > 1 && fr.height > 1) spawnDrop(fr.left + Math.random() * fr.width, fr.top + Math.random() * fr.height); }
+        }
+      }
+    }, 16);
+  }
+  // FORWARD POUR. Phase 0: spin so the LOWEST wall (where it pours over) faces the front. Phase 1: tip forward while the
+  // water surface stays HORIZONTAL (gravity, updateGravityWater) and the level drains to 0. Phase 2: stand back up, empty.
+  function startForwardPour() {
+    const lowIdx = heights.indexOf(Math.min.apply(null, heights));
+    let target = -lowIdx * 360 / N;                            // spin that puts wall lowIdx at the front (angle 0)
+    while (target - spin > 180) target -= 360;
+    while (target - spin < -180) target += 360;
+    const spin0 = spin, t0 = Date.now(), DS = 480;
+    pourTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / DS);
+      spin = spin0 + (target - spin0) * p; apply();
+      if (p >= 1) { clearInterval(pourTimer); pourTimer = null; spin = target; apply(); fwdTilt(); }
+    }, 16);
+  }
+  function fwdTilt() {
+    pouring = true;                                            // take the water away from the slosh loop
+    const lv0 = waterLvl, t0 = Date.now(), D = 1700, MAXT = 86; let lastDrop = 0;
+    drainTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D);
+      pourTilt = MAXT * p;                                     // tip forward (toward viewer)
+      const lv = lv0 * (1 - p);                                // gravity surface descends → drains to 0
+      apply();
+      updateGravityWater(pourTilt, lv);                        // surface stays flat in world; front (lowest) wall holds the water
+      if (p < 0.96) {                                          // droplets spill from the front rim
+        const now = Date.now();
+        if (now - lastDrop > 70) { const m = document.getElementById('mouthMark'); if (m) { const r = m.getBoundingClientRect(); spawnDrop(r.left, r.top); } lastDrop = now; }
+      }
+      if (p >= 1) { clearInterval(drainTimer); drainTimer = null; waterLvl = 0; pouring = false; build(); standUpFwd(); }
+    }, 16);
+  }
+  function standUpFwd() {
+    const start = pourTilt, t0 = Date.now(), D = 600;
+    standTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D);
+      pourTilt = start * (1 - p); apply();
+      if (p >= 1) { clearInterval(standTimer); standTimer = null; pourTilt = 0; apply(); }
+    }, 16);
+  }
+  function standUp() {                                          // SIDE pour, phase 3: tip BACK upright (empty — no refill)
+    if (standTimer) clearInterval(standTimer);
+    const D3 = 650, t0 = Date.now(), start = pourTilt;
+    standTimer = setInterval(() => {
+      const p = Math.min(1, (Date.now() - t0) / D3);
+      pourTilt = start * (1 - p); apply();
+      if (p >= 1) { clearInterval(standTimer); standTimer = null; pourTilt = 0; apply(); }   // upright + empty
+    }, 16);
+  }
+  document.getElementById('pour').addEventListener('click', () => startPour('x'));       // forward, toward the viewer
+  document.getElementById('sidePour').addEventListener('click', () => startPour('z'));   // sideways
+
+  // view: above / below toggle
+  const bAbove = document.getElementById('viewAbove'), bBelow = document.getElementById('viewBelow');
+  bAbove.addEventListener('click', () => { viewAbove = true;  bAbove.classList.add('on'); bBelow.classList.remove('on'); apply(); });
+  bBelow.addEventListener('click', () => { viewAbove = false; bBelow.classList.add('on'); bAbove.classList.remove('on'); apply(); });
+
+  // view angle slider (magnitude; above/below sets the sign)
+  const angle = document.getElementById('angle'), angleVal = document.getElementById('angleVal');
+  angle.addEventListener('input', () => { tilt = +angle.value; angleVal.textContent = tilt + '°'; apply(); });
+
+  // perspective (px) slider
+  const perspEl = document.getElementById('persp'), perspVal = document.getElementById('perspVal');
+  perspEl.addEventListener('input', () => { persp = +perspEl.value; perspVal.textContent = persp + 'px'; apply(); });
+
+  // bucket height + max-width sliders
+  const bhEl = document.getElementById('bheight'), bhVal = document.getElementById('bheightVal');
+  bhEl.addEventListener('input', () => { H = +bhEl.value; bhVal.textContent = H; build(); });
+  const bwEl = document.getElementById('bwidth'), bwVal = document.getElementById('bwidthVal');
+  bwEl.addEventListener('input', () => { R_BOT = R_TOP = +bwEl.value; bwVal.textContent = (2 * R_BOT); build(); });
+
+  // side-wall thickness slider
+  const thickEl = document.getElementById('thick'), thickVal = document.getElementById('thickVal');
+  thickEl.addEventListener('input', () => { wallT = +thickEl.value; thickVal.textContent = wallT + 'px'; build(); });
+
+  const lineEl = document.getElementById('lineSl'), lineValEl = document.getElementById('lineSlVal');
+  lineEl.addEventListener('input', () => { pourLine = +lineEl.value; lineValEl.textContent = pourLine; build(); });
+  const line2El = document.getElementById('lineSl2'), line2ValEl = document.getElementById('lineSl2Val');
+  line2El.addEventListener('input', () => { line2Val = +line2El.value; line2ValEl.textContent = line2Val; build(); });
+  const dropsEl = document.getElementById('dropsSl'), dropsValEl = document.getElementById('dropsSlVal');
+  dropsEl.addEventListener('input', () => { dropAmt = +dropsEl.value; dropsValEl.textContent = dropAmt; });
+  const dropSizeEl = document.getElementById('dropSizeSl'), dropSizeValEl = document.getElementById('dropSizeSlVal');
+  dropSizeEl.addEventListener('input', () => { dropSize = +dropSizeEl.value; dropSizeValEl.textContent = dropSize + 'px'; });
+
+  // face selector — PC renders a dropdown, iOS renders a native picker; each option is tinted with its face colour
+  const faceSel = document.getElementById('faceSel');
+  function buildFaceSelect() {
+    faceSel.innerHTML = '';
+    for (let i = 0; i < N; i++) {
+      const o = document.createElement('option');
+      o.value = i; o.textContent = COLOR_NAMES[i % COLOR_NAMES.length];   // label by colour, not the (editable) title
+      o.style.background = COLORS[i % COLORS.length]; o.style.color = shade(COLORS[i % COLORS.length], 0.40);
+      faceSel.appendChild(o);
+    }
+    faceSel.value = Math.max(0, Math.min(N - 1, textSel));
+  }
+  // dropdown only chooses WHICH face the text fields edit — it does NOT change the bucket
+  faceSel.addEventListener('change', () => { textSel = +faceSel.value; syncInputs(); });
+
+  // per-face text fields: title + 3 band descriptions — 2 lines, char-limited, live count; edits the dropdown-selected face
+  const inTitle = document.getElementById('ftTitle'), inD1 = document.getElementById('ftD1'),
+        inD2 = document.getElementById('ftD2'), inD3 = document.getElementById('ftD3');
+  const fields = [[inTitle, 'title', document.getElementById('cTitle')],
+                  [inD1, 'd1', document.getElementById('cD1')],
+                  [inD2, 'd2', document.getElementById('cD2')],
+                  [inD3, 'd3', document.getElementById('cD3')]];
+  function syncInputs() {
+    const ft = (textSel >= 0 && faceText[textSel]) ? faceText[textSel] : null;
+    fields.forEach(([el, key, cnt]) => {
+      el.disabled = !ft; el.value = ft ? ft[key] : '';
+      cnt.textContent = (ft ? ft[key].length : 0) + '/' + el.maxLength;
+    });
+    if (+faceSel.value !== textSel && textSel >= 0) faceSel.value = textSel;
+  }
+  fields.forEach(([el, key, cnt]) => el.addEventListener('input', () => {
+    if (textSel < 0 || !faceText[textSel]) return;
+    faceText[textSel][key] = el.value;                                    // Enter in the field → \n → next line on the face (white-space: pre-line)
+    cnt.textContent = el.value.length + '/' + el.maxLength;
+    build();                                                              // typing applies to the bucket text in real time (dropdown keeps its colour label)
+  }));
+
+  // Forward POUR with GRAVITY: the bucket is tipped forward by phiDeg, but the water surface must stay HORIZONTAL
+  // (parallel to the ground). In the bucket's local frame that flat plane is tilted front↔back by the same angle, so
+  // each body wall's top sits at h = lv + g·cos(phi) (g = front-back gradient; front wall = deepest), and the surface
+  // cap is tilted by ≈phi to lie flat in world. lv (centre level) drains to 0 as the pour proceeds.
+  function updateGravityWater(phiDeg, lv) {
+    if (!WATER.walls || !WATER.walls.length) return;
+    const phi = phiDeg * PI / 180;
+    const g = WATER.wr * Math.tan(phi) / H;                 // height-fraction gradient across the front↔back axis
+    const yB = WATER.botY || '100';
+    for (const w of WATER.walls) {
+      const hL = Math.max(0, Math.min(1, lv + g * Math.cos(w.phiL)));
+      const hR = Math.max(0, Math.min(1, lv + g * Math.cos(w.phiR)));
+      const yL = ((1 - hL) * 100).toFixed(2), yR = ((1 - hR) * 100).toFixed(2);
+      w.el.style.clipPath = 'polygon(0% ' + yL + '%, 100% ' + yR + '%, 100% ' + yB + '%, 0% ' + yB + '%)';
+    }
+    const tFB = Math.atan(g * H / WATER.wr) * 180 / PI;     // ≈ phi → cap lies flat in world
+    if (WATER.surf) WATER.surf.style.transform = 'translateY(' + (H / 2 - lv * H).toFixed(2) + 'px) rotateX(90deg)';
+    if (WATER.surfInner) WATER.surfInner.style.transform = 'rotateX(' + tFB.toFixed(2) + 'deg)';
+  }
+
+  // slosh loop — varies ONLY each body wall's top + tilts the surface to match (bottom corners stay planted, always blue)
+  function sloshLoop(ts) {
+    const dt = _lastTs ? Math.min(50, ts - _lastTs) : 16; _lastTs = ts;
+    if (pouring) { requestAnimationFrame(sloshLoop); return; }   // forward pour drives the water itself
+    sloshMs += dt;
+    const t = sloshMs / 1000;
+    sloshExtra *= Math.pow(0.5, dt / 650);                 // overflow energy decays away
+    const amp = 0.018 + sloshExtra;                         // tilt amplitude (fraction of H)
+    const Tx = amp * Math.sin(t * 1.7);                     // left-right surface gradient
+    const Tz = amp * 0.7 * Math.sin(t * 1.23 + 0.8);        // front-back surface gradient
+    if (WATER.walls) {
+      // clip each body wall's TOP to the tilted plane: left/right corners at the EXACT plane height of each shared
+      // vertex → adjacent walls share corner heights → the whole top edge lies on the plane, meeting the surface everywhere.
+      for (const w of WATER.walls) {
+        const hL = Math.max(0.03, Math.min(1, WATER.base + (Tx * Math.sin(w.phiL) + Tz * Math.cos(w.phiL)) / WATER.cN));
+        const hR = Math.max(0.03, Math.min(1, WATER.base + (Tx * Math.sin(w.phiR) + Tz * Math.cos(w.phiR)) / WATER.cN));
+        const yL = ((1 - hL) * 100).toFixed(2), yR = ((1 - hR) * 100).toFixed(2), yB = WATER.botY || '100';
+        w.el.style.clipPath = 'polygon(0% ' + yL + '%, 100% ' + yR + '%, 100% ' + yB + '%, 0% ' + yB + '%)';
+      }
+      if (WATER.surfInner && WATER.apo) {                     // surface cap tilts to the SAME plane (interior fill)
+        const tFB =  Math.atan(Tz * H / WATER.apo) * 180 / PI;
+        const tLR = -Math.atan(Tx * H / WATER.apo) * 180 / PI;
+        WATER.surfInner.style.transform = 'rotateX(' + tFB + 'deg) rotateY(' + tLR + 'deg)';
+      }
+    }
+    requestAnimationFrame(sloshLoop);
+  }
+
+  initFaceText();
+  buildFaceSelect();
+  syncInputs();
+  build();
+  apply();
+  requestAnimationFrame(sloshLoop);
+})();
+</script>
+</body>
+</html>

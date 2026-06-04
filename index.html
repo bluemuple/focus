@@ -1295,7 +1295,8 @@
   @keyframes water-fly-up { 0% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -48px); } }
   .water-fly-txt {
     position: absolute; transform: translate(-50%, 0);
-    color: #ef4444; font-weight: 800; font-size: 1rem;
+    color: #ef4444; font-weight: 800; font-size: .85rem;   /* match #water-money */
+    white-space: nowrap;                                    /* keep "-$100" on ONE line (it sits by the right edge) */
     animation: water-fly-up 1s ease-out forwards;
   }
 
@@ -22082,6 +22083,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
   const RIM = 4, MIN_H = 20, DEFAULT_H = 150, LEVELS = 10, BOT = 0;
   let N = 7, R_BOT = 78, R_TOP = 78, H = 116, wallT = 3;        // geometry — adjustable via Settings → Bucket view
   let spin = 0, tilt = 6, viewAbove = false, persp = 194;        // view — also adjustable
+  let pourTilt = 0, _pour3dActive = false, _pourTimer = 0;       // forward-pour tip (deg) — driven by bidoroBucket3DPour (watering)
   // Read the saved view settings (Settings → Bucket view) into the live params.
   const _VIEW_DEF = { N: 7, R: 78, H: 116, wallT: 3, tilt: 6, persp: 194, viewAbove: 0 };
   function _applyView(){
@@ -22186,7 +22188,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
     for (let i = 0; i < N; i++){ const op = (heightSel === i) ? 1 : faceOp; const el = wall(i, R_BOT, R_BOT, heights[i], COLORS[i % COLORS.length], op, false, bucketG); el.dataset.i = i; addFaceText(el, i, heights[i]); addThickness(i, heights[i], COLORS[i % COLORS.length]); }
     for (const pd of pendingDescs){ if (pd.descTop + pd.el.offsetHeight <= pd.panelH - 1) continue; pd.el.style.display = 'none'; }   // overflowing desc → hide (no selection in step 1)
   }
-  function apply(){ world.style.transform = 'rotateX(' + (viewAbove ? tilt : -tilt) + 'deg) rotateY(' + spin + 'deg)'; }
+  function apply(){
+    const pourT = pourTilt ? 'rotateX(' + (-pourTilt) + 'deg) ' : '';   // forward pour tips toward the viewer (OUTERMOST = screen-space, after the spin)
+    world.style.transform = pourT + 'rotateX(' + (viewAbove ? tilt : -tilt) + 'deg) rotateY(' + spin + 'deg)';
+  }
   /* LIVE MIRROR — poll state.bucket each frame (the SVG module owns the state + the
      15 public fns + interaction; this just reflects it visually). Water mode → add
      #bucket-section.b3d-active (SVG → opacity:0, 3D shown) + reflect heights/water;
@@ -22205,6 +22210,14 @@ window.bidoroTaskWaterDrop = function (row, q) {
               + '|' + [N, R_BOT, H, wallT, tilt, persp, viewAbove ? 1 : 0].join(',');   // view in sig → rebuild on slider change
     if (sig !== _lastSig) { _lastSig = sig; heights = hFrac; waterLvl = wFrac; WATER.base = wFrac; build(); }
     else { waterLvl = wFrac; WATER.base = wFrac; }
+    // While the 3D bucket is mounted in the watering host, mirror the SVG engine's
+    // Y-rotation (radians → deg) so the pour spin (bidoroBucketSpin) shows in 3D.
+    try {
+      if (!_pour3dActive && scene && scene.closest && scene.closest('.water-bucket-host') && window.bidoroBucketRotation) {
+        const sp = window.bidoroBucketRotation() * 180 / Math.PI;
+        if (Math.abs(sp - spin) > 0.05) { spin = sp; apply(); }
+      }
+    } catch (_) {}
   }
   function sloshLoop(ts){
     try { syncLive(); } catch (_) {}
@@ -22264,6 +22277,48 @@ window.bidoroTaskWaterDrop = function (row, q) {
   function render(){ syncFromState(); build(); apply(); }
   window.bidoroBucket3DRender = render;
   window.bidoroBucket3DSync = syncLive;
+  /* Forward-pour (watering view) — mirrors bucket-3d.html's "Pour": spin the LOWEST
+     wall to the front, tip the bucket forward over it while the water drains (the
+     engine's water mirror lowers the level), then stand back upright. Freezes the
+     rotation mirror (_pour3dActive) so the pour owns spin + pourTilt for its run. */
+  window.bidoroBucket3DPour = function (opts) {
+    opts = opts || {};
+    const tiltMax = (typeof opts.tilt === 'number') ? opts.tilt : 80;
+    const tiltMs  = Math.max(500, opts.tiltMs || 1500);
+    const SPIN_MS = 460, STAND_MS = 560, HOLD_MS = 220;
+    if (_pourTimer) { clearInterval(_pourTimer); _pourTimer = 0; }
+    _pour3dActive = true;
+    const spin0 = spin;
+    // lowest wall → the front (wall i sits at i·360/N; spin = −lowIdx·360/N brings it forward)
+    let lowIdx = 0, mn = Infinity;
+    for (let i = 0; i < N; i++){ const h = (heights && heights[i] != null) ? +heights[i] : 1; if (h < mn){ mn = h; lowIdx = i; } }
+    let target = -lowIdx * 360 / N;
+    while (target - spin0 > 180) target -= 360;
+    while (target - spin0 < -180) target += 360;
+    let t0 = Date.now();
+    _pourTimer = setInterval(function () {                 // phase 0: spin the lowest wall to the front
+      const p = Math.min(1, (Date.now() - t0) / SPIN_MS);
+      spin = spin0 + (target - spin0) * p; apply();
+      if (p >= 1) { clearInterval(_pourTimer); spin = target; apply(); _tip(); }
+    }, 16);
+    function _tip(){                                       // phase 1: tip forward over the lowest wall (water drains meanwhile)
+      const s0 = Date.now();
+      _pourTimer = setInterval(function () {
+        const p = Math.min(1, (Date.now() - s0) / tiltMs);
+        pourTilt = tiltMax * (1 - Math.pow(1 - p, 2)); apply();      // ease-out tip
+        if (p >= 1) { clearInterval(_pourTimer); pourTilt = tiltMax; apply(); _pourTimer = setTimeout(_stand, HOLD_MS); }
+      }, 16);
+    }
+    function _stand(){                                      // phase 2: stand upright + spin back to start (mirror resumes seamlessly)
+      const u0 = Date.now(), pt0 = pourTilt, sp = spin;
+      _pourTimer = setInterval(function () {
+        const p = Math.min(1, (Date.now() - u0) / STAND_MS);
+        pourTilt = pt0 * (1 - p);
+        spin = sp + (spin0 - sp) * p; apply();
+        if (p >= 1) { clearInterval(_pourTimer); _pourTimer = 0; pourTilt = 0; spin = spin0; apply(); _pour3dActive = false; }
+      }, 16);
+    }
+  };
   /* Screen point of the 3D water-surface centre (where a task droplet should land),
      + a random point on it. Used by bidoroBucketSurfacePoint/RandomPoint when the 3D
      is the live bucket, so the droplet hits the VISIBLE water (not the hidden SVG). */
@@ -23390,6 +23445,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
     spinRafId = requestAnimationFrame(step);
   };
 
+  /* Current Y-rotation (radians). The 3D bucket mirrors this WHILE it sits in the
+     watering host, so the pour spin (bidoroBucketSpin) shows on the 3D too. */
+  window.bidoroBucketRotation = function () { return rotation; };
+
   window.bidoroBucketAddWater = function (ratio) {
     if (typeof ratio !== 'number' || ratio <= 0) return;
     if (!isMounted) return;
@@ -23565,10 +23624,24 @@ window.bidoroTaskWaterDrop = function (row, q) {
         host.style.left = '50%';
         host.style.top = '';                                             // float at the top initially (CSS)
         host.style.transform = REST;
-        host.appendChild(bucketSvg);                                     // move the LIVE bucket in
+        host.appendChild(bucketSvg);                                     // move the LIVE bucket in (now the invisible engine)
         // auto-deselect any chosen wall (silent — overlay covers the page) + see-through floor
         try { if (window.bidoroBucketDeselect) window.bidoroBucketDeselect(); } catch (_) {}
         try { if (window.bidoroBucketSetFloorAlpha) window.bidoroBucketSetFloorAlpha(0.2); } catch (_) {}
+        // Show the CSS-3D bucket in the watering host. The SVG stays mounted as the
+        // state ENGINE (bidoroBucketSpin/Drain drive it); the 3D mirrors its water +
+        // spin (see syncLive's watering-host branch). Scaled to fit the small host.
+        try {
+          const sc = document.getElementById('b3d-scene');
+          if (sc) {
+            bucketSvg.style.opacity = '0'; bucketSvg.style.pointerEvents = 'none';
+            sc.style.display = 'block'; sc.style.pointerEvents = 'none'; sc.style.transformOrigin = 'center center';
+            const s = Math.max(0.4, Math.min(1, (side * 0.95) / 252));   // ~252px = 3D bucket's native projected width
+            sc.style.transform = 'scale(' + s.toFixed(3) + ')';
+            host.appendChild(sc);
+            if (window.bidoroBucket3DSync) window.bidoroBucket3DSync();
+          }
+        } catch (_) {}
       }
       overlay.classList.remove('hidden');
       overlay.setAttribute('aria-hidden', 'false');
@@ -23583,7 +23656,17 @@ window.bidoroTaskWaterDrop = function (row, q) {
       // restore the bucket for the home page: opaque floor again + no wall selected
       try { if (window.bidoroBucketSetFloorAlpha) window.bidoroBucketSetFloorAlpha(1); } catch (_) {}
       try { if (window.bidoroBucketDeselect) window.bidoroBucketDeselect(); } catch (_) {}
-      if (bucketSvg && stage) { host.style.transform = ''; host.style.left = ''; host.style.top = ''; stage.appendChild(bucketSvg); }   // restore
+      if (bucketSvg && stage) {
+        host.style.transform = ''; host.style.left = ''; host.style.top = '';
+        bucketSvg.style.opacity = ''; bucketSvg.style.pointerEvents = '';   // CSS reclaims it (opacity:0 at home)
+        stage.appendChild(bucketSvg);                                       // SVG engine back to the home stage
+        // 3D scene back on the home stage; clear the watering-only inline styles so home CSS reclaims it
+        try {
+          const sc = document.getElementById('b3d-scene');
+          if (sc) { sc.style.transform = ''; sc.style.transformOrigin = ''; sc.style.display = ''; sc.style.pointerEvents = ''; stage.appendChild(sc); }
+        } catch (_) {}
+        try { if (window.bidoroBucket3DSync) window.bidoroBucket3DSync(); } catch (_) {}
+      }
       bucketSvg = null;
       overlay.classList.add('hidden');
       overlay.setAttribute('aria-hidden', 'true');
@@ -23638,9 +23721,13 @@ window.bidoroTaskWaterDrop = function (row, q) {
       // 10-step schedules its next-morning growth (capped at stage 9 = 9.png).
       addWaterToClover(cell, ratio * 10);
       markWatered(cell);                                        // hide this tile's drop until next 7 AM
-      // 1) the bucket dips toward the soil + starts rotating
-      host.style.transform = POUR;
-      try { if (window.bidoroBucketSpin) window.bidoroBucketSpin(ratio, SPIN_MS); } catch (_) {}
+      // 1) the bucket tips FORWARD over its lowest wall + pours (bucket-3d.html "Pour" style).
+      //    The 3D bucket owns the tilt/spin; the SVG engine still drains the water (mirrored).
+      host.style.transform = POUR;                              // small dip toward the soil (host)
+      try {
+        if (window.bidoroBucket3DPour) window.bidoroBucket3DPour({ tiltMs: Math.round(900 + ratio * 1400) });
+        else if (window.bidoroBucketSpin) window.bidoroBucketSpin(ratio, SPIN_MS);   // fallback (SVG-only build)
+      } catch (_) {}
       // thank a watered plant: 1st = "Thank you!", then "Thank you, again!"
       if (seedBefore) {
         seedBefore.thanks = (seedBefore.thanks || 0) + 1;
@@ -23883,7 +23970,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
               fieldEl.appendChild(cl);
             }
           }
-          if (waterMode) {                                     // blinking blue water-drop → tap to water (always shown → re-waterable; the "Thank you!" bubble below is still seed-only)
+          if (waterMode && hasWater()) {                       // blinking blue water-drop → tap to water. HIDDEN when the bucket is empty (nothing to pour) → re-appears once it has water again
             const wd = document.createElement('button'); wd.className = 'wg-wdrop'; wd.type = 'button';
             const ww = Math.round(DIAMOND_W * 0.06);   // 50% of the previous 0.12
             wd.style.left = p.x + 'px'; wd.style.top = (p.y + DIAMOND_H * 0.13) + 'px';   // on the soil, in front of any plant
