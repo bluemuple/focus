@@ -34,72 +34,100 @@
   .tag.reported { background: #fee2e2; color: #b91c1c; }
   .tag.heart { background: #fce7f3; color: #db2777; }
   .del { flex: 0 0 auto; border: 1px solid #fecaca; background: transparent; color: #b91c1c; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; }
+  .userno { border: none; background: #eef2ff; color: #3730a3; font: inherit; font-weight: 800; font-size: .8rem; border-radius: 999px; padding: 1px 9px; cursor: pointer; }
+  .userno:hover { background: #e0e7ff; }
+  .u-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
+  .u-box { width: 100%; max-width: 400px; background: #fff; color: #111827; border-radius: 14px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
+  .u-title { margin: 0 0 2px; font-size: 1.2rem; }
+  .u-sub { margin: 0 0 10px; font-size: .8rem; color: #6b7280; }
+  .u-toggle { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: .92rem; cursor: pointer; }
+  .u-toggle input { width: 18px; height: 18px; }
+  .u-box textarea { width: 100%; box-sizing: border-box; min-height: 70px; resize: vertical; font: inherit; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; }
+  .u-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .u-actions button { font: inherit; font-weight: 700; border-radius: 999px; padding: 8px 18px; cursor: pointer; border: 1px solid #d1d5db; background: #f3f4f6; color: #111827; }
+  .u-actions .u-save { background: #111827; color: #fff; border-color: #111827; }
   .empty, .err { padding: 18px; border-radius: 10px; }
   .empty { color: #9ca3af; }
   .err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
-  .gate { max-width: 320px; margin: 60px auto; text-align: center; }
+  .gate { max-width: 340px; margin: 60px auto; text-align: center; }
   .gate input { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; font: inherit; margin: 10px 0; }
   .gate button { width: 100%; padding: 10px; border: none; background: #111827; color: #fff; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  .gate .err { margin-top: 10px; font-size: .85rem; }
   @media (prefers-color-scheme: dark) {
     body { background: #0b0f17; color: #e5e7eb; }
     .memo, .bar .stat { background: #111827; border-color: #1f2937; }
     .replies, .replies li { border-color: #1f2937; }
+    .u-box { background: #111827; color: #e5e7eb; } .u-box textarea { background: #0b0f17; color: #e5e7eb; border-color: #1f2937; }
+    .userno { background: #1e1b4b; color: #c7d2fe; }
   }
 </style>
 </head>
 <body>
   <div id="gate" class="gate">
     <h1>Admin</h1>
-    <p class="sub">Enter the passphrase to view all shared notes.</p>
-    <input id="pass" type="password" placeholder="Passphrase" autocomplete="off">
+    <p class="sub">Enter your admin token (the ADMIN_TOKEN secret of the focus-admin-api function).</p>
+    <input id="pass" type="password" placeholder="Admin token" autocomplete="off">
     <button id="enter">Enter</button>
+    <div id="gerr" class="err" style="display:none;"></div>
   </div>
 
   <div id="app" style="display:none;">
     <h1>Shared notes — all users</h1>
-    <p class="sub">Every anonymous note shared from Bidoro, with its replies. Use this to monitor and moderate (esp. <b>reported</b> items). Deleting a note removes its replies too.</p>
+    <p class="sub">Every anonymous note + replies. Click a user # to <b>block</b> sharing/commenting or send them a message (shows in their top-bar quote). All actions are authorised server-side by your token.</p>
     <div class="bar" id="bar"></div>
     <div id="root"><p class="empty">Loading…</p></div>
   </div>
 
-<script type="module">
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-// ⚠️ SOFT gate only — the anon key below is public (it ships in the app), so this
-// page is NOT cryptographically secure; the passphrase just deters casual access.
-// Keep the URL private. For real protection, move reads behind a service-role
-// edge function with an admin token. CHANGE this passphrase:
-const ADMIN_PASS = 'bidoro-admin';
-
+<script>
+// REAL security: this page holds NO database powers. Every read/write is a call
+// to the focus-admin-api edge function, which checks ADMIN_TOKEN server-side and
+// uses the service role. The anon key below is only the gateway apikey (public,
+// already in the app); it grants nothing on its own because RLS blocks the admin
+// writes — they exist only behind the token-checked function.
 const SB_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
-const SB_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';
+const ANON_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';
+const FN_URL = SB_URL + '/functions/v1/focus-admin-api';
 
 const gate = document.getElementById('gate');
 const app  = document.getElementById('app');
 const root = document.getElementById('root');
 const bar  = document.getElementById('bar');
+let _token = '';
 let _reportedOnly = false;
+let _memos = [], _byMemo = {}, _controls = {};
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(ts){ try { return new Date(ts).toLocaleString(); } catch(_) { return ts || ''; } }
 function shortId(id){ return id ? (String(id).replace(/^c-/, '').slice(0, 6)) : '—'; }
+function userNo(clientId){ let h = 0; const s = String(clientId || ''); for (let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) >>> 0; } return (h % 900000) + 100000; }
+function ctrlBadges(clientId){ const c = _controls[clientId]; if (!c) return ''; let s = '';
+  if (c.no_share)   s += '<span class="tag reported">no share</span>';
+  if (c.no_comment) s += '<span class="tag reported">no comment</span>';
+  if (c.admin_message && c.admin_message.trim()) s += '<span class="tag heart">msg</span>';
+  return s; }
 
-const sb = createClient(SB_URL, SB_KEY, { auth: { storageKey: 'sb-bidoro-admin', persistSession: false } });
-let _memos = [], _byMemo = {};
+async function callAdmin(action, params){
+  const res = await fetch(FN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY, 'x-admin-token': _token },
+    body: JSON.stringify(Object.assign({ token: _token, action }, params || {}))
+  });
+  let data = null; try { data = await res.json(); } catch(_){}
+  if (res.status === 401) { const e = new Error('unauthorized'); e.code = 401; throw e; }
+  if (!res.ok || !data || data.ok === false) throw new Error((data && data.error) || ('HTTP ' + res.status));
+  return data;
+}
 
 async function load(){
   root.innerHTML = '<p class="empty">Loading…</p>';
-  const { data: memos, error } = await sb.from('focus_shared_memos')
-    .select('id, client_id, text, created_at, max_viewers').order('created_at', { ascending: false }).limit(1000);
-  if (error) { root.innerHTML = '<div class="err">Could not load (' + esc(error.message) + '). Has supabase-memo-comments.sql been run?</div>'; return; }
-  _memos = memos || [];
-  const ids = _memos.map(m => m.id);
+  let d;
+  try { d = await callAdmin('list'); }
+  catch (e) { root.innerHTML = '<div class="err">Could not load (' + esc(e.message) + '). Is focus-admin-api deployed (with --no-verify-jwt) and the SQL run?</div>'; return; }
+  _memos = d.memos || [];
   _byMemo = {};
-  if (ids.length) {
-    const { data: cs } = await sb.from('focus_memo_comments')
-      .select('id, memo_id, text, hearted, reported, is_ai, created_at').in('memo_id', ids).order('created_at', { ascending: true });
-    (cs || []).forEach(c => { (_byMemo[c.memo_id] = _byMemo[c.memo_id] || []).push(c); });
-  }
+  (d.comments || []).forEach(c => { (_byMemo[c.memo_id] = _byMemo[c.memo_id] || []).push(c); });
+  _controls = {};
+  (d.controls || []).forEach(c => { _controls[c.client_id] = c; });
   render();
 }
 
@@ -126,9 +154,10 @@ function render(){
     const replies = (_byMemo[m.id] || []);
     const flagged = replies.some(c => c.reported);
     const card = document.createElement('div'); card.className = 'memo' + (flagged ? ' flagged' : '');
-    let html = '<div class="memo-head"><div class="memo-text">' + esc(m.text) + '</div>'
+    let html = '<div class="memo-head"><div class="memo-text">' + (m.emoji ? (esc(m.emoji) + ' ') : '') + esc(m.text) + '</div>'
       + '<button class="del" data-del-memo="' + m.id + '">Delete</button></div>'
-      + '<div class="memo-meta">id ' + shortId(m.client_id) + ' · shared ' + fmt(m.created_at)
+      + '<div class="memo-meta">user <button class="userno" data-uid="' + esc(m.client_id) + '">#' + userNo(m.client_id) + '</button>'
+      + ctrlBadges(m.client_id) + ' · shared ' + fmt(m.created_at)
       + (m.max_viewers != null ? (' · max ' + m.max_viewers + ' viewers') : '') + '</div>';
     if (replies.length) {
       html += '<ul class="replies">';
@@ -148,21 +177,63 @@ function render(){
 
   root.querySelectorAll('[data-del-memo]').forEach(b => b.onclick = async () => {
     if (!confirm('Delete this note AND all its replies?')) return;
-    b.disabled = true; await sb.from('focus_shared_memos').delete().eq('id', b.getAttribute('data-del-memo')); load();
+    b.disabled = true; try { await callAdmin('deleteMemo', { id: +b.getAttribute('data-del-memo') }); } catch(e){ alert(e.message); } load();
   });
   root.querySelectorAll('[data-del-cmt]').forEach(b => b.onclick = async () => {
     if (!confirm('Delete this reply?')) return;
-    b.disabled = true; await sb.from('focus_memo_comments').delete().eq('id', b.getAttribute('data-del-cmt')); load();
+    b.disabled = true; try { await callAdmin('deleteComment', { id: +b.getAttribute('data-del-cmt') }); } catch(e){ alert(e.message); } load();
   });
+  root.querySelectorAll('.userno').forEach(b => b.onclick = () => openUserPopup(b.getAttribute('data-uid')));
+}
+
+function openUserPopup(clientId){
+  const cur = _controls[clientId] || { no_share:false, no_comment:false, admin_message:'' };
+  const back = document.createElement('div'); back.className = 'u-back';
+  const box = document.createElement('div'); box.className = 'u-box';
+  box.innerHTML =
+    '<h3 class="u-title">User #' + userNo(clientId) + '</h3>'
+    + '<p class="u-sub">id ' + esc(shortId(clientId)) + ' · anonymous</p>'
+    + '<label class="u-toggle"><input type="checkbox" id="u-noshare"' + (cur.no_share?' checked':'') + '> Block this user from <b>sharing</b> notes</label>'
+    + '<label class="u-toggle"><input type="checkbox" id="u-nocomment"' + (cur.no_comment?' checked':'') + '> Block this user from <b>commenting</b></label>'
+    + '<p class="u-sub" style="margin-top:14px;">Message to this user (shows in their top-bar quote):</p>'
+    + '<textarea id="u-msg" maxlength="200" placeholder="Write a message…">' + esc(cur.admin_message || '') + '</textarea>'
+    + '<div class="u-actions"><button class="u-cancel">Cancel</button><button class="u-save">Save</button></div>';
+  back.appendChild(box); document.body.appendChild(back);
+  const close = () => { try { back.remove(); } catch(_){} };
+  back.addEventListener('click', e => { if (e.target === back) close(); });
+  box.querySelector('.u-cancel').onclick = close;
+  box.querySelector('.u-save').onclick = async () => {
+    const btn = box.querySelector('.u-save'); btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      await callAdmin('setControl', {
+        client_id: clientId,
+        no_share: box.querySelector('#u-noshare').checked,
+        no_comment: box.querySelector('#u-nocomment').checked,
+        admin_message: box.querySelector('#u-msg').value.trim()
+      });
+      close(); load();
+    } catch (e) { btn.disabled = false; btn.textContent = 'Failed'; alert(e.message); }
+  };
 }
 
 function unlock(){ gate.style.display = 'none'; app.style.display = ''; load(); }
-document.getElementById('enter').onclick = () => {
-  if (document.getElementById('pass').value === ADMIN_PASS) { try { sessionStorage.setItem('bidoro-admin-ok','1'); } catch(_){} unlock(); }
-  else { alert('Wrong passphrase.'); }
-};
-document.getElementById('pass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('enter').click(); });
-try { if (sessionStorage.getItem('bidoro-admin-ok') === '1') unlock(); } catch(_){}
+async function tryEnter(){
+  _token = document.getElementById('pass').value.trim();
+  const gerr = document.getElementById('gerr'); gerr.style.display = 'none';
+  if (!_token) return;
+  try {
+    await callAdmin('list');                 // validates the token server-side
+    try { sessionStorage.setItem('bidoro-admin-token', _token); } catch(_){}
+    unlock();
+  } catch (e) {
+    _token = '';
+    gerr.textContent = (e.code === 401) ? 'Wrong token.' : ('Error: ' + e.message);
+    gerr.style.display = '';
+  }
+}
+document.getElementById('enter').onclick = tryEnter;
+document.getElementById('pass').addEventListener('keydown', e => { if (e.key === 'Enter') tryEnter(); });
+try { const t = sessionStorage.getItem('bidoro-admin-token'); if (t) { document.getElementById('pass').value = t; tryEnter(); } } catch(_){}
 </script>
 </body>
 </html>

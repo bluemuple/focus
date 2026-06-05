@@ -546,6 +546,8 @@
   /* ===== Social Notes (friend replies on shared memos) ===== */
   /* Top-bar quote: ✉ prefix + 💬 reply button on someone else's memo. */
   .mot-envelope { margin-right: 5px; opacity: .8; font-size: .95em; }
+  .mot-emoji { margin-right: 5px; font-size: .9em; line-height: 1; vertical-align: middle; }
+  .mot-admin-msg { color: #b45309; font-weight: 700; }
   .mot-reply-btn { flex: 0 0 auto; margin-left: 6px; background: transparent; border: none; cursor: pointer; font-size: 1em; line-height: 1; padding: 2px 4px; -webkit-tap-highlight-color: transparent; }
   .mot-social-notice { font-weight: 700; }
   .mot-heart-notice { color: #db2777; }
@@ -7589,11 +7591,15 @@ async function pushSharedMemoToCloud() {
       return true;
     }
     if (containsProfanity(text)) return false;   // never publish profane text
-    const { data, error } = await sb.from(SB_SHARED_TABLE)
-      .upsert({ client_id: state.shareClientId, text: text, updated_at: new Date().toISOString() },
-              { onConflict: 'client_id' })
-      .select('id')
-      .maybeSingle();
+    const _row = { client_id: state.shareClientId, text: text, updated_at: new Date().toISOString() };
+    const _emo = (state.sharedMemoEmoji || '').slice(0, 8);
+    if (_emo) _row.emoji = _emo;
+    let res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
+    if (res.error && _emo && /emoji/i.test(res.error.message || '')) {   // emoji column not added yet → retry without it
+      delete _row.emoji;
+      res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
+    }
+    const { data, error } = res;
     if (error) { console.warn('shared memo push error:', error); return false; }
     if (data && data.id != null) { state.sharedMemoRowId = data.id; saveState(); }
     return true;
@@ -7606,15 +7612,16 @@ async function fetchSharedMemosFromCloud() {
   try {
     const sb = await getSupabaseClient();
     if (!sb) return false;
-    const { data, error } = await sb.from(SB_SHARED_TABLE)
-      .select('id, text, client_id')
-      .order('created_at', { ascending: false })
-      .limit(200);
+    let res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id, emoji').order('created_at', { ascending: false }).limit(200);
+    if (res.error && /emoji/i.test(res.error.message || '')) {   // emoji column not added yet → fall back
+      res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id').order('created_at', { ascending: false }).limit(200);
+    }
+    const { data, error } = res;
     if (error) { console.warn('shared memo fetch error:', error); return false; }
     const mineId = state.shareClientId;
     _sharedMemoPool = (data || [])
       .filter(r => r && r.client_id !== mineId && r.text && !containsProfanity(r.text))
-      .map(r => ({ id: r.id, text: cleanShareText(r.text) }))
+      .map(r => ({ id: r.id, text: cleanShareText(r.text), emoji: (r.emoji || '') }))
       .filter(r => r.text);
     return true;
   } catch (e) { console.warn('shared memo fetch failed:', e); return false; }
@@ -7661,6 +7668,17 @@ async function fetchMyHeartedComments() {
     return data || [];
   } catch (_) { return []; }
 }
+/* My admin-control row (block-share / block-comment / a message from the admin),
+   keyed by my client_id. null when none / table absent. */
+async function fetchMyAdminControl() {
+  try {
+    const sb = await getSupabaseClient(); if (!sb || !state.shareClientId) return null;
+    const { data, error } = await sb.from('focus_admin_controls')
+      .select('no_share, no_comment, admin_message, updated_at').eq('client_id', state.shareClientId).maybeSingle();
+    if (error) return null;
+    return data || null;
+  } catch (_) { return null; }
+}
 async function heartMemoComment(id, on) {
   try { const sb = await getSupabaseClient(); if (!sb) return false;
     const { error } = await sb.from(SB_COMMENTS_TABLE).update({ hearted: !!on }).eq('id', id); return !error;
@@ -7706,6 +7724,7 @@ function openMemoCommentPopup(memoId, memoText) {
     close(); _memoToast("Reported — you won't see this again.");
   });
   box.querySelector('.memo-cmt-send').addEventListener('click', async () => {
+    if (state.adminControl && state.adminControl.no_comment) { close(); _memoToast('Commenting is turned off for your account.'); return; }
     const t = (ta.value || '').trim(); if (!t) { ta.focus(); return; }
     const btn = box.querySelector('.memo-cmt-send'); btn.disabled = true; btn.textContent = 'Sending…';
     const ok = await postMemoComment(memoId, t);
@@ -7739,6 +7758,15 @@ function _showHeartNotice() {
   el._heartTapRestore = restore;
   _motNoticeTimer = setTimeout(restore, 9000);   // also restores on a tap (handled in the display click)
 }
+/* A message the admin sent to THIS user → shown in the motivational-quote slot. */
+function _showAdminMessage(msg) {
+  const el = _motEl(); if (!el) return;
+  clearTimeout(_motNoticeTimer);
+  el.innerHTML = '<span class="mot-social-notice mot-admin-msg">📣 ' + escapeHTML(msg) + '</span>';
+  const restore = () => { try { refreshMotivation(false); } catch (_) {} };
+  el._heartTapRestore = restore;                // tap to dismiss (reuses the same hook)
+  _motNoticeTimer = setTimeout(restore, 12000);
+}
 /* Poll: new replies on my memo → "A friend left a memo."; my replies that got
    ♡'d → "Your friend ♡ your message". Seen-ids in state so a notice fires once. */
 let _memoSocialBusy = false;
@@ -7768,6 +7796,16 @@ async function _pollMemoSocial() {
       state.seenHeartIds = state.seenHeartIds.slice(-200);
       try { saveState(); } catch (_) {}
       _showHeartNotice();
+    }
+    // Admin control for me (block-share / block-comment / a message).
+    const ctrl = await fetchMyAdminControl();
+    state.adminControl = ctrl || null;
+    if (ctrl && ctrl.admin_message && ctrl.admin_message.trim()) {
+      const stamp = ctrl.updated_at || ctrl.admin_message;
+      if (state.seenAdminMsgAt !== stamp) {     // show each new/edited admin message once
+        state.seenAdminMsgAt = stamp; try { saveState(); } catch (_) {}
+        _showAdminMessage(ctrl.admin_message.trim());
+      }
     }
   } catch (_) {} finally { _memoSocialBusy = false; }
 }
@@ -8506,9 +8544,15 @@ function _persistNotes(){
   try { refreshMotivation(true); } catch (_) {}
 }
 function _setNoteShared(id, on){
+  // Admin can switch off a user's sharing — refuse + explain (server RLS also blocks it).
+  if (on && state.adminControl && state.adminControl.no_share) {
+    _memoToast('Sharing is turned off for your account.');
+    renderNotes(); return;
+  }
   _ensureNotes().forEach(n => { if (n.id === id) n.shared = !!on; else if (on) n.shared = false; });   // one shared at a time
   const shared = state.notes.find(n => n.shared);
   state.sharedMemo = shared ? shared.text : '';
+  state.sharedMemoEmoji = shared ? (shared.emoji || '') : '';   // the emoji rides along into the top-bar quote
   if (on && _noteBubbleId === id) _noteBubbleId = null;   // sharing dismisses the coach bubble
   _persistNotes();
   renderNotes();
@@ -17397,7 +17441,15 @@ function refreshMotivation(force) {
   const env = isGreen ? '<span class="mot-envelope" aria-hidden="true">✉</span>' : '';
   const chat = (isGreen && memoId != null)
     ? `<button type="button" class="mot-reply-btn" data-memo-id="${memoId}" aria-label="Reply to this">💬</button>` : '';
-  el.innerHTML = `${env}<span class="motivation-track${isGreen ? ' is-shared' : ''}">${escapeHTML(state.motivationalCurrent.text)}</span>${chat}`;
+  // The note's emoji rides along, small, before the text — for MY notes (look up by
+  // text in state.notes) and for OTHERS' memos (carried in _sharedMemoPool).
+  let _emo = '';
+  try {
+    if (isGreen && memoId != null) { const m = _sharedMemoPool.find(x => x.id === memoId); _emo = (m && m.emoji) || ''; }
+    else { const n = (state.notes || []).find(x => x.text === state.motivationalCurrent.text); _emo = (n && n.emoji) || ''; }
+  } catch (_) {}
+  const emoHtml = _emo ? `<span class="mot-emoji" aria-hidden="true">${escapeHTML(_emo)}</span>` : '';
+  el.innerHTML = `${env}${emoHtml}<span class="motivation-track${isGreen ? ' is-shared' : ''}">${escapeHTML(state.motivationalCurrent.text)}</span>${chat}`;
   const _rb = el.querySelector('.mot-reply-btn');
   if (_rb) _rb.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();

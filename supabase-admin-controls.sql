@@ -21,14 +21,26 @@ create table if not exists public.focus_admin_controls (
   updated_at    timestamptz not null default now()
 );
 
-grant select, insert, update, delete on public.focus_admin_controls to anon, authenticated;
+-- REAL SECURITY: anon may only READ its own control (the client enforces blocks
+-- + shows the admin message). Every WRITE goes through the focus-admin-api edge
+-- function with the SERVICE ROLE, gated by ADMIN_TOKEN — so nobody with just the
+-- public anon key can block users or send fake admin messages.
+grant select on public.focus_admin_controls to anon, authenticated;
+revoke insert, update, delete on public.focus_admin_controls from anon, authenticated;
 alter table public.focus_admin_controls enable row level security;
 
-drop policy if exists "admin_controls_all" on public.focus_admin_controls;
-create policy "admin_controls_all"
-  on public.focus_admin_controls for all
+drop policy if exists "admin_controls_all"    on public.focus_admin_controls;
+drop policy if exists "admin_controls_select" on public.focus_admin_controls;
+create policy "admin_controls_select"
+  on public.focus_admin_controls for select
   to anon, authenticated
-  using (true) with check (true);
+  using (true);
+-- (no anon insert/update/delete policy → only the service role can write.)
+
+-- Reply deletion is admin-only too (via focus-admin-api). Users never delete
+-- replies, so revoke it from anon (heart/report UPDATEs stay allowed).
+revoke delete on public.focus_memo_comments from anon, authenticated;
+drop policy if exists "memo_comments_delete" on public.focus_memo_comments;
 
 -- ── Server-side enforcement: a blocked client cannot INSERT a memo / comment.
 --    (Re-creates the insert policies from the earlier files, adding a blocklist
@@ -56,3 +68,6 @@ create policy "memo_comments_insert"
       where b.client_id = focus_memo_comments.author_client_id and b.no_comment
     )
   );
+
+-- ── Emoji that rides along with a shared memo (shown small in the top-bar quote).
+alter table public.focus_shared_memos add column if not exists emoji text;
