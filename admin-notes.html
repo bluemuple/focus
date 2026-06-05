@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bidoro — Shared notes (admin)</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f6f7f9; color: #111827; padding: 18px; max-width: 920px; margin: 0 auto; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: .85rem; margin: 0 0 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 14px; }
+  .bar .stat { font-size: .82rem; color: #374151; background: #fff; border: 1px solid #e5e7eb; border-radius: 999px; padding: 4px 12px; }
+  .bar .stat b { color: #111827; }
+  .bar .stat.rep b { color: #b91c1c; }
+  .toggle { margin-left: auto; display: inline-flex; border: 1px solid #d1d5db; border-radius: 999px; overflow: hidden; }
+  .toggle button { border: none; background: transparent; padding: 6px 14px; font: inherit; font-weight: 700; color: #6b7280; cursor: pointer; }
+  .toggle button.on { background: #111827; color: #fff; }
+  .memo { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px 16px; margin: 0 0 14px; }
+  .memo.flagged { border-color: #fca5a5; box-shadow: 0 0 0 1px #fca5a5; }
+  .memo-head { display: flex; align-items: baseline; gap: 8px; }
+  .memo-text { font-size: 1.05rem; font-weight: 600; flex: 1 1 auto; min-width: 0; }
+  .memo-meta { color: #6b7280; font-size: .76rem; margin-top: 3px; }
+  .replies { margin: 10px 0 0; padding: 0; list-style: none; border-top: 1px dashed #e5e7eb; }
+  .replies li { display: flex; align-items: flex-start; gap: 8px; padding: 8px 0 8px 6px; border-bottom: 1px solid #f1f5f9; }
+  .replies li:last-child { border-bottom: none; }
+  .r-arrow { color: #9ca3af; }
+  .r-text { flex: 1 1 auto; min-width: 0; }
+  .r-when { color: #9ca3af; font-size: .72rem; white-space: nowrap; }
+  .tag { display: inline-block; font-size: .66rem; font-weight: 800; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
+  .tag.ai { background: #ede9fe; color: #6d28d9; }
+  .tag.reported { background: #fee2e2; color: #b91c1c; }
+  .tag.heart { background: #fce7f3; color: #db2777; }
+  .del { flex: 0 0 auto; border: 1px solid #fecaca; background: transparent; color: #b91c1c; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; }
+  .empty, .err { padding: 18px; border-radius: 10px; }
+  .empty { color: #9ca3af; }
+  .err { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+  .gate { max-width: 320px; margin: 60px auto; text-align: center; }
+  .gate input { width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 10px; font: inherit; margin: 10px 0; }
+  .gate button { width: 100%; padding: 10px; border: none; background: #111827; color: #fff; border-radius: 10px; font-weight: 700; cursor: pointer; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #0b0f17; color: #e5e7eb; }
+    .memo, .bar .stat { background: #111827; border-color: #1f2937; }
+    .replies, .replies li { border-color: #1f2937; }
+  }
+</style>
+</head>
+<body>
+  <div id="gate" class="gate">
+    <h1>Admin</h1>
+    <p class="sub">Enter the passphrase to view all shared notes.</p>
+    <input id="pass" type="password" placeholder="Passphrase" autocomplete="off">
+    <button id="enter">Enter</button>
+  </div>
+
+  <div id="app" style="display:none;">
+    <h1>Shared notes — all users</h1>
+    <p class="sub">Every anonymous note shared from Bidoro, with its replies. Use this to monitor and moderate (esp. <b>reported</b> items). Deleting a note removes its replies too.</p>
+    <div class="bar" id="bar"></div>
+    <div id="root"><p class="empty">Loading…</p></div>
+  </div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+// ⚠️ SOFT gate only — the anon key below is public (it ships in the app), so this
+// page is NOT cryptographically secure; the passphrase just deters casual access.
+// Keep the URL private. For real protection, move reads behind a service-role
+// edge function with an admin token. CHANGE this passphrase:
+const ADMIN_PASS = 'bidoro-admin';
+
+const SB_URL = 'https://sbatsnivlrlywpfytlio.supabase.co';
+const SB_KEY = 'sb_publishable_vwZUKHhhtBEjAgXrZQTNFQ_bQeM8Ypc';
+
+const gate = document.getElementById('gate');
+const app  = document.getElementById('app');
+const root = document.getElementById('root');
+const bar  = document.getElementById('bar');
+let _reportedOnly = false;
+
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmt(ts){ try { return new Date(ts).toLocaleString(); } catch(_) { return ts || ''; } }
+function shortId(id){ return id ? (String(id).replace(/^c-/, '').slice(0, 6)) : '—'; }
+
+const sb = createClient(SB_URL, SB_KEY, { auth: { storageKey: 'sb-bidoro-admin', persistSession: false } });
+let _memos = [], _byMemo = {};
+
+async function load(){
+  root.innerHTML = '<p class="empty">Loading…</p>';
+  const { data: memos, error } = await sb.from('focus_shared_memos')
+    .select('id, client_id, text, created_at, max_viewers').order('created_at', { ascending: false }).limit(1000);
+  if (error) { root.innerHTML = '<div class="err">Could not load (' + esc(error.message) + '). Has supabase-memo-comments.sql been run?</div>'; return; }
+  _memos = memos || [];
+  const ids = _memos.map(m => m.id);
+  _byMemo = {};
+  if (ids.length) {
+    const { data: cs } = await sb.from('focus_memo_comments')
+      .select('id, memo_id, text, hearted, reported, is_ai, created_at').in('memo_id', ids).order('created_at', { ascending: true });
+    (cs || []).forEach(c => { (_byMemo[c.memo_id] = _byMemo[c.memo_id] || []).push(c); });
+  }
+  render();
+}
+
+function render(){
+  const allComments = Object.values(_byMemo).flat();
+  const repMemos = _memos.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
+  const repComments = allComments.filter(c => c.reported);
+  bar.innerHTML =
+    '<span class="stat"><b>' + _memos.length + '</b> notes</span>' +
+    '<span class="stat"><b>' + allComments.length + '</b> replies</span>' +
+    '<span class="stat"><b>' + allComments.filter(c => c.is_ai).length + '</b> ai</span>' +
+    '<span class="stat rep"><b>' + (repMemos.length + repComments.length) + '</b> reported</span>' +
+    '<span class="toggle"><button id="t-all" class="' + (!_reportedOnly?'on':'') + '">All</button>' +
+    '<button id="t-rep" class="' + (_reportedOnly?'on':'') + '">Reported</button></span>';
+  document.getElementById('t-all').onclick = () => { _reportedOnly = false; render(); };
+  document.getElementById('t-rep').onclick = () => { _reportedOnly = true; render(); };
+
+  let list = _memos;
+  if (_reportedOnly) list = _memos.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
+  if (!list.length) { root.innerHTML = '<p class="empty">' + (_reportedOnly ? 'No reported items 🎉' : 'No shared notes yet.') + '</p>'; return; }
+
+  root.innerHTML = '';
+  list.forEach(m => {
+    const replies = (_byMemo[m.id] || []);
+    const flagged = replies.some(c => c.reported);
+    const card = document.createElement('div'); card.className = 'memo' + (flagged ? ' flagged' : '');
+    let html = '<div class="memo-head"><div class="memo-text">' + esc(m.text) + '</div>'
+      + '<button class="del" data-del-memo="' + m.id + '">Delete</button></div>'
+      + '<div class="memo-meta">id ' + shortId(m.client_id) + ' · shared ' + fmt(m.created_at)
+      + (m.max_viewers != null ? (' · max ' + m.max_viewers + ' viewers') : '') + '</div>';
+    if (replies.length) {
+      html += '<ul class="replies">';
+      replies.forEach(c => {
+        html += '<li><span class="r-arrow">⤷</span><span class="r-text">' + esc(c.text)
+          + (c.is_ai ? '<span class="tag ai">ai</span>' : '')
+          + (c.hearted ? '<span class="tag heart">♥</span>' : '')
+          + (c.reported ? '<span class="tag reported">reported</span>' : '')
+          + '</span><span class="r-when">' + fmt(c.created_at) + '</span>'
+          + '<button class="del" data-del-cmt="' + c.id + '">✕</button></li>';
+      });
+      html += '</ul>';
+    }
+    card.innerHTML = html;
+    root.appendChild(card);
+  });
+
+  root.querySelectorAll('[data-del-memo]').forEach(b => b.onclick = async () => {
+    if (!confirm('Delete this note AND all its replies?')) return;
+    b.disabled = true; await sb.from('focus_shared_memos').delete().eq('id', b.getAttribute('data-del-memo')); load();
+  });
+  root.querySelectorAll('[data-del-cmt]').forEach(b => b.onclick = async () => {
+    if (!confirm('Delete this reply?')) return;
+    b.disabled = true; await sb.from('focus_memo_comments').delete().eq('id', b.getAttribute('data-del-cmt')); load();
+  });
+}
+
+function unlock(){ gate.style.display = 'none'; app.style.display = ''; load(); }
+document.getElementById('enter').onclick = () => {
+  if (document.getElementById('pass').value === ADMIN_PASS) { try { sessionStorage.setItem('bidoro-admin-ok','1'); } catch(_){} unlock(); }
+  else { alert('Wrong passphrase.'); }
+};
+document.getElementById('pass').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('enter').click(); });
+try { if (sessionStorage.getItem('bidoro-admin-ok') === '1') unlock(); } catch(_){}
+</script>
+</body>
+</html>
