@@ -7647,8 +7647,12 @@ async function postMemoComment(memoId, text) {
   try {
     const sb = await getSupabaseClient(); if (!sb || memoId == null) return false;
     const t = cleanShareText(text); if (!t || containsProfanity(t)) return false;
-    const { error } = await sb.from(SB_COMMENTS_TABLE).insert({ memo_id: memoId, author_client_id: state.shareClientId, text: t });
-    return !error;
+    const row = { memo_id: memoId, author_client_id: state.shareClientId, text: t };
+    // Tag the reply with my auth user id if signed up → admin page can show my email.
+    try { const { data: { session } } = await sb.auth.getSession(); if (session && session.user && session.user.id) row.user_id = session.user.id; } catch (_) {}
+    let res = await sb.from(SB_COMMENTS_TABLE).insert(row);
+    if (res.error && row.user_id && /user_id|column/i.test(res.error.message || '')) { delete row.user_id; res = await sb.from(SB_COMMENTS_TABLE).insert(row); }
+    return !res.error;
   } catch (_) { return false; }
 }
 async function fetchRepliesToMyMemo() {

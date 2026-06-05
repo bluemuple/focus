@@ -50,17 +50,21 @@ Deno.serve(async (req) => {
       let comments: any[] = [];
       if (ids.length) {
         const { data } = await sb.from("focus_memo_comments")
-          .select("id, memo_id, text, hearted, reported, is_ai, created_at").in("memo_id", ids).order("created_at", { ascending: true });
+          .select("id, memo_id, author_client_id, user_id, text, hearted, reported, is_ai, created_at").in("memo_id", ids).order("created_at", { ascending: true });
         comments = data || [];
       }
       const { data: controls } = await sb.from("focus_admin_controls").select("client_id, no_share, no_comment, admin_message");
-      // Resolve emails for SIGNED-UP sharers (service role can read auth.users).
-      const uids = [...new Set((memos || []).map((m: any) => m.user_id).filter(Boolean))];
+      // Resolve emails for SIGNED-UP sharers AND repliers (service role → auth.users).
+      const uids = [...new Set([
+        ...(memos || []).map((m: any) => m.user_id),
+        ...comments.map((c: any) => c.user_id),
+      ].filter(Boolean))];
       const emailByUid: Record<string, string> = {};
       for (const uid of uids) {
         try { const { data } = await sb.auth.admin.getUserById(uid as string); if (data?.user?.email) emailByUid[uid as string] = data.user.email; } catch (_) { /* ignore */ }
       }
       (memos || []).forEach((m: any) => { m.email = m.user_id ? (emailByUid[m.user_id] || null) : null; });
+      comments.forEach((c: any) => { c.email = c.user_id ? (emailByUid[c.user_id] || null) : null; });
       return json({ ok: true, memos: memos || [], comments, controls: controls || [] });
     }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }
@@ -76,6 +80,16 @@ Deno.serve(async (req) => {
       };
       if (!row.client_id) return json({ ok: false, error: "client_id required" }, 400);
       await sb.from("focus_admin_controls").upsert(row, { onConflict: "client_id" });
+      return json({ ok: true });
+    }
+    if (action === "getSettings") {
+      const { data } = await sb.from("focus_admin_settings").select("ai_enabled, ai_reply_after_minutes").eq("id", 1).maybeSingle();
+      return json({ ok: true, settings: data || { ai_enabled: true, ai_reply_after_minutes: 1440 } });
+    }
+    if (action === "setSettings") {
+      const mins = Math.max(0, Math.min(1051200, parseInt(String(b.ai_reply_after_minutes), 10) || 1440));   // 0 .. ~2y
+      const row = { id: 1, ai_enabled: b.ai_enabled !== false, ai_reply_after_minutes: mins, updated_at: new Date().toISOString() };
+      await sb.from("focus_admin_settings").upsert(row, { onConflict: "id" });
       return json({ ok: true });
     }
     return json({ ok: false, error: "unknown action" }, 400);

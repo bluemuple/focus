@@ -28,12 +28,22 @@
   .replies li:last-child { border-bottom: none; }
   .r-arrow { color: #9ca3af; }
   .r-text { flex: 1 1 auto; min-width: 0; }
+  .r-by { flex: 0 0 auto; font-size: .74rem; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
   .r-when { color: #9ca3af; font-size: .72rem; white-space: nowrap; }
   .tag { display: inline-block; font-size: .66rem; font-weight: 800; border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
   .tag.ai { background: #ede9fe; color: #6d28d9; }
   .tag.reported { background: #fee2e2; color: #b91c1c; }
   .tag.heart { background: #fce7f3; color: #db2777; }
   .del { flex: 0 0 auto; border: 1px solid #fecaca; background: transparent; color: #b91c1c; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; }
+  .ai-settings { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .88rem; }
+  .ai-settings .ais-on { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .ai-settings .ais-on input { width: 18px; height: 18px; }
+  .ai-settings .ais-row { color: #374151; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .ai-settings input[type=number] { width: 70px; padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+  .ai-settings select { padding: 5px 8px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+  .ai-settings #ais-save { margin-left: auto; padding: 6px 14px; border: 1px solid #111827; background: #111827; color: #fff; border-radius: 8px; font-weight: 700; cursor: pointer; }
+  .ai-settings #ais-status { font-size: .8rem; color: #6b7280; }
+  @media (prefers-color-scheme: dark) { .ai-settings { background: #111827; border-color: #1f2937; } .ai-settings input, .ai-settings select { background: #0b0f17; color: #e5e7eb; border-color: #1f2937; } }
   .email { color: #047857; font-weight: 700; }
   .anon { color: #9ca3af; font-style: italic; }
   .userno { border: none; background: #eef2ff; color: #3730a3; font: inherit; font-weight: 800; font-size: .8rem; border-radius: 999px; padding: 1px 9px; cursor: pointer; }
@@ -77,6 +87,15 @@
     <h1>Shared notes — all users</h1>
     <p class="sub">Every anonymous note + replies. Click a user # to <b>block</b> sharing/commenting or send them a message (shows in their top-bar quote). All actions are authorised server-side by your token.</p>
     <div class="bar" id="bar"></div>
+    <div class="ai-settings" id="ai-settings" style="display:none;">
+      <label class="ais-on"><input type="checkbox" id="ais-enabled"> <b>AI auto-reply</b></label>
+      <span class="ais-row">— if a shared note gets no human reply after
+        <input type="number" id="ais-num" min="0" step="1" value="24">
+        <select id="ais-unit"><option value="60">hours</option><option value="1">minutes</option></select>,
+        an AI replies (looks human; gibberish notes are skipped).</span>
+      <button id="ais-save">Save</button>
+      <span id="ais-status"></span>
+    </div>
     <div id="root"><p class="empty">Loading…</p></div>
   </div>
 
@@ -96,7 +115,7 @@ const root = document.getElementById('root');
 const bar  = document.getElementById('bar');
 let _token = '';
 let _reportedOnly = false;
-let _memos = [], _byMemo = {}, _controls = {};
+let _memos = [], _byMemo = {}, _controls = {}, _emailByClient = {};
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(ts){ try { return new Date(ts).toLocaleString(); } catch(_) { return ts || ''; } }
@@ -107,6 +126,13 @@ function ctrlBadges(clientId){ const c = _controls[clientId]; if (!c) return '';
   if (c.no_comment) s += '<span class="tag reported">no comment</span>';
   if (c.admin_message && c.admin_message.trim()) s += '<span class="tag heart">msg</span>';
   return s; }
+// Who left a reply — "ai" tag, or a clickable user # (+ email if signed up).
+function replyAuthor(c){
+  if (c.is_ai || c.author_client_id === 'ai') return '<span class="tag ai">ai</span>';
+  if (!c.author_client_id) return '';
+  return '<button class="userno" data-uid="' + esc(c.author_client_id) + '">#' + userNo(c.author_client_id) + '</button>'
+    + (c.email ? ' <span class="email">' + esc(c.email) + '</span>' : '');
+}
 
 async function callAdmin(action, params){
   const res = await fetch(FN_URL, {
@@ -130,6 +156,10 @@ async function load(){
   (d.comments || []).forEach(c => { (_byMemo[c.memo_id] = _byMemo[c.memo_id] || []).push(c); });
   _controls = {};
   (d.controls || []).forEach(c => { _controls[c.client_id] = c; });
+  // client_id → email (from memo sharers AND repliers) for the popup lookup.
+  _emailByClient = {};
+  _memos.forEach(m => { if (m.email) _emailByClient[m.client_id] = m.email; });
+  (d.comments || []).forEach(c => { if (c.email && c.author_client_id) _emailByClient[c.author_client_id] = c.email; });
   render();
 }
 
@@ -170,7 +200,8 @@ function render(){
           + (c.is_ai ? '<span class="tag ai">ai</span>' : '')
           + (c.hearted ? '<span class="tag heart">♥</span>' : '')
           + (c.reported ? '<span class="tag reported">reported</span>' : '')
-          + '</span><span class="r-when">' + fmt(c.created_at) + '</span>'
+          + '</span><span class="r-by">' + replyAuthor(c) + '</span>'
+          + '<span class="r-when">' + fmt(c.created_at) + '</span>'
           + '<button class="del" data-del-cmt="' + c.id + '">✕</button></li>';
       });
       html += '</ul>';
@@ -192,7 +223,7 @@ function render(){
 
 function openUserPopup(clientId){
   const cur = _controls[clientId] || { no_share:false, no_comment:false, admin_message:'' };
-  const _email = (_memos.find(m => m.client_id === clientId) || {}).email || '';
+  const _email = _emailByClient[clientId] || '';
   const back = document.createElement('div'); back.className = 'u-back';
   const box = document.createElement('div'); box.className = 'u-box';
   box.innerHTML =
@@ -221,7 +252,28 @@ function openUserPopup(clientId){
   };
 }
 
-function unlock(){ gate.style.display = 'none'; app.style.display = ''; load(); }
+async function loadSettings(){
+  const box = document.getElementById('ai-settings');
+  try {
+    const d = await callAdmin('getSettings');
+    const s = d.settings || {};
+    document.getElementById('ais-enabled').checked = s.ai_enabled !== false;
+    const mins = (typeof s.ai_reply_after_minutes === 'number') ? s.ai_reply_after_minutes : 1440;
+    const num = document.getElementById('ais-num'), unit = document.getElementById('ais-unit');
+    if (mins > 0 && mins % 60 === 0) { unit.value = '60'; num.value = mins / 60; } else { unit.value = '1'; num.value = mins; }
+    box.style.display = 'flex';
+  } catch (_) { box.style.display = 'none'; }
+}
+document.getElementById('ais-save').onclick = async () => {
+  const btn = document.getElementById('ais-save'), st = document.getElementById('ais-status');
+  const num = Math.max(0, parseInt(document.getElementById('ais-num').value, 10) || 0);
+  const factor = parseInt(document.getElementById('ais-unit').value, 10) || 1;
+  btn.disabled = true; st.textContent = 'Saving…';
+  try { await callAdmin('setSettings', { ai_enabled: document.getElementById('ais-enabled').checked, ai_reply_after_minutes: num * factor }); st.textContent = 'Saved ✓'; }
+  catch (e) { st.textContent = 'Failed: ' + e.message; }
+  btn.disabled = false; setTimeout(() => { st.textContent = ''; }, 2500);
+};
+function unlock(){ gate.style.display = 'none'; app.style.display = ''; load(); loadSettings(); }
 async function tryEnter(){
   _token = document.getElementById('pass').value.trim();
   const gerr = document.getElementById('gerr'); gerr.style.display = 'none';

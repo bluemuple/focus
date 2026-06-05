@@ -76,3 +76,21 @@ alter table public.focus_shared_memos add column if not exists emoji text;
 --    function resolves it → email server-side (service role); the client fetch
 --    NEVER selects this column, so other users don't download author user-ids.
 alter table public.focus_shared_memos add column if not exists user_id uuid;
+
+-- ── Same for REPLY authors → the admin page shows who left each reply (+ email).
+alter table public.focus_memo_comments add column if not exists user_id uuid;
+
+-- ── Global settings for the AI auto-reply (edited on the admin page; read by the
+--    focus-memo-ai-reply function). Service-role only — never exposed to anon.
+create table if not exists public.focus_admin_settings (
+  id                     int primary key default 1,
+  ai_enabled             boolean not null default true,
+  ai_reply_after_minutes int     not null default 1440,   -- wait this long with no human reply → AI replies (default 24 h)
+  updated_at             timestamptz not null default now()
+);
+insert into public.focus_admin_settings (id) values (1) on conflict (id) do nothing;
+alter table public.focus_admin_settings enable row level security;
+revoke all on public.focus_admin_settings from anon, authenticated;
+grant all on public.focus_admin_settings to service_role;
+-- (no anon/authenticated policies → only the service role, used by the edge
+--  functions, can read or write these settings.)
