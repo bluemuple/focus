@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
 
     if (action === "list") {
       const { data: memos } = await sb.from("focus_shared_memos")
-        .select("id, client_id, text, emoji, created_at, max_viewers").order("created_at", { ascending: false }).limit(1000);
+        .select("id, client_id, text, emoji, created_at, max_viewers, user_id").order("created_at", { ascending: false }).limit(1000);
       const ids = (memos || []).map((m: any) => m.id);
       let comments: any[] = [];
       if (ids.length) {
@@ -54,6 +54,13 @@ Deno.serve(async (req) => {
         comments = data || [];
       }
       const { data: controls } = await sb.from("focus_admin_controls").select("client_id, no_share, no_comment, admin_message");
+      // Resolve emails for SIGNED-UP sharers (service role can read auth.users).
+      const uids = [...new Set((memos || []).map((m: any) => m.user_id).filter(Boolean))];
+      const emailByUid: Record<string, string> = {};
+      for (const uid of uids) {
+        try { const { data } = await sb.auth.admin.getUserById(uid as string); if (data?.user?.email) emailByUid[uid as string] = data.user.email; } catch (_) { /* ignore */ }
+      }
+      (memos || []).forEach((m: any) => { m.email = m.user_id ? (emailByUid[m.user_id] || null) : null; });
       return json({ ok: true, memos: memos || [], comments, controls: controls || [] });
     }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }

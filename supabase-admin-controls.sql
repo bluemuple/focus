@@ -71,3 +71,8 @@ create policy "memo_comments_insert"
 
 -- ── Emoji that rides along with a shared memo (shown small in the top-bar quote).
 alter table public.focus_shared_memos add column if not exists emoji text;
+
+-- ── Auth user id of the sharer IF they're signed up (email account). The admin
+--    function resolves it → email server-side (service role); the client fetch
+--    NEVER selects this column, so other users don't download author user-ids.
+alter table public.focus_shared_memos add column if not exists user_id uuid;

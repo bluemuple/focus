@@ -7594,9 +7594,11 @@ async function pushSharedMemoToCloud() {
     const _row = { client_id: state.shareClientId, text: text, updated_at: new Date().toISOString() };
     const _emo = (state.sharedMemoEmoji || '').slice(0, 8);
     if (_emo) _row.emoji = _emo;
+    // Attach the auth user id IF signed up (lets the admin page resolve an email).
+    try { const { data: { session } } = await sb.auth.getSession(); if (session && session.user && session.user.id) _row.user_id = session.user.id; } catch (_) {}
     let res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
-    if (res.error && _emo && /emoji/i.test(res.error.message || '')) {   // emoji column not added yet → retry without it
-      delete _row.emoji;
+    if (res.error && (_row.emoji || _row.user_id) && /emoji|user_id|column/i.test(res.error.message || '')) {   // optional columns not added yet → retry with just the base
+      delete _row.emoji; delete _row.user_id;
       res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
     }
     const { data, error } = res;
