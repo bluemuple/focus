@@ -46,6 +46,10 @@
   @media (prefers-color-scheme: dark) { .ai-settings { background: #111827; border-color: #1f2937; } .ai-settings input, .ai-settings select { background: #0b0f17; color: #e5e7eb; border-color: #1f2937; } }
   .email { color: #047857; font-weight: 700; }
   .anon { color: #9ca3af; font-style: italic; }
+  .tag.umsg { background: #fef3c7; color: #92400e; }
+  .u-frommsg { background: #f3f4f6; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: .9rem; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .u-fm-when { color: #9ca3af; font-size: .72rem; white-space: nowrap; flex: 0 0 auto; }
+  @media (prefers-color-scheme: dark) { .u-frommsg { background: #0b0f17; } .tag.umsg { background: #4a3a1a; color: #fcd34d; } }
   .userno { border: none; background: #eef2ff; color: #3730a3; font: inherit; font-weight: 800; font-size: .8rem; border-radius: 999px; padding: 1px 9px; cursor: pointer; }
   .userno:hover { background: #e0e7ff; }
   .u-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
@@ -122,16 +126,18 @@ const root = document.getElementById('root');
 const bar  = document.getElementById('bar');
 let _token = '';
 let _reportedOnly = false;
-let _memos = [], _byMemo = {}, _controls = {}, _emailByClient = {};
+let _memos = [], _byMemo = {}, _controls = {}, _emailByClient = {}, _userMsgsByClient = {};
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function fmt(ts){ try { return new Date(ts).toLocaleString(); } catch(_) { return ts || ''; } }
 function shortId(id){ return id ? (String(id).replace(/^c-/, '').slice(0, 6)) : '—'; }
 function userNo(clientId){ let h = 0; const s = String(clientId || ''); for (let i=0;i<s.length;i++){ h = (h*31 + s.charCodeAt(i)) >>> 0; } return (h % 900000) + 100000; }
-function ctrlBadges(clientId){ const c = _controls[clientId]; if (!c) return ''; let s = '';
+function ctrlBadges(clientId){ const c = _controls[clientId] || {}; let s = '';
   if (c.no_share)   s += '<span class="tag reported">no share</span>';
   if (c.no_comment) s += '<span class="tag reported">no comment</span>';
   if (c.admin_message && c.admin_message.trim()) s += '<span class="tag heart">msg</span>';
+  var um = _userMsgsByClient[clientId];
+  if (um && um.length) s += '<span class="tag umsg">✉ ' + um.length + '</span>';
   return s; }
 // Who left a reply — "ai" tag, or a clickable user # (+ email if signed up).
 function replyAuthor(c){
@@ -167,6 +173,9 @@ async function load(){
   _emailByClient = {};
   _memos.forEach(m => { if (m.email) _emailByClient[m.client_id] = m.email; });
   (d.comments || []).forEach(c => { if (c.email && c.author_client_id) _emailByClient[c.author_client_id] = c.email; });
+  // Messages users sent BACK to the admin (appeals), grouped by client_id.
+  _userMsgsByClient = {};
+  (d.userMessages || []).forEach(u => { (_userMsgsByClient[u.client_id] = _userMsgsByClient[u.client_id] || []).push(u); });
   render();
 }
 
@@ -240,6 +249,9 @@ function openUserPopup(clientId){
     + '<label class="u-toggle"><input type="checkbox" id="u-nocomment"' + (cur.no_comment?' checked':'') + '> Block this user from <b>commenting</b></label>'
     + '<p class="u-sub" style="margin-top:14px;">Message to this user (shows in their top-bar quote):</p>'
     + '<textarea id="u-msg" maxlength="200" placeholder="Write a message…">' + esc(cur.admin_message || '') + '</textarea>'
+    + (function(){ var msgs = _userMsgsByClient[clientId] || []; if (!msgs.length) return '';
+        return '<div class="u-frommsgs"><div class="u-sub" style="margin-top:14px;">📨 Messages from this user:</div>'
+          + msgs.map(function(m){ return '<div class="u-frommsg">' + esc(m.message) + '<span class="u-fm-when">' + fmt(m.created_at) + '</span></div>'; }).join('') + '</div>'; })()
     + '<div class="u-actions"><button class="u-cancel">Cancel</button><button class="u-save">Save</button></div>';
   back.appendChild(box); document.body.appendChild(back);
   const close = () => { try { back.remove(); } catch(_){} };

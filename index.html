@@ -230,14 +230,10 @@
   :root[data-theme="solarized"] nav.tabs .topbar-icon-btn.sound-toggle.mode-soft {
     background: rgba(238,232,213,.16) !important; border-color: rgba(238,232,213,.40) !important; color: #FDF6E3 !important;
   }
-  /* HOME stays a high-contrast FILLED circle on dark too (cream fill + dark glyph),
-     so it reads as the "home" anchor just like the mockup's dark button on light. */
-  :root[data-theme="solarized"] nav.tabs .topbar-icon-btn.topbar-home {
-    background: var(--ink); color: var(--card-bg); border-color: var(--ink);
-  }
-  :root[data-theme="solarized"] nav.tabs .topbar-icon-btn.topbar-home:hover {
-    background: var(--ink); color: var(--card-bg); border-color: var(--ink); filter: brightness(1.08);
-  }
+  /* HOME button colour follows the PAGE in EVERY theme (black on Focus/home, gray
+     elsewhere) — handled by the base .topbar-home / .on-home-page rules below. The
+     old always-cream-filled solarized override was removed: it ignored the page and
+     made dark mode show a light circle everywhere. */
   /* Memo (shared) + song-name prefix — keep the hue but brighter. */
   :root[data-theme="solarized"] .motivation .motivation-track.is-shared { color: #34D399; }   /* brighter green */
   :root[data-theme="solarized"] .motivation .music-prefix { color: #F472B6; }                  /* brighter pink */
@@ -448,7 +444,7 @@
     background: var(--button-bg); color: var(--text-muted, #9ca3af); border-color: var(--card-border);
   }
   nav.tabs .topbar-icon-btn.topbar-home.on-home-page {
-    background: var(--ink); color: var(--card-bg); border-color: var(--ink);
+    background: #111827; color: #fff; border-color: #111827;   /* BLACK + white glyph in every theme (incl. dark), per user */
   }
   nav.tabs .topbar-icon-btn.topbar-home:hover { filter: brightness(1.08); }
   /* Hamburger gets a pressed look while its menu is open (theme-aware). */
@@ -571,6 +567,13 @@
   .note-reply-row .nr-heart { font-size: 1.05rem; color: #9ca3af; }
   .note-reply-row .nr-heart.on { color: #db2777; }
   .note-reply-row .nr-report:hover { color: #b91c1c; }
+  /* Admin → user banner (message + block notice + appeal input) atop the Notes list. */
+  .note-admin-banner { margin: 0 0 12px; border-radius: 12px; overflow: hidden; border: 1px solid var(--card-border); }
+  .note-admin-banner .nab-msg { background: #fef3c7; color: #92400e; font-weight: 700; padding: 10px 14px; line-height: 1.4; }
+  .note-admin-banner .nab-block { background: #fee2e2; color: #b91c1c; font-weight: 700; padding: 10px 14px; line-height: 1.4; }
+  .note-admin-banner .nab-appeal { display: flex; gap: 8px; padding: 10px 12px; background: var(--surface-2, #f9fafb); }
+  .note-admin-banner .nab-input { flex: 1 1 auto; min-width: 0; font: inherit; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-main); }
+  .note-admin-banner .nab-send { flex: 0 0 auto; font: inherit; font-weight: 700; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--ink, #111827); background: var(--ink, #111827); color: var(--card-bg, #fff); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   /* Comment popup (reply to someone's shared memo). */
   .memo-cmt-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
   .memo-cmt-box { width: 100%; max-width: 380px; background: var(--card-bg, #fff); color: var(--text-main, #111827); border-radius: 14px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
@@ -752,6 +755,17 @@
   }
   body.ios-kb-open .modal .modal-content,
   body.ios-kb-open .modal .login-modal-content {
+    max-height: calc(100dvh - var(--kb-height, 300px) - 28px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Same lift for the dynamically-built "Leave a kind word" comment popup, which
+     isn't a .modal — otherwise the iPhone keyboard covers it. */
+  body.ios-kb-open .memo-cmt-back {
+    align-items: flex-end !important;
+    padding-bottom: calc(var(--kb-height, 300px) + 12px);
+  }
+  body.ios-kb-open .memo-cmt-box {
     max-height: calc(100dvh - var(--kb-height, 300px) - 28px);
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
@@ -7691,6 +7705,16 @@ async function fetchMyAdminControl() {
     return data || null;
   } catch (_) { return null; }
 }
+/* The blocked user's reply BACK to the admin (an appeal). Append-only; the admin
+   reads it via the focus-admin-api function. */
+async function postUserMessage(text) {
+  try {
+    const sb = await getSupabaseClient(); if (!sb || !state.shareClientId) return false;
+    const t = (text || '').trim().slice(0, 500); if (!t) return false;
+    const { error } = await sb.from('focus_user_messages').insert({ client_id: state.shareClientId, message: t });
+    return !error;
+  } catch (_) { return false; }
+}
 async function heartMemoComment(id, on) {
   try { const sb = await getSupabaseClient(); if (!sb) return false;
     const { error } = await sb.from(SB_COMMENTS_TABLE).update({ hearted: !!on }).eq('id', id); return !error;
@@ -8576,10 +8600,44 @@ const _NOTE_ICON_PEN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="no
 const _NOTE_ICON_X   = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
 const _NOTE_ICON_OK  = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="5 12 10 17 19 7"/></svg>';
 const _NOTE_ICON_FLAG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21V4h12l-2 4 2 4H4"/></svg>';
+/* Banner at the top of the Notes list: the admin's message to me (also shown in
+   the top bar), and — if the admin has blocked my sharing/commenting — a notice
+   plus an input to message the admin back (an appeal). */
+function _renderAdminBanner(list){
+  const c = (typeof state !== 'undefined') ? state.adminControl : null;
+  if (!c) return;
+  const blocked = c.no_share || c.no_comment;
+  const hasMsg = c.admin_message && c.admin_message.trim();
+  if (!hasMsg && !blocked) return;
+  const wrap = document.createElement('div'); wrap.className = 'note-admin-banner';
+  if (hasMsg) { const m = document.createElement('div'); m.className = 'nab-msg'; m.textContent = '📣 ' + c.admin_message.trim(); wrap.appendChild(m); }
+  if (blocked) {
+    const what = (c.no_share && c.no_comment) ? 'sharing and commenting' : (c.no_share ? 'sharing notes' : 'commenting');
+    const b = document.createElement('div'); b.className = 'nab-block'; b.textContent = '🚫 An admin turned off ' + what + ' for you.';
+    wrap.appendChild(b);
+    const row = document.createElement('div'); row.className = 'nab-appeal';
+    const inp = document.createElement('input'); inp.className = 'nab-input'; inp.maxLength = 500; inp.placeholder = 'Message the admin…';
+    const send = document.createElement('button'); send.type = 'button'; send.className = 'nab-send'; send.textContent = 'Send';
+    const doSend = async () => {
+      const t = inp.value.trim(); if (!t) { inp.focus(); return; }
+      send.disabled = true; send.textContent = 'Sending…';
+      const ok = await postUserMessage(t);
+      inp.value = ''; send.disabled = false;
+      try { _memoToast(ok ? 'Sent to the admin.' : "Couldn't send — try later."); } catch (_) {}
+      send.textContent = ok ? 'Sent ✓' : 'Send'; setTimeout(() => { try { send.textContent = 'Send'; } catch (_) {} }, 2200);
+    };
+    send.addEventListener('click', doSend);
+    inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } });
+    row.appendChild(inp); row.appendChild(send);
+    wrap.appendChild(row);
+  }
+  list.appendChild(wrap);
+}
 function renderNotes(){
   _ensureNotes();
   const list = document.getElementById('note-list'); if (!list) return;
   list.innerHTML = '';
+  _renderAdminBanner(list);   // admin message + block notice + "message the admin" appeal
   if (!state.notes.length) { const e = document.createElement('p'); e.className = 'help'; e.style.margin = '12px 0 0'; e.textContent = 'No notes yet — write one above.'; list.appendChild(e); return; }
   state.notes.forEach(n => {
     const row = document.createElement('div'); row.className = 'note-row';
@@ -18133,26 +18191,19 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     ttbydPanel.style.display = 'none';
     ttbydPanel.setAttribute('aria-hidden', 'true');
   }
-  // Settings page order: Timer & rewards (money-factors, from setup-page) ·
-  // Sound (static) · Theme (from stats-page) · Account (from setup-page).
-  const moneyPanel = document.getElementById('money-factors-panel');
-  if (moneyPanel && moneyPanel.parentNode) {
-    moneyPanel.style.margin = '0';
-    settingsPage.insertBefore(moneyPanel, soundPanel);    // above the Sound panel
-  }
+  // Settings page order (user spec 2026-06-05):
+  //   Sound · Theme · Pillars · Timer & rewards · Bucket view · Account.
+  // Append in that exact order — appendChild re-homes each panel to the end, so the
+  // final array order IS the on-page order (static + relocated panels alike).
   const themePanel = document.getElementById('theme-panel');
-  if (themePanel && themePanel.parentNode) {
-    themePanel.style.margin = '0';
-    settingsPage.appendChild(themePanel);                 // below Sound
-  }
+  const pillarsPanel = document.getElementById('pillars-panel');
+  const moneyPanel = document.getElementById('money-factors-panel');
+  const bucketPanel = document.getElementById('bucket-view-panel');
   const authIn = document.getElementById('auth-logged-in');
-  if (authIn) {
-    const acctPanel = authIn.closest('.panel');
-    if (acctPanel && acctPanel.parentNode) {
-      acctPanel.style.margin = '0';
-      settingsPage.appendChild(acctPanel);                // bottom
-    }
-  }
+  const acctPanel = authIn ? authIn.closest('.panel') : null;
+  [soundPanel, themePanel, pillarsPanel, moneyPanel, bucketPanel, acctPanel].forEach(function (p) {
+    if (p && p.parentNode) { p.style.margin = '0'; settingsPage.appendChild(p); }
+  });
   if (setupPage) setupPage.style.display = 'none';
 })();
 

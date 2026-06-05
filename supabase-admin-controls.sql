@@ -94,3 +94,23 @@ revoke all on public.focus_admin_settings from anon, authenticated;
 grant all on public.focus_admin_settings to service_role;
 -- (no anon/authenticated policies → only the service role, used by the edge
 --  functions, can read or write these settings.)
+
+-- ── Messages a blocked user sends BACK to the admin (an appeal). Anon may only
+--    INSERT (append); reads happen ONLY through focus-admin-api (service role), so
+--    nobody can read others' messages with the public key.
+create table if not exists public.focus_user_messages (
+  id         bigint generated always as identity primary key,
+  client_id  text        not null,
+  message    text        not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists focus_user_messages_client_idx on public.focus_user_messages (client_id, created_at desc);
+grant insert on public.focus_user_messages to anon, authenticated;
+revoke select, update, delete on public.focus_user_messages from anon, authenticated;
+alter table public.focus_user_messages enable row level security;
+drop policy if exists "user_messages_insert" on public.focus_user_messages;
+create policy "user_messages_insert"
+  on public.focus_user_messages for insert
+  to anon, authenticated
+  with check (char_length(message) between 1 and 500);
+-- (no select policy for anon → only the service role reads them.)
