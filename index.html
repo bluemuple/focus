@@ -182,6 +182,11 @@
     box-shadow: 0 1px 2px rgba(0,0,0,.3);
     border: 1px solid var(--card-border);   /* gauge "네모" outline = section-box outline */
   }
+  /* Pomodoro BREAK fingernail/mark: the pale sky #BAE6FD glares on the dark
+     gauge → dimmer sky-blue in dark theme. Keep this hex in sync with
+     _breakColor() in JS. (#2) */
+  :root[data-theme="solarized"] .tg-break-edge,
+  :root[data-theme="solarized"] .tb-break-mark { background: #3A86B0; }
   /* PC/web gauge CONTAINER → section background; the hour labels ("3PM") and
      the horizontal grid lines → section-box OUTLINE colour (uniform muted axis). */
   :root[data-theme="solarized"] .gauge-col {
@@ -766,6 +771,34 @@
   .undo-toast .undo-toast-msg {
     overflow: hidden; text-overflow: ellipsis;
   }
+
+  /* (#A1/#A3) Floating bottom-right panel: gauge-block shortcut help (when a block
+     is selected, wide only) + the undo/redo message. Black translucent, white text,
+     fixed so it stays visible on scroll. pointer-events:none = purely informational. */
+  #gauge-hotkey-help {
+    position: fixed; right: 14px; bottom: 14px; z-index: 9400;
+    display: none;
+    background: rgba(17,24,39,0.86); color: #fff;
+    border-radius: 12px; padding: 10px 12px;
+    font-size: .76rem; line-height: 1.5;
+    box-shadow: 0 8px 28px rgba(0,0,0,.34);
+    pointer-events: none; max-width: 240px;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  #gauge-hotkey-help.on { display: block; }
+  #gauge-hotkey-help .ghk-list { display: none; }
+  #gauge-hotkey-help.ghk-sel .ghk-list { display: block; }
+  #gauge-hotkey-help .ghk-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  #gauge-hotkey-help .ghk-k { display: inline-flex; align-items: center; gap: 3px; flex: 0 0 auto; min-width: 96px; }
+  #gauge-hotkey-help kbd {
+    font: inherit; font-size: .68rem; font-weight: 700;
+    background: rgba(255,255,255,.16); color: #fff;
+    border-radius: 5px; padding: 1px 5px; line-height: 1.4;
+  }
+  #gauge-hotkey-help .ghk-row > span:last-child { color: rgba(255,255,255,.82); }
+  #gauge-hotkey-help .ghk-msg { display: none; font-weight: 700; }
+  #gauge-hotkey-help.ghk-has-msg .ghk-msg { display: block; }
+  #gauge-hotkey-help.ghk-has-msg.ghk-sel .ghk-msg { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,.18); }
 
   /* Modal */
   .modal {
@@ -2130,6 +2163,11 @@
      accent and the solarized one is light → low-contrast on a pastel fill). */
   .task-row input.task-cb-pillar:checked::after { border-color: #1f2937 !important; }
   .task-row .task-text { flex: 1; background: transparent; border: none; outline: none; min-width: 0; }
+  /* (#C2) Focus-matrix task bar: the name sizes to its CONTENT so the play/pause
+     button sits right after it (not shoved to the row's right edge); the pen takes
+     an auto left margin so PEN + GRIP pin to the right (only visible in Edit). */
+  #focus-matrix .task-row .task-text { flex: 0 1 auto; }
+  #focus-matrix .task-row .task-edit-pen { margin-left: auto; }
   /* Pillar tag dot (set via the +Add pillar picker) — small colour circle = the bucket face. */
   .task-row .task-pillar-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,.22); margin: 0 1px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
   /* Edit-task pillar picker — a row of face-coloured numbered circles. */
@@ -2170,6 +2208,14 @@
   /* In edit mode the pen + drag-grip own the right side, so hide the play control there. */
   body.tt-show-actions .task-row .task-play,
   .focus-cell.show-actions .task-row .task-play { display: none; }
+  /* Completed rows render no play button → a same-size invisible placeholder keeps
+     a finished bar exactly as tall (and same internal layout) as an unfinished
+     play-button bar, in every padding mode. (#N5) */
+  .task-row .task-play-ph {
+    flex: 0 0 auto; width: 28px; height: 28px; margin-left: 2px; visibility: hidden; pointer-events: none;
+  }
+  body.tt-show-actions .task-row .task-play-ph,
+  .focus-cell.show-actions .task-row .task-play-ph { display: none; }
 
   /* (TTBYD panel CSS removed — panel is permanently hidden display:none and
      its sliders moved into the Mana Moments column.) */
@@ -2652,11 +2698,14 @@
     pointer-events: none;
     white-space: nowrap;
   }
-  /* Goal lines on the gauge — deadline (blue) + bedtime (green). */
+  /* Goal lines on the gauge — deadline (blue) + bedtime (green).
+     z-index 16 sits ABOVE the task boxes (.tg-block = 15) so the GTD/bedtime
+     line passes OVER the blocks, not under them; still below the time oval (20)
+     and tooltips (25). (#N1) */
   .gauge-line-blue, .gauge-line-green {
     position: absolute; left: 0; right: 0;
     height: 2px;
-    z-index: 9;
+    z-index: 16;
     pointer-events: none;
     transition: top .9s linear;
   }
@@ -2925,16 +2974,16 @@
   /* .fc-expanded is intentionally NOT made position:relative here, so the swap
      cat below resolves against the full-height .focus-card (stays 108px) rather
      than the now flex-centred (shorter) .fc-expanded. */
-  /* Pin the cat to the SAME box it occupies when idle (top/bottom 12px, bottom-
-     flush, centred) so it keeps its size and just fades — without this the cat
-     image (and its red capsule) stretches/"balloons" across the card mid-swap. */
+  /* Pin the cat to the SAME box it occupies when idle (full card, bottom-flush,
+     bigger) so it keeps its size and just fades — without this the cat image
+     (and its red capsule) stretches/"balloons" or jumps size mid-swap. */
   .focus-card.fc-swapping .fc-cat {
     display: flex !important; align-items: flex-end; justify-content: center;
-    position: absolute; left: 0; right: 0; top: 12px; bottom: 12px;
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
     z-index: 4; pointer-events: none;
   }
-  /* Keep the startnow cat's slight downward offset through the fade (no jump). */
-  .focus-card.fc-swapping .fc-cat-inner { transform: translateY(4%); }
+  /* Match the idle cat's bigger size + downward offset through the fade (no jump). */
+  .focus-card.fc-swapping .fc-cat-inner { height: 138px; transform: translateY(5%); }
   /* SHOW the white clock during the swap (fc-startnow is already gone by now) so it
      fades out WITH the cat — it's a child of .fc-cat → inherits the opacity fade.
      The "Add a task" bubble + the play button stay hidden. */
@@ -2945,14 +2994,15 @@
   /* ===== Task-completed reward overlay (done cat). Absolutely overlays the card so it
      doesn't change the fixed height; it fades IN while the rest of the card fades OUT. ===== */
   .focus-card .fc-done {
-    position: absolute; left: 12px; right: 12px; top: 12px; bottom: 12px;
+    position: absolute; left: 0; right: 0; top: 0; bottom: 0;
     display: flex; align-items: flex-end; justify-content: center;
     opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .4s ease;
   }
   .focus-card.fc-done-on .fc-done { opacity: 1; visibility: visible; pointer-events: auto; }
   .focus-card .fc-expanded > * { transition: opacity .35s ease; }
   .focus-card.fc-done-on .fc-expanded > *:not(.fc-done) { opacity: 0; pointer-events: none; }
-  .focus-card .fc-done .fc-cat-inner { position: relative; height: 100%; }
+  /* Done cat matches the idle cat: bigger + bottom-flush + dropped so paws rest on the edge. */
+  .focus-card .fc-done .fc-cat-inner { position: relative; height: 138px; transform: translateY(5%); }
   .focus-card .fc-done .fc-no-task { display: block; height: 100%; width: auto; }
   /* Reward bubble — over the done cat's speech bubble (top-left). 2 centred lines + ⋯› at the
      bottom-right of the bubble. */
@@ -3541,8 +3591,11 @@
   .gtd-chip { padding: 5px 9px; gap: 5px; }
   .gtd-chip .gtd-head { display: inline-flex; align-items: center; justify-content: center;
     min-width: 2.5em; font-variant-numeric: tabular-nums; }
-  .gtd-chip .gtd-for  { font-size: .7rem; font-weight: 600; opacity: .8; }
-  .gtd-chip.gtd-over .gtd-head { color: #dc2626; }
+  .gtd-chip .gtd-for  { display: inline-flex; align-items: center; line-height: 1; font-size: .7rem; font-weight: 600; opacity: .8; }   /* center the word like .gtd-head so "left"/"over" lines up with h:mm */
+  .gtd-chip.gtd-set:not(.gtd-over) .gtd-head,
+  .gtd-chip.gtd-set:not(.gtd-over) .gtd-for { color: #2563EB; opacity: 1; }   /* h:mm + "left" → blue */
+  .gtd-chip.gtd-over .gtd-head,
+  .gtd-chip.gtd-over .gtd-for  { color: #dc2626; opacity: 1; }                /* h:mm + "over" → red */
   /* GTD picker modal — title + [time | Now] row + [+30m | +1h | OK] row (rows EQUAL width). */
   #gtd-modal .gtd-content { width: 300px; position: relative; }
   #gtd-modal .gtd-x {
@@ -3666,6 +3719,11 @@
      feature is phone-only, so hide the chips on PC. */
   .ftt-chips { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
   @media (min-width: 701px) { .ftt-chips { display: none; } }
+  /* GTD capsule on the matrix "Tasks" header — pinned to the far right. On narrow
+     the .ftt-chips group (margin-left:auto) shoves the right cluster over and the
+     capsule trails it; on wide .ftt-chips is hidden so the capsule itself takes
+     the auto margin to land at the right end. (#N2) */
+  @media (min-width: 701px) { #gtd-chip-tasks { margin-left: auto; } }
   /* This header carries its own Collapse chip (#matrix-collapse-toggle), so drop the
      panel system's default ▾ ::after — otherwise its margin-left:auto competes with the
      chips group and the chips don't sit flush right. */
@@ -5127,6 +5185,29 @@
     outline-offset: -1px;
     box-shadow: 0 0 0 3px rgba(59,130,246,.25), 0 1px 3px rgba(0,0,0,.13);
   }
+  /* (#B6) Right-edge theme-colour "baby-fingernail" (colour set inline per block). */
+  .tg-block-redge {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
+    border-radius: 0 5px 5px 0; pointer-events: none; z-index: 2;
+  }
+  /* (#B7) Delete × — hidden until the block is SELECTED (wide/iPad) or Edit mode. */
+  .tg-block-x {
+    position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+    display: none; align-items: center; justify-content: center;
+    border-radius: 50%; background: rgba(17,24,39,.82); color: #fff;
+    cursor: pointer; z-index: 7; -webkit-tap-highlight-color: transparent;
+    box-shadow: 0 1px 3px rgba(0,0,0,.3);
+  }
+  .tg-block-x:active { transform: scale(.86); }
+  .tg-block.selected .tg-block-x,
+  body.tt-show-actions .tg-block .tg-block-x { display: inline-flex; }
+  /* ≤10-min block: while the × is showing, crop the block's right edge so the ×
+     sits in the GAP between the block and the gauge's right edge (overflow:visible
+     lets it spill into that gap). (#B7) */
+  .tg-block.short10.selected,
+  body.tt-show-actions .tg-block.short10 { right: 30px; overflow: visible; }
+  .tg-block.short10.selected .tg-block-x,
+  body.tt-show-actions .tg-block.short10 .tg-block-x { top: 50%; right: -26px; transform: translateY(-50%); }
   /* Draggable tail — the portion of a block below the current-time line */
   .tg-block-tail {
     position: absolute; left: 0; right: 0; bottom: 8px;
@@ -5378,7 +5459,7 @@
   /* Direct gauge-block editing removed (per spec): delete / resize / move on the
      box itself are gone — editing is via the Edit-mode tool now. Hide the
      per-block affordances so they're non-interactive (display:none = no taps). */
-  .time-block-nudge, .time-block-rb, .time-block-x { display: none !important; }
+  .time-block-nudge, .time-block-rb { display: none !important; }   /* per-block × re-enabled for Edit mode (#B7) */
   /* Small × button appears only on the selected block — plain grey glyph,
      no chrome (no border, no background). */
   .time-block-x {
@@ -5395,8 +5476,23 @@
     z-index: 3;
     touch-action: none;
   }
-  .time-block.selected .time-block-x { display: inline-flex; }
+  .time-block.selected .time-block-x,
+  body.tt-show-actions .time-block .time-block-x,
+  .focus-cell.show-actions .time-block .time-block-x { display: inline-flex; }   /* selected OR iPhone Edit → × on every block (#B7) */
   .time-block-x:active { color: #1f2937; transform: scale(.9); }
+  /* (#B6) Right-edge theme-colour "baby-fingernail" on mobile blocks (colour set inline). */
+  .time-block-redge {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
+    border-radius: 0 5px 5px 0; pointer-events: none; z-index: 1;
+  }
+  /* ≤10-min block: while the × is showing, crop the right edge so the × sits in
+     the gap between the block and the gauge's right edge (overflow:visible). (#B7) */
+  .time-block.short10.selected,
+  body.tt-show-actions .time-block.short10 { right: 33px; overflow: visible; }
+  .time-block.short10.selected .time-block-x,
+  body.tt-show-actions .time-block.short10 .time-block-x { right: -22px; top: 50%; transform: translateY(-50%); }
+  .time-block.short10.selected .time-block-redge,
+  body.tt-show-actions .time-block.short10 .time-block-redge { display: none; }
   /* Bottom-edge resize handle on every block. INERT by default — only
      becomes touch-active when the block is selected. This prevents an
      unintended rb drag when the user is reaching for the time-area's
@@ -6122,6 +6218,13 @@
                 <svg class="mct-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
             </span>
+            <!-- GTD capsule mirrored onto the matrix "Tasks" header, far right. On
+                 wide (≥701px) .ftt-chips is hidden and only the 2×2 matrix view
+                 exists, so this is where the GTD time shows. _renderGtdChip fills
+                 BOTH this and the Time&Tasks-header #gtd-chip. (#N2) -->
+            <button class="hd-chip gtd-chip" id="gtd-chip-tasks" type="button"
+                    title="Set time to get things done" aria-label="Set time to get things done"
+                    style="touch-action:manipulation;"></button>
           </h3>
           <!-- Split-view-only "master" +add task button. Hidden in stacked /
                PC modes (each quadrant cell has its own +add task there). In
@@ -8794,10 +8897,22 @@ function _setNoteShared(id, on){
   // The shared memo is ONE upserted row, so its replies persist across re-shares and
   // were wrongly showing under whatever note is shared now. Stamp WHEN this note became
   // shared; only replies created after that count as belonging to it (see fetchRepliesToMyMemo).
-  if (on) { state.sharedAt = Date.now(); _myMemoReplies = []; }
+  if (on) { state.sharedAt = Date.now(); _myMemoReplies = []; _noteComments[id] = []; }
   if (on && _noteBubbleId === id) _noteBubbleId = null;   // sharing dismisses the coach bubble
   _persistNotes();
   renderNotes();
+  // Publish/unpublish the memo ROW immediately. The Notes-page Share button used to
+  // only flip local state — it never re-upserted the SB_SHARED_TABLE row — so the
+  // server row + state.sharedMemoRowId went stale until the next app launch. That
+  // made fetchRepliesToMyMemo() read the WRONG/old row: the previous note's reply
+  // kept showing under whatever note was shared, and the server-side AI auto-reply
+  // (which attaches to the CURRENT row) never appeared here. Push now, then poll so
+  // this note's fresh row id + sharedAt drive the reply fetch. (#N-notes-share)
+  try {
+    Promise.resolve(pushSharedMemoToCloud())
+      .then(() => { try { if (typeof _pollMemoSocial === 'function') _pollMemoSocial(); } catch (_) {} })
+      .catch(() => {});
+  } catch (_) {}
 }
 function _updateNoteCount(){ const ta = document.getElementById('note-comment'), c = document.getElementById('note-count'); if (ta && c) c.textContent = ta.value.length ? (ta.value.length + ' / 200') : ''; }
 function _noteEmojiBtnSync(){ const eb = document.getElementById('note-emoji-btn'); if (eb){ eb.textContent = _noteEmoji || '?'; eb.classList.toggle('has-emoji', !!_noteEmoji); } }
@@ -9469,12 +9584,18 @@ function _commitTaskMove(q, fromIdx, insertAtRaw) {
   if (document.getElementById('setup-page') && document.getElementById('setup-page').style.display !== 'none') renderTasks();
   if (document.getElementById('focus-page') && document.getElementById('focus-page').style.display !== 'none') renderFocusMatrix();
 }
-function attachDragHandlers(row, q, i) {
-  // Mouse/desktop: native HTML5 drag. TOUCH devices: the unified `_td` handler
-  // owns row drags (it draws its OWN rounded ghost), so disable native dragging
-  // there — the WKWebView native drag image renders black corners around the
-  // rounded bar (the reported artifact) and bypasses the `_td` reorder logic.
-  row.draggable = !(('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0);
+function attachDragHandlers(row, q, i, isMatrix) {
+  // (#N4) Matrix rows are driven by the UNIFIED pointer-based `_td` handler —
+  // mouse + touch + pen on ONE code path — so disable native HTML5 drag for them
+  // (isMatrix, passed by renderFocusMatrix): a leftward mouse/trackpad drag now
+  // sends the task to the gauge as a 25/5 block exactly like the iPhone touch
+  // swipe, and reorder is grip-only everywhere (matching iPhone). Native DnD also
+  // drew black corners around the rounded bar in WKWebView. (closest('.focus-cell')
+  // is unreliable here — the row isn't appended yet.) Legacy non-matrix rows
+  // (setup page) keep native DnD.
+  row.draggable = isMatrix
+    ? false
+    : !(('ontouchstart' in window) || (navigator.maxTouchPoints || 0) > 0);
   row.ondragstart = (e) => {
     // Don't start a drag when the user clicks inside an input/button/link —
     // let those elements handle the interaction normally.
@@ -11610,13 +11731,21 @@ function renderFocusMatrix() {
       const _playSvg = _running
         ? '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><rect x="6" y="4.5" width="4.2" height="15" rx="1.3" fill="currentColor"/><rect x="13.8" y="4.5" width="4.2" height="15" rx="1.3" fill="currentColor"/></svg>'
         : '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M8 5.2 L18.6 12 L8 18.8 Z" fill="currentColor"/></svg>';
-      const _playHtml = t.done ? '' : `<button class="task-play" aria-label="${_running ? 'Pause task' : 'Start task'}" title="${_running ? 'Pause' : 'Start'}">${_playSvg}</button>`;
+      // Done tasks show no play control, but render a same-size invisible
+      // placeholder so a finished bar keeps the exact height of an unfinished
+      // (play-button) bar — otherwise the missing 28px button made done rows
+      // shorter. (#N5)
+      const _playHtml = t.done
+        ? `<span class="task-play-ph" aria-hidden="true"></span>`
+        : `<button class="task-play" aria-label="${_running ? 'Pause task' : 'Start task'}" title="${_running ? 'Pause' : 'Start'}">${_playSvg}</button>`;
+      // (#C2) Order: checkbox · name · PLAY (right after the name, not right-aligned) ·
+      // bid/pomodoro slot · then PEN + GRIP pinned to the right (Edit-mode only).
       row.innerHTML = `
         ${_cbHtml}
         <span class="task-text ${t.done?'done':''} ${(isPomo||isUp)?'running':''}">${_nameHtml}</span>
-        <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
-        <span class="task-bid-wrap"></span>
         ${_playHtml}
+        <span class="task-bid-wrap"></span>
+        <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         <button class="task-grip" aria-label="Drag to reorder" title="Drag to reorder"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="16" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
       const cb      = isQ4 ? null : row.querySelector('input[type="checkbox"]');
       const textEl  = row.querySelector('.task-text');
@@ -11958,8 +12087,8 @@ function renderFocusMatrix() {
         del.innerHTML = iconSvg('close', 14);
         del.onclick = (ev) => { ev.stopPropagation(); deleteTaskAt(q, i); saveState(); renderFocusMatrix(); markSettingsChanged(); pushSettingsToCloud(); };
         row.appendChild(del);
-        attachDragHandlers(row, q, i);
-        // (Left-swipe-to-gauge is handled by the unified `_td` touch handler.)
+        attachDragHandlers(row, q, i, true);   // (#N4) matrix row → pointer-driven, native DnD off
+        // (Left-swipe-to-gauge is handled by the unified `_td` pointer handler.)
       }
       tasksDiv.appendChild(row);
     });
@@ -12882,6 +13011,12 @@ function tickPomodoro() {
   showPomoPhaseConfirm();
 }
 
+/* Device-local guard so the end-of-phase sound cue fires exactly ONCE per phase
+   boundary. showPomoPhaseConfirm() is called from several paths (tickPomodoro,
+   the cross-device popup mirror, the relaunch re-open, the full-screen→classic
+   handoff); without this the cue could double-play ("task-end sound twice").
+   Not synced → each device still cues once. (#10) */
+let _lastTransitionSoundBoundary = 0;
 async function showPomoPhaseConfirm() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
@@ -12905,10 +13040,16 @@ async function showPomoPhaseConfirm() {
   }
   // Sound cue when the prompt opens — different per phase transition.
   // work→short-break: wave  ·  work→long-break: long-wave  ·  break→work: resume
-  if (at.phase === 'work') {
-    playFx(nextPhase === 'long-break' ? 'long-wave' : 'wave');
-  } else {
-    playFx('resume');
+  // Fire ONCE per boundary (see _lastTransitionSoundBoundary) so re-entry from
+  // the mirror / relaunch / full-screen paths can't double-play the cue. (#10)
+  const _soundBoundary = (+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0);
+  if (_lastTransitionSoundBoundary !== _soundBoundary) {
+    _lastTransitionSoundBoundary = _soundBoundary;
+    if (at.phase === 'work') {
+      playFx(nextPhase === 'long-break' ? 'long-wave' : 'wave');
+    } else {
+      playFx('resume');
+    }
   }
   // ---- Gentle-coach transition (replaces the old Yes/No "Pomodoro" prompt) ----
   // Encouraging copy — "Plans are guides." Work-end offers Keep going / Start
@@ -13474,12 +13615,12 @@ function drawGauge() {
     line.style.top = pct(tMs) + '%';
     const isPhone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
     if (isPhone) {
-      label.innerHTML = `${fmtTimeShort(tMs)}<br>Goal`;
+      label.innerHTML = `${fmtTimeShort(tMs)}<br>${name}`;   // deadline → "Finish by", bedtime → "Sleep" (#N-gtd-label)
     } else {
       label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
     }
   }
-  placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Go home');
+  placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Finish by');
   placeGoalLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
 
   // Scheduled task blocks — rendered AFTER goal lines so they sit on top.
@@ -13875,7 +14016,7 @@ function drawTimeArea() {
                 ? TRACKER_POS_COLOR
                 : (b.trackerRate < 0 ? TRACKER_NEG_COLOR : '#e5e7eb');
             } else if (seg.type === 'break') {
-              _fillColor = POMO_BREAK_COLOR;
+              _fillColor = _breakColor();
             } else {
               _fillColor = qTaskColor(b.q, b.taskIdx);
             }
@@ -13918,7 +14059,7 @@ function drawTimeArea() {
           band.className = 'time-block-edge';
           band.style.top    = (_coff / _ch * 100) + '%';
           band.style.height = (sg.ms / _ch * 100) + '%';
-          band.style.background = (sg.type === 'break') ? POMO_BREAK_COLOR : bidoroTaskBg(b.q, b.taskIdx);
+          band.style.background = (sg.type === 'break') ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
           div.appendChild(band);
           _coff += sg.ms;
         });
@@ -13950,6 +14091,7 @@ function drawTimeArea() {
     // vertically-centered name overlaps the bottom-right duration label.
     const _blockPx = bPx - tPx;
     if (_blockPx < 30) div.classList.add('short');
+    if ((b.endMs - b.startMs) <= 10 * 60000) div.classList.add('short10');   // ≤10-min → × sits in the right gap (#B7)
 
     if (isBreakBox) {
       // break box: no task name, just a baby-fingernail-size sky-blue marker (left)
@@ -14005,6 +14147,15 @@ function drawTimeArea() {
     xBtn.setAttribute('aria-label', 'Delete block');
     xBtn.innerHTML = iconSvg('close', 14);
     div.appendChild(xBtn);
+
+    /* (#B6) Right-edge theme-colour "baby-fingernail" (task → quadrant colour,
+       break → sky), matching the iPhone app. Trackers keep their rate fill. */
+    if (b.kind !== 'tracker') {
+      const _re = document.createElement('div');
+      _re.className = 'time-block-redge';
+      _re.style.background = isBreakBox ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
+      div.appendChild(_re);
+    }
 
     /* ---- ms-per-pixel within the 24h content ---- */
     const _msPerPx = msPerPx;
@@ -14531,7 +14682,7 @@ function drawTimeArea() {
     }, { passive: false });
   }
 
-  placeTimeGoal(state.deadline, state.deadlineDate, 'Go home', '#3b82f6', true);
+  placeTimeGoal(state.deadline, state.deadlineDate, 'Finish by', '#3b82f6', true);
   placeTimeGoal(state.bedtime,  state.bedtimeDate,  'Sleep',   '#10b981', false);
 
   /* ⏳ GTD countdown (purple) pill removed per user request — clear any that
@@ -14953,8 +15104,12 @@ function _renderShuffleBtn() {
 const _GTD_CLOCK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7.5 12 12 15 14"/></svg>';
 function _gtdRemainMs() {
   try {
-    if (typeof GtdCapsule !== 'undefined' && GtdCapsule.deadlineMs) {
-      const dm = GtdCapsule.deadlineMs();
+    // Compute straight from the saved deadline so the capsule shows h:mm in EVERY
+    // view. The 2×2 matrix gauge doesn't set _gtdMap, so GtdCapsule.deadlineMs()
+    // returned null there and the capsule fell back to the clock icon. combineDateTime
+    // ignores the anchor when a date is present, else uses now + rolling. (#N-gtd)
+    if (state.deadline && typeof combineDateTime === 'function') {
+      const dm = combineDateTime(state.deadlineDate, state.deadline, { anchor: Date.now(), rolling: true });
       if (dm != null) return dm - Date.now();
     }
   } catch (_) {}
@@ -14968,20 +15123,28 @@ function _totalTaskCount() {
       : 0), 0);
 }
 function _renderGtdChip() {
-  const chip = document.getElementById('gtd-chip'); if (!chip) return;
+  // Update EVERY GTD capsule — the one in the "Time & Tasks" header (#gtd-chip)
+  // AND the mirror on the matrix "Tasks" header (#gtd-chip-tasks, the only one
+  // shown on wide/iPad where just the 2×2 view exists). (#N2)
+  const chips = document.querySelectorAll('.gtd-chip'); if (!chips.length) return;
   const rem = _gtdRemainMs();
+  let setOn, overOn, html;
   if (rem == null) {                       // no GTD set → clock icon, tap to set
-    chip.classList.remove('gtd-set', 'gtd-over');
-    chip.innerHTML = '<span class="gtd-head">' + _GTD_CLOCK_SVG + '</span>';
-    return;
+    setOn = false; overOn = false;
+    html = '<span class="gtd-head">' + _GTD_CLOCK_SVG + '</span>';
+  } else {
+    const over = rem <= 0;
+    const a = Math.abs(rem);
+    const h = Math.floor(a / 3600000), m = Math.floor((a % 3600000) / 60000);
+    const txt = h + ':' + String(m).padStart(2, '0');   // magnitude — time LEFT, or time OVER once the now-line passes the deadline
+    setOn = true; overOn = over;
+    html = '<span class="gtd-head">' + txt + '</span><span class="gtd-for">' + (over ? 'over' : 'left') + '</span>';
   }
-  const over = rem <= 0;
-  const a = Math.abs(rem);
-  const h = Math.floor(a / 3600000), m = Math.floor((a % 3600000) / 60000);
-  const txt = h + ':' + String(m).padStart(2, '0');   // magnitude — time LEFT, or time OVER once the now-line passes the deadline
-  chip.classList.add('gtd-set');
-  chip.classList.toggle('gtd-over', over);
-  chip.innerHTML = '<span class="gtd-head">' + txt + '</span><span class="gtd-for">' + (over ? 'over' : 'left') + '</span>';
+  chips.forEach((chip) => {
+    chip.classList.toggle('gtd-set', setOn);
+    chip.classList.toggle('gtd-over', overOn);
+    chip.innerHTML = html;
+  });
 }
 /* Shared light-sky-blue used wherever a Pomodoro BREAK is visualised:
    - The break-segment fill inside a time-block on the gauge
@@ -14989,6 +15152,21 @@ function _renderGtdChip() {
    - The pomodoro-display pill (initial render not affected; existing
      phase-specific colours still apply there). */
 const POMO_BREAK_COLOR = '#BAE6FD';
+/* Theme-aware Pomodoro BREAK colour. Light = the pale sky #BAE6FD; dark
+   (solarized) = a dimmer sky-blue so it doesn't glare on the dark gauge.
+   Keep the dark hex in sync with the .tg-break-edge / .tb-break-mark dark
+   override in CSS. (#2) Used for the render-time in-block break fills. */
+function _breakColor() {
+  return document.documentElement.getAttribute('data-theme') === 'solarized'
+    ? '#3A86B0' : POMO_BREAK_COLOR;
+}
+/* Break SEGMENTS are stored with seg.color === POMO_BREAK_COLOR (#BAE6FD) as a
+   stable sentinel (also used to detect + skip them on the gauge background), so
+   we keep the literal in state and translate to the theme colour only when a
+   stored segment is actually painted (gauge / weekly bands). */
+function _segColor(c) {
+  return (c && String(c).toLowerCase() === '#bae6fd') ? _breakColor() : c;
+}
 
 /* HH:MM helper for tooltips */
 function _hhmm(ms) {
@@ -15030,7 +15208,7 @@ function addGaugeSegment(parent, pct, seg, isActive) {
   const height = Math.max(0, pct(seg.endMs) - top);
   div.style.top = top + '%';
   div.style.height = height + '%';
-  div.style.background = seg.color || (seg.q ? qTaskColor(seg.q, seg.taskIdx) : '#fca5a5');
+  div.style.background = _segColor(seg.color) || (seg.q ? qTaskColor(seg.q, seg.taskIdx) : '#fca5a5');
   div.title = seg.name || '';
   // Always show the task name on every colored band (truncated if too small).
   if (seg.name) {
@@ -17937,7 +18115,7 @@ function renderWeekView() {
       segDiv.className = 'mg-segment';
       segDiv.style.top = top + '%';
       segDiv.style.height = height + '%';
-      segDiv.style.background = seg.color || (seg.q ? qTaskColor(seg.q, seg.taskIdx) : '#fca5a5');
+      segDiv.style.background = _segColor(seg.color) || (seg.q ? qTaskColor(seg.q, seg.taskIdx) : '#fca5a5');
       segDiv.title = (seg.name || '') + ' · ' +
         new Date(seg.startMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '–' +
         new Date(seg.endMs).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
@@ -19148,8 +19326,17 @@ applyTtState();
   const btn = document.getElementById('screen-awake-btn');
   if (!btn) return;
   let _wake = null;
-  async function acquire(){ try { if (navigator.wakeLock) { _wake = await navigator.wakeLock.request('screen'); _wake.addEventListener('release', () => { _wake = null; }); } } catch (_) {} }
-  function release(){ try { if (_wake) { const w = _wake; _wake = null; w.release(); } } catch (_) {} }
+  // Native bridge: the web Wake Lock API does NOT actually hold the screen awake
+  // inside the Capacitor WKWebView (the reported "always-on but screen still
+  // sleeps" bug), so on the iOS app we ALSO toggle UIApplication's idle timer
+  // natively via MainViewController's `bidoroWakeLock` handler. No-op on the plain
+  // web (no webkit.messageHandlers). (#N3)
+  function _nativeIdleTimer(on){
+    try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroWakeLock)
+            window.webkit.messageHandlers.bidoroWakeLock.postMessage({ on: !!on }); } catch (_) {}
+  }
+  async function acquire(){ _nativeIdleTimer(true); try { if (navigator.wakeLock) { _wake = await navigator.wakeLock.request('screen'); _wake.addEventListener('release', () => { _wake = null; }); } } catch (_) {} }
+  function release(){ _nativeIdleTimer(false); try { if (_wake) { const w = _wake; _wake = null; w.release(); } } catch (_) {} }
   function sync(){ const on = !!(typeof state !== 'undefined' && state.screenAwake); btn.classList.toggle('is-on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
   function hint(on){
     const el = document.getElementById('motivation-display'); if (!el) return;
@@ -19345,14 +19532,13 @@ if (_editToggle) {
 })();
 
 /* ===== GTD chip → open the "Setting Time for Get Things Done" picker. ===== */
-const _gtdChip = document.getElementById('gtd-chip');
-if (_gtdChip) {
-  _gtdChip.addEventListener('click', (e) => {
+document.querySelectorAll('.gtd-chip').forEach((c) => {   // #gtd-chip (Time&Tasks header) + #gtd-chip-tasks (matrix header) — both open the picker (#N2)
+  c.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
     if (window._openGtdPicker) window._openGtdPicker();
   });
-}
+});
 try { if (typeof _renderGtdChip === 'function') _renderGtdChip(); } catch (_) {}
 try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000); } catch (_) {}
 
@@ -21531,7 +21717,9 @@ setInterval(() => {
   }
 
   /* ---- Tooltip helpers ---- */
+  let _tipHideTimer = null;
   function showTips(startMs, endMs) {
+    if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }   // a live (drag) show cancels any pending auto-hide
     tipTopEl.textContent = hhMM(startMs);
     tipTopEl.style.top   = msToPct(startMs) + '%';
     tipTopEl.classList.remove('hidden');
@@ -21540,9 +21728,44 @@ setInterval(() => {
     tipBotEl.classList.remove('hidden');
   }
   function hideTips() {
+    if (_tipHideTimer) { clearTimeout(_tipHideTimer); _tipHideTimer = null; }
     tipTopEl.classList.add('hidden');
     tipBotEl.classList.add('hidden');
   }
+  // DISCRETE keyboard action (resize / move): show the capsule(s) then auto-hide
+  // so they never linger when not dragging. Selection/navigation shows NOTHING. (#A5)
+  function flashTips(startMs, endMs) {
+    showTips(startMs, endMs);
+    _tipHideTimer = setTimeout(hideTips, 1500);
+  }
+
+  /* (#A1) Floating bottom-right shortcut-help panel for the SELECTED gauge block
+     (wide screens only). Also hosts the undo/redo message (routed in by
+     _showUndoToast). Black translucent + white text; fixed so it stays on scroll. */
+  const _hkHelp = document.createElement('div');
+  _hkHelp.id = 'gauge-hotkey-help';
+  _hkHelp.setAttribute('aria-hidden', 'true');
+  _hkHelp.innerHTML =
+    '<div class="ghk-msg" id="ghk-msg"></div>' +
+    '<div class="ghk-list">' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>↑</kbd><kbd>↓</kbd></span><span>select block</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Shift</kbd>+<kbd>↑↓</kbd></span><span>resize 5 min</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Ctrl</kbd>+<kbd>↑↓</kbd></span><span>resize 1 min</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Alt</kbd>+<kbd>↑↓</kbd></span><span>move 5 min</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>⌫</kbd></span><span>delete</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Esc</kbd></span><span>deselect</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Ctrl</kbd>+<kbd>Z</kbd></span><span>undo</span></div>' +
+      '<div class="ghk-row"><span class="ghk-k"><kbd>Ctrl</kbd>+<kbd>⇧</kbd>+<kbd>Z</kbd></span><span>redo</span></div>' +
+    '</div>';
+  document.body.appendChild(_hkHelp);
+  // Show the panel when a block is selected (wide only) OR an undo/redo msg is up.
+  function _syncHotkeyHelp() {
+    const wide = !(window.matchMedia && window.matchMedia('(max-width: 700px)').matches);
+    const sel  = wide && !!_arrowBlock;
+    _hkHelp.classList.toggle('ghk-sel', sel);
+    _hkHelp.classList.toggle('on', sel || _hkHelp.classList.contains('ghk-has-msg'));
+  }
+  window.__syncHotkeyHelp = _syncHotkeyHelp;
 
   /* ---- Overlap-limit helper ----
      Returns the max number of EXISTING blocks active at any instant within
@@ -21661,10 +21884,8 @@ setInterval(() => {
     _ghost = null;
     placeGhost();              // hides tips
     drawGauge();
-    // Show bottom-edge tip for the freshly placed block
-    tipBotEl.textContent = hhMM(_newBlock.endMs);
-    tipBotEl.style.top   = msToPct(_newBlock.endMs) + '%';
-    tipBotEl.classList.remove('hidden');
+    // Briefly show the freshly-placed block's span, then auto-hide. (#A5)
+    flashTips(_newBlock.startMs, _newBlock.endMs);
   });
 
   /* ---- Cleanup on drag end (covers both drop and cancel/Escape) ---- */
@@ -21681,7 +21902,7 @@ setInterval(() => {
        activeEl.isContentEditable);
 
     if (e.key === 'Escape') {
-      if (_arrowBlock) { _arrowBlock = null; hideTips(); if (!_tgBusy) drawGauge(); }
+      if (_arrowBlock) { _arrowBlock = null; hideTips(); _syncHotkeyHelp(); if (!_tgBusy) drawGauge(); }
       return;
     }
 
@@ -21755,7 +21976,7 @@ setInterval(() => {
       if (target) {
         _arrowBlock = target;
         drawGauge();
-        showTips(target.startMs, target.endMs);
+        hideTips();   // (#A5) selection/peer-hop is NOT a drag → no time capsule
       }
       return;
     }
@@ -21773,6 +21994,19 @@ setInterval(() => {
 
     if (isTyping || _tgBusy) return;
 
+    /* -- Alt+↑/↓: MOVE the whole block ±5 min, keeping its duration. (#A2) ---- */
+    if (e.altKey) {
+      if (!_arrowBlock) return;
+      e.preventDefault();
+      const delta = (e.key === 'ArrowDown') ? STEP_MS : -STEP_MS;
+      _arrowBlock.startMs += delta;
+      _arrowBlock.endMs   += delta;
+      saveState(); debouncedPushSettings();
+      drawGauge();
+      flashTips(_arrowBlock.startMs, _arrowBlock.endMs);
+      return;
+    }
+
     /* -- Shift+↑/↓: resize bottom edge in 5-min steps
        -- Ctrl/Cmd+↑/↓: resize bottom edge in 1-min steps                       */
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
@@ -21786,9 +22020,7 @@ setInterval(() => {
       }
       saveState(); debouncedPushSettings();
       drawGauge();
-      tipBotEl.textContent = hhMM(_arrowBlock.endMs);
-      tipBotEl.style.top   = msToPct(_arrowBlock.endMs) + '%';
-      tipBotEl.classList.remove('hidden');
+      flashTips(_arrowBlock.startMs, _arrowBlock.endMs);   // (#A5) bottom-edge resize → bottom capsule, auto-hide
       return;
     }
 
@@ -21812,7 +22044,7 @@ setInterval(() => {
     }
     _arrowBlock = blocks[nextIdx];
     drawGauge();
-    showTips(_arrowBlock.startMs, _arrowBlock.endMs);
+    hideTips();   // (#A5) ↑/↓ navigation is selection, NOT a drag → no time capsule
   });
 
   /* ---- Click anywhere on gauge (not on a block) deselects arrow-key target ---- */
@@ -21820,6 +22052,7 @@ setInterval(() => {
     if (!ev.target.closest('.tg-block') && _arrowBlock) {
       _arrowBlock = null;
       hideTips();
+      _syncHotkeyHelp();   // (#A1) hide the shortcut panel on click-away deselect
     }
   });
 
@@ -21828,6 +22061,7 @@ setInterval(() => {
     // IMPORTANT: check _tgBusy BEFORE removing elements — removing them then
     // returning early would make every block vanish during a drag/resize.
     if (_tgBusy) return;   // mid-interaction — skip repaint to avoid flicker
+    _syncHotkeyHelp();     // (#A1) keep the bottom-right shortcut panel in sync with the selection
 
     // Safe to replace now: no interaction is in progress.
     gaugeInner.querySelectorAll('.tg-block').forEach(el => el.remove());
@@ -21902,7 +22136,7 @@ setInterval(() => {
                   ? TRACKER_POS_COLOR
                   : (b.trackerRate < 0 ? TRACKER_NEG_COLOR : '#e5e7eb');
               } else if (seg.type === 'break') {
-                _fillColor = POMO_BREAK_COLOR;
+                _fillColor = _breakColor();
               } else {
                 _fillColor = bidoroTaskBg(b.q, b.taskIdx);
               }
@@ -21936,7 +22170,7 @@ setInterval(() => {
             band.style.left = '0'; band.style.right = 'auto'; band.style.width = '5px';
             band.style.top = (_coff / totalH * 100) + '%';
             band.style.height = (sg.ms / totalH * 100) + '%';
-            band.style.background = (sg.type === 'break') ? POMO_BREAK_COLOR : bidoroTaskBg(b.q, b.taskIdx);
+            band.style.background = (sg.type === 'break') ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
             div.appendChild(band);
             _coff += sg.ms;
           });
@@ -21973,6 +22207,37 @@ setInterval(() => {
       const rbEl = document.createElement('div'); rbEl.className = 'tg-block-rb';
       div.appendChild(rtEl);
       div.appendChild(rbEl);
+
+      /* -- (#B6) Theme-colour "baby-fingernail" on the RIGHT edge of every task /
+         break block, matching the iPhone app (task → its quadrant colour, break →
+         the sky break colour). Purely decorative; trackers keep their rate fill. -- */
+      if (b.kind !== 'tracker') {
+        const _re = document.createElement('div');
+        _re.className = 'tg-block-redge';
+        _re.style.background = _isBreakBoxW ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
+        div.appendChild(_re);
+      }
+
+      /* -- (#B7) Delete × — top-right of the block; revealed when the block is
+         SELECTED (wide/iPad) OR in Edit mode (body.tt-show-actions). For ≤10-min
+         blocks the block is cropped on the right (.short10) so the × sits in the
+         gap between the block and the gauge's right edge. Tap removes the block. -- */
+      if ((b.endMs - b.startMs) <= 10 * 60000) div.classList.add('short10');
+      const xEl = document.createElement('div');
+      xEl.className = 'tg-block-x';
+      xEl.setAttribute('role', 'button');
+      xEl.setAttribute('aria-label', 'Delete block');
+      xEl.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.6" fill="none" stroke-linecap="round"/></svg>';
+      xEl.addEventListener('mousedown', ev => ev.stopPropagation());   // never start a block drag
+      xEl.addEventListener('click', ev => {
+        ev.stopPropagation(); ev.preventDefault();
+        const bi = state.scheduledBlocks.indexOf(b);
+        if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
+        if (_arrowBlock === b) _arrowBlock = null;
+        saveState(); debouncedPushSettings();
+        hideTips(); _syncHotkeyHelp(); drawGauge();
+      });
+      div.appendChild(xEl);
 
       /* -- Detachable tail: portion of block below the current-time line -- */
       let tailEl = null;
@@ -22522,7 +22787,7 @@ setInterval(() => {
       if (tg) tg.style.display = 'none';
     }
 
-    document.addEventListener('touchstart', ev => {
+    document.addEventListener('pointerdown', ev => {
       // Ignore touches on interactive controls or gauge elements — EXCEPT the
       // reorder grip (it's a <button> but must START a reorder drag).
       const _onGrip = !!ev.target.closest('.task-grip');
@@ -22533,7 +22798,7 @@ setInterval(() => {
       if (!info) return;
       // Don't preventDefault here — let taps and scroll proceed naturally until
       // the movement threshold is crossed (handled in touchmove below).
-      const t = ev.touches[0];
+      const t = ev;
       // Per-task duration if set, otherwise the global default (from Settings).
       const _task = state.tasks[info.q] && state.tasks[info.q][info.idx];
       const _taskDur = _task && typeof _task.durationMs === 'number' ? _task.durationMs : DEFAULT_MS_GET();
@@ -22579,9 +22844,9 @@ setInterval(() => {
       } catch (_) {}
     }, { passive: false });
 
-    document.addEventListener('touchmove', ev => {
+    document.addEventListener('pointermove', ev => {
       if (!_td) return;
-      const t = ev.touches[0];
+      const t = ev;
       // The finger is already on a task row. The moment the finger moves AT
       // ALL we must lock out page scroll — otherwise iOS Safari (and the
       // Capacitor WKWebView wrapper) can begin a momentum scroll before the
@@ -22752,7 +23017,7 @@ setInterval(() => {
       return { tasksDiv, beforeNode: null, insertAt: rows.length };
     }
 
-    document.addEventListener('touchend', ev => {
+    document.addEventListener('pointerup', ev => {
       if (!_td) return;
       // Release the page-scroll hold set at touchstart.
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
@@ -22760,7 +23025,7 @@ setInterval(() => {
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
       // ===== Send-to-gauge commit / snap-back (left swipe) =====
       if (_td.dragging && _td.mode === 'gaugeswipe') {
-        const lastT = ev.changedTouches && ev.changedTouches[0];
+        const lastT = ev;
         const dx    = lastT ? (lastT.clientX - _td.startX) : 0;
         const row   = _td.srcRow;
         const rowW  = (row && row.offsetWidth) || 200;
@@ -22786,7 +23051,7 @@ setInterval(() => {
       }
       // ===== Swipe-to-delete commit / snap-back =====
       if (_td.dragging && _td.mode === 'swipe') {
-        const lastT = ev.changedTouches && ev.changedTouches[0];
+        const lastT = ev;
         const dx    = lastT ? (lastT.clientX - _td.startX) : 0;
         const row   = _td.srcRow;
         const rowW  = (row && row.offsetWidth) || 200;
@@ -22887,7 +23152,7 @@ setInterval(() => {
       _td = null;
     });
 
-    document.addEventListener('touchcancel', () => {
+    document.addEventListener('pointercancel', () => {
       if (!_td) return;
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
@@ -23191,6 +23456,24 @@ setInterval(() => {
     }[c]));
   }
   function _showUndoToast(message) {
+    // (#A3) Route the undo/redo message into the bottom-right shortcut panel's
+    // black message slot instead of the old centered toast. The panel stays up
+    // afterwards only if a block is still selected (handled by __syncHotkeyHelp).
+    const _help = document.getElementById('gauge-hotkey-help');
+    const _msgEl = document.getElementById('ghk-msg');
+    if (_help && _msgEl) {
+      _msgEl.textContent = message || 'Action undone';
+      _help.classList.add('ghk-has-msg');
+      if (typeof window.__syncHotkeyHelp === 'function') window.__syncHotkeyHelp(); else _help.classList.add('on');
+      clearTimeout(_help._ghkMsgTimer);
+      _help._ghkMsgTimer = setTimeout(() => {
+        _help.classList.remove('ghk-has-msg');
+        _msgEl.textContent = '';
+        if (typeof window.__syncHotkeyHelp === 'function') window.__syncHotkeyHelp(); else _help.classList.remove('on');
+      }, 2200);
+      return;
+    }
+    // Fallback: original centered toast (only if the panel isn't in the DOM).
     let el = document.getElementById('undo-toast');
     if (!el) {
       el = document.createElement('div');
