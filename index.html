@@ -2164,8 +2164,14 @@
      would). touch-action:none stops it at the source so `_td` fully owns the
      gesture. Mouse-wheel scrolling is unaffected (touch-action governs only
      touch/pen); the page still scrolls by dragging the gauge / card / gaps. */
+  /* Bar BODY → pan-y: a vertical drag on the bar scrolls the page (per user
+     request), while horizontal swipes (delete / send-to-gauge) still reach the
+     JS handler. The reorder GRIP keeps touch-action:none so a vertical grip-drag
+     reorders (edit mode) instead of scrolling. */
   #focus-matrix .task-row,
-  #focus-matrix .task-row * { touch-action: none; }   /* incl. children — the touch may land on .task-text etc. */
+  #focus-matrix .task-row * { touch-action: pan-y; }
+  #focus-matrix .task-row .task-grip,
+  #focus-matrix .task-row .task-grip * { touch-action: none; }
   /* A task bar that just sprang back into the list after a swipe-to-gauge. */
   @keyframes tgReappear {
     from { transform: translateX(120%); opacity: 0; }
@@ -2868,7 +2874,20 @@
      like any other section (no sticky / no compact morph). Once scrolled, the
      live task name + pomodoro ring appear in the topbar instead — see the
      ".topbar-now" overlay below. */
-  .focus-card .fc-expanded { text-align: center; }
+  .focus-card .fc-expanded { text-align: center; position: relative; }
+  /* Tiny "expand → full screen" icon, top-right of the focus card. Only shown
+     while a pomodoro is running (hidden when idle / q4 tracker / done overlay). */
+  .focus-card .fc-expand-btn {
+    position: absolute; top: -6px; right: -6px; z-index: 3;   /* nudged 6px up + 6px right */
+    width: 26px; height: 26px; padding: 0; border: none; border-radius: 8px;
+    background: transparent; color: var(--text-muted); cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent; opacity: .55;
+    transition: opacity .12s ease, background .12s ease, transform .08s ease;
+  }
+  .focus-card .fc-expand-btn:hover  { opacity: 1; background: rgba(127,127,127,.12); }
+  .focus-card .fc-expand-btn:active { transform: scale(.9); }
+  .focus-card:not(.fc-idle):not(.fc-q4-run):not(.fc-done-on) .fc-expand-btn { display: flex; }
   /* Running / q4 states: fill the card's content box and vertically CENTRE the
      "Now focusing on" block (the idle cat + the done overlay own their own
      layout, so they're excluded). Fixes the content sitting high (bottom gap >
@@ -2877,34 +2896,58 @@
     display: flex; flex-direction: column; justify-content: center;
     min-height: 108px;
   }
+  /* Top section (the focus card) gets a touch more breathing room on the sides.
+     Higher specificity than `.panel` so it wins over the phone `.panel{padding}`. */
+  .focus-right .focus-card { padding-left: 22px; padding-right: 22px; }
   .focus-card .fc-label {
     color: var(--text-muted); font-size: .95rem; font-weight: 600; margin-bottom: 4px;
   }
-  .focus-card .fc-name-row {
-    display: flex; align-items: center; justify-content: center;
-    gap: 10px; margin-bottom: 8px;
-  }
+  /* Running header = LEFT text column ("Now focusing on" / name / Session badge) +
+     a big pomodoro ring on the RIGHT (where the start-now cat's play-circle sat). */
+  .focus-card .fc-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; }
+  .focus-card .fc-head-left { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; flex: 1 1 auto; }
   .focus-card .fc-name {
     font-size: 1.9rem; font-weight: 800; color: var(--text-main);
-    line-height: 1.15; word-break: break-word; min-width: 0;
+    line-height: 1.1; min-width: 0;
+    /* Never split a word across lines — wrap only at spaces. When a single word
+       is too wide, _fitFocusName() shrinks the font so it fits (overflow:hidden +
+       align-self:stretch let JS measure the real available width). */
+    align-self: stretch; overflow: hidden;
+    word-break: normal; overflow-wrap: normal; hyphens: none;
   }
-  /* Live pomodoro ring next to the task name — a red disc that "drains" to
-     white clockwise from 12 o'clock as the work phase elapses. The conic
-     gradient is set each tick by renderImDoing (amber in the last 2 min). A
-     glanceable, read-free time cue (helps with ADHD time-blindness). */
-  .focus-card .fc-pomo {
-    flex-shrink: 0;
-    width: 26px; height: 26px; border-radius: 50%;
-    background: #ef4444;                       /* fallback: full = all red */
-    box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.14);
+  /* "Session N" pill — the running session count as its own badge (the name no longer
+     carries the trailing number). Empty → hidden. */
+  .focus-card .fc-session {
+    align-self: flex-start; font-size: .82rem; font-weight: 800; line-height: 1;
+    color: #be123c; background: #fce7eb; border: 1px solid #f6c9d3;
+    border-radius: 999px; padding: 4px 12px;
   }
+  .focus-card .fc-session:empty { display: none; }
+  /* Big live ring — light track + the task-colour REMAINING arc; a knob marks the
+     elapsed edge (NO dot at the 12-o'clock start); mm:ss + a pause button sit inside. */
+  .focus-card .fc-ring-wrap { position: relative; flex: 0 0 auto; width: 108px; height: 108px; }
+  .focus-card .fc-ring { width: 100%; height: 100%; display: block; overflow: visible; }
+  .focus-card .fc-ring-track { fill: none; stroke: #be123c; stroke-opacity: .15; stroke-width: 7; }
+  .focus-card .fc-ring-arc {
+    fill: none; stroke: #be123c; stroke-width: 7; stroke-linecap: butt;   /* butt = NO dot at the 12-o'clock start */
+    transition: stroke-dasharray .9s linear, stroke-dashoffset .9s linear;
+  }
+  .focus-card .fc-ring-knob { fill: #be123c; }
+  .focus-card .fc-ring-time {
+    position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
+    font-size: 1.5rem; font-weight: 800; color: #be123c; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .focus-card .fc-ring-pause {
+    position: absolute; left: 50%; top: 68%; transform: translate(-50%,-50%);
+    width: 30px; height: 30px; border-radius: 9px; border: none; cursor: pointer; padding: 0;
+    background: #fce7eb; color: #be123c;
+    display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent;
+  }
+  .focus-card .fc-ring-pause:active { transform: translate(-50%,-50%) scale(.92); }
+  /* Legacy small conic ring — hidden in the card; the class still styles the topbar #tn-pomo. */
+  .focus-card .fc-pomo { flex-shrink: 0; width: 26px; height: 26px; border-radius: 50%; background: #ef4444; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.14); }
   .focus-card .fc-pomo.fc-pomo-sm { width: 16px; height: 16px; box-shadow: inset 0 0 0 1.2px rgba(0,0,0,.14); }
   .focus-card .fc-pomo.fc-pomo-hidden { display: none; }
-  /* time LEFT = the focal, in-the-moment signal (paired with the ring). */
-  .focus-card .fc-left-row {
-    color: var(--text-main); font-weight: 800; font-size: 1.25rem;
-    font-variant-numeric: tabular-nums; margin-bottom: 8px;
-  }
   /* Gentle reward indicator — small, calm, fades in/out. Collapses to 0 height
      when empty so it never reserves space in the card. */
   .focus-card .fc-reward-badge {
@@ -2970,10 +3013,8 @@
     opacity: 0; border: 0; padding: 0; margin: 0; cursor: pointer;
   }
   /* idle (no active task) → hide the work stats + ring; keep name + GTD row */
-  .focus-card.fc-idle .fc-stats,
-  .focus-card.fc-idle .fc-pomo,
-  .focus-card.fc-idle .fc-left-row { display: none; }
-  .focus-card.fc-q4-run .fc-left-row { display: none; }   /* q4 tracker → name only, no countdown */
+  .focus-card.fc-idle .fc-stats { display: none; }
+  .focus-card.fc-q4-run .fc-ring-wrap { display: none; }   /* q4 tracker → name only, no ring */
   /* ===== Idle cat (no task running). FIXED section height = the running (mini-pomodoro)
      height, so it never jumps between states. Two cats fill that height bottom-flush:
      • cat-down   — no tasks at all → "Add a task." speech bubble.
@@ -5032,6 +5073,8 @@
        would break the card's sticky behaviour. */
     main { padding: 4px 10px calc(10px + env(safe-area-inset-bottom, 0px)); max-width: 100vw; overflow-x: clip; }
     .panel { padding: 12px; max-width: 100%; box-sizing: border-box; }
+    /* Top focus card keeps a touch more side padding than other panels on phone. */
+    .focus-right .focus-card { padding-left: 18px; padding-right: 18px; }
 
     /* Compact topbar: hide brand entirely, give the motivation quote the full
        left+middle space, tabs on the right. */
@@ -6188,6 +6231,11 @@
                task name (+ live pomodoro ring) → time LEFT (focal) → today's
                progress (secondary) → money (reward). -->
           <div class="fc-expanded">
+            <!-- Tiny top-right "expand → full screen" icon. CSS gates it to the
+                 running-pomodoro state; JS wires the click → openFocusFullscreen(). -->
+            <button class="fc-expand-btn" id="fc-expand-btn" type="button" aria-label="Expand to full screen" title="Full screen">
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
             <!-- Idle (no task running): the cat fills the fixed-height section instead of
                  the "Now focusing on [name]" header (CSS swaps via .fc-idle). The image
                  swaps by state in JS: cat-down ("Add a task." — no tasks) vs cat-startnow
@@ -6211,18 +6259,28 @@
               </div>
             </div>
             <div class="fc-header" id="fc-header">
-              <div class="fc-label">Now focusing on</div>
-              <div class="fc-name-row">
-                <span class="fc-pomo" id="fc-pomo" title="현재 포모도로 남은 시간" aria-hidden="true"></span>
+              <div class="fc-head-left">
+                <div class="fc-label">Now focusing on</div>
                 <span class="fc-name" id="fc-name">—</span>
+                <span class="fc-session" id="fc-session" aria-hidden="true"></span>
+              </div>
+              <!-- Big pomodoro ring (lands where the start-now cat's play-circle was):
+                   the time + a pause button sit inside it; a knob marks the elapsed
+                   edge — no dot at the 12-o'clock start. -->
+              <div class="fc-ring-wrap" id="fc-ring-wrap">
+                <span class="fc-pomo fc-pomo-hidden" id="fc-pomo" aria-hidden="true"></span>
+                <svg class="fc-ring" viewBox="0 0 120 120" aria-hidden="true">
+                  <circle class="fc-ring-track" id="fc-ring-track" cx="60" cy="60" r="52"></circle>
+                  <circle class="fc-ring-arc"   id="fc-ring-arc"   cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
+                  <circle class="fc-ring-knob"  id="fc-ring-knob"  cx="60" cy="8" r="6"></circle>
+                </svg>
+                <span class="fc-ring-time" id="fc-left">00:00</span>
+                <button class="fc-ring-pause" id="fc-ring-pause" type="button" aria-label="Pause"></button>
               </div>
             </div>
             <!-- Gentle reward indicator — appears briefly on finish (on-time /
                  speed bonus / time adjustment), then fades. Never says "penalty". -->
             <div class="fc-reward-badge" id="fc-reward-badge" aria-hidden="true"></div>
-            <div class="fc-left-row">
-              <span id="fc-left">00:00</span> left
-            </div>
             <!-- "[hh:mm] to get things done" — the time is a tappable button.
                  A transparent <input type=time> overlays the button so tapping
                  opens the native OS picker exactly as before; while it's open
@@ -8606,6 +8664,12 @@ window.addEventListener('pagehide', flushPendingPushes);
    pushSettingsToCloud, so polling can fully bring a device up to date — not
    just session_state — and we never end up with localTs == remoteTs but tasks
    / time goals / factors still stale. */
+/* The phase-confirm boundary THIS device most recently answered (device-local, never
+   synced). Guards against the cross-device echo where the other device (e.g. a throttled
+   iPhone) pushes the SAME pending dialog a few seconds after you answered on this one —
+   without it, that stale activeTimer reverts the answer and re-pops the dialog (~5-10s
+   later). Used by applyRemoteSettings (ignore the stale timer) + set in the answer handler. */
+let _answeredPhaseConfirmBoundary = 0;
 function applyRemoteSettings(remote) {
   if (!remote) return false;
   const motInput = document.getElementById('motivation-input');
@@ -8707,7 +8771,18 @@ function applyRemoteSettings(remote) {
   // ---- Session state (timer, segments, day-rollover, scoreLog, motivational pick) ----
   if (remote.session_state && typeof remote.session_state === 'object') {
     const ss = remote.session_state;
-    if ('activeTimer' in ss) state.activeTimer = ss.activeTimer || null;
+    if ('activeTimer' in ss) {
+      const _inc = ss.activeTimer || null;
+      const _incB = _inc ? ((+_inc.phaseStartedAt || +_inc.startedAt) + (+_inc.phaseDurationMs || 0)) : 0;
+      // Drop a stale echo of a phase-confirm we already answered here (the other device
+      // pushing the same pending dialog a few seconds late) → keep our local timer so the
+      // answer sticks and the dialog doesn't re-pop. Any other timer update applies normally.
+      if (_inc && _inc.pendingPhaseConfirm && _incB && _incB === _answeredPhaseConfirmBoundary) {
+        /* ignore — keep local activeTimer */
+      } else {
+        state.activeTimer = _inc;
+      }
+    }
     if (typeof ss.pomodoroSessionsInCycle === 'number') state.pomodoroSessionsInCycle = ss.pomodoroSessionsInCycle;
     if (Array.isArray(ss.timeSegments)) state.timeSegments = ss.timeSegments;
     if ('sessionStartMs' in ss) state.sessionStartMs = ss.sessionStartMs || null;
@@ -11509,6 +11584,7 @@ function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
   // On entering the focus page, snap Time area scroll back to current time.
   if (state.timeArea) state.timeArea._needsScroll = true;
+  _glueUnstartedToNowLine();   // #22 catch an un-started plan up to the now-line on entry
   drawGauge();
   renderImDoing();
   // Resume the q4 distraction FX if an up-timer was already running (e.g.
@@ -11526,7 +11602,7 @@ function startFocusTicker() {
     // re-measures the floor + does a full re-render mid-interaction, fighting the
     // live height control so the gauge visibly jumps/shakes once a second.
     // renderImDoing keeps running regardless.
-    if (!window._gaugeBusy) drawGauge();
+    if (!window._gaugeBusy) { _glueUnstartedToNowLine(); drawGauge(); }   // #22 un-started plan follows the line
     renderImDoing();
   }, 1000);
 }
@@ -12151,12 +12227,24 @@ function renderFocusMatrix() {
         });
         if (!hasCoveringBlock && earliestFuture) {
           // The task already has a box on the gauge → do NOT add another (per
-          // user). Move that planned box to NOW and start on it.
+          // user). Move that planned box UP to NOW and start on it.
+          const _oldStart = earliestFuture.startMs;
+          const _delta    = _oldStart - _tgNow;        // how far up the box (and the tail below it) slides
           const _dur = earliestFuture.endMs - earliestFuture.startMs;
           earliestFuture.startMs   = _tgNow;
           earliestFuture.endMs     = _tgNow + _dur;
           earliestFuture.activeAt  = _tgNow;
           earliestFuture.activeEndMs = null;
+          // #9(b) — the started box's TOP now touches the now-line; pull every box
+          // that was chained BELOW it up by the same delta so they stay connected to
+          // the line (no gap where the box used to sit). Boxes scheduled ABOVE the old
+          // slot (between now and _oldStart) stay put — the renderer overlaps via columns.
+          if (_delta > 0) {
+            (state.scheduledBlocks || []).forEach(b => {
+              if (b === earliestFuture) return;
+              if (b.startMs >= _oldStart) { b.startMs -= _delta; b.endMs -= _delta; }
+            });
+          }
           hasCoveringBlock = true;   // skip the spawn path below
         }
         if (!hasCoveringBlock) {
@@ -13230,6 +13318,9 @@ async function showPomoPhaseConfirm() {
   // Re-fetch — user may have stopped the timer some other way during the prompt
   const at2 = state.activeTimer;
   if (!at2 || at2.type !== 'pomodoro') return;
+  // Remember the boundary we're answering so a stale remote echo of this same
+  // pending dialog (pushed late by the other device) can't revert it + re-pop.
+  _answeredPhaseConfirmBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
   // Break-end has no "skip" (unlike work-end). Its secondary button ("Finish
   // for now") means stop — route a `false` answer there to the stop path.
   if (answer === false && at2.phase !== 'work') answer = null;
@@ -14474,10 +14565,11 @@ function drawTimeArea() {
       div.addEventListener('touchstart', e => {
         if (e.target.closest('.time-block-rb,.time-block-x,.time-block-nudge')) return;
         if (!e.touches[0]) return;
-        // (#12) Only OWN the touch (block drag / swipe-to-delete) when this block is
-        // already SELECTED; on a non-selected block let the page/gauge SCROLL (a tap
-        // still selects it via the click handler below). Without this, the
-        // unconditional preventDefault ate every vertical scroll started on a block.
+        // (#12) Only OWN the touch (block drag / swipe-to-delete) in EDIT mode AND
+        // when this block is already SELECTED. Outside edit mode — or on a
+        // non-selected block — let the gauge TIMELINE SCROLL (touch a block, slide
+        // up/down → the #time-area scrolls). A tap still selects via the click path.
+        if (!document.body.classList.contains('tt-edit')) return;   // non-edit → always scroll
         if (!(activeDiv || div).classList.contains('selected')) return;
         e.preventDefault();
         // ANTI-ACCIDENTAL ARMING: don't classify/split/move on touch-down. Only
@@ -16220,6 +16312,38 @@ function pomoRingColor(q, idx) {
   const L = Math.max(24, Math.min(78, hsl[2] + sh[0]));   // clamp so the arc never washes to near-black or near-white
   return _hslToHex(hsl[0], hsl[1] + sh[1], L);
 }
+/* The ONE accent colour for the focus header (ring arc/knob, timer text,
+   pause/play button, "Session N" badge) — one colour per Eisenhower quadrant
+   (q1/q2/q3/q4), NOT per-task, so the whole header reads as the active task's
+   quadrant identity (the user's "4 colours — important-urgent etc."). Theme-aware:
+   deep shades on light cards (text contrast on white) / bright on the dark card. */
+function focusQuadAccent(q) {
+  const LIGHT = { q1: '#be123c', q2: '#b45309', q3: '#6d28d9', q4: '#1d4ed8' };
+  const DARK  = { q1: '#fb7185', q2: '#fbbf24', q3: '#c4b5fd', q4: '#93c5fd' };
+  const map = bidoroDarkTheme() ? DARK : LIGHT;
+  return map[q] || map.q1;
+}
+/* The quadrant of the gauge TASK BLOCK currently under the now-line — handles
+   combined/shuffle blocks (taskSegs) and the now-line crossing into the next
+   block — so the focus ring STRICTLY follows the gauge block, not merely at.q.
+   Falls back to the active timer's quadrant when no task block spans `now`. */
+function _focusBlockQAt(at, now) {
+  let q = at ? at.q : null;
+  try {
+    const blocks = state.scheduledBlocks || [];
+    for (const b of blocks) {
+      if (!b || b.isBreak || b.kind === 'tracker') continue;
+      if (Array.isArray(b.taskSegs) && b.taskSegs.length) {
+        for (const sg of b.taskSegs) {
+          if (typeof sg.q === 'string' && (+sg.startMs) <= now && now < (+sg.endMs)) return sg.q;
+        }
+      } else if (typeof b.q === 'string' && (+b.startMs) <= now && now < (+b.endMs)) {
+        return b.q;
+      }
+    }
+  } catch (_) {}
+  return q;
+}
 /* SPLIT RING: the colour segments for the CURRENT 25-min work window, by time
    fraction. When >1 task block falls inside the window (multi-task focus — the
    user switched tasks mid-window), the ring shows EACH task's colour for its
@@ -16324,6 +16448,29 @@ function _growKeepGoing() {
 function _settleKeepGoing() {
   if (!Array.isArray(state.scheduledBlocks)) return;
   state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; });
+}
+/* #22 — keep an un-started plan glued to the now-line. When NOTHING is running and the
+   current-time line has reached the earliest un-started (never-worked) block, slide that
+   block + everything chained at/after it DOWN so its top stays on the line — the line
+   never passes an un-started block, so a plan you haven't begun follows you until you
+   start it (then starting pins it). Future blocks the line hasn't reached are left alone.
+   Runs in the focus tick (only while the gauge is on screen → no churn in the background);
+   mutates in memory only (the next natural save persists it; each device re-glues on view). */
+function _glueUnstartedToNowLine() {
+  if (!Array.isArray(state.scheduledBlocks) || !state.scheduledBlocks.length) return;
+  if (state.scheduledBlocks.some(b => b.activeAt && !b.activeEndMs)) return;   // a live session pins the schedule
+  const now = Date.now();
+  let top = null;
+  state.scheduledBlocks.forEach(b => {
+    if (b.activeAt || b.activeEndMs) return;                                    // started / worked / finalized → not un-started
+    if (Array.isArray(b.workedSegments) && b.workedSegments.length) return;
+    if (!top || (+b.startMs) < (+top.startMs)) top = b;                         // earliest un-started, never-worked block
+  });
+  if (!top || (+top.startMs) >= now) return;                                    // line hasn't reached it → leave future plans
+  const oldStart = +top.startMs, delta = now - oldStart;                        // slide it (and the tail at/after it) down to the line
+  state.scheduledBlocks.forEach(b => {
+    if (!b.activeEndMs && (+b.startMs) >= oldStart) { b.startMs = (+b.startMs) + delta; b.endMs = (+b.endMs) + delta; }
+  });
 }
 
 /* ---- score / face rendering ---- */
@@ -16674,11 +16821,40 @@ function _fcHideDone() {
   try { renderImDoing(); } catch (_) {}
 }
 
+/* Shrink the "Now focusing on" task name only when a single word is too wide to
+   fit (so words NEVER break mid-word). Resets to the CSS size first, then steps
+   the font down until the widest word fits or it hits the floor. No-op when the
+   element is hidden (clientWidth 0). */
+function _fitFocusName() {
+  const el = document.getElementById('fc-name');
+  if (!el) return;
+  el.style.fontSize = '';                                  // back to the CSS default
+  const avail = el.clientWidth;
+  if (!avail) return;                                      // hidden / not laid out
+  const MIN = 11;                                          // px floor — small, but the user prefers shrinking over any wrap
+  let size = parseFloat(getComputedStyle(el).fontSize) || 30;
+  let guard = 0;
+  while (el.scrollWidth > el.clientWidth + 1 && size > MIN && guard < 60) {
+    size = Math.max(MIN, size - 1);
+    el.style.fontSize = size + 'px';
+    guard++;
+  }
+}
 function renderImDoing() {
   // Populates the sticky "Now focusing on" card (expanded + compact layouts).
   // Reuses the exact same call sites the old "I'm doing" area used.
   const card = document.getElementById('focus-card');
   if (!card) return;
+  // Tiny top-right "expand → full screen" icon (wired once). CSS gates its
+  // visibility to the running-pomodoro state.
+  const _exp = document.getElementById('fc-expand-btn');
+  if (_exp && !_exp._wired) {
+    _exp._wired = true;
+    _exp.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      try { openFocusFullscreen(); } catch (_) {}
+    });
+  }
   if (typeof renderMoneyCard === 'function') renderMoneyCard();
   // Mirror the live timer into the full-screen circular view while it's open
   // (also auto-closes it the moment the pomodoro ends / goes idle).
@@ -16697,7 +16873,7 @@ function renderImDoing() {
   // setName mirrors to the topbar overlay (#tn-name); the rest only live in the
   // expanded card now (the compact bar was removed). setDot is a no-op — the
   // quadrant dot went away with the compact bar (the ring conveys phase).
-  const setName    = (s) => { setT('fc-name', s); setT('tn-name', s); };
+  const setName    = (s) => { setT('fc-name', s); setT('tn-name', s); _fitFocusName(); };
   const setLeft    = (s) => { setT('fc-left', s); };
   const setDot     = () => {};
   // Pomodoro ring: white sweeps clockwise from 12 o'clock as the phase elapses
@@ -16705,13 +16881,41 @@ function renderImDoing() {
   // topbar overlay ring (#tn-pomo) mirrors the card ring (#fc-pomo).
   // `segs` is a cumulative [{endFrac,color}] list (split ring) — or null to hide.
   const setPomo = (fracElapsed, segs) => {
-    ['fc-pomo', 'tn-pomo'].forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      if (fracElapsed == null || !segs) { el.classList.add('fc-pomo-hidden'); return; }
-      el.classList.remove('fc-pomo-hidden');
-      el.style.background = pomoRingGradient(fracElapsed, segs);
-    });
+    // topbar overlay keeps its small conic ring
+    const tn = document.getElementById('tn-pomo');
+    if (tn) {
+      if (fracElapsed == null || !segs) tn.classList.add('fc-pomo-hidden');
+      else { tn.classList.remove('fc-pomo-hidden'); tn.style.background = pomoRingGradient(fracElapsed, segs); }
+    }
+    // card's big ring: REMAINING arc (drains) + a knob at the elapsed edge; NO dot at
+    // the 12-o'clock start (butt cap). Same arc math as the full-screen dial.
+    const wrap = document.getElementById('fc-ring-wrap');
+    const arc  = document.getElementById('fc-ring-arc');
+    const knob = document.getElementById('fc-ring-knob');
+    if (!wrap || !arc || !knob) return;
+    if (fracElapsed == null || !segs) { wrap.style.visibility = 'hidden'; return; }
+    wrap.style.visibility = '';
+    // colour = the segment the elapsed edge is in (the focused task) so the ring matches
+    // the active task bar — not just the window's first segment.
+    let color = (segs[0] && segs[0].color) || '#be123c', _pf = 0;
+    for (const sg of segs) { if (fracElapsed >= _pf && fracElapsed < sg.endFrac) { color = sg.color; break; } _pf = sg.endFrac; }
+    const C = 2 * Math.PI * 52, rem = Math.max(0, Math.min(1, 1 - fracElapsed));
+    arc.style.stroke = color;
+    arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
+    arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
+    const tr = document.getElementById('fc-ring-track'); if (tr) tr.style.stroke = color;
+    // knob at the elapsed edge — hidden at the very start so there is NO dot at the top
+    if (fracElapsed < 0.012) { knob.style.display = 'none'; }
+    else {
+      knob.style.display = '';
+      const ang = (-90 + fracElapsed * 360) * Math.PI / 180;   // 12 o'clock + clockwise
+      knob.setAttribute('cx', (60 + 52 * Math.cos(ang)).toFixed(1));
+      knob.setAttribute('cy', (60 + 52 * Math.sin(ang)).toFixed(1));
+      knob.style.fill = color;
+    }
+    const timeEl = document.getElementById('fc-left'); if (timeEl) timeEl.style.color = color;
+    const pauseEl = document.getElementById('fc-ring-pause');
+    if (pauseEl) { pauseEl.style.color = color; pauseEl.style.background = /^#[0-9a-f]{6}$/i.test(color) ? color + '26' : '#fce7eb'; }
   };
   const fmtMMSS = (ms) => {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -16754,25 +16958,57 @@ function renderImDoing() {
     // the running session number, and the pomodoro time left.
     card.classList.remove('fc-idle', 'fc-down', 'fc-startnow', 'fc-q4-run');
     try { _fcStopClock(); } catch (_) {}
-    // Session number — PER TASK: counts only THIS task's work sessions today (by
-    // name), so the number belongs to the focused task and restarts at 1 for a new
-    // task. The 1st session shows the bare name; the running count is appended from
-    // the 2nd onward (e.g. "공부 2"). setName mirrors to the topbar overlay too.
-    const counts = (typeof _pomoCountsForToday === 'function') ? _pomoCountsForToday(name) : { workN: 0 };
-    const sessionN = (counts.workN || 0) + 1;
-    if (sessionN >= 2) setName(name + ' ' + sessionN);
+    // ONE quadrant accent for the WHOLE header (ring/timer/pause/play/badge) —
+    // STRICTLY the quadrant of the gauge task block under the now-line (4 colours),
+    // NOT the per-task/segment shade. Break stays sky-blue so it reads apart.
+    const accent = (at.phase === 'work') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : '#38BDF8';
+    const _ac6 = /^#[0-9a-f]{6}$/i.test(accent);
+    // Badge — PER TASK, today (matched by name, robust across reorder/delete):
+    //   WORK  → "Session N" (this task's work-session count, shown from #2 on)
+    //   BREAK → "Break N"   (this task's break count, incl. the current break)
+    const counts = (typeof _pomoCountsForToday === 'function') ? _pomoCountsForToday(name) : { workN: 0, breakN: 0 };
+    let badgeText = '';
+    if (at.phase === 'work') {
+      const sessionN = (counts.workN || 0) + 1;
+      badgeText = (sessionN >= 2) ? ('Session ' + sessionN) : '';
+    } else {
+      badgeText = 'Break ' + ((counts.breakN || 0) + 1);   // current break = breakN + 1
+    }
+    const _sessEl = document.getElementById('fc-session');
+    if (_sessEl) {
+      _sessEl.textContent = badgeText;
+      // tint the badge with the same accent as the ring/timer
+      _sessEl.style.color = accent;
+      _sessEl.style.background  = _ac6 ? (accent + '1f') : '#fce7eb';   // ~12% tint fill
+      _sessEl.style.borderColor = _ac6 ? (accent + '55') : '#f6c9d3';   // ~33% tint border
+    }
+    // pause/play button inside the ring (reflects + toggles the live pause state)
+    const _pz = document.getElementById('fc-ring-pause');
+    if (_pz) {
+      if (!_pz._wired) {
+        _pz._wired = true;
+        _pz.addEventListener('click', (e) => {
+          e.preventDefault(); e.stopPropagation();
+          if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
+          try { renderImDoing(); } catch (_) {}
+          try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+          try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+          try { saveState(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+        });
+      }
+      _pz.innerHTML = at.paused
+        ? '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M8 5.2 L18 12 L8 18.8 Z" fill="currentColor"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/></svg>';
+    }
     const remMs = (typeof getPomodoroRemainingMs === 'function') ? getPomodoroRemainingMs() : 0;
     setLeft(fmtMMSS(remMs));
     // Live ring: red (amber in last 2 min) on work, sky-blue on break.
     const phaseDur = (+at.phaseDurationMs) || (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
     const fracElapsed = phaseDur > 0 ? Math.max(0, Math.min(1, 1 - remMs / phaseDur)) : 0;
-    // Work phase paints the ACTIVE TASK's colour — IDENTICAL to its task-bar /
-    // gauge-block TEXT colour (per-task shade, so two same-quadrant tasks differ);
-    // break phases stay sky-blue.
-    // Break = single sky-blue; work = split by the tasks in the current window.
-    const ringSegs = (at.phase !== 'work')
-      ? [{ endFrac: 1, color: '#38BDF8' }]
-      : pomoWindowSegments(at);
+    // Ring = ONE solid arc in the quadrant accent (work) / sky-blue (break). The
+    // arc, knob, track, timer text and pause/play button all derive from this
+    // single segment colour inside setPomo, so the whole ring matches the badge.
+    const ringSegs = [{ endFrac: 1, color: accent }];
     setPomo(fracElapsed, ringSegs);
   } else {
     // q4 distraction / tracker — show the "Now focusing on [name]" header (no idle cat, no
@@ -16781,6 +17017,7 @@ function renderImDoing() {
     card.classList.add('fc-q4-run');
     try { _fcStopClock(); } catch (_) {}
     setLeft('00:00'); setPomo(null);
+    const _se = document.getElementById('fc-session'); if (_se) _se.textContent = '';   // q4 has no session badge
   }
 }
 
@@ -19631,8 +19868,22 @@ if (_editToggle) {
     if (idx < 0) { _ensureSel(); return; }                 // first press → select at/after now
     _select(fut[Math.min(fut.length - 1, Math.max(0, idx + (dir > 0 ? 1 : -1)))]);
   }
-  if (up)   up.addEventListener('click',   (e) => { e.preventDefault(); e.stopPropagation(); _navigate(-1); if (_guideStage === 'nav') _setGuide('mode'); });
-  if (down) down.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _navigate(1);  if (_guideStage === 'nav') _setGuide('mode'); });
+  /* When ↑/↓ lands on a block that sits BELOW the gauge's vertical middle, scroll
+     the #time-area so that block rises to the middle. A block at/above the middle
+     leaves the gauge still (per user spec). Runs AFTER _redraw() so _gtdMap is fresh. */
+  function _centerSelInGauge(){
+    const area = document.getElementById('time-area');
+    if (!area || area.offsetParent === null) return;                 // time-area not the visible gauge
+    if (!_gtdMap || typeof _gtdMap.msToPx !== 'function') return;
+    const b = _sel(); if (!b) return;
+    const midPx = (_gtdMap.msToPx(b.startMs) + _gtdMap.msToPx(b.endMs)) / 2;
+    const viewMidPx = area.scrollTop + area.clientHeight / 2;
+    if (midPx <= viewMidPx + 1) return;                              // at/above middle → stay put
+    const target = Math.max(0, Math.min(area.scrollHeight - area.clientHeight, midPx - area.clientHeight / 2));
+    try { area.scrollTo({ top: target, behavior: 'smooth' }); } catch (_) { area.scrollTop = target; }
+  }
+  if (up)   up.addEventListener('click',   (e) => { e.preventDefault(); e.stopPropagation(); _navigate(-1); _centerSelInGauge(); if (_guideStage === 'nav') _setGuide('mode'); });
+  if (down) down.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _navigate(1);  _centerSelInGauge(); if (_guideStage === 'nav') _setGuide('mode'); });
   if (modeBtn) modeBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _mode = (_mode === 'move' ? 'resize' : 'move'); _renderMode(); if (_guideStage === 'mode') _setGuide('slider'); });
   if (del) del.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
@@ -19696,6 +19947,30 @@ if (_editToggle) {
     slider.addEventListener('touchcancel',() => { if (drag) end(); });
   }
   window._geOnEnterEdit = function(){ try { _ensureSel(); } catch (_) {} _setGuide('nav'); };   // every Edit entry restarts the green-border hint
+})();
+
+/* ===== Gauge auto return-to-now =====
+   7 s after the user SCROLLS the #time-area gauge (touch / wheel), glide it back
+   so the current-time line sits 30 min from the top (TIME_HEAD_OFFSET_MS, the
+   same target as the "Time" tap / first render). Listens to touchmove/wheel only
+   (real user input) — never to the programmatic scrollTo it issues — so it can't
+   loop. Skipped while EDITING or mid gauge-drag (those own the view on purpose). */
+(function wireGaugeAutoReturnToNow(){
+  const area = document.getElementById('time-area');
+  if (!area) return;
+  let timer = null;
+  const _blocked = () => document.body.classList.contains('tt-edit') || window._gaugeBusy || window._timeGaugePinching;
+  function _schedule(){
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (_blocked()) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (_blocked() || !area || area.offsetParent === null || !state.timeArea) return;
+      try { state.timeArea._needsScroll = 'smooth'; if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+    }, 7000);
+  }
+  area.addEventListener('touchmove', _schedule, { passive: true });
+  area.addEventListener('wheel',     _schedule, { passive: true });
 })();
 
 /* ===== GTD chip → open the "Setting Time for Get Things Done" picker. ===== */
@@ -21270,13 +21545,12 @@ function renderFocusFullscreen() {
     timeEl.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
   }
   const elapsedFrac = durMs > 0 ? Math.max(0, Math.min(1, 1 - remMs / durMs)) : 0;
-  // SPLIT ring (matches the mini ring): one arc per task segment in the current
-  // work window. Break = single sky-blue. Different-type tasks → each theme
-  // colour; same-type → first = theme colour, rest = distinct same-family
-  // shades (pomoRingColor). A single task behaves exactly like the old 1-arc.
+  // ONE solid arc in the active task's quadrant accent (work) / sky-blue (break)
+  // — matches the mini header ring exactly (the user wants the 4 quadrant colours,
+  // not the per-task/segment shade).
   const ffSegs = (at.phase !== 'work')
     ? [{ endFrac: 1, color: '#38BDF8' }]
-    : ((typeof pomoWindowSegments === 'function') ? pomoWindowSegments(at) : [{ endFrac: 1, color: pomoRingColor(at.q, at.idx) }]);
+    : [{ endFrac: 1, color: (typeof focusQuadAccent === 'function') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : pomoRingColor(at.q, at.idx) }];
   const baseArc = document.getElementById('ff-arc');
   let knobColor = ffSegs.length ? ffSegs[0].color : '#38BDF8';
   if (baseArc) {
@@ -22998,57 +23272,55 @@ setInterval(() => {
               startX: t.clientX, startY: t.clientY, dragging: false,
               srcRow: row, rowGhost: null, fromGrip: _onGrip };
       _draggedTask = { q: info.q, idx: info.idx };
-      // === HOLD the page scroll for this whole row gesture ===
-      // The "page scrolls during a drag" was actually the iOS rubber-band
-      // OVERSCROLL BOUNCE (scrollTop never changed — confirmed via debug). Lock
-      // the scrolling ancestor(s): overflow:hidden + overscroll-behavior:none
-      // (kills the bounce) + a scroll-position snap-back backstop; element-level
-      // touchmove preventDefault for good measure. Undone on touchend/cancel.
-      try {
-        // Find the ACTUAL scrolling ancestor of the row (don't assume <main>).
-        let _sc = row, _g = 0;
-        while (_sc && _sc !== document.body && _g++ < 40) {
-          const cs = getComputedStyle(_sc);
-          if (_sc.scrollHeight > _sc.clientHeight + 2 && /(auto|scroll)/.test(cs.overflowY)) break;
-          _sc = _sc.parentElement;
-        }
-        if (!_sc || _sc === document.body) _sc = document.scrollingElement || document.documentElement;
-        const _m = document.querySelector('main');
-        const _locks = [];
-        [_sc, _m, document.scrollingElement].forEach(el => { if (el && _locks.indexOf(el) < 0) _locks.push(el); });
-        const _starts = _locks.map(el => el.scrollTop);
-        const _wTop = window.scrollY || 0;
-        const _onScroll = () => {
-          _locks.forEach((el, i) => { if (el.scrollTop !== _starts[i]) el.scrollTop = _starts[i]; });
-          if ((window.scrollY || 0) !== _wTop) window.scrollTo(0, _wTop);
-        };
-        _locks.forEach(el => {
-          if (!el._rowDragGuard) { el.addEventListener('touchmove', e => { if (_td) e.preventDefault(); }, { passive: false }); el._rowDragGuard = true; }
-          el._prevOv = el.style.overflow; el.style.overflow = 'hidden';
-          el._prevOB = el.style.overscrollBehavior; el.style.overscrollBehavior = 'none';   // kill the rubber-band bounce
-          el.addEventListener('scroll', _onScroll, { passive: true });
-        });
-        window.addEventListener('scroll', _onScroll, { passive: true });
-        _td._unlockScroll = () => {
-          _locks.forEach(el => { el.removeEventListener('scroll', _onScroll); el.style.overflow = el._prevOv || ''; el.style.overscrollBehavior = el._prevOB || ''; });
-          window.removeEventListener('scroll', _onScroll);
-        };
-      } catch (_) {}
+      // === Page-scroll lock — DEFERRED until a capture gesture commits ===
+      // A vertical BAR-BODY drag must scroll the page (touch-action:pan-y), so we
+      // do NOT lock on pointerdown anymore. Only grip-reorder / horizontal-swipe
+      // call _td._lockScroll() (from pointermove, once the gesture is decided) to
+      // hold the scrolling ancestor(s): overflow:hidden + overscroll-behavior:none
+      // (kills the iOS rubber-band bounce) + a scroll snap-back backstop. Undone
+      // on touchend/cancel via _td._unlockScroll.
+      _td._lockScroll = function () {
+        if (_td._unlockScroll) return;   // already held
+        try {
+          // Find the ACTUAL scrolling ancestor of the row (don't assume <main>).
+          let _sc = row, _g = 0;
+          while (_sc && _sc !== document.body && _g++ < 40) {
+            const cs = getComputedStyle(_sc);
+            if (_sc.scrollHeight > _sc.clientHeight + 2 && /(auto|scroll)/.test(cs.overflowY)) break;
+            _sc = _sc.parentElement;
+          }
+          if (!_sc || _sc === document.body) _sc = document.scrollingElement || document.documentElement;
+          const _m = document.querySelector('main');
+          const _locks = [];
+          [_sc, _m, document.scrollingElement].forEach(el => { if (el && _locks.indexOf(el) < 0) _locks.push(el); });
+          const _starts = _locks.map(el => el.scrollTop);
+          const _wTop = window.scrollY || 0;
+          const _onScroll = () => {
+            _locks.forEach((el, i) => { if (el.scrollTop !== _starts[i]) el.scrollTop = _starts[i]; });
+            if ((window.scrollY || 0) !== _wTop) window.scrollTo(0, _wTop);
+          };
+          _locks.forEach(el => {
+            if (!el._rowDragGuard) { el.addEventListener('touchmove', e => { if (_td) e.preventDefault(); }, { passive: false }); el._rowDragGuard = true; }
+            el._prevOv = el.style.overflow; el.style.overflow = 'hidden';
+            el._prevOB = el.style.overscrollBehavior; el.style.overscrollBehavior = 'none';   // kill the rubber-band bounce
+            el.addEventListener('scroll', _onScroll, { passive: true });
+          });
+          window.addEventListener('scroll', _onScroll, { passive: true });
+          _td._unlockScroll = () => {
+            _locks.forEach(el => { el.removeEventListener('scroll', _onScroll); el.style.overflow = el._prevOv || ''; el.style.overscrollBehavior = el._prevOB || ''; });
+            window.removeEventListener('scroll', _onScroll);
+          };
+        } catch (_) {}
+      };
     }, { passive: false });
 
     document.addEventListener('pointermove', ev => {
       if (!_td) return;
       const t = ev;
-      // The finger is already on a task row. The moment the finger moves AT
-      // ALL we must lock out page scroll — otherwise iOS Safari (and the
-      // Capacitor WKWebView wrapper) can begin a momentum scroll before the
-      // 8 px threshold below is reached, which manifests as "the whole page
-      // jumps a bit while I'm dragging a task." preventDefault on touchmove
-      // does NOT suppress the subsequent `click` event for short taps, so
-      // tap-to-toggle still works.
-      ev.preventDefault();
-      // Wait for an 8 px movement before committing to a drag — this lets
-      // short taps still fire click events without interference.
+      // Wait for an 8 px movement before committing to a gesture — this lets
+      // short taps still fire click events, AND lets a vertical bar-body drag
+      // start the page scroll (touch-action:pan-y) BEFORE we decide anything.
+      // We deliberately do NOT preventDefault until a CAPTURE gesture commits.
       if (!_td.dragging) {
         const dx0 = t.clientX - _td.startX, dy0 = t.clientY - _td.startY;
         if (dx0 * dx0 + dy0 * dy0 < 64) return;   // < 8 px — not a drag yet
@@ -23056,12 +23328,14 @@ setInterval(() => {
         // Decide which gesture this is:
         //   swipe-RIGHT (predominantly rightward) → swipe-to-delete
         //   swipe-LEFT  (predominantly leftward)  → send-to-gauge (NO ghost)
-        //   up / down / diagonal                  → drag (gauge-drop / reorder)
+        //   grip + up/down/diagonal               → reorder drag
+        //   bar-body + vertical                   → RELEASE → page scrolls
         // The 1.3× factor biases ties toward drag so an accidental diagonal
         // doesn't fire a horizontal action unexpectedly.
         const absDx = Math.abs(dx0), absDy = Math.abs(dy0);
         if (!_td.fromGrip && dx0 > 0 && absDx > absDy * 1.3) {
           _td.mode = 'swipe';
+          if (_td._lockScroll) _td._lockScroll();   // capture → hold the page now
           // Disable transition initially so the row tracks the finger 1:1.
           // Re-enabled on touchend for the snap-back / fly-out animation.
           if (_td.srcRow && _td.srcRow.style) {
@@ -23073,15 +23347,18 @@ setInterval(() => {
           // whole point — a clean, effortless left swipe). The bar tracks the
           // finger and is clipped at its own left edge (the "portal wall").
           _td.mode = 'gaugeswipe';
+          if (_td._lockScroll) _td._lockScroll();
           if (_td.srcRow && _td.srcRow.style) {
             _td.srcRow.style.transition = 'none';
             _td.srcRow.style.willChange = 'transform, clip-path, opacity';
           }
         } else {
-          // vertical/diagonal → REORDER drag, but ONLY when it began on the grip
-          // (edit mode). A bar-body vertical drag must NOT reorder.
-          if (!_td.fromGrip) { _td.mode = 'none'; return; }
+          // vertical/diagonal. ONLY the GRIP reorders; a bar-body vertical drag
+          // must let the PAGE scroll (touch-action:pan-y) — so we fully RELEASE
+          // the gesture (no lock, no preventDefault) and let the browser scroll.
+          if (!_td.fromGrip) { _td = null; return; }   // (#scroll-on-bar)
           _td.mode = 'drag';
+          if (_td._lockScroll) _td._lockScroll();   // grip reorder → hold the page
           // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
           // never creates a stray ghost element on screen.
           try {
@@ -23091,7 +23368,8 @@ setInterval(() => {
           } catch (_) {}
         }
       }
-      if (_td.mode === 'none') return;   // bar-body vertical drag → inert (grip is the only reorder handle)
+      if (!_td || _td.mode === 'none') return;
+      ev.preventDefault();   // committed capture gesture → block native scroll (lock already set)
       // ===== Send-to-gauge (left swipe) branch =====
       if (_td.mode === 'gaugeswipe') {
         const dx = Math.min(0, t.clientX - _td.startX);     // leftward only
@@ -24103,6 +24381,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
         w.el.style.clipPath = 'polygon(0% ' + yL + '%, 100% ' + yR + '%, 100% ' + yB + '%, 0% ' + yB + '%)';
       }
       if (WATER.surfInner && WATER.apo){ const tFB = Math.atan(Tz * H / WATER.apo) * 180 / PI, tLR = -Math.atan(Tx * H / WATER.apo) * 180 / PI; WATER.surfInner.style.transform = 'rotateX(' + tFB + 'deg) rotateY(' + tLR + 'deg)'; }
+      // #4 the water SURFACE descends with the draining level — its translateY was only
+      // set at build() (gated by a binary water signature), so it used to stay put while
+      // the walls below dropped. Track WATER.base every frame so the surface sinks too.
+      if (WATER.surfEl) WATER.surfEl.style.transform = 'translateY(' + (H * 0.5 - WATER.base * H) + 'px) rotateX(90deg)';
     }
     requestAnimationFrame(sloshLoop);
   }
@@ -24240,6 +24522,9 @@ window.bidoroTaskWaterDrop = function (row, q) {
     const tiltMax = (typeof opts.tilt === 'number') ? opts.tilt : 80;
     const tiltMs  = Math.max(500, opts.tiltMs || 1500);
     const SPIN_MS = 460, STAND_MS = 560, HOLD_MS = 220;
+    // #5 hold the forward tilt until ~this many ms after the pour started (i.e. until the
+    // water has fully drained) before standing back upright — was standing too early.
+    const standAtMs = (typeof opts.standAtMs === 'number') ? opts.standAtMs : 0;
     if (_pourTimer) { clearInterval(_pourTimer); _pourTimer = 0; }
     _pour3dActive = true;
     const spin0 = spin;
@@ -24260,7 +24545,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       _pourTimer = setInterval(function () {
         const p = Math.min(1, (Date.now() - s0) / tiltMs);
         pourTilt = tiltMax * (1 - Math.pow(1 - p, 2)); apply();      // ease-out tip
-        if (p >= 1) { clearInterval(_pourTimer); pourTilt = tiltMax; apply(); _pourTimer = setTimeout(_stand, HOLD_MS); }
+        if (p >= 1) { clearInterval(_pourTimer); pourTilt = tiltMax; apply(); _pourTimer = setTimeout(_stand, Math.max(HOLD_MS, standAtMs - (Date.now() - t0))); }
       }, 16);
     }
     function _stand(){                                      // phase 2: stand upright + spin back to start (mirror resumes seamlessly)
@@ -25546,6 +25831,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
     let _tx = 0, _ty = 0;
     let _pourCell = null;                  // which garden tile we're currently pouring onto
     let _lastGreenCell = null;             // the tile whose gauge JUST turned green → blinks once
+    let _bucketTracking = false;           // true while the bucket should follow _pourCell through pans
     let REST = '', POUR = '';
     function buildTransforms() {
       REST = 'translate(-50%,0)';                  // centred on its (left:…) anchor
@@ -25709,7 +25995,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       //    The 3D bucket owns the tilt/spin; the SVG engine still drains the water (mirrored).
       host.style.transform = POUR;                              // small dip toward the soil (host)
       try {
-        if (window.bidoroBucket3DPour) window.bidoroBucket3DPour({ tiltMs: Math.round(900 + ratio * 1400) });
+        if (window.bidoroBucket3DPour) window.bidoroBucket3DPour({ tiltMs: Math.round(900 + ratio * 1400), standAtMs: SETTLE_MS - 700 });   // #5 stay tilted until the water has drained
         else if (window.bidoroBucketSpin) window.bidoroBucketSpin(ratio, SPIN_MS);   // fallback (SVG-only build)
       } catch (_) {}
       // thank a watered plant: 1st = "Thank you!", then "Thank you, again!". The bubble +
@@ -25750,6 +26036,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       //    self-remove. (Previously they fired ~1 s in, before the water was gone.)
       setTimeout(() => {
         host.style.left = '50%'; host.style.top = ''; host.style.transform = REST;
+        _bucketTracking = false;                 // back at rest → stop following the tile (returns to original spot)
         pouring = false; updatePourBtn();
         try { renderField(); } catch (_) {}
         try { if (_thanksMsg) spawnThanks(cell, _thanksMsg); } catch (_) {}
@@ -25762,6 +26049,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
     function enterWaterField() {
       cancelInertia();
       _lastGreenCell = null;   // a fresh open shouldn't replay a stale green-blink
+      _bucketTracking = false;
       buildOn = true; buildMode = false; plantMode = false; waterMode = true;
       if (viewPour)  viewPour.classList.add('hidden');
       if (viewBuild) viewBuild.classList.remove('hidden');
@@ -25776,20 +26064,28 @@ window.bidoroTaskWaterDrop = function (row, q) {
     }
     // Tap a water-drop → glide the bucket so its floor sits over the tile DIRECTLY
     // ABOVE this one (one diamond-height up), then pour straight down onto this tile.
-    function pourAtCell(r, c) {
-      if (pouring || !hasWater()) return;
+    // Position the floating bucket over a cell. The host lives OUTSIDE the pannable
+    // field, so its target is the tile's CURRENT viewBuild-local point (includes panX/
+    // panY) — recomputed whenever the field pans so the bucket stays glued to its tile.
+    // animate=false tracks the pan instantly (transition off); =true does the 1.2 s glide.
+    function _alignBucketToCell(r, c, animate) {
       const vp = vpEl.getBoundingClientRect();
       const view = viewBuild.getBoundingClientRect();
       const cp = cellXY(r, c);
-      const tileX = (vp.left - view.left) + vp.width / 2 + panX + cp.x;   // tile centre (viewBuild-local)
+      const tileX = (vp.left - view.left) + vp.width / 2 + panX + cp.x;
       const tileY = (vp.top  - view.top)  + vp.height / 2 + panY + cp.y;
       const side  = host.offsetHeight || parseFloat(host.style.height) || 120;
-      host.style.left = tileX + 'px';
-      // bucket floor-hole (≈0.72·height) lands on the tile one row up (tileY − DIAMOND_H)
-      host.style.top  = (tileY - DIAMOND_H - side * 0.72) + 'px';
+      const _set = () => { host.style.left = tileX + 'px'; host.style.top = (tileY - DIAMOND_H - side * 0.72) + 'px'; };   // floor-hole (≈0.72·h) over the tile one row up
+      if (animate) { _set(); }
+      else { const prev = host.style.transition; host.style.transition = 'none'; _set(); requestAnimationFrame(() => { host.style.transition = prev || ''; }); }
+    }
+    function pourAtCell(r, c) {
+      if (pouring || !hasWater()) return;
       _pourCell = { r: r, c: c };
-      // wait for the (1.2 s) descent to finish, THEN pour: bucket rotates first,
-      // droplets 0.5 s later, water drains 0.5 s after that.
+      _bucketTracking = true;                  // keep the bucket glued to this tile through any pan (returns to rest at settle)
+      _alignBucketToCell(r, c, true);          // initial 1.2 s glide over the tile
+      // wait for the descent to finish, THEN pour: bucket rotates first, droplets
+      // 0.5 s later, water drains 0.5 s after that.
       setTimeout(() => pour(), 1250);
     }
 
@@ -25818,7 +26114,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
     let buildOn = false, buildMode = false, plantMode = false, waterMode = false, alertMode = false, pendingCell = null, pendingSeed = null;
     let panX = 0, panY = 0, panDrag = null, panMoved = false;
     let panVX = 0, panVY = 0, panLX = 0, panLY = 0, panLT = 0, inertiaRAF = 0;   // momentum-glide state
-    function applyPan() { if (fieldEl) fieldEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px)'; }
+    function applyPan() {
+      if (fieldEl) fieldEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px)';
+      if (_bucketTracking && _pourCell) _alignBucketToCell(_pourCell.r, _pourCell.c, false);   // bucket follows its tile as the field pans
+    }
     function cellXY(r, c) { return { x: (c - r) * OX, y: (c + r) * OY }; }
     function tileSrc() { return 'earth.png'; }                // uniform tile (variants unused → seamless)
     function gardenTiles() { if (!Array.isArray(state.gardenTiles)) state.gardenTiles = []; return state.gardenTiles; }
