@@ -3297,6 +3297,25 @@
     display: flex; align-items: center; justify-content: center;
   }
   .fc-cat .fc-no-task { height: auto; width: auto; max-width: 100%; max-height: 100%; }
+  /* ===== Idle card = BIG 2-line text (left) + small face image (right), replacing
+     the old full-width banner. Text is real HTML in the Time & Tasks font so it stays
+     crisp + recolours in dark mode; start-small.gif / add-small.png are the SAME size
+     so the face holds its place across the add↔start swap. ===== */
+  .focus-card.fc-idle .fc-cat-inner,
+  .focus-card.fc-startnow .fc-cat-inner { justify-content: space-between; gap: 10px; padding: 0 2px; }
+  .fc-idle-text {
+    flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column;
+    justify-content: center; align-items: flex-start; text-align: left;
+  }
+  .fc-idle-text .fit-l1, .fc-idle-text .fit-l2 {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 1.4rem; font-weight: 800; line-height: 1.1; letter-spacing: -.01em;
+    color: var(--text-main, #111827); white-space: nowrap;
+  }
+  .focus-card.fc-idle .fc-no-task,
+  .focus-card.fc-startnow .fc-no-task {
+    flex: 0 0 auto; height: 80%; width: auto; max-width: 42%; object-fit: contain;
+  }
   /* No task → ONLY add.png (drop the old "Add a task." bubble + the clock pill). */
   .focus-card.fc-down .fc-cat-bubble,
   .focus-card.fc-swapping .fc-cat-bubble { display: none !important; }
@@ -6502,7 +6521,12 @@
                  (tasks exist, none started). Overlays sit on top of the cat. -->
             <div class="fc-cat" id="fc-cat" aria-hidden="true">
               <div class="fc-cat-inner" id="fc-cat-inner">
-                <img class="fc-no-task" id="fc-no-task" src="images/focus/doro/add-sm.png?v=doro-2" alt="" aria-hidden="true">
+                <!-- Idle card: BIG 2-line text (left, Time & Tasks font) + small face image
+                     (right). renderImDoing sets the text + swaps the image by state/theme:
+                     no task → "Add one." / "I'll pour it in." + add-small.png ·
+                     task not started → "Nice list." / "Now press start." + start-small.gif. -->
+                <div class="fc-idle-text" id="fc-idle-text"><span class="fit-l1" id="fit-l1"></span><span class="fit-l2" id="fit-l2"></span></div>
+                <img class="fc-no-task" id="fc-no-task" src="images/focus/doro/add-small.png?v=doro-5" alt="" aria-hidden="true">
                 <span class="fc-cat-bubble" id="fc-cat-bubble">Add a task.</span>
                 <span class="fc-cat-time" id="fc-cat-time"></span>
                 <button class="fc-cat-play" id="fc-cat-play" type="button" aria-label="Start a task"></button>
@@ -17464,19 +17488,21 @@ function renderImDoing() {
     card.classList.toggle('fc-startnow', _anyTask);
     card.classList.toggle('fc-down', !_anyTask);
     const _ntImg = document.getElementById('fc-no-task');
+    const _fitL1 = document.getElementById('fit-l1'), _fitL2 = document.getElementById('fit-l2');
+    // Idle card BIG text (left). Task ready → "Nice list. / Now press start."; no task →
+    // "Add one. / I'll pour it in." Set always (cheap) even mid-swap so it fades correctly.
+    if (_fitL1 && _fitL2) {
+      _fitL1.textContent = _anyTask ? 'Nice list.' : 'Add one.';
+      _fitL2.textContent = _anyTask ? 'Now press start.' : "I'll pour it in.";
+    }
     if (_ntImg && !card.classList.contains('fc-swapping')) {
-      // Idle art (wide banners): add = no task · start.gif = task added, not started.
-      let _want;
-      if (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()) {
-        // Dark mode → teal-background variants (matches --card-bg #073642). Single reduced size.
-        _want = 'images/focus/doro/' + (_anyTask ? 'start-dark.gif' : 'add-dark.png') + '?v=doro-2';
-      } else {
-        // Light: iPad APP uses the full-res files (bundled, no bandwidth cost); iPhone app +
-        // ALL web use the reduced "-sm" versions (start.gif ~2MB → ~200KB).
-        const _ipadApp = document.documentElement.classList.contains('platform-ios') && window.matchMedia('(min-width: 701px)').matches;
-        const _sm = _ipadApp ? '' : '-sm';
-        _want = _anyTask ? ('images/focus/doro/start' + _sm + '.gif?v=doro-2') : ('images/focus/doro/add' + _sm + '.png?v=doro-2');
-      }
+      // Small face image (right) — start-small.gif (task ready) / add-small.png (no task),
+      // + a dark-mode variant (cream-on-teal). All FOUR are the same size & crop, so the
+      // face holds its exact place across the add↔start swap.
+      const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
+      const _want = _anyTask
+        ? ('images/focus/doro/start-small' + (_dk ? '-dark' : '') + '.gif?v=doro-5')
+        : ('images/focus/doro/add-small' + (_dk ? '-dark' : '') + '.png?v=doro-5');
       if ((_ntImg.getAttribute('src') || '') !== _want) _ntImg.setAttribute('src', _want);
     }
     if (_anyTask) { try { _fcStartClock(); } catch (_) {} } else { try { _fcStopClock(); } catch (_) {} }
