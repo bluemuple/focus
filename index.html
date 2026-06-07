@@ -496,6 +496,20 @@
   }
   .topbar-menu-dropdown .tmd-item:hover .tmd-ico { color: var(--text-main); }
   .topbar-menu-dropdown .tmd-lbl { line-height: 1; }
+  /* Focus View parent: chevron pinned right, rotates when its submenu is open. */
+  .topbar-menu-dropdown .tmd-chev { margin-left: auto; display: inline-flex; color: var(--text-muted); transition: transform .2s ease; }
+  .topbar-menu-dropdown .tmd-parent[aria-expanded="true"] .tmd-chev { transform: rotate(180deg); }
+  /* Submenu — slightly darker inset panel under the parent. */
+  .topbar-menu-dropdown .tmd-submenu {
+    display: flex; flex-direction: column; gap: 2px;
+    margin: 2px 2px 2px; padding: 4px; border-radius: 11px;
+    background: rgba(0, 0, 0, .055);
+  }
+  :root[data-theme="solarized"] .topbar-menu-dropdown .tmd-submenu { background: rgba(0, 0, 0, .24); }
+  .topbar-menu-dropdown .tmd-submenu.hidden { display: none; }
+  .topbar-menu-dropdown .tmd-sub { padding: 9px 12px 9px 18px; font-size: .9rem; font-weight: 600; }
+  .topbar-menu-dropdown .tmd-sub .tmd-ico { width: 20px; }
+  .topbar-menu-dropdown .tmd-sub:hover { background: var(--card-border, #e5e7eb); }
   /* Music prev/next are hidden everywhere now — the bar shows just the three
      mockup buttons (soundwave · home · menu); music auto-advances on track end. */
   nav.tabs .music-prev-pc, nav.tabs .music-next-pc { display: none !important; }
@@ -2867,6 +2881,22 @@
   #focus-page .focus-right > .focus-card,
   #focus-page .focus-right > #time-tasks-wrap,
   #focus-page .focus-right > #bucket-section { margin: 0; }
+  /* ===== Focus View take-over (hamburger → Focus View → Time & Tasks / Matrix).
+     Hide the focus card + bucket; the Time & Tasks wrap fills the viewport (its
+     height is set by _fvLayout); the page itself doesn't scroll. ===== */
+  body.fv-active main { overflow: hidden; }
+  body.fv-active #focus-page .focus-right > .focus-card,
+  body.fv-active #focus-page .focus-right > #bucket-section { display: none; }
+  body.fv-active #time-tasks-wrap { margin: 0; }
+  body.fv-active #focus-page .focus-right { height: 100%; }
+  /* Time & Tasks focus (split): the panels row FILLS the tall wrap (not the
+     auto-content height), and the gauge flex-fills its column → long left gauge. */
+  body.fv-active.tt-split #time-tasks-wrap { grid-template-rows: auto minmax(0, 1fr) auto; }
+  body.fv-active.tt-split #time-panel { display: flex; flex-direction: column; min-height: 0; }
+  body.fv-active.tt-split #time-panel .time-area { flex: 1 1 auto; min-height: 0; }
+  /* Decision Matrix focus (flip): the gauge panel fills below the 2×2 grid. */
+  body.fv-active.tt-flip #time-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  body.fv-active.tt-flip #time-panel .time-area { flex: 1 1 auto; min-height: 0; }
 
   .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 700px) { .scores { grid-template-columns: 1fr; } }
@@ -3633,6 +3663,14 @@
   .focus-cell:not(.show-actions) .task-row > .x {
     display: none !important;
   }
+  /* Reorder GRIP — like the pencil, hidden until Edit; revealed by the per-cell
+     title toggle (.show-actions) OR the global Tasks Edit button (body
+     .tt-show-actions). In Edit the play/pause hides (rule above) → pencil + grip
+     take the bar's right edge, matching the iPhone app. (wide/desktop matrix) */
+  .focus-cell:not(.show-actions) .task-row .task-grip { display: none !important; }
+  body.tt-show-actions #focus-matrix .focus-cell .task-row .task-edit-pen,
+  body.tt-show-actions #focus-matrix .focus-cell .task-row .task-grip { display: inline-flex !important; }
+  body.tt-show-actions #focus-matrix .focus-cell .task-row .task-edit-pen { margin-left: auto; }
   .focus-cell .add-task {
     /* Sits between the cell title and the first task. Slim margin so the
        cell doesn't grow vertically. */
@@ -5381,9 +5419,9 @@
     box-shadow: 0 0 0 3px rgba(59,130,246,.25), 0 1px 3px rgba(0,0,0,.13);
   }
   /* (#B6) Right-edge theme-colour "baby-fingernail" (colour set inline per block). */
-  .tg-block-redge {
-    position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
-    border-radius: 0 5px 5px 0; pointer-events: none; z-index: 2;
+  .tg-block-ledge {   /* wide gauge baby-fingernail — LEFT edge (matches the mobile gauge) */
+    position: absolute; left: 0; top: 0; bottom: 0; width: 5px;
+    border-radius: 5px 0 0 5px; pointer-events: none; z-index: 2;
   }
   /* (#B7) Delete × — hidden until the block is SELECTED (wide/iPad) or Edit mode. */
   .tg-block-x {
@@ -5685,6 +5723,11 @@
     position: absolute; right: 0; top: 0; bottom: 0; width: 5px;
     border-radius: 0 5px 5px 0; pointer-events: none; z-index: 1;
   }
+  /* The RIGHT-edge fingernail read as a stray task-colour strip on the gray block
+     body (esp. future / un-started blocks in dark mode). Neutralise it so the
+     right edge matches the block's CENTRE — the LEFT fingernail is enough. The
+     !important overrides the JS-set inline task colour. (mobile + wide gauge) */
+  .time-block-redge { background: transparent !important; }   /* mobile right edge → gray (left fingernail is enough) */
   /* ≤10-min block: while the × is showing, crop the right edge so the × sits in
      the gap between the block and the gauge's right edge (overflow:visible). (#B7) */
   .time-block.short10.selected,
@@ -5990,6 +6033,17 @@
     <button class="topbar-icon-btn topbar-menu-btn" id="topbar-menu-btn" type="button" aria-label="Menu" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M4 7 H20 M4 12 H20 M4 17 H20" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></button>
     <!-- Dropdown menu — opens under the hamburger. -->
     <div class="topbar-menu-dropdown hidden" id="topbar-menu-dropdown" role="menu" aria-hidden="true">
+      <!-- Focus View — collapsible submenu (Pomodoro / Time & Tasks / Decision Matrix). -->
+      <button class="tmd-item tmd-parent" id="tmd-focusview" type="button" role="menuitem" aria-expanded="false" aria-controls="tmd-fv-sub">
+        <span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><circle cx="12" cy="12" r="2.4"/></svg></span>
+        <span class="tmd-lbl">Focus View</span>
+        <span class="tmd-chev" aria-hidden="true"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+      </button>
+      <div class="tmd-submenu hidden" id="tmd-fv-sub" role="group" aria-label="Focus View">
+        <button class="tmd-item tmd-sub" id="tmd-fv-pomo" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 13V8.5"/><path d="M9 2.5h6"/></svg></span><span class="tmd-lbl">Pomodoro</span></button>
+        <button class="tmd-item tmd-sub" id="tmd-fv-tt" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="16" rx="1.4"/><line x1="14" y1="7" x2="20" y2="7"/><line x1="14" y1="12" x2="20" y2="12"/><line x1="14" y1="17" x2="20" y2="17"/></svg></span><span class="tmd-lbl">Time &amp; Tasks</span></button>
+        <button class="tmd-item tmd-sub" id="tmd-fv-matrix" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.2"/></svg></span><span class="tmd-lbl">Decision Matrix</span></button>
+      </div>
       <button class="tmd-item" id="tmd-stats" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="4" y="13" width="3.6" height="7" rx="0.8" fill="currentColor"/><rect x="10.2" y="9" width="3.6" height="11" rx="0.8" fill="currentColor"/><rect x="16.4" y="5" width="3.6" height="15" rx="0.8" fill="currentColor"/></svg></span><span class="tmd-lbl">Statistics</span></button>
       <button class="tmd-item" id="tmd-notes" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5 h16 a1 1 0 0 1 1 1 v9 a1 1 0 0 1 -1 1 H9.5 L5 21 v-3.5 H4 a1 1 0 0 1 -1 -1 V6.5 a1 1 0 0 1 1 -1 Z"/><line x1="7" y1="9.5" x2="17" y2="9.5" stroke-linecap="round"/><line x1="7" y1="12.7" x2="14" y2="12.7" stroke-linecap="round"/></svg></span><span class="tmd-lbl">Notes</span></button>
       <button class="tmd-item" id="tmd-settings" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="tmd-lbl">Settings</span></button>
@@ -8957,6 +9011,10 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     _lastPollMs = 0;  // bypass throttle
     pollCloudForUpdates();
+    // Returning to the app while a pomodoro runs: the ring must JUMP straight to
+    // the current position, not slide there over .9s. Flag it + repaint now.
+    window._fcRingInstant = true;
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
   }
 });
 
@@ -9013,6 +9071,8 @@ function showPage(name) {
 //  still redirects to 'focus' for any legacy caller.)
 const _topHomeBtn = document.getElementById('topbar-home');
 if (_topHomeBtn) _topHomeBtn.onclick = () => {
+  // In a Focus View, the house icon first returns to the normal home layout.
+  if (typeof exitFocusView === 'function' && exitFocusView()) return;
   showPage('focus');
   const m = document.querySelector('main'); if (m) m.scrollTo({ top: 0, behavior: 'auto' });
 };
@@ -9050,6 +9110,19 @@ if (_topHomeBtn) _topHomeBtn.onclick = () => {
     m.scrollTo({ top: m.scrollTop + pr.top - mr.top - 12, behavior: 'auto' });
   };
   const wire = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', (e) => { e.preventDefault(); closeMenu(); try { fn(); } catch (_) {} }); };
+  // Focus View parent → toggle its submenu inline (keep the dropdown open).
+  const fvBtn = document.getElementById('tmd-focusview');
+  const fvSub = document.getElementById('tmd-fv-sub');
+  if (fvBtn && fvSub) {
+    fvBtn.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const nowHidden = fvSub.classList.toggle('hidden');
+      fvBtn.setAttribute('aria-expanded', nowHidden ? 'false' : 'true');
+    });
+  }
+  wire('tmd-fv-pomo',   () => { try { if (typeof openFocusFullscreen === 'function') openFocusFullscreen(); } catch (_) {} });
+  wire('tmd-fv-tt',     () => { try { if (typeof enterFocusView === 'function') enterFocusView('tt'); } catch (_) {} });
+  wire('tmd-fv-matrix', () => { try { if (typeof enterFocusView === 'function') enterFocusView('matrix'); } catch (_) {} });
   wire('tmd-stats',    () => { showPage('stats');    scrollMainTop(); });
   wire('tmd-notes',    () => { showPage('notes');    scrollMainTop(); });
   wire('tmd-settings', () => { showPage('settings'); scrollMainTop(); });
@@ -13471,17 +13544,24 @@ async function showPomoPhaseConfirm() {
       // Create a NEW block for the next phase starting at _resumeMs — UNLESS a
       // _combine block already absorbed the next phase inside itself.
       if (!_combineCont) {
+        // A "keep going" WORK session spawns a fresh 25+5 _combine box (one box
+        // with the 25-work/5-break fingernails + centred bigger name) — identical
+        // to a freshly-added task block, not a bare 25-min work sliver. (Break
+        // advances stay a plain 5-min break box.)
+        const _isWorkNext = (nextPhase === 'work');
+        const _newSpan = (_isWorkNext && typeof plannedTotalMs === 'function') ? plannedTotalMs(nextDurMs) : nextDurMs;
         const newBlock = {
           id:           _resumeMs + '_' + Math.random().toString(36).slice(2),
           q:            at2.q,
           taskIdx:      at2.idx,
           taskName:     taskName,
           startMs:      _resumeMs,
-          endMs:        _resumeMs + nextDurMs,
-          activeAt:     nextPhase === 'work' ? _resumeMs : null,
-          activeBreakAt:nextPhase !== 'work' ? _resumeMs : null,
+          endMs:        _resumeMs + _newSpan,
+          activeAt:     _isWorkNext ? _resumeMs : null,
+          activeBreakAt:!_isWorkNext ? _resumeMs : null,
           activeEndMs:  null
         };
+        if (_isWorkNext) newBlock._combine = true;
         state.scheduledBlocks.push(newBlock);
       }
     }
@@ -14129,11 +14209,26 @@ function drawTimeArea() {
 
   /* Viewport height = renderDurMs / 1h × PX_PER_HOUR (zoom-INDEPENDENT — the
      visible window stays aligned with the task list; only the content scales). */
-  const viewportPx = Math.round((renderDurMs / 3600000) * TIME_PX_PER_HOUR);
+  let viewportPx = Math.round((renderDurMs / 3600000) * TIME_PX_PER_HOUR);
+  // FOCUS VIEW (menu → Focus View → Time & Tasks / Decision Matrix): the Time &
+  // Tasks wrap fills the whole viewport, so the gauge fills the height that's left
+  // (and the visible window stretches to match). availH = wrap − header (− the
+  // 2×2 grid in Matrix focus). Overrides the normal split/flip sizing.
+  let _fvGaugeH = 0;
+  if (document.body.classList.contains('fv-active')) {
+    // The gauge is CSS-flex-filled to the section (see the body.fv-active grid +
+    // flex rules). Clear any inline height so flex owns it, then READ the
+    // resulting height and drive the visible-window math from it.
+    area.style.height = '';
+    const _h = Math.round(area.clientHeight);
+    if (_h > 140) _fvGaugeH = _h;
+  }
   // On the flipped "Tasks" back face the gauge is WIDE and fills the locked
   // section height MINUS the 2×2 grid above it — a fixed, scrollable viewport
   // (NOT the full 2880px content). "How much shows" = locked H − grid height.
-  if (document.body.classList.contains('tt-flip')) {
+  if (_fvGaugeH > 0) {
+    viewportPx = _fvGaugeH;   // height owned by CSS flex; just align the math
+  } else if (document.body.classList.contains('tt-flip')) {
     const _wrap = document.getElementById('time-tasks-wrap');
     const _tp   = document.getElementById('tasks-panel');
     const _lockedH = window._ttLockedH || (_wrap ? _wrap.offsetHeight : 0);
@@ -14160,6 +14255,7 @@ function drawTimeArea() {
   // visible-range math) to use the stretched value so blocks, the now-line,
   // and ghost line all map to the larger viewport in split mode.
   durMs = renderDurMs;
+  if (_fvGaugeH > 0) durMs = Math.round((_fvGaugeH / TIME_PX_PER_HOUR) * 3600000);   // focus view: window = the tall gauge
 
   /* Content range = 24 h anchored to most recent 4 AM (matches main gauge) */
   const now = Date.now();
@@ -16923,6 +17019,12 @@ function renderImDoing() {
     let color = (segs[0] && segs[0].color) || '#be123c', _pf = 0;
     for (const sg of segs) { if (fracElapsed >= _pf && fracElapsed < sg.endFrac) { color = sg.color; break; } _pf = sg.endFrac; }
     const C = 2 * Math.PI * 52, rem = Math.max(0, Math.min(1, 1 - fracElapsed));
+    // On app RE-ENTRY (foreground) the ring must JUMP to NOW in one shot — not
+    // slide the arc + knob to the current position over .9s. The visibilitychange
+    // handler sets window._fcRingInstant; we kill the transition for THIS paint,
+    // flush it, then restore the CSS .9s so live ticks animate normally.
+    const _instant = !!window._fcRingInstant;
+    if (_instant) { arc.style.transition = 'none'; knob.style.transition = 'none'; }
     arc.style.stroke = color;
     arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
     arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
@@ -16935,6 +17037,11 @@ function renderImDoing() {
       knob.setAttribute('cx', (60 + 52 * Math.cos(ang)).toFixed(1));
       knob.setAttribute('cy', (60 + 52 * Math.sin(ang)).toFixed(1));
       knob.style.fill = color;
+    }
+    if (_instant) {
+      void getComputedStyle(arc).strokeDashoffset;   // flush the no-transition paint
+      arc.style.transition = ''; knob.style.transition = '';   // restore CSS .9s for ticks
+      window._fcRingInstant = false;                 // consume (one-shot)
     }
     const timeEl = document.getElementById('fc-left'); if (timeEl) timeEl.style.color = color;
     const pauseEl = document.getElementById('fc-ring-pause');
@@ -19625,6 +19732,45 @@ function applyTtState() {
     if (p) p.classList.remove('collapsed');
   });
 }
+/* ===== Focus View (hamburger → Focus View → …) — a distraction-free, full-height
+   take-over of the home page: the top bar stays, the focus card + bucket hide, and
+   ONE section (Time & Tasks split, or the 2×2 Decision Matrix + gauge) fills the
+   whole viewport with NO page scroll. The gauge stretches to the section height
+   (drawTimeArea's `fv-active` branch). Exit via the home (house) icon. ===== */
+function _fvLayout() {
+  if (!document.body.classList.contains('fv-active')) return;
+  const topbar = document.querySelector('header.topbar');
+  const tb = topbar ? topbar.getBoundingClientRect().bottom : 0;
+  const availH = Math.max(240, Math.round(window.innerHeight - tb - 6));
+  const wrap = document.getElementById('time-tasks-wrap');
+  if (wrap) wrap.style.height = availH + 'px';
+}
+function enterFocusView(mode) {   // 'tt' (Time & Tasks) | 'matrix' (Decision Matrix)
+  const wantFlip = (mode === 'matrix');
+  if (typeof showPage === 'function' && state.currentPage !== 'focus') showPage('focus');
+  if (!!state.ttFlipped !== wantFlip) { state.ttFlipped = wantFlip; if (typeof applyTtState === 'function') applyTtState(); }
+  document.body.classList.add('fv-active');
+  document.body.classList.toggle('fv-matrix', wantFlip);
+  document.body.classList.toggle('fv-tt', !wantFlip);
+  try { const m = document.querySelector('main'); if (m) m.scrollTo({ top: 0, behavior: 'auto' }); } catch (_) {}
+  _fvLayout();
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  try { if (state.timeArea) state.timeArea._needsScroll = true; } catch (_) {}
+  try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+  try { saveState(); } catch (_) {}
+}
+function exitFocusView() {
+  if (!document.body.classList.contains('fv-active')) return false;
+  document.body.classList.remove('fv-active', 'fv-tt', 'fv-matrix');
+  const w = document.getElementById('time-tasks-wrap'); if (w) w.style.height = '';
+  try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  try { saveState(); } catch (_) {}
+  return true;
+}
+window.enterFocusView = enterFocusView;
+window.exitFocusView = exitFocusView;
+window.addEventListener('resize', () => { try { if (document.body.classList.contains('fv-active')) { _fvLayout(); if (typeof drawTimeArea === 'function') drawTimeArea(); } } catch (_) {} });
 let _ttFlipBusy = false;
 function flipTimeTasks(toBack) {
   toBack = !!toBack;
@@ -22785,12 +22931,12 @@ setInterval(() => {
       div.appendChild(rtEl);
       div.appendChild(rbEl);
 
-      /* -- (#B6) Theme-colour "baby-fingernail" on the RIGHT edge of every task /
-         break block, matching the iPhone app (task → its quadrant colour, break →
-         the sky break colour). Purely decorative; trackers keep their rate fill. -- */
+      /* -- (#B6) Theme-colour "baby-fingernail" on the LEFT edge of every task /
+         break block (task → its quadrant colour, break → the sky break colour) —
+         on the LEFT to match the mobile gauge. Decorative; trackers keep their fill. -- */
       if (b.kind !== 'tracker') {
         const _re = document.createElement('div');
-        _re.className = 'tg-block-redge';
+        _re.className = 'tg-block-ledge';
         _re.style.background = _isBreakBoxW ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
         div.appendChild(_re);
       }
