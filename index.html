@@ -542,7 +542,11 @@
   /* Level badge (1-10) on the face title — iPhone notification-dot style. */
   .b3d-face-badge { position: absolute; right: 4%; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #ff3b30; color: #fff; font-weight: 800; box-sizing: border-box; box-shadow: 0 0 0 1.4px #fff; pointer-events: none; backface-visibility: hidden; }
   /* Desc that didn't fit the face → lifted ABOVE it; white outline so it reads on the background. */
-  .b3d-face-desc.b3d-desc-above { text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff !important; }
+  /* When a wall is LOW the wall rect is tiny + hard to grab, but its description floats
+     ABOVE it — so make THAT text a grab handle for the wall (it's a child of the
+     .b3d-wall[data-i], so the pointer/touch hit-test resolves to the wall). touch-action:
+     none = the same as the walls, so a vertical drag adjusts/rotates instead of scrolling. */
+  .b3d-face-desc.b3d-desc-above { text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff, 0 0 3px #fff !important; pointer-events: auto; touch-action: none; cursor: ns-resize; }
   /* Dark theme: a soft shadow so the painted face text reads on the dark bucket. */
   :root[data-theme="solarized"] .b3d-face-title,
   :root[data-theme="solarized"] .b3d-face-desc { text-shadow: 0 1px 3px rgba(0,0,0,.5); }
@@ -781,8 +785,9 @@
      a subtle "pop" so the eye catches it before it fades. */
   .undo-toast {
     position: fixed;
-    top: 28%; left: 50%;
-    transform: translate(-50%, -50%) scale(.92);
+    /* Bottom-centred so it never covers the "Now focusing on" / header content. */
+    left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 24px); top: auto;
+    transform: translateX(-50%) translateY(10px) scale(.96);
     background: rgba(17,24,39,0.92);
     color: #fff;
     padding: 12px 20px;
@@ -802,7 +807,7 @@
   }
   .undo-toast.show {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
+    transform: translateX(-50%) translateY(0) scale(1);
   }
   .undo-toast .undo-toast-tag {
     font-size: .68rem; font-weight: 800;
@@ -924,11 +929,11 @@
   .ff-close {
     position: absolute; top: max(16px, env(safe-area-inset-top)); right: 18px;
     width: 42px; height: 42px; border-radius: 999px;
-    border: none; background: #f1f3f5; color: #4b5563;
+    border: 1px solid var(--ff-border, transparent); background: var(--ff-fill, #f1f3f5); color: var(--ff-ink, #4b5563);
     display: flex; align-items: center; justify-content: center; cursor: pointer;
     z-index: 20;                 /* above the scene/content so the tap always lands */
   }
-  .ff-close:active { background: #e5e7eb; transform: scale(.94); }
+  .ff-close:active { background: var(--ff-border, #e5e7eb); transform: scale(.94); }
   .ff-name {
     margin-top: 7vh; font-size: 1.5rem; font-weight: 800; color: #111827;
     text-align: center; max-width: 86%;
@@ -964,6 +969,9 @@
   .ff-slide img { width: 100%; height: 100%; display: block; pointer-events: none; }
   .ff-slide.fit-contain img { object-fit: contain; }
   .ff-slide.fit-cover img { object-fit: cover; }
+  /* "Touch here to add" prompt slide — small grey one-liner, centred. */
+  .ff-slide.ff-slide-add { display: flex; align-items: center; justify-content: center; }
+  .ff-add-prompt { font-size: .82rem; font-weight: 600; color: #9ca3af; letter-spacing: .01em; }
   /* Number badge — grey circle + white number, shown ~2 s after add / replace. */
   .ff-num-badge {
     position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -984,15 +992,15 @@
     margin: auto 0; flex: none;
   }
   .ff-btn {
-    width: 64px; height: 64px; border-radius: 999px; border: none;
-    background: #f1f3f5; color: #374151;
+    width: 64px; height: 64px; border-radius: 999px; border: 1px solid var(--ff-border, transparent);
+    background: var(--ff-fill, #f1f3f5); color: var(--ff-ink, #374151);
     display: flex; align-items: center; justify-content: center; cursor: pointer;
     position: absolute; top: 0; left: 50%;
     transform: translateX(-50%);
     transition: background .14s ease, transform .18s cubic-bezier(.22,.61,.36,1), box-shadow .14s ease;
     -webkit-tap-highlight-color: transparent; touch-action: none;
   }
-  .ff-btn:active { background: #e5e7eb; transform: translateX(-50%) scale(.95); }
+  .ff-btn:active { background: var(--ff-border, #e5e7eb); transform: translateX(-50%) scale(.95); }
   /* Side buttons (stop / play) — hidden until a phase-confirm slider is up. */
   .ff-side-btn { display: none; }
   .ff-controls.confirming .ff-side-btn { display: flex; }
@@ -1008,7 +1016,7 @@
      Auto mode is ON (the centre button itself then reads "Auto"). */
   .ff-auto-btn {
     top: calc(100% + 18px); left: 50%;
-    background: #f1f3f5; color: #4b5563;
+    background: var(--ff-fill, #f1f3f5); color: var(--ff-ink, #4b5563);
     font-size: .78rem; font-weight: 800; letter-spacing: .02em;
   }
   .ff-auto-btn.armed { background: #cbd5e1; color: #1f2937; }
@@ -1019,7 +1027,11 @@
     transition: none; z-index: 6; box-shadow: 0 8px 22px rgba(0,0,0,.20);
   }
   .ff-pause { z-index: 4; }
-  .ff-q-icon { font-size: 1.9rem; font-weight: 800; line-height: 1; }
+  .ff-q-icon { position: relative; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .ff-q-icon .ffq-q { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+  .ff-q-icon .ffq-dirs { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .ff-q-icon .ffq-dirs polyline { fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; opacity: .5; animation: ffq-dir-pulse 1.6s ease-in-out infinite; }
+  @keyframes ffq-dir-pulse { 0%,100% { opacity: .32; } 50% { opacity: .72; } }
   .ff-auto-label { font-size: .82rem; font-weight: 800; letter-spacing: .02em; }
   /* Top-right circular ✕ dismiss inside the modal. Sits over the top-right
      corner with a subtle gray background that brightens on hover so the
@@ -1185,10 +1197,12 @@
      buttons share .bucket-btn for consistent 40×40 size and shape. */
   .bucket-buttons {
     display: flex;
-    flex-direction: row;        /* horizontal row at the bottom */
-    justify-content: center;    /* centred under the bucket */
+    flex-direction: row;        /* horizontal row */
+    justify-content: center;    /* centred */
     gap: 14px;
     flex-shrink: 0;
+    order: -1;                  /* the 🌱 sprout sits ABOVE the money */
+    align-self: center;         /* …and centred horizontally in the money column */
   }
   .bucket-btn {
     width: 40px; height: 40px;
@@ -2461,17 +2475,23 @@
   /* Money Change Factors panel — background/border same as other panels (no override). */
   .money-factors-list {
     list-style: none; padding: 0; margin: 8px 0 0;
-    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 9px;
   }
   @media (max-width: 700px) {
-    .money-factors-list { grid-template-columns: 1fr 1fr; gap: 4px; }
+    .money-factors-list { grid-template-columns: 1fr 1fr; gap: 7px; }
   }
   .money-factors-list li {
-    background: var(--surface-2); border: 1px solid var(--card-border); padding: 6px 10px;
+    background: var(--surface-2); border: 1px solid var(--card-border); padding: 9px 12px;
     border-radius: 8px;
     display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px;
     font-size: .85rem; color: var(--text-main);
   }
+  /* A row that's ALONE on the last grid line (Finish task, Allow $, Drift $ loss) was a
+     cramped half-width box — let it span the full width instead. */
+  .money-factors-list.mcf-grid li:last-child:nth-child(odd) { grid-column: 1 / -1; }
+  /* Extra breathing room BEFORE the drift rows (between "Late reward floor" and "Drift grace").
+     Needs all 3 classes to beat the later `.mcf-grid { margin-top: 0 }`. */
+  .money-factors-list.mcf-grid.mcf-drift { margin-top: 16px; }
   .money-factors-list .mcf-help { display: none; }
   .mcf-val {
     display: inline-block;
@@ -3089,12 +3109,12 @@
      elapsed edge (NO dot at the 12-o'clock start); mm:ss + a pause button sit inside. */
   .focus-card .fc-ring-wrap { position: relative; flex: 0 0 auto; width: 108px; height: 108px; }
   .focus-card .fc-ring { width: 100%; height: 100%; display: block; overflow: visible; }
-  .focus-card .fc-ring-track { fill: none; stroke: #be123c; stroke-opacity: .15; stroke-width: 7; }
+  .focus-card .fc-ring-track { fill: none; stroke: #B23A5B; stroke-opacity: .14; stroke-width: 5; }
   .focus-card .fc-ring-arc {
-    fill: none; stroke: #be123c; stroke-width: 7; stroke-linecap: butt;   /* butt = NO dot at the 12-o'clock start */
+    fill: none; stroke: #B23A5B; stroke-width: 5; stroke-linecap: butt;   /* thinner so it doesn't overpower the number; butt = NO dot at 12-o'clock */
     transition: stroke-dasharray .9s linear, stroke-dashoffset .9s linear;
   }
-  .focus-card .fc-ring-knob { fill: #be123c; }
+  .focus-card .fc-ring-knob { fill: #B23A5B; }
   .focus-card .fc-ring-time {
     position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
     font-size: 1.5rem; font-weight: 800; color: #be123c; font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -3257,34 +3277,76 @@
   .focus-card.fc-swapping .fc-cat-time { display: flex; }
   .focus-card.fc-swapping .fc-cat-bubble,
   .focus-card.fc-swapping .fc-cat-play { display: none !important; }
-  .focus-card.fc-swapping .fc-header { display: block; }
+  /* Keep the header FLEX during the swap (not block) — otherwise the ring stacks
+     BELOW the head-left/Session capsule for a frame, then snaps to the right when the
+     swap ends. flex = ring stays on the right the whole time, just fading in. */
+  .focus-card.fc-swapping .fc-header { display: flex; }
+  /* ===== Doro idle art (add.png = no task · start.gif = task added, not started).
+     WIDE banner images (~3.3:1) → centre + CONTAIN them in the card (not the old tall-cat
+     bottom-flush 138px sizing), across EVERY idle/start state INCLUDING the fade-out swap,
+     so the image never resizes mid-fade. ===== */
+  /* FIXED height (= the idle card height): `height:100%`/insets collapse to 0 because the
+     positioned containing block (.fc-expanded) is ~0-tall when idle. A definite px height
+     lets the inner + image size and centre reliably. */
+  .focus-card.fc-idle .fc-cat,
+  .focus-card.fc-swapping .fc-cat { align-items: center; top: 0; height: 132px; }
+  .focus-card.fc-idle .fc-cat-inner,
+  .focus-card.fc-startnow .fc-cat-inner,
+  .focus-card.fc-swapping .fc-cat-inner {
+    height: 100%; width: 100%; transform: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .fc-cat .fc-no-task { height: auto; width: auto; max-width: 100%; max-height: 100%; }
+  /* No task → ONLY add.png (drop the old "Add a task." bubble + the clock pill). */
+  .focus-card.fc-down .fc-cat-bubble,
+  .focus-card.fc-swapping .fc-cat-bubble { display: none !important; }
+  .focus-card.fc-swapping .fc-cat-time { display: none !important; }
+  /* Task added, not started → the WHOLE start.gif is the tap-to-start button. */
+  .focus-card.fc-startnow .fc-cat-play {
+    display: block; left: 0; top: 0; width: 100%; height: 100%; transform: none; border-radius: 0;
+  }
+  .focus-card.fc-startnow .fc-cat-play:active { transform: scale(.98); }
+  /* WIDE / iPad: vertically CENTER the idle "start"/"add" banner in the focus card.
+     The phone card is exactly 132px so the fixed-height .fc-cat already fills it, but
+     the wide card is taller (≈167px), which left the banner pinned to the top with a
+     gap below. Making .fc-expanded static (only in the idle/start states) lets the
+     absolute .fc-cat resolve against the REAL-height #focus-card, so top:0/bottom:0
+     fills the whole card and the centred image lands in the middle. */
+  @media (min-width: 701px) {
+    .focus-card.fc-idle .fc-expanded,
+    .focus-card.fc-startnow .fc-expanded { position: static; }
+    .focus-card.fc-idle .fc-cat,
+    .focus-card.fc-startnow .fc-cat { top: 0; bottom: 0; height: auto; }
+  }
   /* ===== Task-completed reward overlay (done cat). Absolutely overlays the card so it
      doesn't change the fixed height; it fades IN while the rest of the card fades OUT. ===== */
   .focus-card .fc-done {
     position: absolute; left: 0; right: 0; top: 0; bottom: 0;
-    display: flex; align-items: flex-end; justify-content: center;
+    display: flex; align-items: center;
     opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .4s ease;
   }
   .focus-card.fc-done-on .fc-done { opacity: 1; visibility: visible; pointer-events: auto; }
   .focus-card .fc-expanded > * { transition: opacity .35s ease; }
   .focus-card.fc-done-on .fc-expanded > *:not(.fc-done) { opacity: 0; pointer-events: none; }
-  /* Done cat matches the idle cat: bigger + bottom-flush + dropped so paws rest on the edge. */
-  .focus-card .fc-done .fc-cat-inner { position: relative; height: 138px; transform: translateY(5%); }
-  .focus-card .fc-done .fc-no-task { display: block; height: 100%; width: auto; }
-  /* Reward bubble — over the done cat's speech bubble (top-left). 2 centred lines + ⋯› at the
-     bottom-right of the bubble. */
-  .fc-done-bubble { position: absolute; left: 2%; top: 2.5%; width: 63%; height: 32%; }
-  /* 2 centred lines, centred across the WHOLE bubble with symmetric (2%) insets
-     left and right so the text uses the full bubble width. (The ⋯› next button
-     was removed; messages auto-advance on a timer.) */
+  /* Completion message = BOLD text on the LEFT + comment.png on the RIGHT (same arrangement
+     + text size as add.png). The row padding matches the focus-card's so the text lines up
+     with "Now focusing on". */
+  .fc-done-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    width: 100%; height: 132px; box-sizing: border-box; padding: 0 22px;   /* fixed = the idle card height (percentage collapses; the CB .fc-expanded is short) */
+  }
+  .fc-done-img { height: 60px; }   /* reduced per request (was 116px) — small accent next to the money text */
+  @media (max-width: 700px) { .fc-done-row { padding: 0 18px; } }
+  @media (min-width: 701px) { body:not(.fv-active) #focus-page .fc-done-row { padding: 0 32px; } }
   .fc-done-msg {
-    position: absolute; inset: 2%; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; text-align: center;
-    color: #111827; font-weight: 800; line-height: 1.08;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+    text-align: left; flex: 1 1 auto; min-width: 0;
+    color: var(--text-main, #111827); font-weight: 800; line-height: 1.14; gap: 1px;
   }
   .fc-done-msg .fdm-l1, .fc-done-msg .fdm-l2 { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fc-done-msg .fdm-l1 { font-size: .56rem; }
-  .fc-done-msg .fdm-l2 { font-size: .53rem; font-weight: 700; }
+  .fc-done-msg .fdm-l1 { font-size: .78rem; font-weight: 600; opacity: .6; }   /* small + faint LABEL on top ("You got paid") */
+  .fc-done-msg .fdm-l2 { font-size: 1.3rem; font-weight: 800; }                 /* big + bold "[money] for [task]" below */
+  .fc-done-img { flex: 0 0 auto; height: 46%; width: auto; max-width: 24%; object-fit: contain; align-self: center; }   /* ~half of the old size */
   /* ===== Topbar "now focusing" overlay =====
      Once the page is scrolled (body.scrolled-now) the topbar's button cluster
      fades out and a small pomodoro ring + task name fades in over the SAME
@@ -3672,6 +3734,12 @@
   .focus-cell.q2 { background: var(--q2); }
   .focus-cell.q3 { background: var(--q3); }
   .focus-cell.q4 { background: var(--q4); }
+  /* Running task bar → a left accent stripe in the quadrant's ring colour (fast scan).
+     inset box-shadow = no layout shift. Keep these 4 in sync with QUAD_TOKENS[*].stripe. */
+  .focus-cell.q1 .task-row.is-running { box-shadow: inset 4px 0 0 0 #B23A5B; }
+  .focus-cell.q2 .task-row.is-running { box-shadow: inset 4px 0 0 0 #A8650F; }
+  .focus-cell.q3 .task-row.is-running { box-shadow: inset 4px 0 0 0 #534AB7; }
+  .focus-cell.q4 .task-row.is-running { box-shadow: inset 4px 0 0 0 #185FA5; }
   .focus-cell h4 {
     font-size: .68rem; opacity: .7; text-transform: uppercase;
     /* Pulled up so the title sits closer to the top edge of the cell. */
@@ -6333,15 +6401,16 @@
           <li>Q1 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ1">+$15</span></li>
           <li>Q2 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ2">+$25</span></li>
           <li>Q3 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ3">+$10</span></li>
-          <li>Early bonus cap: <span class="mcf-val mcf-neu" data-mcf="earlyBonusCapPct">50%</span></li>
-          <li>Late reward floor: <span class="mcf-val mcf-neu" data-mcf="lateMinPct">0%</span></li>
-          <li>Allow negative $: <span class="mcf-val mcf-neu" data-mcf="allowNegativeMoney">On</span></li>
+          <li>Focus /min: <span class="mcf-val mcf-pos" data-mcf="focusDripPerMin">+$0.5</span></li>
+          <li>Early bonus cap: <span class="mcf-val mcf-neu" data-mcf="earlyBonusCapPct">40%</span></li>
+          <li>Late reward floor: <span class="mcf-val mcf-neu" data-mcf="lateMinPct">75%</span></li>
+          <li>Allow negative $: <span class="mcf-val mcf-neu" data-mcf="allowNegativeMoney">Off</span></li>
         </ul>
         <!-- q4 drift: a gentle warning, not shame — grace, then water, then $. -->
-        <ul class="money-factors-list mcf-grid">
-          <li>Drift grace: <span class="mcf-val mcf-neu" data-mcf="driftGraceMin">3 min</span></li>
+        <ul class="money-factors-list mcf-grid mcf-drift">
+          <li>Drift grace: <span class="mcf-val mcf-neu" data-mcf="driftGraceMin">5 min</span></li>
           <li>Drift water drain: <span class="mcf-val mcf-neu" data-mcf="driftDrainPctPerMin">1%/min</span></li>
-          <li>Drift $ loss: <span class="mcf-val mcf-neu" data-mcf="driftMoneyLossPerMin">-$5/min</span></li>
+          <li>Drift $ loss: <span class="mcf-val mcf-neu" data-mcf="driftMoneyLossPerMin">-$2/min</span></li>
         </ul>
       </div>
     </div>
@@ -6433,20 +6502,10 @@
                  (tasks exist, none started). Overlays sit on top of the cat. -->
             <div class="fc-cat" id="fc-cat" aria-hidden="true">
               <div class="fc-cat-inner" id="fc-cat-inner">
-                <img class="fc-no-task" id="fc-no-task" src="images/focus/cat-down.png?v=catstate-1" alt="" aria-hidden="true">
+                <img class="fc-no-task" id="fc-no-task" src="images/focus/doro/add-sm.png?v=doro-2" alt="" aria-hidden="true">
                 <span class="fc-cat-bubble" id="fc-cat-bubble">Add a task.</span>
                 <span class="fc-cat-time" id="fc-cat-time"></span>
                 <button class="fc-cat-play" id="fc-cat-play" type="button" aria-label="Start a task"></button>
-              </div>
-            </div>
-            <!-- Task-completed reward: the thumbs-up cat fades in over the card with a 2-line
-                 reward message in its bubble; ⋯› (or 6 s) cycles to the early/late detail. -->
-            <div class="fc-done" id="fc-done" aria-hidden="true">
-              <div class="fc-cat-inner">
-                <img class="fc-no-task" src="images/focus/cat-done.png?v=catstate-1" alt="" aria-hidden="true">
-                <div class="fc-done-bubble">
-                  <div class="fc-done-msg"><span class="fdm-l1" id="fdm-l1"></span><span class="fdm-l2" id="fdm-l2"></span></div>
-                </div>
               </div>
             </div>
             <div class="fc-header" id="fc-header">
@@ -6463,7 +6522,7 @@
                 <svg class="fc-ring" viewBox="0 0 120 120" aria-hidden="true">
                   <circle class="fc-ring-track" id="fc-ring-track" cx="60" cy="60" r="52"></circle>
                   <circle class="fc-ring-arc"   id="fc-ring-arc"   cx="60" cy="60" r="52" transform="rotate(-90 60 60)"></circle>
-                  <circle class="fc-ring-knob"  id="fc-ring-knob"  cx="60" cy="8" r="6"></circle>
+                  <circle class="fc-ring-knob"  id="fc-ring-knob"  cx="60" cy="8" r="5"></circle>
                 </svg>
                 <span class="fc-ring-time" id="fc-left">00:00</span>
                 <button class="fc-ring-pause" id="fc-ring-pause" type="button" aria-label="Pause"></button>
@@ -6483,6 +6542,18 @@
                 <input type="time" id="fc-gtd-time" class="fc-gtd-overlay" aria-label="Get things done before (목표 시각)">
               </span>
               <span class="fc-gtd-suffix">to get things done</span>
+            </div>
+          </div>
+          <!-- Task-completed reward overlay. A DIRECT child of #focus-card (NOT inside
+               .fc-expanded — that collapses to 0-height when idle and would pin this to
+               the card's TOP edge, the bug where the message + comment.png rode too high).
+               Anchored to the full 132px card so the bold message (left) + comment.png
+               (right) sit VERTICALLY CENTRED. The 2-line message; ⋯› (or 6 s) cycles to
+               the early/late detail. -->
+          <div class="fc-done" id="fc-done" aria-hidden="true">
+            <div class="fc-done-row">
+              <div class="fc-done-msg"><span class="fdm-l1" id="fdm-l1"></span><span class="fdm-l2" id="fdm-l2"></span></div>
+              <img class="fc-done-img" id="fc-done-img" src="images/focus/doro/comment.png?v=doro-3" alt="" aria-hidden="true">
             </div>
           </div>
         </div>
@@ -6674,15 +6745,8 @@
                   <path d="M12 12.5 C17 12.5 20 9.5 20 5 C15 5 12 8 12 12.5 Z" fill="#22c55e"/>
                 </svg>
               </button>
-              <button class="bucket-btn bucket-fill-btn" id="bucket-fill-btn"
-                      type="button" aria-label="물 채우기" title="물 채우기">
-                <svg viewBox="0 0 20 24" width="18" height="22" aria-hidden="true">
-                  <path d="M10 1 C10 1 3 11 3 16 C3 20.4 6.1 23 10 23
-                           C13.9 23 17 20.4 17 16 C17 11 10 1 10 1 Z"
-                        fill="#38BDF8"/>
-                </svg>
-              </button>
-              <!-- (drain ✕ button removed per request) -->
+              <!-- (water-fill 💧 button removed per request — only the 🌱 sprout remains,
+                   centred above the money.) -->
             </div>
           </div>
           <!-- RIGHT: the bucket itself (3D scene; SVG kept laid-out at opacity 0). -->
@@ -6825,17 +6889,9 @@
       <label class="pillar-edit-row"><span>Mid (4–7)</span><textarea id="pillar-edit-d2" maxlength="60" rows="2" placeholder="What 4–7 looks like"></textarea></label>
       <label class="pillar-edit-row"><span>High (8–10)</span><textarea id="pillar-edit-d3" maxlength="60" rows="2" placeholder="What 8–10 looks like"></textarea></label>
     </div>
-    <!-- Bucket view — shape + camera sliders for the 3D bucket (live). -->
-    <div class="panel" id="bucket-view-panel">
-      <h2>Bucket view</h2>
-      <p class="help">Tune the 3D bucket's shape and camera — changes show live. (Set the number of sides in <b>Bucket Sides</b>.)</p>
-      <div class="bv-row"><label for="bv-angle">Angle</label><input type="range" id="bv-angle" min="0" max="75" step="1"><span class="bv-val" id="bv-angle-val"></span></div>
-      <div class="bv-row"><label for="bv-persp">Perspective</label><input type="range" id="bv-persp" min="120" max="800" step="2"><span class="bv-val" id="bv-persp-val"></span></div>
-      <div class="bv-row"><label for="bv-height">Height</label><input type="range" id="bv-height" min="50" max="220" step="1"><span class="bv-val" id="bv-height-val"></span></div>
-      <div class="bv-row"><label for="bv-width">Width</label><input type="range" id="bv-width" min="40" max="140" step="1"><span class="bv-val" id="bv-width-val"></span></div>
-      <div class="bv-row"><label for="bv-wall">Wall</label><input type="range" id="bv-wall" min="0" max="18" step="1"><span class="bv-val" id="bv-wall-val"></span></div>
-      <label class="bv-above"><input type="checkbox" id="bv-above"> View from above</label>
-    </div>
+    <!-- (Bucket view shape/camera sliders panel removed per request — the 3D bucket
+         still uses its saved geometry; wireBucketView/_bucketViewLoad guard the now-
+         missing controls so nothing breaks.) -->
   </section>
 
   <!-- ============================== PAGE 5 — HELP ============================== -->
@@ -7574,14 +7630,15 @@ const defaultState = () => ({
     rewardRateQ1:   15,   // Important & Urgent      — $ per 5 min planned
     rewardRateQ2:   25,   // Important & Not Urgent  — $ per 5 min planned
     rewardRateQ3:   10,   // Not Important & Urgent  — $ per 5 min planned
-    earlyBonusCapPct: 50, // early-finish bonus capped at this % of planned reward
-    lateMinPct:      0,   // late-finish reward floor as % of planned (0 = can reach $0)
-    allowNegativeMoney: true, // allow money < 0 (drift mode only)
+    earlyBonusCapPct: 40, // early-finish bonus capped at this % of planned reward
+    lateMinPct:     75,   // late-finish reward floor as % of planned — gentle on ADHD time-blindness (finishing late keeps ≥75%)
+    allowNegativeMoney: false, // never let the balance go negative — debt discourages + hurts retention
+    focusDripPerMin: 0.5, // $/min paid per FOCUSED minute (rewards effort/showing-up, not only completion)
     defaultBreakMin: 5,   // default break length (focus default = taskDurationDefaultMin)
-    // q4 drift: grace minutes, then water drains, then money bleeds once dry.
-    driftGraceMin:        3,  // free minutes before water starts draining
+    // q4 drift: grace minutes, then water drains, then money bleeds once dry. (Gentle.)
+    driftGraceMin:        5,  // free minutes before water starts draining
     driftDrainPctPerMin:  1,  // % bucket water drained per minute after grace
-    driftMoneyLossPerMin: 5   // $ lost per minute once water is empty
+    driftMoneyLossPerMin: 2   // $ lost per minute once water is empty
   },
   // Marker for the daily Sleep-button rule. YYYY-MM-DD of the day Sleep was last clicked.
   sleepClickedDate: '',
@@ -7922,13 +7979,27 @@ function migrateState() {
     if (typeof mcf.rewardRateQ1           !== 'number') mcf.rewardRateQ1 = 15;
     if (typeof mcf.rewardRateQ2           !== 'number') mcf.rewardRateQ2 = 25;
     if (typeof mcf.rewardRateQ3           !== 'number') mcf.rewardRateQ3 = 10;
-    if (typeof mcf.earlyBonusCapPct       !== 'number') mcf.earlyBonusCapPct = 50;
-    if (typeof mcf.lateMinPct             !== 'number') mcf.lateMinPct = 0;
-    if (typeof mcf.allowNegativeMoney     !== 'boolean') mcf.allowNegativeMoney = true;
+    if (typeof mcf.earlyBonusCapPct       !== 'number') mcf.earlyBonusCapPct = 40;
+    if (typeof mcf.lateMinPct             !== 'number') mcf.lateMinPct = 75;
+    if (typeof mcf.allowNegativeMoney     !== 'boolean') mcf.allowNegativeMoney = false;
+    if (typeof mcf.focusDripPerMin        !== 'number') mcf.focusDripPerMin = 0.5;
     if (typeof mcf.defaultBreakMin        !== 'number') mcf.defaultBreakMin = 5;
-    if (typeof mcf.driftGraceMin          !== 'number') mcf.driftGraceMin = 3;
+    if (typeof mcf.driftGraceMin          !== 'number') mcf.driftGraceMin = 5;
     if (typeof mcf.driftDrainPctPerMin    !== 'number') mcf.driftDrainPctPerMin = 1;
-    if (typeof mcf.driftMoneyLossPerMin   !== 'number') mcf.driftMoneyLossPerMin = 5;
+    if (typeof mcf.driftMoneyLossPerMin   !== 'number') mcf.driftMoneyLossPerMin = 2;
+  }
+  // One-time gentle-economy retune (2026-06): nudge values that are STILL at the old
+  // defaults toward the friendlier ADHD-aware economy — but never overwrite a value the
+  // user changed themselves. No-debt is enforced regardless (debt is never wanted here).
+  if (!state._mcfRetuneV) {
+    state._mcfRetuneV = 1;
+    const m = state.moneyChangeFactors;
+    if (m.lateMinPct === 0)           m.lateMinPct = 75;           // late finish keeps ≥75% (time-blindness)
+    if (m.earlyBonusCapPct === 50)    m.earlyBonusCapPct = 40;
+    if (m.driftMoneyLossPerMin === 5) m.driftMoneyLossPerMin = 2;  // gentler distraction cost
+    if (m.driftGraceMin === 3)        m.driftGraceMin = 5;
+    if (typeof m.focusDripPerMin !== 'number') m.focusDripPerMin = 0.5;
+    m.allowNegativeMoney = false;                                  // never allow a negative balance
   }
   if (state.timerTransition !== 'manual' && state.timerTransition !== 'gentleAuto') state.timerTransition = 'gentleAuto';
   if (typeof state.sleepClickedDate       !== 'string') state.sleepClickedDate = '';
@@ -10729,8 +10800,9 @@ async function editMoneyFactor(key) {
     rewardRateQ1:         ['Q1 reward rate', 'Important & Urgent — dollars earned per 5 minutes of planned work.'],
     rewardRateQ2:         ['Q2 reward rate', 'Important & Not Urgent — dollars earned per 5 minutes of planned work.'],
     rewardRateQ3:         ['Q3 reward rate', 'Not Important & Urgent — dollars earned per 5 minutes of planned work.'],
+    focusDripPerMin:      ['Focus reward per minute', 'Dollars earned per FOCUSED minute — paid at each work-phase boundary, so effort is rewarded even if you never tick the task done. Decimals OK (e.g. 0.5). Set 0 to turn off.'],
     earlyBonusCapPct:     ['Early-finish bonus cap', 'Finishing early earns a bonus, capped at this percent of the planned reward.'],
-    lateMinPct:           ['Late-finish reward floor', 'Finishing late reduces the reward, but never below this percent of the planned reward (0 = can reach $0, never negative).'],
+    lateMinPct:           ['Late-finish reward floor', 'Finishing late reduces the reward, but never below this percent of the planned reward (higher = gentler on running over; 75 = keep at least three-quarters).'],
     driftGraceMin:        ['Drift grace', 'Free minutes in drift mode (q4) before the bucket water starts draining.'],
     driftDrainPctPerMin:  ['Drift water drain', 'Percent of bucket water drained per minute of drift, after the grace period.'],
     driftMoneyLossPerMin: ['Drift money loss', 'Dollars lost per minute of drift once the bucket water is empty.']
@@ -13525,8 +13597,17 @@ function logPomodoroPhase(at, phaseEndMs) {
   };
   if (isWork) {
     task.elapsedMs = (task.elapsedMs || 0) + duration;
-    // No money at phase end — rewards are completion-based (computeTaskReward).
-    // entry.money stays 0; the elapsed time still feeds the reward calc.
+    // Reward EFFORT, not only completion: a small "showing up" drip per focused minute of
+    // this work chunk — so even a task you never tick done still pays for the focus you
+    // put in (helps ADHD initiation/sustaining). Kept small so completion stays the
+    // headline reward. Fires once per work phase (this fn is once-per-boundary).
+    try {
+      const dripPerMin = +(state.moneyChangeFactors || {}).focusDripPerMin || 0;
+      if (dripPerMin > 0 && typeof applyMoney === 'function') {
+        const drip = Math.round(dripPerMin * (duration / 60000) * 100) / 100;   // 2-dp
+        if (drip > 0) { applyMoney(drip, `Focus: ${task.text || '(task)'}`, 'focus-drip'); entry.money = drip; }
+      }
+    } catch (_) {}
   }
   if (!Array.isArray(state.watchLog))     state.watchLog     = [];
   if (!Array.isArray(state.timeSegments)) state.timeSegments = [];
@@ -15339,6 +15420,64 @@ function drawTimeArea() {
     }
     state.timeArea._needsScroll = false;
   }
+
+  /* #3 — Phone home, NO task bars: stretch the gauge so the bucket section's
+     bottom lands just above the viewport bottom (fills the dead space under the
+     short content; never adds a scrollbar). Runs LAST so it overrides the area
+     height set above; re-applies every redraw (the per-second ticker resets it).
+     `viewportPx` = the natural (un-stretched) gauge height it should reset to. */
+  _fillHomeTimeArea(viewportPx);
+}
+
+/* See #3: grow the Time & Tasks gauge to push the bucket section down to the
+   bottom of the screen on the PHONE home when there are no task bars — fills the
+   empty space under the short content. Idempotent: resets to the natural layout,
+   re-measures, then re-stretches in one synchronous shot. No-op on wide screens,
+   when task bars exist, on the 2×2 flip face, or in Focus View. */
+function _fillHomeTimeArea(viewportPx) {
+  let tp = null, area = null;
+  try {
+    tp           = document.getElementById('time-panel');
+    area         = document.getElementById('time-area');
+    const bucket = document.getElementById('bucket-section');
+    const fp     = document.getElementById('focus-page');
+    const main   = document.querySelector('main');
+    if (!tp || !area || !bucket || !fp || !main) return;
+    const apply = window.matchMedia('(max-width: 700px)').matches
+      && fp.offsetParent !== null
+      && document.body.classList.contains('tt-split')
+      && !document.body.classList.contains('tt-flip')
+      && !document.body.classList.contains('fv-active')
+      && !document.body.classList.contains('tt-has-tasks');
+    if (!apply) {
+      // Not the phone no-task home: drop our overrides + restore the normal
+      // .28s height glide (used when task bars are added / removed).
+      if (tp.style.height) tp.style.height = '';
+      if (area.style.transition) area.style.transition = '';
+      return;
+    }
+    // The gauge carries a `.28s height` transition in split mode. Suppress it so
+    // the reset-to-natural → measure → re-stretch below is exact (no mid-animation
+    // contamination) and the final height lands in ONE shot — otherwise the per-
+    // second redraw and this fill fight across the animation and leave a gap.
+    area.style.transition = 'none';
+    const hasNat = typeof viewportPx === 'number' && viewportPx > 0;
+    if (hasNat) area.style.height = viewportPx + 'px';   // reset gauge to natural
+    tp.style.height = '';                                  // reset the grid row to natural
+    // Target = main scroller's content-box bottom minus a small margin, so the
+    // bucket clears any bottom safe-area padding and the page never scrolls.
+    const mr     = main.getBoundingClientRect();
+    const padB   = parseFloat(getComputedStyle(main).paddingBottom) || 0;
+    const target = mr.bottom - padB - 14;
+    const slack  = target - bucket.getBoundingClientRect().bottom;   // exact natural read
+    if (slack > 10) {                              // only when there's real dead space
+      const naturalAreaH = hasNat ? viewportPx : area.getBoundingClientRect().height;
+      tp.style.height   = Math.round(tp.getBoundingClientRect().height + slack) + 'px'; // grow row
+      area.style.height = Math.round(naturalAreaH + slack) + 'px';   // gauge fills the row
+    }
+    // Transition stays off while filled (nothing animates in the resting no-task
+    // state); it's restored on the !apply branch the moment a task bar appears.
+  } catch (_) { try { if (tp && tp.style.height) tp.style.height = ''; } catch (__) {} }
 }
 
 /* Compact duration label for time-block-dur (e.g. "35m" / "1h" / "1h30m") */
@@ -16588,10 +16727,12 @@ function activeTimerToSegment(at, now) {
    dark text. ALERT_RED is reserved for over-warnings + the now-line — it deliberately
    matches NO quadrant so a running pink task never reads as an alarm. ===== */
 const QUAD_TOKENS = {
-  q1: { bar:'#F2C2CE', chipBg:'#FBEAF0', text:'#8B2547', ring:'#B23A5B', ringDark:'#FB7185', button:'#99294A', stripe:'#B23A5B' },  // pink / rose
-  q2: { bar:'#F4E1AE', chipBg:'#FAEEDA', text:'#7A4A0C', ring:'#A8650F', ringDark:'#FBBF24', button:'#633806', stripe:'#A8650F' },  // amber / gold
-  q3: { bar:'#D7C8EC', chipBg:'#EEEDFE', text:'#473C8A', ring:'#534AB7', ringDark:'#C4B5FD', button:'#3C3489', stripe:'#534AB7' },  // violet
-  q4: { bar:'#C6D9F0', chipBg:'#E6F1FB', text:'#1C5187', ring:'#185FA5', ringDark:'#93C5FD', button:'#0C447C', stripe:'#185FA5' },  // blue
+  // ff* = the full-screen pomodoro's soft buttons (✕ / pause / Auto): tinted off-white
+  // fill + slate ink + soft border, per quadrant (matches the screenshots).
+  q1: { bar:'#F2C2CE', chipBg:'#FBEAF0', text:'#8B2547', ring:'#B23A5B', ringDark:'#FB7185', button:'#99294A', stripe:'#B23A5B', ffFill:'#F4EFEB', ffInk:'#49546A', ffBorder:'#D8C6CD' },  // pink / rose
+  q2: { bar:'#F4E1AE', chipBg:'#FAEEDA', text:'#7A4A0C', ring:'#A8650F', ringDark:'#FBBF24', button:'#633806', stripe:'#A8650F', ffFill:'#F4EFE6', ffInk:'#556072', ffBorder:'#D8CAB8' },  // amber / gold
+  q3: { bar:'#D7C8EC', chipBg:'#EEEDFE', text:'#473C8A', ring:'#534AB7', ringDark:'#C4B5FD', button:'#3C3489', stripe:'#534AB7', ffFill:'#F2F2F6', ffInk:'#566079', ffBorder:'#D2D0E3' },  // violet
+  q4: { bar:'#C6D9F0', chipBg:'#E6F1FB', text:'#1C5187', ring:'#185FA5', ringDark:'#93C5FD', button:'#0C447C', stripe:'#185FA5', ffFill:'#EEF1F8', ffInk:'#4F5B73', ffBorder:'#CCD6E6' },  // blue
 };
 const ALERT_RED = '#E24B4A';   // over-warning + now-line ONLY — distinct from every quadrant
 function quadTok(q) { return QUAD_TOKENS[q] || QUAD_TOKENS.q4; }
@@ -17167,12 +17308,13 @@ function _fcShowDoneReward(rw, taskName) {
   // Otherwise: message 1 = total earned (no leading "+"); message 2 (early/late
   // only) = the early/late detail.
   let msgs;
+  // a = small faint LABEL (top line); b = big bold money + task (bottom line).
   if (rw.kind === 'none' || total <= 0) {
-    msgs = [{ a: 'Finished a task.', b: 'Well done!' }];
+    msgs = [{ a: 'Nice work', b: 'Finished ' + name }];
   } else {
-    msgs = [{ a: 'You earned $' + total, b: 'for ' + name }];
-    if (rw.kind === 'early' && rw.delta > 0)     msgs.push({ a: '+$' + Math.abs(rw.delta) + ' extra', b: 'for finishing early' });
-    else if (rw.kind === 'late' && rw.delta < 0) msgs.push({ a: '−$' + Math.abs(rw.delta) + ' less', b: 'for finishing late' });
+    msgs = [{ a: 'You got paid', b: '$' + total + ' for ' + name }];
+    if (rw.kind === 'early' && rw.delta > 0)     msgs.push({ a: 'Finished early', b: '+$' + Math.abs(rw.delta) + ' extra' });
+    else if (rw.kind === 'late' && rw.delta < 0) msgs.push({ a: 'Finished late', b: '−$' + Math.abs(rw.delta) + ' less' });
   }
   let mi = 0;
   function show(i) {
@@ -17182,6 +17324,11 @@ function _fcShowDoneReward(rw, taskName) {
     // After 6 s: auto-advance to the next message, or (on the last) revert.
     _fcDoneTimer = setTimeout(() => { if (i < msgs.length - 1) show(i + 1); else _fcHideDone(); }, 6000);
   }
+  // Dark mode → the teal-background comment image (matches --card-bg) so it blends.
+  try {
+    const dimg = document.getElementById('fc-done-img');
+    if (dimg) { const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()); dimg.src = 'images/focus/doro/comment' + (_dk ? '-dark' : '') + '.png?v=doro-3'; }
+  } catch (_) {}
   card.classList.add('fc-done-on');
   show(0);
 }
@@ -17297,7 +17444,9 @@ function renderImDoing() {
     }
     const timeEl = document.getElementById('fc-left'); if (timeEl) timeEl.style.color = color;
     const pauseEl = document.getElementById('fc-ring-pause');
-    if (pauseEl) { pauseEl.style.color = color; pauseEl.style.background = /^#[0-9a-f]{6}$/i.test(color) ? color + '26' : '#fce7eb'; }
+    // High-contrast pause: SOLID accent fill + white icon (no pale tint) so it reads
+    // clearly without competing with the centre number.
+    if (pauseEl) { pauseEl.style.background = color; pauseEl.style.color = '#fff'; }
   };
   const fmtMMSS = (ms) => {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -17316,8 +17465,19 @@ function renderImDoing() {
     card.classList.toggle('fc-down', !_anyTask);
     const _ntImg = document.getElementById('fc-no-task');
     if (_ntImg && !card.classList.contains('fc-swapping')) {
-      const _want = _anyTask ? 'start-now' : 'cat-down';   // (#C7) new start cat (retires cat-startnow)
-      if ((_ntImg.getAttribute('src') || '').indexOf(_want) < 0) _ntImg.setAttribute('src', 'images/focus/' + _want + '.png?v=catstate-1');
+      // Idle art (wide banners): add = no task · start.gif = task added, not started.
+      let _want;
+      if (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()) {
+        // Dark mode → teal-background variants (matches --card-bg #073642). Single reduced size.
+        _want = 'images/focus/doro/' + (_anyTask ? 'start-dark.gif' : 'add-dark.png') + '?v=doro-2';
+      } else {
+        // Light: iPad APP uses the full-res files (bundled, no bandwidth cost); iPhone app +
+        // ALL web use the reduced "-sm" versions (start.gif ~2MB → ~200KB).
+        const _ipadApp = document.documentElement.classList.contains('platform-ios') && window.matchMedia('(min-width: 701px)').matches;
+        const _sm = _ipadApp ? '' : '-sm';
+        _want = _anyTask ? ('images/focus/doro/start' + _sm + '.gif?v=doro-2') : ('images/focus/doro/add' + _sm + '.png?v=doro-2');
+      }
+      if ((_ntImg.getAttribute('src') || '') !== _want) _ntImg.setAttribute('src', _want);
     }
     if (_anyTask) { try { _fcStartClock(); } catch (_) {} } else { try { _fcStopClock(); } catch (_) {} }
     const isPhone = window.matchMedia('(max-width: 700px)').matches;
@@ -20044,6 +20204,9 @@ function _onResizeFocusHome() {
     if (state.currentPage === 'focus' && !document.body.classList.contains('fv-active')) {
       if (typeof layoutFocusHomeWide === 'function') layoutFocusHomeWide();
       if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime();
+      // Re-fill the phone home gauge to the new viewport height (#3). drawTimeArea
+      // resets the area then calls _fillHomeTimeArea, so the bucket re-tracks the bottom.
+      if (typeof drawTimeArea === 'function') drawTimeArea();
     }
   } catch (_) {}
 }
@@ -21715,7 +21878,16 @@ function _ffPauseIcon(paused) {
     ? '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5 L19 12 L8 19 Z" fill="currentColor"/></svg>'
     : '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor"/></svg>';
 }
-function _ffQIcon() { return '<span class="ff-q-icon">?</span>'; }
+function _ffQIcon() {
+  // The centre button is DRAGGED left / right / down onto the stop / play / Auto targets —
+  // show chevrons in those 3 directions so it reads as a draggable chooser, not just "?".
+  return '<span class="ff-q-icon">' +
+    '<svg class="ffq-dirs" viewBox="0 0 64 64" aria-hidden="true">' +
+      '<polyline points="21 25 14 32 21 39"/>' +
+      '<polyline points="43 25 50 32 43 39"/>' +
+      '<polyline points="25 43 32 50 39 43"/>' +
+    '</svg><span class="ffq-q">?</span></span>';
+}
 
 /* Paint the full-screen control buttons for the CURRENT state:
      • phase-confirm slider up  → centre shows "?", side + Auto targets visible
@@ -21872,8 +22044,8 @@ function _ffBuildDial(durMin) {
   const n = Math.max(1, Math.round(durMin));
   const tickOuter = _FF_R + 16, minorIn = _FF_R + 8, majorIn = _FF_R + 2, numR = _FF_R + 32;
   let s = '';
-  s += `<circle cx="${_FF_CX}" cy="${_FF_CY}" r="${_FF_R}" fill="none" stroke="#eef0f2" stroke-width="14"/>`;
-  s += `<circle id="ff-arc" cx="${_FF_CX}" cy="${_FF_CY}" r="${_FF_R}" fill="none" stroke="#ef4444" stroke-width="14" stroke-linecap="round" transform="rotate(-90 ${_FF_CX} ${_FF_CY})" stroke-dasharray="0 ${_FF_C.toFixed(1)}"/>`;
+  s += `<circle cx="${_FF_CX}" cy="${_FF_CY}" r="${_FF_R}" fill="none" stroke="#eef0f2" stroke-width="10"/>`;
+  s += `<circle id="ff-arc" cx="${_FF_CX}" cy="${_FF_CY}" r="${_FF_R}" fill="none" stroke="#B23A5B" stroke-width="10" stroke-linecap="round" transform="rotate(-90 ${_FF_CX} ${_FF_CY})" stroke-dasharray="0 ${_FF_C.toFixed(1)}"/>`;
   for (let m = 0; m < n; m++) {
     const ang = (-90 + (m / n) * 360) * Math.PI / 180;
     const major = (m % 5 === 0);
@@ -21919,15 +22091,17 @@ let _ffCenterDragging = false;
 
 function _ffMakeSlides(mode) {
   const imgs = _ffImages()[mode] || [];
-  const def = (mode === 'break') ? 'break-cat.gif' : 'cat.gif';
+  const def = (mode === 'break') ? 'images/focus/doro/break.png?v=doro-2' : 'images/focus/doro/study.png?v=doro-2';
   const arr = [{ type: 'blank' }, { type: 'gif', src: def }];
   imgs.forEach((u, i) => arr.push({ type: 'user', src: u, num: i + 1 }));
+  arr.push({ type: 'add' });   // "Touch here to add" slide → then cycles back to blank
   return arr;
 }
 function _ffRenderSlot(el, slide) {
   if (!el) return;
   el.className = 'ff-slide';
   if (!slide || slide.type === 'blank') { el.innerHTML = ''; return; }
+  if (slide.type === 'add') { el.classList.add('ff-slide-add'); el.innerHTML = '<span class="ff-add-prompt">Touch here to add</span>'; return; }
   el.classList.add(slide.type === 'gif' ? 'fit-contain' : 'fit-cover');
   el.innerHTML = '<img src="' + slide.src + '" alt="">';
 }
@@ -21994,13 +22168,14 @@ function _ffTapCentre() {
   const file = document.getElementById('ff-cat-file'); if (!file) return;
   const imgs = _ffImages()[_ffMode] || [];
   const cur = _ffSlides[_ffIdx[_ffMode]];
-  if (cur && cur.type === 'user') {
-    _ffPending = { mode: _ffMode, replaceIndex: cur.num - 1 };
-  } else if (imgs.length < 3) {
-    _ffPending = { mode: _ffMode, addNew: true };
+  if (!cur) return;
+  if (cur.type === 'user') {
+    _ffPending = { mode: _ffMode, replaceIndex: cur.num - 1 };               // tap a photo → replace it
+  } else if (cur.type === 'add') {
+    _ffPending = (imgs.length < 3) ? { mode: _ffMode, addNew: true }          // tap "Touch here to add" → add (or replace #1 when full)
+                                   : { mode: _ffMode, replaceIndex: 0 };
   } else {
-    _ffIdx[_ffMode] = 2; _ffFill(); _ffSetTransform(0, false);   // jump to photo #1
-    _ffPending = { mode: _ffMode, replaceIndex: 0 };
+    return;   // blank / default study|break image → not a tap target
   }
   try { file.value = ''; } catch (_) {}
   file.click();
@@ -22086,6 +22261,28 @@ function renderFocusFullscreen() {
   const ffSegs = (at.phase !== 'work')
     ? [{ endFrac: 1, color: '#38BDF8' }]
     : [{ endFrac: 1, color: (typeof focusQuadAccent === 'function') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : pomoRingColor(at.q, at.idx) }];
+  // Calm "deep focus" backdrop = the quadrant's pale wash (pale sky on a break) PLUS the
+  // soft per-quadrant theming of the ✕ / pause / Auto buttons (fill · ink · border). Light
+  // themes only — dark keeps its existing light panel + neutral gray buttons.
+  try {
+    const _ffOvl = document.getElementById('focus-fullscreen');
+    if (_ffOvl) {
+      if (typeof bidoroDarkTheme === 'function' && !bidoroDarkTheme()) {
+        const _isBreak = (at.phase !== 'work');
+        const _ft = _isBreak
+          ? { chipBg: '#E8F4FB', ffFill: '#EEF3F8', ffInk: '#4A5A6E', ffBorder: '#CBDBE8' }
+          : quadTok(_focusBlockQAt(at, Date.now()));
+        _ffOvl.style.background = _ft.chipBg;
+        _ffOvl.style.setProperty('--ff-fill',   _ft.ffFill);
+        _ffOvl.style.setProperty('--ff-ink',    _ft.ffInk);
+        _ffOvl.style.setProperty('--ff-border', _ft.ffBorder);
+      } else {
+        _ffOvl.style.removeProperty('--ff-fill');
+        _ffOvl.style.removeProperty('--ff-ink');
+        _ffOvl.style.removeProperty('--ff-border');
+      }
+    }
+  } catch (_) {}
   const baseArc = document.getElementById('ff-arc');
   let knobColor = ffSegs.length ? ffSegs[0].color : '#38BDF8';
   if (baseArc) {
@@ -24974,7 +25171,11 @@ window.bidoroTaskWaterDrop = function (row, q) {
       const wEl = e.target && e.target.closest ? e.target.closest('.b3d-wall[data-i]') : null;
       const fi = wEl ? +wEl.dataset.i : -1;
       if (fi < 0) { _drag = null; return; }   // empty side margin → no drag → never rotates; vertical slide scrolls the page
-      _drag = { x: e.clientX, y: e.clientY, spin0: spin, mode: null, i: fi, h0: heights[fi], lvl: 0,
+      // Did the drag START on the floating low-wall description? (it's a child of the
+      // wall, lifted above it.) If so, a vertical drag RAISES that wall directly — the
+      // tiny low wall is too hard to grab, so the floating text is the handle.
+      const fromDesc = !!(e.target.closest && e.target.closest('.b3d-desc-above'));
+      _drag = { x: e.clientX, y: e.clientY, spin0: spin, mode: null, i: fi, h0: heights[fi], lvl: 0, fromDesc: fromDesc,
                 _lastWater: Math.min(waterLvl, Math.min.apply(null, heights)) };   // current visible water level (for the spill)
       try { scene.setPointerCapture(e.pointerId); } catch (_) {}
     });
@@ -24983,7 +25184,12 @@ window.bidoroTaskWaterDrop = function (row, q) {
       const dx = e.clientX - _drag.x, dy = e.clientY - _drag.y;
       if (!_drag.mode) {
         if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
-        _drag.mode = (_drag.i >= 0 && _drag.i === heightSel && Math.abs(dy) > Math.abs(dx)) ? 'adjust' : 'rotate';
+        const vertical = Math.abs(dy) > Math.abs(dx);
+        // Vertical drag → adjust when the face is selected OR the drag started on its
+        // floating low-wall text (`fromDesc`). The text-handle also selects the face so
+        // it reads as "being adjusted".
+        _drag.mode = (_drag.i >= 0 && vertical && (_drag.i === heightSel || _drag.fromDesc)) ? 'adjust' : 'rotate';
+        if (_drag.mode === 'adjust' && _drag.fromDesc && heightSel !== _drag.i) { heightSel = _drag.i; _selClass(); }
       }
       if (_drag.mode === 'rotate') { spin = _drag.spin0 + dx * 0.55; apply(); return; }
       const lvl = Math.max(1, Math.min(10, Math.round((_drag.h0 - dy / H) * 10)));   // up = higher level
@@ -25028,7 +25234,8 @@ window.bidoroTaskWaterDrop = function (row, q) {
     scene.addEventListener('touchstart', (e) => {
       const wEl = e.target && e.target.closest ? e.target.closest('.b3d-wall[data-i]') : null;
       const fi = wEl ? +wEl.dataset.i : -1;
-      if (fi >= 0 && fi === heightSel) _lockScroll();          // selected face touched → adjust gesture → lock
+      const onDesc = !!(e.target.closest && e.target.closest('.b3d-desc-above'));
+      if (fi >= 0 && (fi === heightSel || onDesc)) _lockScroll();   // selected face OR the low-wall text handle → adjust gesture → lock
     }, { passive: true });
     scene.addEventListener('touchmove', (e) => { if (_bLock) e.preventDefault(); }, { passive: false });
     scene.addEventListener('touchend', _unlockScroll);
@@ -26836,6 +27043,9 @@ window.bidoroTaskWaterDrop = function (row, q) {
               g.style.zIndex = String(z + 7);
               const gf = document.createElement('div'); gf.className = 'wg-prog-fill';
               g.appendChild(gf); fieldEl.appendChild(g);
+              // Blink ONCE: clear the "just turned green" marker right after applying it, so a
+              // later re-render (selecting / deselecting a tile) does NOT re-add wg-blink.
+              if (_justGreen) _lastGreenCell = null;
               // Set the width DIRECTLY (no 0→frac animation) so a re-render never
               // makes EVERY tile's gauge re-fill — only the tile being watered
               // animates, and that's driven by the live pour (_liveFill) instead.
@@ -27326,7 +27536,11 @@ window.bidoroTaskWaterDrop = function (row, q) {
   out.textContent = summary(); panel.appendChild(out);
   btn.addEventListener('click', () => { const show = panel.style.display === 'none'; panel.style.display = show ? 'flex' : 'none'; if (show) { applyAll(); out.textContent = summary(); } });
   function mount(){ if (!document.body) return; document.body.appendChild(btn); document.body.appendChild(panel); }
-  if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount);
+  // Hidden from the app per request (the "🐱 tune" capsule should NOT ship). The tuning
+  // code is kept for later — set window.__c7Tune = true before load (or call mount() from
+  // the console) to bring the panel back when tuning the start-now cat.
+  if (window.__c7Tune) { if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount); }
+  try { window._c7TuneMount = mount; } catch (_) {}
 })();
 </script>
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
