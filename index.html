@@ -692,6 +692,11 @@
     padding: 10px 12px;
     border: 1px solid var(--line); border-radius: 6px;
     font: inherit; box-sizing: border-box; width: 100%;
+    /* Explicit theme bg/text so iOS WKWebView can't render the field with the
+       SYSTEM dark appearance (black box) when the app theme is light. */
+    background: var(--card-bg, #fff);
+    color: var(--text-main, #111827);
+    -webkit-text-fill-color: var(--text-main, #111827);
   }
   .auth-form .row-flex { grid-column: 1 / -1; }
   #auth-logged-in p strong { color: #059669; }
@@ -1341,6 +1346,7 @@
   }
   .wh-slot img { width: 100%; height: 100%; object-fit: contain; -webkit-user-drag: none; }
   #wh-seed img { width: 70%; height: 70%; }      /* seed icon smaller inside its slot */
+  #wh-trowel img { width: 74%; height: 74%; object-fit: contain; }   /* trowel (→ sell mode) */
   .wh-slot.active { border-color: #38BDF8; box-shadow: 0 0 0 2px rgba(56,189,248,.30); }
   /* Build view — isometric SimCity field built FROM the earth tiles; pan by sliding */
   .water-field-vp {
@@ -1495,6 +1501,7 @@
     white-space: nowrap;                                    /* keep "-$100" on ONE line (it sits by the right edge) */
     animation: water-fly-up 1s ease-out forwards;
   }
+  .water-fly-txt.gain { color: #059669; }   /* SELL income — green, same up-float as a spend (#sell) */
 
   /* ===== Task-tick water droplets =====
      When a task is ticked, ~12 blue droplets shoot from the ✓ checkbox
@@ -2652,6 +2659,26 @@
     flex: 1 1 0; min-width: 0; white-space: nowrap;
     padding-left: 10px; padding-right: 10px; text-align: center;
   }
+  /* #15 reopen "did you do it?" dialog */
+  .reopen-ask-overlay {
+    position: fixed; inset: 0; z-index: 100000;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(15,23,42,.46); padding: 24px;
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  }
+  .reopen-ask-card {
+    width: 100%; max-width: 360px; background: var(--card-bg, #fff);
+    border: 1px solid var(--card-border, #e5e7eb); border-radius: 16px;
+    padding: 20px 20px 16px; box-shadow: 0 18px 50px rgba(0,0,0,.32);
+  }
+  .reopen-ask-title { font-size: 1.15rem; font-weight: 800; color: var(--text-main, #111827); margin-bottom: 8px; }
+  .reopen-ask-msg { font-size: .95rem; line-height: 1.5; color: var(--text-muted, #4b5563); margin-bottom: 18px; }
+  .reopen-ask-msg b { color: var(--text-main, #111827); }
+  .reopen-ask-btns { display: flex; gap: 10px; }
+  .reopen-ask-btns button { flex: 1 1 0; padding: 11px 12px; border-radius: 10px; font: inherit; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .reopen-ask-no  { border: 1px solid #fca5a5; background: #fef2f2; color: #b91c1c; }
+  .reopen-ask-yes { border: 1px solid var(--accent, #3FA36B); background: var(--accent, #3FA36B); color: #fff; }
+  .reopen-ask-btns button:active { transform: scale(.97); }
   .btn {
     padding: 10px 18px; border-radius: 8px; border: 1px solid var(--card-border);
     background: var(--button-bg); color: var(--button-text);
@@ -3698,9 +3725,9 @@
     min-width: 2.5em; font-variant-numeric: tabular-nums; }
   .gtd-chip .gtd-for  { display: inline-flex; align-items: center; line-height: 1; font-size: .7rem; font-weight: 600; opacity: .8; }   /* center the word like .gtd-head so "left"/"over" lines up with h:mm */
   .gtd-chip.gtd-set:not(.gtd-over) .gtd-head,
-  .gtd-chip.gtd-set:not(.gtd-over) .gtd-for { color: #2563EB; opacity: 1; }   /* h:mm + "left" → blue */
+  .gtd-chip.gtd-set:not(.gtd-over) .gtd-for { color: #0EA5E9; opacity: 1; }   /* h:mm + "left" → sky-blue */
   .gtd-chip.gtd-over .gtd-head,
-  .gtd-chip.gtd-over .gtd-for  { color: #dc2626; opacity: 1; }                /* h:mm + "over" → red */
+  .gtd-chip.gtd-over .gtd-for  { color: #EC4899; opacity: 1; }                /* h:mm + "over" → pink */
   /* GTD picker modal — title + [time | Now] row + [+30m | +1h | OK] row (rows EQUAL width). */
   #gtd-modal .gtd-content { width: 300px; position: relative; }
   #gtd-modal .gtd-x {
@@ -5610,12 +5637,17 @@
     pointer-events: auto;
     cursor: pointer;
     box-shadow: 0 1px 2px rgba(0,0,0,.08);
-    /* Block consumes touches so parent scroll doesn't fight our drag handlers */
-    touch-action: none;
+    /* Default: a vertical slide on a block SCROLLS the gauge timeline (the block
+       does not eat the touch). Only the SELECTED block IN EDIT MODE captures the
+       touch for drag/resize (see the tt-edit override below). */
+    touch-action: pan-y;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
   }
+  /* Edit mode + selected → the block (and its resize/× children, via the ancestor
+     rule) own the touch so drag/resize work and don't scroll the gauge. */
+  body.tt-edit .time-block.selected { touch-action: none; }
   /* (The 연두색 bottom-edge "duration adjustable" cue lives ONLY on the
      creation preview block — `.time-block.preview` — not on committed gauge
      blocks. See that rule above.) */
@@ -7146,11 +7178,11 @@
     </div>
     <div class="water-fx" id="water-fx"></div>
   </div>
-  <!-- Minecraft-style hotbar: slot 1 = earth (→ build), slot 2 = seed -->
+  <!-- Minecraft-style hotbar: slot 1 = earth (→ build), slot 2 = trowel (→ sell), slot 3 = seed -->
   <div class="water-hotbar" id="water-hotbar">
     <button class="wh-slot" id="wh-earth" type="button" aria-label="흙"><img src="earth.png" alt="" draggable="false"></button>
+    <button class="wh-slot" id="wh-trowel" type="button" aria-label="삽 (팔기)"><img src="clover/trowel.png" alt="" draggable="false"></button>
     <button class="wh-slot" id="wh-seed" type="button" aria-label="씨앗"><img src="clover/1.png" alt="" draggable="false"></button>
-    <button class="wh-slot" type="button" aria-hidden="true"></button>
     <button class="wh-slot" type="button" aria-hidden="true"></button>
     <button class="wh-slot" type="button" aria-hidden="true"></button>
     <button class="wh-slot" type="button" aria-hidden="true"></button>
@@ -9946,20 +9978,13 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
   const rowW = rowRect.width || 200;
 
   // ---- Phase 1: the bar vanishes into its own LEFT edge ----
-  let vanishEl;
-  if (isRunning) {
-    // The running row must stay (tick + time keep ticking) → vanish a ghost.
-    vanishEl = row.cloneNode(true);
-    vanishEl.classList.add('tg-row-ghost');
-    vanishEl.style.cssText =
-      `position:fixed;left:${rowRect.left}px;top:${rowRect.top}px;width:${rowW}px;` +
-      `height:${rowRect.height}px;margin:0;z-index:99998;pointer-events:none;`;
-    document.body.appendChild(vanishEl);
-    // Reset the real running row (it carried the live-drag transform/clip).
-    row.style.transition = ''; row.style.transform = ''; row.style.clipPath = ''; row.style.opacity = '';
-  } else {
-    vanishEl = row;             // the real row vanishes, then springs back
-  }
+  // The REAL row vanishes left — running or not — continuing smoothly from the
+  // live-swipe transform, then springs back from the right via _tgReappearTask.
+  // (A running task's countdown lives in the focus card + state, NOT this list
+  // row, so briefly hiding the row never interrupts the timer.) Previously a
+  // running row was reset to its origin immediately + a ghost vanished instead —
+  // which read as "the bar slides left a bit then instantly snaps back".
+  const vanishEl = row;
   vanishEl.style.transition =
     `transform ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), clip-path ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${PHASE1_MS}ms ease`;
   requestAnimationFrame(() => {
@@ -9970,8 +9995,9 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
 
   // ---- Phase 2: blocks emerge from the gauge's RIGHT edge ----
   setTimeout(() => {
-    if (isRunning) { try { vanishEl.remove(); } catch (_) {} }
-    if (typeof drawGauge === 'function') drawGauge();   // create the block DOM
+    if (typeof drawGauge === 'function') drawGauge();   // create the block DOM (blocks are VISIBLE here → clone from them)
+    // Now keep the REAL block(s) hidden across any re-render until the clone lands.
+    window._tgFlyHideIds = new Set(newIds);
     const blocksEl = document.getElementById('time-blocks');
     const area = document.getElementById('time-area');
     const areaVisible = !!(area && area.offsetParent !== null);
@@ -10012,11 +10038,12 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
     }
     // ---- Cleanup after the blocks land ----
     setTimeout(() => {
+      window._tgFlyHideIds = null;     // re-renders may now show the real block(s)
       clones.forEach(({ el }) => { try { el.style.visibility = ''; } catch (_) {} });
       try { if (container) container.remove(); } catch (_) {}
       window._gaugeBusy = false;
       if (typeof drawGauge === 'function') drawGauge();
-      if (!isRunning) _tgReappearTask = { q, i };
+      _tgReappearTask = { q, i };   // running or not → the row springs back in from the right
       if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
     }, PHASE2_MS + 50);
   }, PHASE1_MS);
@@ -14210,6 +14237,10 @@ function drawTimeArea() {
     // node after a touchstart-time split + drawTimeArea() destroys the
     // original element (see attachBodyDrag's spanning-block branch).
     if (b.id) div.setAttribute('data-block-id', b.id);
+    // While a swipe-to-gauge fly-in is animating this block's CLONE, keep the REAL
+    // block hidden across ANY re-render (sync poll, tick…) so it never shows
+    // "settled" in place at the same time the clone is still sliding in. (#dup-fix)
+    if (b.id && window._tgFlyHideIds && window._tgFlyHideIds.has(b.id)) div.style.visibility = 'hidden';
     div.style.top    = tPx + 'px';
     div.style.height = (bPx - tPx) + 'px';
 
@@ -14247,7 +14278,10 @@ function drawTimeArea() {
             } else if (seg.type === 'break') {
               _fillColor = _breakColor();
             } else {
-              _fillColor = qTaskColor(b.q, b.taskIdx);
+              // Theme-aware (was always-pale qTaskColor → glaring bright pink on
+              // the dark gauge). Now MATCHES the block's left fingernail band
+              // (bidoroTaskBg = pale on light themes, muted-dark in dark mode).
+              _fillColor = bidoroTaskBg(b.q, b.taskIdx);
             }
             fill.style.background = _fillColor;
             div.appendChild(fill);
@@ -15215,8 +15249,9 @@ function _rechunkFutureTasks(forceOrderKeys) {
   } else {
     tasks.sort((a, b) => a._s - b._s);
   }
-  // Any FUTURE re-chunk (_shuffle) blocks present? (i.e. is there anything to clean?)
-  const hasRechunk = state.scheduledBlocks.some(b => b && b._shuffle && b.activeAt == null && b.activeEndMs == null && b.endMs > now);
+  // Any FUTURE re-chunk blocks present? (i.e. is there anything to clean?)
+  // (_shuffle = legacy 25-min chunks; _rechunk = the new per-task _combine boxes.)
+  const hasRechunk = state.scheduledBlocks.some(b => b && (b._shuffle || b._rechunk) && b.activeAt == null && b.activeEndMs == null && b.endMs > now);
   if (tasks.length < 2 && !hasRechunk) return;         // lone task keeps its own _combine box; nothing to do
   // Future blocks are CONTIGUOUS from the now-line (or right after a running
   // block) — no gaps. So deleting a task pulls the rest UP under the line.
@@ -15239,37 +15274,25 @@ function _rechunkFutureTasks(forceOrderKeys) {
       activeAt: null, activeEndMs: null, _combine: true });
     return;
   }
-  // Continuous work timeline (cumulative work positions, tagged by task).
-  const segs = []; let cum = 0;
-  tasks.forEach(t => { segs.push({ q: t.q, idx: t.idx, name: t.name, a: cum, b: cum + t.work }); cum += t.work; });
-  const total = cum;
+  // Lay each task out as ONE _combine box — its full planned span (WORK + the
+  // internal 25/5 breaks, via plannedTotalMs) — contiguous in task order. A task
+  // therefore reads as a SINGLE box with baby-fingernail 25-work / 5-break bands
+  // (exactly like a lone 1-hour task), NOT separate 25-min chunk boxes with
+  // borders between them. Same-task never splits (one box per task). The pomodoro
+  // timer follows the bands too — the _combine runtime continues work→break→work
+  // inside the box (see the `_combineCont` path in the phase-confirm handler).
   let s = startMs, seq = 0;
-  const mk = () => 'rc_' + startMs + '_' + (seq++) + '_' + Math.random().toString(36).slice(2);
-  for (let w = 0; w < total; w += WORK) {
-    const pA = w, pB = Math.min(w + WORK, total), pMs = pB - pA;
-    const ov = segs.filter(sg => sg.a < pB && sg.b > pA);   // task segments inside this pomodoro
-    if (!ov.length) break;
-    const blk = {
-      id: mk(), q: ov[0].q, taskIdx: ov[0].idx,
-      taskName: (ov.length > 1) ? ov.map(o => o.name || '?').join(' +\n') : ov[0].name,   // 2nd name on its own line
-      startMs: s, endMs: s + pMs, activeAt: null, activeEndMs: null, _shuffle: true
-    };
-    if (ov.length > 1) {
-      let ss = s;
-      blk.taskSegs = ov.map(sg => {
-        const segMs = Math.min(sg.b, pB) - Math.max(sg.a, pA);
-        const seg = { q: sg.q, taskIdx: sg.idx, taskName: sg.name, startMs: ss, endMs: ss + segMs };
-        ss += segMs; return seg;
-      });
-    }
-    state.scheduledBlocks.push(blk); s += pMs;
-    if (pB < total) {                                  // 5-min break between pomodoros (not after the last)
-      const last = ov[ov.length - 1];
-      state.scheduledBlocks.push({ id: mk(), q: last.q, taskIdx: last.idx, taskName: last.name, isBreak: true,
-        startMs: s, endMs: s + BRK, activeAt: null, activeEndMs: null, breakSegments: [{ startMs: s, endMs: s + BRK }] });
-      s += BRK;
-    }
-  }
+  tasks.forEach(t => {
+    const span = (typeof plannedTotalMs === 'function') ? plannedTotalMs(t.work) : t.work;
+    if (!(span > 0)) return;
+    state.scheduledBlocks.push({
+      id: 'rc_' + startMs + '_' + (seq++) + '_' + Math.random().toString(36).slice(2),
+      q: t.q, taskIdx: t.idx, taskName: t.name,
+      startMs: s, endMs: s + span, activeAt: null, activeEndMs: null,
+      _combine: true, _rechunk: true
+    });
+    s += span;
+  });
 }
 /* Pull the FUTURE planned blocks UP to the now-line (or right after a still-running block),
    PRESERVING their structure — used when the RUNNING task is completed: its blocks were just
@@ -15869,7 +15892,7 @@ function openEventModal(existing) {
         };
         e.preventDefault();
       }
-    }, { passive: false });
+    }, { passive: false, capture: true });   // CAPTURE: catch the 2-finger gesture even when it starts ON a block (before pan-y scroll commits)
     area.addEventListener('touchmove', (e) => {
       if (!pinch || e.touches.length !== 2) return;
       e.preventDefault();
@@ -15881,7 +15904,7 @@ function openEventModal(existing) {
       // Keep the content point that was under the fingers still under them.
       const newH = _timeContentPxH();
       area.scrollTop = Math.max(0, pinch.anchorFrac * newH - pinch.midOffset);
-    }, { passive: false });
+    }, { passive: false, capture: true });
     function endPinch(e) {
       if (!pinch) return;
       if (!e.touches || e.touches.length < 2) {
@@ -19892,14 +19915,20 @@ if (_editToggle) {
     const blocks = state.scheduledBlocks || [];
     // the selected reference can go stale after a redraw → re-resolve by id
     const cur = blocks.find(b => b && b.id === s.id) || s;
-    if (window.__tgSelectBlock) window.__tgSelectBlock(null);
+    // After deleting, auto-select the block JUST BELOW (next future block by start
+    // time); if none below, the one just ABOVE. Compute it BEFORE the splice.
+    const fut = _futureBlocks();
+    const ci = fut.findIndex(b => b && b.id === cur.id);
+    const nextSel = (ci >= 0) ? (fut[ci + 1] || fut[ci - 1] || null) : null;
     // Delete ONLY this one block — NOT the whole task. The task's OTHER blocks
     // stay on the gauge; the task itself is removed via its task-bar ×, not here.
     const idx = blocks.findIndex(b => b && b.id === cur.id);
     if (idx >= 0) blocks.splice(idx, 1);
+    if (window.__tgSelectBlock) window.__tgSelectBlock(nextSel || null);   // select the adjacent block
     try { saveState(); } catch (_) {}
     try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
     _redraw();
+    _centerSelInGauge();   // keep the newly-selected block in view
   });
   if (slider) {
     const STEP = 5 * 60 * 1000, MIN = 5 * 60 * 1000;
@@ -19971,6 +20000,88 @@ if (_editToggle) {
   }
   area.addEventListener('touchmove', _schedule, { passive: true });
   area.addEventListener('wheel',     _schedule, { passive: true });
+})();
+
+/* ===== #15 — "Did you actually do it?" on reopen ============================
+   The gentle-auto "continue this task?" prompt auto-continues after ~30 s if
+   untouched. If the prompt is left UNANSWERED and the app is then closed and
+   reopened much later, the session may have auto-continued — crediting focus the
+   user may not have done. On reopen after a long suspend gap (with the prompt
+   unanswered when the app was closed) we ASK. Per the user's choice:
+     • "No, I stopped" → REWIND to the moment they left: cap this task's worked
+       time at the phase boundary (drops only the away-period credit; never
+       touches other tasks or future plans) + stop the timer.
+     • "Yes, keep it"  → keep / continue normally.
+   Detection: a heartbeat tick that observes a real-time GAP far larger than its
+   interval = the app was suspended (JS timers were frozen meanwhile). =========*/
+(function wireReopenDidYouDoIt(){
+  const HEARTBEAT_MS = 4000;
+  const SUSPEND_MS   = 3 * 60 * 1000;     // a gap bigger than this = the app was suspended
+  let _lastTick = Date.now();
+  let _prevPending = false, _prevBoundary = 0, _prevTask = null, _open = false;
+  function _taskName(q, idx){ const t = state.tasks[q] && state.tasks[q][idx]; return (t && t.text) || 'your task'; }
+  function _esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
+  function _rewind(task, boundaryMs){
+    try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser('remote'); } catch (_) {}   // close any open prompt w/o acting
+    (state.scheduledBlocks || []).forEach(b => {
+      if (!b || b.q !== task.q || b.taskIdx !== task.idx) return;
+      if (Array.isArray(b.workedSegments)) {
+        b.workedSegments = b.workedSegments
+          .map(s => ({ startMs: s.startMs, endMs: Math.min(s.endMs, boundaryMs) }))
+          .filter(s => s.endMs > s.startMs);
+      }
+      if (b.activeAt != null) {
+        if (b.activeAt < boundaryMs) {
+          if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
+          b.workedSegments.push({ startMs: b.activeAt, endMs: boundaryMs });
+        }
+        b.activeAt = null;
+        b.activeEndMs = boundaryMs;
+      }
+    });
+    const at = state.activeTimer;
+    if (at && at.q === task.q && at.idx === task.idx) { at.pendingPhaseConfirm = false; state.activeTimer = null; }
+    try { saveState(); } catch (_) {}
+    try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
+    try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+    try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  }
+  function _keep(){ try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser(true); } catch (_) {} }
+  function _ask(task, boundaryMs, awayStartMs){
+    if (_open) return; _open = true;
+    const mins = Math.max(1, Math.round((Date.now() - awayStartMs) / 60000));
+    const ov = document.createElement('div');
+    ov.className = 'reopen-ask-overlay';
+    ov.innerHTML =
+      '<div class="reopen-ask-card" role="dialog" aria-modal="true">' +
+        '<div class="reopen-ask-title">Welcome back 👋</div>' +
+        '<div class="reopen-ask-msg">The app was closed for about <b>' + mins + ' min</b> while <b>' + _esc(task.name) + '</b> was still timing.<br>Were you actually working on it?</div>' +
+        '<div class="reopen-ask-btns">' +
+          '<button type="button" class="reopen-ask-no">No, I stopped</button>' +
+          '<button type="button" class="reopen-ask-yes">Yes, keep it</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    const close = () => { try { ov.remove(); } catch (_) {} _open = false; };
+    ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(); close(); });
+    ov.querySelector('.reopen-ask-no').addEventListener('click', () => { _rewind(task, boundaryMs); close(); });
+  }
+  // on-device test hook (the suspend trigger can't fire in a desktop preview):
+  // call __reopenDidYouDoIt({q,idx,name}, boundaryMs, awayStartMs) to show the dialog.
+  window.__reopenDidYouDoIt = _ask;
+  setInterval(() => {
+    const now = Date.now();
+    const gap = now - _lastTick;
+    const at = state.activeTimer;
+    if (gap > SUSPEND_MS && _prevPending && _prevTask) _ask(_prevTask, _prevBoundary, now - gap);
+    _lastTick = now;
+    _prevPending  = !!(at && at.type === 'pomodoro' && at.pendingPhaseConfirm);
+    _prevBoundary = at ? ((+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0)) : 0;
+    _prevTask     = (at && at.type === 'pomodoro') ? { q: at.q, idx: at.idx, name: _taskName(at.q, at.idx) } : null;
+  }, HEARTBEAT_MS);
 })();
 
 /* ===== GTD chip → open the "Setting Time for Get Things Done" picker. ===== */
@@ -23356,7 +23467,8 @@ setInterval(() => {
           // vertical/diagonal. ONLY the GRIP reorders; a bar-body vertical drag
           // must let the PAGE scroll (touch-action:pan-y) — so we fully RELEASE
           // the gesture (no lock, no preventDefault) and let the browser scroll.
-          if (!_td.fromGrip) { _td = null; return; }   // (#scroll-on-bar)
+          // Clear _draggedTask too (pointerup's cleanup is skipped once _td is null).
+          if (!_td.fromGrip) { _td = null; _draggedTask = null; return; }   // (#scroll-on-bar)
           _td.mode = 'drag';
           if (_td._lockScroll) _td._lockScroll();   // grip reorder → hold the page
           // Spawn the row-shaped ghost ONLY now so a quick tap (no drag)
@@ -25964,6 +26076,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       const EMIT_MS = Math.round(400 + ratio * 2000);          // more water → falls longer
       const SPIN_MS = Math.round(1500 + ratio * 2200);         // SLOW spin: full bucket ≈ 3.7 s for one turn
       const DROP_DELAY  = 500;                                  // droplets start 0.5 s after the spin begins
+      const DROP_FALL_MS = 600;                                 // ~time a droplet takes to FALL to the plant (spawnDrop dur)
       const DRAIN_DELAY = 1000;                                 // bucket water drains 0.5 s after droplets
       const SETTLE_MS   = DRAIN_DELAY + 4200;                   // return after the water has drained
       const cell = _pourCell || { r: 0, c: 0 };                 // the tile we glided over
@@ -26009,9 +26122,13 @@ window.bidoroTaskWaterDrop = function (row, q) {
       }
       // 2) droplets spill from the LOWEST wall's top edge — the visible water surface, which
       //    the bucket has tipped toward the front — NOT the floor (0.5 s after the spin starts).
+      // #11 fill this cell's gauge only once the water DROPLETS actually LAND on the
+      // plant (DROP_DELAY = emit start, + DROP_FALL_MS = fall time), NOT before the
+      // pour — and fill over the emit window so it tracks the falling water.
       setTimeout(() => {
-        // #11 fill this cell's gauge as the water actually pours (over the emit window)
-        if (_liveFill) { _liveFill.style.transition = 'width ' + EMIT_MS + 'ms linear'; void _liveFill.offsetWidth; _liveFill.style.width = Math.round(_liveTo * 100) + '%'; }
+        if (_liveFill && pouring) { _liveFill.style.transition = 'width ' + EMIT_MS + 'ms linear'; void _liveFill.offsetWidth; _liveFill.style.width = Math.round(_liveTo * 100) + '%'; }
+      }, DROP_DELAY + DROP_FALL_MS);
+      setTimeout(() => {
         let elapsed = 0;
         const iv = setInterval(() => {
           if (!pouring || elapsed >= EMIT_MS) { clearInterval(iv); return; }
@@ -26050,9 +26167,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
       cancelInertia();
       _lastGreenCell = null;   // a fresh open shouldn't replay a stale green-blink
       _bucketTracking = false;
-      buildOn = true; buildMode = false; plantMode = false; waterMode = true;
+      buildOn = true; buildMode = false; plantMode = false; sellMode = false; waterMode = true;
       if (viewPour)  viewPour.classList.add('hidden');
       if (viewBuild) viewBuild.classList.remove('hidden');
+      if (trowelSlot) trowelSlot.classList.remove('active');
       if (earthSlot) earthSlot.classList.remove('active');
       if (seedSlot)  seedSlot.classList.remove('active');
       if (confirmEl) confirmEl.classList.add('hidden');
@@ -26110,8 +26228,9 @@ window.bidoroTaskWaterDrop = function (row, q) {
     const CAP = Math.max(9, Math.round(DIAMOND_W * 0.05));   // capsule font ≈ 10% of a cell → small
     const confirmMsg = document.getElementById('water-confirm-msg');
     const seedSlot   = document.getElementById('wh-seed');
+    const trowelSlot = document.getElementById('wh-trowel');
     const SEED_COST  = 100;
-    let buildOn = false, buildMode = false, plantMode = false, waterMode = false, alertMode = false, pendingCell = null, pendingSeed = null;
+    let buildOn = false, buildMode = false, plantMode = false, waterMode = false, sellMode = false, alertMode = false, pendingCell = null, pendingSeed = null;
     let panX = 0, panY = 0, panDrag = null, panMoved = false;
     let panVX = 0, panVY = 0, panLX = 0, panLY = 0, panLT = 0, inertiaRAF = 0;   // momentum-glide state
     function applyPan() {
@@ -26293,7 +26412,10 @@ window.bidoroTaskWaterDrop = function (row, q) {
               g.style.zIndex = String(z + 7);
               const gf = document.createElement('div'); gf.className = 'wg-prog-fill';
               g.appendChild(gf); fieldEl.appendChild(g);
-              void gf.offsetWidth;                              // settle at width 0, then animate the fill in
+              // Set the width DIRECTLY (no 0→frac animation) so a re-render never
+              // makes EVERY tile's gauge re-fill — only the tile being watered
+              // animates, and that's driven by the live pour (_liveFill) instead.
+              gf.style.transition = 'none';
               gf.style.width = Math.round(frac * 100) + '%';
             }
           }
@@ -26345,6 +26467,42 @@ window.bidoroTaskWaterDrop = function (row, q) {
             cap.addEventListener('touchend', plant, { passive: false });
             cap.addEventListener('click', plant);
             fieldEl.appendChild(cap);
+          } else if (sellMode) {
+            // Trowel mode: a GREEN $ tag on every plant (above it) + every empty
+            // bought tile (centred). Tapping the tag — or the plant/tile image
+            // (a transparent diamond hit layer) — sells it. The origin centre
+            // tile itself is never sellable (empty centre → no tag).
+            const _kind = planted ? 'plant' : (!centre ? 'tile' : null);
+            if (_kind) {
+              const _st  = planted ? Math.max(1, Math.min(MAX_STAGE, planted.stage || 1)) : 1;
+              const _val = (_kind === 'plant') ? _plantSellValue(planted) : Math.round(TILE_COST / 2);
+              const _rr = r, _cc = c;
+              const sell = (e) => { e.preventDefault(); e.stopPropagation(); if (panMoved) return; (_kind === 'plant' ? sellPlant : sellTile)(_rr, _cc); };
+              // transparent diamond hit layer (tap the image to sell)
+              const hit = document.createElement('div'); hit.className = 'wg-hit';
+              hit.style.left = (p.x - DIAMOND_W / 2) + 'px'; hit.style.top = (p.y - DIAMOND_H / 2) + 'px';
+              hit.style.width = DIAMOND_W + 'px'; hit.style.height = DIAMOND_H + 'px';
+              hit.style.zIndex = String(z + 3);
+              hit.addEventListener('touchend', sell, { passive: false });
+              hit.addEventListener('click', sell);
+              fieldEl.appendChild(hit);
+              // the green price capsule — above the plant top, or centred on a bare tile
+              const cap = document.createElement('button'); cap.className = 'wg-capsule'; cap.type = 'button';
+              const capW = Math.round(DIAMOND_W * 0.16);
+              let capY = p.y;
+              if (planted) {
+                const _topY = (_st >= 2) ? (p.y + DIAMOND_H * 0.05 - cloverH(_st)) : (p.y - DIAMOND_H * 0.05);
+                capY = _topY - DIAMOND_H * 0.06;
+              }
+              cap.style.left = p.x + 'px'; cap.style.top = capY + 'px';
+              cap.style.width = capW + 'px'; cap.style.height = Math.round(capW * 0.56) + 'px';
+              cap.style.fontSize = Math.round(capW * 0.30) + 'px'; cap.style.padding = '0';
+              cap.style.zIndex = String(z + 9);
+              cap.textContent = '$' + _val;
+              cap.addEventListener('touchend', sell, { passive: false });
+              cap.addEventListener('click', sell);
+              fieldEl.appendChild(cap);
+            }
           }
         } else if (buildMode) {                                // grid + $ only while the earth slot is ON
           const cell = document.createElement('div');         // empty cell — diamond outline
@@ -26406,7 +26564,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       vpEl.addEventListener('mousedown', (e) => { panBegin(e.clientX, e.clientY); const mm = (ev) => panTo(ev.clientX, ev.clientY); const mu = () => { panStop(); window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); }; window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu); });
     }
     function enterBuild() { buildOn = true;  viewPour.classList.add('hidden');  viewBuild.classList.remove('hidden'); panX = 0; panY = 0; applyPan(); }
-    function exitBuild()  { buildOn = false; buildMode = false; plantMode = false; viewBuild.classList.add('hidden'); viewPour.classList.remove('hidden'); earthSlot.classList.remove('active'); if (seedSlot) seedSlot.classList.remove('active'); if (confirmEl) confirmEl.classList.add('hidden'); pendingCell = null; pendingSeed = null; }
+    function exitBuild()  { buildOn = false; buildMode = false; plantMode = false; sellMode = false; viewBuild.classList.add('hidden'); viewPour.classList.remove('hidden'); earthSlot.classList.remove('active'); if (seedSlot) seedSlot.classList.remove('active'); if (trowelSlot) trowelSlot.classList.remove('active'); if (confirmEl) confirmEl.classList.add('hidden'); pendingCell = null; pendingSeed = null; }
     function plantSeed() {
       if (!pendingSeed) return;
       const cell = pendingSeed; pendingSeed = null;
@@ -26429,12 +26587,12 @@ window.bidoroTaskWaterDrop = function (row, q) {
         renderField();                                          // stage-1 buried-seed mound appears
       }, 760);
     }
-    function flyMoney(txt) {
+    function flyMoney(txt, isGain) {
       const m = document.getElementById('water-money');
       if (!flyHost || !m) return;
       const fh = flyHost.getBoundingClientRect(), mr = m.getBoundingClientRect();
       const el = document.createElement('div');
-      el.className = 'water-fly-txt'; el.textContent = txt;
+      el.className = 'water-fly-txt' + (isGain ? ' gain' : ''); el.textContent = txt;
       el.style.left = (mr.left + mr.width / 2 - fh.left) + 'px';
       el.style.top  = (mr.top - fh.top - 4) + 'px';
       flyHost.appendChild(el);
@@ -26455,6 +26613,38 @@ window.bidoroTaskWaterDrop = function (row, q) {
       flyMoney('-$' + TILE_COST);                              // red ghost rises from the money
       renderField();
     }
+    /* ===== SELL (trowel mode) — refund a plant or an empty tile =====
+       • Empty tile      → TILE_COST / 2 (the tile vanishes, leaving bare grid).
+       • Un-grown seed   → SEED_COST / 2.
+       • Grown clover    → SEED_COST + (SEED_COST/10) per stage advanced.
+                           e.g. stage-2 sprout = 100 + 10 = $110. */
+    function _plantSellValue(seed) {
+      const st = Math.max(1, Math.min(MAX_STAGE, (seed && seed.stage) || 1));
+      if (st <= 1) return Math.round(SEED_COST / 2);          // un-grown seed → half
+      return Math.round(SEED_COST + (SEED_COST / 10) * (st - 1));   // grown → full + 1/10 per stage
+    }
+    function _sellCommit(val) {
+      state.money = (+state.money || 0) + val;                 // real income
+      try { saveState(); } catch (_) {}
+      try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
+      try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+      try { if (typeof renderMoneyCard === 'function') renderMoneyCard(); } catch (_) {}
+      updateMoney();
+      flyMoney('+$' + val, true);                              // GREEN ghost rises from the money
+      renderField();
+    }
+    function sellPlant(r, c) {                                 // remove the plant, KEEP the tile (re-plantable)
+      const s = seedAt(r, c); if (!s) return;
+      const val = _plantSellValue(s);
+      const arr = gardenSeeds(); const i = arr.indexOf(s); if (i >= 0) arr.splice(i, 1);
+      _sellCommit(val);
+    }
+    function sellTile(r, c) {                                  // remove the tile (+ any plant on it) → bare grid
+      const tiles = gardenTiles(); const ti = tiles.findIndex(t => t.r === r && t.c === c); if (ti < 0) return;
+      tiles.splice(ti, 1);
+      const seeds = gardenSeeds(); const si = seeds.findIndex(s => s.r === r && s.c === c); if (si >= 0) seeds.splice(si, 1);
+      _sellCommit(Math.round(TILE_COST / 2));
+    }
 
     sproutBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); });
     function closeTap(e) { e.preventDefault(); e.stopPropagation(); close(); }   // X → hide overlay → back to the page
@@ -26468,10 +26658,11 @@ window.bidoroTaskWaterDrop = function (row, q) {
         e.preventDefault(); e.stopPropagation();
         if (!buildOn) enterWaterField();
         buildMode = !buildMode;
-        plantMode = false;                                      // earth / seed / water modes are exclusive
+        plantMode = false; sellMode = false;                    // earth / seed / trowel / water modes are exclusive
         waterMode = !buildMode;                                 // earth slot OFF → back to water-drops
         earthSlot.classList.toggle('active', buildMode);
-        if (seedSlot) seedSlot.classList.remove('active');
+        if (seedSlot)   seedSlot.classList.remove('active');
+        if (trowelSlot) trowelSlot.classList.remove('active');
         renderField();
       };
       earthSlot.addEventListener('touchend', earthTap, { passive: false });
@@ -26482,14 +26673,30 @@ window.bidoroTaskWaterDrop = function (row, q) {
         e.preventDefault(); e.stopPropagation();
         if (!buildOn) enterWaterField();
         plantMode = !plantMode;
-        buildMode = false;
+        buildMode = false; sellMode = false;
         waterMode = !plantMode;                                 // seed slot OFF → back to water-drops
         seedSlot.classList.toggle('active', plantMode);
-        if (earthSlot) earthSlot.classList.remove('active');
+        if (earthSlot)  earthSlot.classList.remove('active');
+        if (trowelSlot) trowelSlot.classList.remove('active');
         renderField();                                          // brown blink-dots on earth tiles
       };
       seedSlot.addEventListener('touchend', seedTap, { passive: false });
       seedSlot.addEventListener('click', seedTap);
+    }
+    if (trowelSlot) {
+      const trowelTap = (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (!buildOn) enterWaterField();
+        sellMode = !sellMode;
+        buildMode = false; plantMode = false;
+        waterMode = !sellMode;                                  // trowel OFF → back to water-drops
+        trowelSlot.classList.toggle('active', sellMode);
+        if (earthSlot) earthSlot.classList.remove('active');
+        if (seedSlot)  seedSlot.classList.remove('active');
+        renderField();                                          // green $ tags on every tile / plant
+      };
+      trowelSlot.addEventListener('touchend', trowelTap, { passive: false });
+      trowelSlot.addEventListener('click', trowelTap);
     }
     if (confirmOk)     { const ok = (e) => { e.preventDefault(); e.stopPropagation(); if (alertMode) { alertMode = false; if (confirmEl) confirmEl.classList.add('hidden'); } else if (pendingSeed) { plantSeed(); } else { doBuy(); } }; confirmOk.addEventListener('touchend', ok, { passive: false }); confirmOk.addEventListener('click', ok); }
     if (confirmCancel) { const cc = (e) => { e.preventDefault(); e.stopPropagation(); pendingCell = null; pendingSeed = null; if (confirmEl) confirmEl.classList.add('hidden'); }; confirmCancel.addEventListener('touchend', cc, { passive: false }); confirmCancel.addEventListener('click', cc); }
