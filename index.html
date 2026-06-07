@@ -610,6 +610,13 @@
   .note-reply-row .nr-heart { font-size: 1.05rem; color: #9ca3af; }
   .note-reply-row .nr-heart.on { color: #db2777; }
   .note-reply-row .nr-report:hover { color: #b91c1c; }
+  /* "Kind words you've sent" — each item is the OTHER person's note over my ⤷ reply. */
+  .myreply-item { padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .myreply-item:last-child { border-bottom: 0; }
+  .myreply-item .myreply-other { gap: 8px; }
+  .myreply-item .myreply-other .note-text { color: var(--text-muted); }
+  .myreply-item .myreply-other .note-text.myreply-reported { text-decoration: line-through; opacity: .6; }
+  .myreply-item .note-reply-row { padding-top: 2px; padding-bottom: 0; }
   /* Admin → user banner (message + block notice + appeal input) atop the Notes list. */
   .note-admin-banner { margin: 0 0 12px; border-radius: 12px; overflow: hidden; border: 1px solid var(--card-border); }
   .note-admin-banner .nab-msg { background: #fef3c7; color: #92400e; font-weight: 700; padding: 10px 14px; line-height: 1.4; }
@@ -617,8 +624,10 @@
   .note-admin-banner .nab-appeal { display: flex; gap: 8px; padding: 10px 12px; background: var(--surface-2, #f9fafb); }
   .note-admin-banner .nab-input { flex: 1 1 auto; min-width: 0; font: inherit; padding: 8px 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--card-bg, #fff); color: var(--text-main); }
   .note-admin-banner .nab-send { flex: 0 0 auto; font: inherit; font-weight: 700; padding: 8px 16px; border-radius: 999px; border: 1px solid var(--ink, #111827); background: var(--ink, #111827); color: var(--card-bg, #fff); cursor: pointer; -webkit-tap-highlight-color: transparent; }
-  /* Comment popup (reply to someone's shared memo). */
-  .memo-cmt-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px; }
+  /* Comment popup (reply to someone's shared memo). The extra bottom padding biases
+     the centred box UPWARD by ~50px so it opens close to where the iPhone keyboard will
+     push it (see body.ios-kb-open lift below) — avoiding the centre→up "jump". */
+  .memo-cmt-back { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; padding: 18px 18px 120px; }
   .memo-cmt-box { width: 100%; max-width: 380px; background: var(--card-bg, #fff); color: var(--text-main, #111827); border-radius: 14px; padding: 18px; box-shadow: 0 10px 40px rgba(0,0,0,.3); }
   .memo-cmt-title { margin: 0 0 4px; font-size: 1.1rem; }
   .memo-cmt-sub { margin: 0 0 10px; font-size: .82rem; color: var(--text-muted, #6b7280); }
@@ -2897,6 +2906,79 @@
   /* Decision Matrix focus (flip): the gauge panel fills below the 2×2 grid. */
   body.fv-active.tt-flip #time-panel { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
   body.fv-active.tt-flip #time-panel .time-area { flex: 1 1 auto; min-height: 0; }
+
+  /* ============ WIDE HOME — iPad (portrait + landscape) + PC homepage ============
+     (NOT the iPhone app / phone web — those stay below 701px and are untouched.)
+     Goal (per request): the bucket/money card rides UP beside "Now focusing on"
+     (each ~half width); the Tasks 2×2 grid spans the FULL width below them; the
+     left gauge is CLIPPED to the viewport instead of being a 1680px page-scroll,
+     and its bottom edge lines up with the Tasks bottom edge. With few tasks the
+     whole thing fills the viewport (no scroll) and the 4 quadrant cells grow to
+     soak up any leftover height; with many tasks both columns grow together so the
+     gauge bottom keeps tracking the Tasks bottom. layoutFocusHomeWide() (JS) sets
+     .focus-layout's min-height to the visible viewport; grid `stretch` keeps the
+     gauge column and the right column the same height. */
+  @media (min-width: 701px) {
+    body:not(.fv-active) #focus-page .focus-layout {
+      grid-template-rows: 1fr;        /* single row fills the JS min-height */
+      align-items: stretch;           /* gauge column == right column height */
+    }
+    /* Right column → 2 rows: [focus-card | bucket] then [Tasks, full width]. */
+    body:not(.fv-active) #focus-page .focus-right {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: auto 1fr;
+      gap: 8px;
+      min-height: 0;
+    }
+    /* min-width:0 lets both top cards shrink to an exact 50/50 split (otherwise the
+       bucket's min-content would steal width and make it wider than the focus-card). */
+    body:not(.fv-active) #focus-page .focus-right > #focus-card    { grid-column: 1; grid-row: 1; align-self: stretch; min-width: 0; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section { grid-column: 2; grid-row: 1; align-self: stretch; min-width: 0; }
+    /* #tasks-panel is promoted out of #time-tasks-wrap (which is display:contents
+       on wide), so it acts as a direct grid ITEM here even though it is not a DOM
+       child of .focus-right — hence no `>` combinator. */
+    body:not(.fv-active) #focus-page #tasks-panel {
+      grid-column: 1 / -1; grid-row: 2;
+      min-height: 0; display: flex; flex-direction: column;
+    }
+    /* Tasks fills row 2 → the 2×2 matrix + its 4 cells grow to fill any leftover. */
+    body:not(.fv-active) #focus-page #tasks-panel .focus-matrix {
+      flex: 1 1 auto; min-height: 0; grid-auto-rows: 1fr; align-content: stretch;
+    }
+
+    /* Compact bucket so the top row stays short (≈ the focus-card height); this
+       overrides the big centred C1/C4 bucket. It now fills its half-width cell. */
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section {
+      max-width: none; margin: 0; padding: 10px 18px; gap: 14px;
+    }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-left { gap: 9px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .fc-money-big { font-size: 1.7rem; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .fc-money-change { font-size: .8rem; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-buttons { gap: 12px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-btn { width: 40px; height: 40px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-stage { flex: 0 0 auto; width: 132px; max-width: 132px; }
+    /* The 3D bucket renders at a fixed px footprint (perspective-magnified to
+       ~160px tall) — too big for the compact card. Scale the scene down so it
+       sits neatly inside (overrides the .b3d-active scale(0.82)). */
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section.b3d-active #b3d-scene { transform: scale(0.5); }
+
+    /* Left gauge: stop being 1680px tall — fill the column height & clip; the JS
+       scroll-to-now shows the current time near the top, upcoming blocks below.
+       Scrollbar hidden so the column stays clean (still swipe/wheel-scrollable). */
+    body:not(.fv-active) #focus-page .gauge-wrap { min-height: 0; }
+    /* flex-basis:0 (not auto) is critical: with `auto` the gauge exposes its
+       1680px inner as max-content, which blows the grid's 1fr row up to 1680px.
+       With basis 0 the gauge contributes nothing to intrinsic sizing but still
+       GROWS to fill the column height the right side dictates. */
+    body:not(.fv-active) #focus-page .gauge-col {
+      flex: 1 1 0; height: auto; min-height: 0;
+      overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: none;
+    }
+    body:not(.fv-active) #focus-page .gauge-col::-webkit-scrollbar { width: 0; height: 0; display: none; }
+    body:not(.fv-active) #focus-page .gauge-inner { min-height: 100%; }
+  }
 
   .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 700px) { .scores { grid-template-columns: 1fr; } }
@@ -6769,6 +6851,13 @@
       <div class="note-count-row"><span id="note-count" class="help"></span></div>
       <div class="note-list" id="note-list"></div>
     </div>
+    <!-- Replies I've left on OTHERS' shared notes. Each entry: their note (1 line) with
+         a flag to report it, then my reply on a ⤷ row with edit + delete. (BATCH 3) -->
+    <div class="panel notes-panel" id="my-replies-panel" style="display:none;">
+      <h2>Kind words you've sent</h2>
+      <p class="help">Replies you left on others' shared notes. Edit or remove yours with the pencil / ✕; the flag reports their note so it stops showing in your top bar.</p>
+      <div class="note-list" id="my-replies-list"></div>
+    </div>
   </section>
 </main>
 
@@ -8241,9 +8330,24 @@ async function postMemoComment(memoId, text) {
     const row = { memo_id: memoId, author_client_id: state.shareClientId, text: t };
     // Tag the reply with my auth user id if signed up → admin page can show my email.
     try { const { data: { session } } = await sb.auth.getSession(); if (session && session.user && session.user.id) row.user_id = session.user.id; } catch (_) {}
-    let res = await sb.from(SB_COMMENTS_TABLE).insert(row);
-    if (res.error && row.user_id && /user_id|column/i.test(res.error.message || '')) { delete row.user_id; res = await sb.from(SB_COMMENTS_TABLE).insert(row); }
-    return !res.error;
+    // .select('id') so we can keep the row id locally → edit / delete my reply later.
+    let res = await sb.from(SB_COMMENTS_TABLE).insert(row).select('id').maybeSingle();
+    if (res.error && row.user_id && /user_id|column/i.test(res.error.message || '')) { delete row.user_id; res = await sb.from(SB_COMMENTS_TABLE).insert(row).select('id').maybeSingle(); }
+    if (res.error) return false;
+    return (res.data && res.data.id != null) ? res.data.id : true;   // id (number) on success, else true
+  } catch (_) { return false; }
+}
+/* Edit / delete one of MY replies on the server (best-effort; no-ops if the table
+   or RLS isn't set up). The local state.myReplies list is the UI's source of truth. */
+async function updateMemoComment(id, text) {
+  try { const sb = await getSupabaseClient(); if (!sb || id == null) return false;
+    const t = cleanShareText(text); if (!t || containsProfanity(t)) return false;
+    const { error } = await sb.from(SB_COMMENTS_TABLE).update({ text: t }).eq('id', id); return !error;
+  } catch (_) { return false; }
+}
+async function deleteMemoComment(id) {
+  try { const sb = await getSupabaseClient(); if (!sb || id == null) return false;
+    const { error } = await sb.from(SB_COMMENTS_TABLE).delete().eq('id', id); return !error;
   } catch (_) { return false; }
 }
 async function fetchRepliesToMyMemo() {
@@ -8338,8 +8442,24 @@ function openMemoCommentPopup(memoId, memoText) {
     if (state.adminControl && state.adminControl.no_comment) { close(); _memoToast('Commenting is turned off for your account.'); return; }
     const t = (ta.value || '').trim(); if (!t) { ta.focus(); return; }
     const btn = box.querySelector('.memo-cmt-send'); btn.disabled = true; btn.textContent = 'Sending…';
-    const ok = await postMemoComment(memoId, t);
-    close(); _memoToast(ok ? 'Sent ♥' : "Couldn't send — try again later");
+    const res = await postMemoComment(memoId, t);
+    if (res) {
+      // Keep a local record so it shows in the "Kind words you've sent" Notes section
+      // (with the other person's note) and can be edited / deleted later.
+      if (!Array.isArray(state.myReplies)) state.myReplies = [];
+      state.myReplies.unshift({
+        lid: 'r' + Date.now(),
+        id: (typeof res === 'number' ? res : null),   // server comment id (for edit/delete), or null
+        memoId: memoId,
+        memoText: memoText || '',
+        text: t,
+        ts: Date.now()
+      });
+      if (state.myReplies.length > 100) state.myReplies.length = 100;
+      try { saveState(); } catch (_) {}
+      try { renderMyReplies(); } catch (_) {}
+    }
+    close(); _memoToast(res ? 'Sent ♥' : "Couldn't send — try again later");
   });
 }
 
@@ -9333,6 +9453,73 @@ function renderNotes(){
         list.appendChild(rr);
       });
     }
+  });
+  try { renderMyReplies(); } catch (_) {}
+}
+let _myReplyEditLid = null;
+/* "Kind words you've sent" — render MY replies to OTHERS' shared notes. Each item:
+   the other person's note (1 line, + a flag to report it) over my reply on a ⤷ row
+   (with edit + delete). Source of truth = state.myReplies, recorded when I send a
+   reply via openMemoCommentPopup. The whole section hides when I've sent none. */
+function renderMyReplies(){
+  const panel = document.getElementById('my-replies-panel');
+  const list  = document.getElementById('my-replies-list');
+  if (!panel || !list) return;
+  const items = Array.isArray(state.myReplies) ? state.myReplies : [];
+  list.innerHTML = '';
+  if (!items.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  items.forEach((r) => {
+    const wrap = document.createElement('div'); wrap.className = 'myreply-item';
+    // Row 1 — the OTHER person's note, with a flag to report it.
+    const orow = document.createElement('div'); orow.className = 'note-row myreply-other';
+    const otx = document.createElement('span'); otx.className = 'note-text' + (r.reported ? ' myreply-reported' : ''); otx.textContent = r.memoText || '(their note)';
+    orow.appendChild(otx);
+    if (r.reported) {
+      const tag = document.createElement('span'); tag.className = 'nr-flag'; tag.textContent = 'reported'; orow.appendChild(tag);
+    } else {
+      const flag = document.createElement('button'); flag.type = 'button'; flag.className = 'note-act nr-report'; flag.innerHTML = _NOTE_ICON_FLAG; flag.title = 'Report their note'; flag.setAttribute('aria-label', 'Report their note');
+      flag.addEventListener('click', () => {
+        r.reported = true;
+        if (r.memoId != null) { if (!Array.isArray(state.hiddenSharedMemos)) state.hiddenSharedMemos = []; if (!state.hiddenSharedMemos.includes(r.memoId)) state.hiddenSharedMemos.push(r.memoId); }
+        try { saveState(); } catch (_) {}
+        try { refreshMotivation(true); } catch (_) {}
+        renderMyReplies(); _memoToast("Reported — you won't see their note again.");
+      });
+      orow.appendChild(flag);
+    }
+    wrap.appendChild(orow);
+    // Row 2 — MY reply on a ⤷ row, with edit + delete (or an inline editor).
+    const rr = document.createElement('div'); rr.className = 'note-reply-row';
+    const arrow = document.createElement('span'); arrow.className = 'nr-arrow'; arrow.textContent = '⤷';
+    rr.appendChild(arrow);
+    if (_myReplyEditLid === r.lid) {
+      const inp = document.createElement('input'); inp.className = 'note-edit-input'; inp.maxLength = 200; inp.value = r.text;
+      const ok = document.createElement('button'); ok.type = 'button'; ok.className = 'note-act'; ok.innerHTML = _NOTE_ICON_OK; ok.title = 'Save';
+      const commit = () => {
+        const t = inp.value.trim(); _myReplyEditLid = null;
+        if (t && t !== r.text) { r.text = t; try { saveState(); } catch (_) {} renderMyReplies(); try { updateMemoComment(r.id, t); } catch (_) {} }
+        else renderMyReplies();
+      };
+      ok.addEventListener('click', commit);
+      inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') { _myReplyEditLid = null; renderMyReplies(); } });
+      rr.appendChild(inp); rr.appendChild(ok);
+      wrap.appendChild(rr); list.appendChild(wrap);
+      setTimeout(() => { try { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); } catch (_) {} }, 0);
+      return;
+    }
+    const txt = document.createElement('span'); txt.className = 'nr-text'; txt.textContent = r.text;
+    const ed = document.createElement('button'); ed.type = 'button'; ed.className = 'note-act note-edit'; ed.innerHTML = _NOTE_ICON_PEN; ed.title = 'Edit your reply'; ed.setAttribute('aria-label', 'Edit your reply');
+    ed.addEventListener('click', () => { _myReplyEditLid = r.lid; renderMyReplies(); });
+    const del = document.createElement('button'); del.type = 'button'; del.className = 'note-act note-del'; del.innerHTML = _NOTE_ICON_X; del.title = 'Delete your reply'; del.setAttribute('aria-label', 'Delete your reply');
+    del.addEventListener('click', () => {
+      const idx = state.myReplies.indexOf(r); if (idx < 0) return;
+      const cid = r.id; state.myReplies.splice(idx, 1);
+      try { saveState(); } catch (_) {} renderMyReplies();
+      try { if (cid != null) deleteMemoComment(cid); } catch (_) {}
+    });
+    rr.appendChild(txt); rr.appendChild(ed); rr.appendChild(del);
+    wrap.appendChild(rr); list.appendChild(wrap);
   });
 }
 (function wireNotes(){
@@ -11666,8 +11853,26 @@ function initFocusPage() {
   updateCountdowns();
   if (typeof updateSleepButtonLabel === 'function') updateSleepButtonLabel();
   startFocusTicker();
-  // Scroll the gauge to the current time line
-  setTimeout(scrollGaugeToCurrentTime, 50);
+  // Size the wide-home layout to the viewport, THEN scroll the gauge to now (the
+  // gauge height depends on that layout, so order matters).
+  layoutFocusHomeWide();
+  setTimeout(() => { layoutFocusHomeWide(); scrollGaugeToCurrentTime(); }, 50);
+}
+/* Wide home (iPad + PC): make .focus-layout at least the visible viewport tall so
+   the first screen fills with no scroll; grid `stretch` then matches the gauge
+   column to the right column and the Tasks 2×2 cells grow into any leftover.
+   No-op on phones (the left gauge is hidden there) and in Focus View (its own
+   _fvLayout owns the height). */
+function layoutFocusHomeWide() {
+  const layout = document.querySelector('#focus-page .focus-layout');
+  if (!layout) return;
+  const wide = window.matchMedia('(min-width: 701px)').matches;
+  if (!wide || document.body.classList.contains('fv-active')) { layout.style.minHeight = ''; return; }
+  const main = document.querySelector('main');
+  if (!main) return;
+  const cs = getComputedStyle(main);
+  const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+  layout.style.minHeight = Math.max(360, Math.round(main.clientHeight - padY)) + 'px';
 }
 function scrollGaugeToCurrentTime() {
   const col = document.getElementById('gauge-col');
@@ -11678,7 +11883,11 @@ function scrollGaugeToCurrentTime() {
   const innerHeight = inner.offsetHeight;
   const linePixel = (lineTopPct / 100) * innerHeight;
   const colHeight = col.offsetHeight;
-  col.scrollTop = Math.max(0, linePixel - colHeight / 2);
+  // Wide home: now-line sits ~22% down so a little past context shows above and
+  // the upcoming blocks fill the rest below. (Mobile hides this gauge entirely,
+  // so the 0.5 branch is academic.)
+  const frac = window.matchMedia('(min-width: 701px)').matches ? 0.22 : 0.5;
+  col.scrollTop = Math.max(0, linePixel - colHeight * frac);
 }
 function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
@@ -12892,6 +13101,40 @@ function switchPomodoroTaskWithinWindow(q, i) {
       q: t1q, taskIdx: t1i, taskName: (t1task && t1task.text) || '',
       startMs: now + D, endMs: now + D + t1RemainMs, activeAt: null, activeEndMs: null, _combine: true
     });
+  }
+
+  // 4.5 COMPENSATE: if task2 ALREADY has a planned box downstream, BORROW the new
+  //     box's D from it — cut D off the EARLIEST downstream task2 box (drop it if
+  //     it's ≤ D) and pull everything below the cut UP by the amount cut. So
+  //     task2's total time AND the schedule length stay the same instead of
+  //     growing by D every switch (the user's "2 of the same task overlap" bug).
+  //     No downstream task2 box → no compensation (schedule simply extends by D).
+  {
+    const _newBoxEnd = now + D;
+    const _t2next = (state.scheduledBlocks || [])
+      .filter(b => b && b.q === q && b.taskIdx === i && !b.isBreak && b.activeAt == null && b.activeEndMs == null && b.startMs >= _newBoxEnd - 1000)
+      .sort((a, b) => a.startMs - b.startMs)[0];
+    if (_t2next) {
+      const _bd  = _t2next.endMs - _t2next.startMs;
+      const _cut = Math.min(D, _bd);
+      const _below = _t2next.endMs;                 // pull-up reference (its current bottom)
+      if (_cut >= _bd - 1000) {
+        const _ix = state.scheduledBlocks.indexOf(_t2next);
+        if (_ix >= 0) state.scheduledBlocks.splice(_ix, 1);   // box ≤ D → remove it whole
+      } else {
+        _t2next.endMs -= _cut;                      // shrink from the bottom (re-chunks 25/5 on render)
+        if (Array.isArray(_t2next.taskSegs)) _t2next.taskSegs = _t2next.taskSegs.filter(s => s.endMs <= _t2next.endMs + 1000);
+      }
+      state.scheduledBlocks.forEach(b => {
+        if (!b || b.kind === 'tracker' || b === _t2next) return;
+        if (b.activeAt != null || b.activeEndMs != null) return;
+        if (b.startMs >= _below - 1000) {           // below the cut → pull UP by _cut
+          b.startMs -= _cut; b.endMs -= _cut;
+          if (Array.isArray(b.taskSegs))      b.taskSegs.forEach(s => { s.startMs -= _cut; s.endMs -= _cut; });
+          if (Array.isArray(b.breakSegments)) b.breakSegments.forEach(s => { s.startMs -= _cut; s.endMs -= _cut; });
+        }
+      });
+    }
   }
 
   // 5. Switch the running timer to task2 with a FRESH 25-min work phase (task2 is a NEW box,
@@ -18772,6 +19015,19 @@ function refreshMotivation(force) {
     e.preventDefault(); e.stopPropagation();
     try { openMemoCommentPopup(+_env.dataset.memoId, state.motivationalCurrent.text); } catch (_) {}
   });
+  // For others' shared (green) notes, tapping the message TEXT itself also opens the
+  // reply popup — same as the envelope — so the whole quote is a reply target, not just
+  // the small icon. stopPropagation keeps the parent's "open Notes" handler from firing.
+  if (isGreen && memoId != null) {
+    const _trk = el.querySelector('.motivation-track');
+    if (_trk) {
+      _trk.style.cursor = 'pointer';
+      _trk.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        try { openMemoCommentPopup(memoId, state.motivationalCurrent.text); } catch (_) {}
+      });
+    }
+  }
   applyMotivationMarquee();
 }
 
@@ -19771,6 +20027,19 @@ function exitFocusView() {
 window.enterFocusView = enterFocusView;
 window.exitFocusView = exitFocusView;
 window.addEventListener('resize', () => { try { if (document.body.classList.contains('fv-active')) { _fvLayout(); if (typeof drawTimeArea === 'function') drawTimeArea(); } } catch (_) {} });
+// Wide home (NOT Focus View): re-fit .focus-layout to the viewport + re-scroll the
+// gauge to now on window resize / iPad rotation, so the gauge stays clipped-to-
+// viewport with its bottom tracking the Tasks bottom.
+function _onResizeFocusHome() {
+  try {
+    if (state.currentPage === 'focus' && !document.body.classList.contains('fv-active')) {
+      if (typeof layoutFocusHomeWide === 'function') layoutFocusHomeWide();
+      if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime();
+    }
+  } catch (_) {}
+}
+window.addEventListener('resize', _onResizeFocusHome);
+window.addEventListener('orientationchange', () => setTimeout(_onResizeFocusHome, 300));
 let _ttFlipBusy = false;
 function flipTimeTasks(toBack) {
   toBack = !!toBack;
