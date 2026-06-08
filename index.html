@@ -6412,6 +6412,22 @@
   .cal-cat-cnt { font-size: .8rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; }
   .cal-cat-dots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
   .cal-cat-dot { width: 100%; aspect-ratio: 1 / 1; border-radius: 50%; background: var(--card-border, #e5e7eb); }
+  /* Event editor — type icons + bucket-side picker. */
+  .event-row-label { font-size: .8rem; font-weight: 700; color: var(--text-muted, #6b7280); margin: 12px 0 6px; }
+  .event-icon-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .event-icon-btn { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-muted, #6b7280); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .event-icon-btn.sel { border-color: var(--accent, #2563eb); color: var(--text-main, #111827); box-shadow: 0 0 0 2px var(--card-bg, #fff), 0 0 0 4px var(--accent, #2563eb); }
+  .event-side-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .event-side-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; box-shadow: 0 0 0 1px rgba(0,0,0,.12); font-size: .7rem; font-weight: 800; color: rgba(0,0,0,.55); display: inline-flex; align-items: center; justify-content: center; padding: 0; }
+  .event-side-dot.none { background: var(--button-bg, #f3f4f6); color: var(--text-muted, #9ca3af); box-shadow: 0 0 0 1px var(--card-border, #e5e7eb); }
+  .event-side-dot.sel { border-color: var(--text-main, #111827); box-shadow: 0 0 0 2px var(--card-bg, #fff), 0 1px 4px rgba(0,0,0,.3); transform: scale(1.08); }
+  .cal-ev-icon { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; color: var(--text-muted, #6b7280); }
+  .cal-ev-row { cursor: pointer; }
+  .cal-task-rep { opacity: .75; font-weight: 800; }
+  .cal-sprout { display: flex; align-items: center; justify-content: center; gap: 7px; margin: 16px 0 4px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2, var(--button-bg, #f3f4f6)); color: var(--text-main, #374151); font-weight: 700; font-size: .9rem; }
+  /* Calendar + Garden are iPhone-app features for now → hidden on plain web / iPad. */
+  html:not(.is-native-ios) #tmd-calendar,
+  html:not(.is-native-ios) #tmd-garden { display: none; }
 </style>
 </head>
 <body>
@@ -7198,6 +7214,8 @@
         <div id="cal-events-list"></div>
         <div class="cal-sub"><h3>Tasks</h3><button class="cal-add-btn" id="cal-add-task" type="button">+ Add Task</button></div>
         <div id="cal-tasks-list"></div>
+        <!-- Sprout summary for the selected day (focus on bucket sides → bucket fill). -->
+        <div class="cal-sprout" id="cal-sprout"></div>
       </div>
       <div id="cal-agenda-view" style="display:none;"></div>
       <div id="cal-routine-view" style="display:none;">
@@ -7510,6 +7528,11 @@
       <label><span>Start</span><input type="datetime-local" id="event-start"></label>
       <label><span>End</span><input type="datetime-local" id="event-end"></label>
     </div>
+    <!-- Type icon + bucket-side (event colour = side colour, grey if none). -->
+    <div class="event-row-label">Type</div>
+    <div class="event-icon-row" id="event-icon-row"></div>
+    <div class="event-row-label">Bucket side</div>
+    <div class="event-side-row" id="event-side-row"></div>
     <div class="actions">
       <button class="btn danger" id="event-delete" style="display:none;">Delete</button>
       <button class="btn" id="event-cancel">Cancel</button>
@@ -9677,10 +9700,18 @@ function _calKeyToDate(key) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
   return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
 }
-function _tasksOnDate(key) {               // [{q,idx,task}] created on that day
+function _tasksOnDate(key) {               // [{q,idx,task,_repeat?}] on that day
   const out = [];
+  const dd = _calKeyToDate(key); const dow = dd ? dd.getDay() : -1;   // 0=Sun..6=Sat
   ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach((t, idx) => {
-    if (t && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) === key) out.push({ q, idx, task: t });
+    if (!t) return;
+    const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+    const onCreated = createdKey === key;
+    // Recurrence (E): show on every matching weekday on/after the creation day
+    // ('YYYY-MM-DD' string compare = chronological). Projected, not duplicated in state.
+    const repeats = !onCreated && Array.isArray(t.repeat) && t.repeat.length && dow >= 0 &&
+                    t.repeat.indexOf(dow) >= 0 && createdKey && key >= createdKey;
+    if (onCreated || repeats) out.push({ q, idx, task: t, _repeat: !!repeats });
   }));
   return out;
 }
@@ -9763,7 +9794,8 @@ function _calRenderDayLists() {
     evWrap.innerHTML = evs.length ? evs.map(ev => {
       const t = new Date(ev.startMs), hh = t.getHours(), mm = t.getMinutes();
       const tm = ((hh % 12) || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM');
-      return '<div class="cal-ev-row" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span></div>';
+      const ic = ev.icon ? '<span class="cal-ev-icon">' + _eventIconSvg(ev.icon, 16) + '</span>' : '';
+      return '<div class="cal-ev-row" data-id="' + ev.id + '" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span>' + ic + '</div>';
     }).join('') : '<div class="cal-empty-note">No events</div>';
   }
   const tkWrap = document.getElementById('cal-tasks-list');
@@ -9771,8 +9803,22 @@ function _calRenderDayLists() {
     const tks = _tasksOnDate(key);
     tkWrap.innerHTML = tks.length ? tks.map(o => {
       const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
-      return '<div class="cal-task-row" style="background:' + col + '">' + escapeHTML(o.task.text || '') + '</div>';
+      const rep = o._repeat ? ' <span class="cal-task-rep">↻</span>' : '';   // projected recurrence
+      return '<div class="cal-task-row" style="background:' + col + '">' + escapeHTML(o.task.text || '') + rep + '</div>';
     }).join('') : '<div class="cal-empty-note">No tasks</div>';
+  }
+  // Sprout summary: the selected day's focus time + current bucket fill.
+  const sprout = document.getElementById('cal-sprout');
+  if (sprout) {
+    let mins = 0;
+    (state.watchLog || []).forEach(e => { if (e && e.type === 'pomodoro' && typeof e.startedAt === 'number' && _calDateKey(e.startedAt) === key) mins += (e.durationMs || 0) / 60000; });
+    mins = Math.round(mins);
+    const hh = Math.floor(mins / 60), mm = mins % 60;
+    const focusedStr = mins ? (hh ? (hh + 'h ' + (mm ? mm + 'm' : '')).trim() : mm + 'm') : null;
+    let bucketStr = '';
+    try { if (typeof window.bidoroBucketWaterRatio === 'function') bucketStr = ' · Bucket ' + Math.round(window.bidoroBucketWaterRatio() * 100) + '%'; } catch (_) {}
+    const sproutSvg = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#3aa776" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c0-3 2.4-5 5.4-5 .2 2.8-2 5-5.4 5z"/><path d="M12 13c0-2.6-2.1-4.4-4.7-4.4C7.1 11 9 13 12 13z"/></svg>';
+    sprout.innerHTML = sproutSvg + '<span>' + (focusedStr ? ('Focused ' + focusedStr) : 'No focus logged') + bucketStr + '</span>';
   }
 }
 function _calRenderAgenda() {
@@ -9789,7 +9835,8 @@ function _calRenderAgenda() {
     evs.forEach(ev => {
       const t = new Date(ev.startMs), hh = t.getHours(), mm = t.getMinutes();
       const tm = ((hh % 12) || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM');
-      html += '<div class="cal-ev-row" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span></div>';
+      const ic = ev.icon ? '<span class="cal-ev-icon">' + _eventIconSvg(ev.icon, 16) + '</span>' : '';
+      html += '<div class="cal-ev-row" data-id="' + ev.id + '" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span>' + ic + '</div>';
     });
     tks.forEach(o => {
       const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
@@ -9911,18 +9958,16 @@ async function _calAddTask() {
   try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
   renderCalendar();
 }
-async function _calAddEvent() {
-  if (typeof openNoteEditor !== 'function') return;
-  const v = await openNoteEditor('', { title: 'New event', subtitle: 'Starts 9:00 AM on the selected day (1 h).', singleLine: true, maxLength: 120 });
-  if (v == null) return;
-  const text = ((typeof v === 'string') ? v : (v.text || '')).trim();
-  if (!text) return;
+function _calAddEvent() {
   _calInit();
-  const d = _calKeyToDate(_calState.selKey) || new Date(); d.setHours(9, 0, 0, 0);
-  if (!Array.isArray(state.events)) state.events = [];
-  state.events.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2), name: text.slice(0, 120), startMs: d.getTime(), endMs: d.getTime() + 3600000 });
-  try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
-  renderCalendar();
+  if (typeof openEventModal !== 'function') return;
+  const d = _calKeyToDate(_calState.selKey) || new Date();
+  openEventModal(null, { defaultDate: d, onSaved: function () { try { renderCalendar(); } catch (_) {} } });
+}
+function _calEditEvent(id) {
+  const ev = (state.events || []).find(x => x.id === id);
+  if (!ev || typeof openEventModal !== 'function') return;
+  openEventModal(ev, { onSaved: function () { try { renderCalendar(); } catch (_) {} } });
 }
 (function wireCalendar() {
   const seg = document.getElementById('cal-seg');
@@ -9957,6 +10002,12 @@ async function _calAddEvent() {
   const addT = document.getElementById('cal-add-task'), addE = document.getElementById('cal-add-event');
   if (addT) addT.addEventListener('click', _calAddTask);
   if (addE) addE.addEventListener('click', _calAddEvent);
+  // Tap an event row (Month day list or Agenda) → open its editor.
+  const calPage = document.getElementById('calendar-page');
+  if (calPage) calPage.addEventListener('click', (e) => {
+    const row = e.target.closest('.cal-ev-row[data-id]');
+    if (row && row.dataset.id) _calEditEvent(row.dataset.id);
+  });
   // Routine sub-toggle [Routine | Category] + the rings month nav / swipe.
   const rtSeg = document.getElementById('cal-rt-seg');
   if (rtSeg) rtSeg.querySelectorAll('.cal-rt-btn').forEach(b => b.addEventListener('click', () => {
@@ -16840,7 +16891,19 @@ function msToHHMM(ms) {
    state.events[]; each event paints a light-gray band on the vertical gauge
    AND on the weekly view. Click an existing band to re-open the same modal
    (with Delete enabled). */
-function openEventModal(existing) {
+const _EVENT_ICONS = [
+  { k: 'calendar', svg: '<rect x="3.5" y="5" width="17" height="15.5" rx="2.2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6.5"/><line x1="16" y1="3" x2="16" y2="6.5"/>' },
+  { k: 'video', svg: '<rect x="3" y="6" width="13" height="12" rx="2"/><path d="M16 10 L21 7 V17 L16 14 Z"/>' },
+  { k: 'heart', svg: '<path d="M12 20s-7-4.6-9.2-8.4C1.3 8.7 2.6 5.5 5.7 5.1 7.6 4.9 9 6 12 8.7 15 6 16.4 4.9 18.3 5.1c3.1.4 4.4 3.6 2.9 6.5C19 15.4 12 20 12 20z"/>' },
+  { k: 'star', svg: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 17.9 6.8 19.6l1-5.8L3.5 9.7l5.9-.9z"/>' },
+  { k: 'book', svg: '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5z"/><path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5A1.5 1.5 0 0 1 20 20.5z"/>' }
+];
+function _eventIconSvg(k, size) {
+  const it = _EVENT_ICONS.find(x => x.k === k); if (!it) return '';
+  return '<svg viewBox="0 0 24 24" width="' + (size || 20) + '" height="' + (size || 20) + '" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + it.svg + '</svg>';
+}
+function openEventModal(existing, opts) {
+  opts = opts || {};
   const modal     = document.getElementById('event-modal');
   const titleEl   = document.getElementById('event-modal-title');
   const nameEl    = document.getElementById('event-name');
@@ -16850,7 +16913,11 @@ function openEventModal(existing) {
   const cancelBtn = document.getElementById('event-cancel');
   const deleteBtn = document.getElementById('event-delete');
   const backdrop  = document.getElementById('event-modal-backdrop');
+  const iconRow   = document.getElementById('event-icon-row');
+  const sideRow   = document.getElementById('event-side-row');
   if (!modal || !nameEl || !startEl || !endEl) return;
+  let _selIcon = (existing && existing.icon) || null;
+  let _selSide = (existing && typeof existing.side === 'number') ? existing.side : null;
 
   function msToInput(ms) {
     if (!ms) return '';
@@ -16874,12 +16941,42 @@ function openEventModal(existing) {
   } else {
     titleEl.textContent = 'Add event';
     nameEl.value = '';
-    // Default: now → +1 hour
-    const now = new Date();
-    const later = new Date(now.getTime() + 60 * 60 * 1000);
-    startEl.value = msToInput(now.getTime());
-    endEl.value   = msToInput(later.getTime());
+    // Default: opts.defaultDate at 9–10 AM (calendar), else now → +1 hour.
+    let s, e;
+    if (opts.defaultDate instanceof Date) {
+      s = new Date(opts.defaultDate); s.setHours(9, 0, 0, 0);
+      e = new Date(s.getTime() + 60 * 60 * 1000);
+    } else {
+      s = new Date(); e = new Date(s.getTime() + 60 * 60 * 1000);
+    }
+    startEl.value = msToInput(s.getTime());
+    endEl.value   = msToInput(e.getTime());
     deleteBtn.style.display = 'none';
+  }
+  // Type-icon picker (tap to toggle one on/off).
+  if (iconRow) {
+    iconRow.innerHTML = '';
+    _EVENT_ICONS.forEach(it => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'event-icon-btn' + (_selIcon === it.k ? ' sel' : '');
+      b.innerHTML = _eventIconSvg(it.k, 20); b.title = it.k; b.dataset.k = it.k;
+      b.onclick = () => { _selIcon = (_selIcon === it.k) ? null : it.k; iconRow.querySelectorAll('.event-icon-btn').forEach(x => x.classList.toggle('sel', x.dataset.k === _selIcon)); };
+      iconRow.appendChild(b);
+    });
+  }
+  // Bucket-side picker (None + N sides). Event colour = the chosen side's colour.
+  if (sideRow && typeof _calSideCount === 'function') {
+    sideRow.innerHTML = '';
+    const mkDot = (side) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      if (side == null) { b.className = 'event-side-dot none' + (_selSide == null ? ' sel' : ''); b.textContent = '∅'; b.title = 'None (grey)'; }
+      else { b.className = 'event-side-dot' + (_selSide === side ? ' sel' : ''); b.style.background = _calSideColor(side); b.title = _calSideName(side); b.textContent = String(side + 1); }
+      b.onclick = () => { _selSide = side; sideRow.querySelectorAll('.event-side-dot').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); };
+      return b;
+    };
+    sideRow.appendChild(mkDot(null));
+    for (let s = 0; s < _calSideCount(); s++) sideRow.appendChild(mkDot(s));
   }
   function close() {
     modal.classList.add('hidden');
@@ -16894,13 +16991,14 @@ function openEventModal(existing) {
     if (!startMs || !endMs) return;
     if (endMs < startMs) { const t = startMs; startMs = endMs; endMs = t; }
     if (!Array.isArray(state.events)) state.events = [];
+    const _evObj = { name, startMs, endMs, icon: _selIcon || null, side: (_selSide != null ? _selSide : null) };
     if (existing && existing.id) {
       const idx = state.events.findIndex(x => x.id === existing.id);
-      if (idx >= 0) state.events[idx] = { id: existing.id, name, startMs, endMs };
-      else state.events.push({ id: existing.id, name, startMs, endMs });
+      if (idx >= 0) state.events[idx] = Object.assign({ id: existing.id }, _evObj);
+      else state.events.push(Object.assign({ id: existing.id }, _evObj));
     } else {
       const id = 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-      state.events.push({ id, name, startMs, endMs });
+      state.events.push(Object.assign({ id }, _evObj));
     }
     saveState();
     markSettingsChanged(); pushSettingsToCloud();
@@ -16910,6 +17008,7 @@ function openEventModal(existing) {
         !document.getElementById('stats-week').classList.contains('hidden')) {
       renderWeekView();
     }
+    try { if (typeof opts.onSaved === 'function') opts.onSaved(); } catch (_) {}
     close();
   };
   cancelBtn.onclick = () => close();
@@ -16925,6 +17024,7 @@ function openEventModal(existing) {
         !document.getElementById('stats-week').classList.contains('hidden')) {
       renderWeekView();
     }
+    try { if (typeof opts.onSaved === 'function') opts.onSaved(); } catch (_) {}
     close();
   };
   modal.classList.remove('hidden');
