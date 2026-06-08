@@ -6395,6 +6395,23 @@
   .cal-agenda-date { font-weight: 800; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
   .cal-agenda-today { font-size: .7rem; font-weight: 700; color: #fff; background: #3aa776; border-radius: 999px; padding: 2px 8px; }
   .cal-placeholder { color: var(--text-muted, #9ca3af); text-align: center; padding: 40px 16px; font-size: .95rem; }
+  /* Routine view: [Routine | Category] sub-toggle + rings grid + category cards. */
+  .cal-rt-seg { display: flex; gap: 6px; margin: 0 0 14px; }
+  .cal-rt-btn { flex: 1 1 0; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-muted, #6b7280); font-weight: 700; font-size: .88rem; padding: 7px 4px; border-radius: 999px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .cal-rt-btn.active { background: #111827; border-color: #111827; color: #fff; }
+  .cal-rt-hint { color: var(--text-muted, #9ca3af); font-size: .72rem; text-align: center; margin: 8px 0 0; }
+  .cal-rt-cell { gap: 2px; }
+  .cal-rt-cell .cal-day { font-size: .78rem; }
+  .cal-rings { display: inline-flex; gap: 1px; align-items: center; justify-content: center; height: 16px; }
+  .cal-rings .cal-ring { width: 15px; height: 15px; display: block; }
+  /* Category cards — 2-col, each a 5×5 activity dot grid in the side colour. */
+  .cal-cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cal-cat-card { background: var(--surface-2, var(--button-bg, #f3f4f6)); border-radius: 12px; padding: 11px 12px; }
+  .cal-cat-head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 9px; }
+  .cal-cat-name { font-weight: 800; font-size: .95rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-cat-cnt { font-size: .8rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; }
+  .cal-cat-dots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+  .cal-cat-dot { width: 100%; aspect-ratio: 1 / 1; border-radius: 50%; background: var(--card-border, #e5e7eb); }
 </style>
 </head>
 <body>
@@ -7183,7 +7200,22 @@
         <div id="cal-tasks-list"></div>
       </div>
       <div id="cal-agenda-view" style="display:none;"></div>
-      <div id="cal-routine-view" style="display:none;"><div class="cal-placeholder">Routine rings &amp; category grid — coming soon.</div></div>
+      <div id="cal-routine-view" style="display:none;">
+        <div class="cal-rt-seg" id="cal-rt-seg">
+          <button class="cal-rt-btn active" data-sub="routine" type="button">Routine</button>
+          <button class="cal-rt-btn" data-sub="category" type="button">Category</button>
+        </div>
+        <div id="cal-rt-rings">
+          <div class="cal-month-head">
+            <button class="cal-nav" id="cal-rt-prev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+            <h2 id="cal-rt-title">Month</h2>
+            <button class="cal-nav" id="cal-rt-next" type="button" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+          </div>
+          <div class="cal-grid-clip" id="cal-rt-grid-clip"><div class="cal-grid cal-rings-grid" id="cal-rt-grid"></div></div>
+          <p class="cal-rt-hint">Each 30 min on a bucket side fills a half-ring (clockwise from 12).</p>
+        </div>
+        <div id="cal-rt-category" style="display:none;"></div>
+      </div>
     </div>
   </section>
   <!-- D: Garden page (placeholder — content coming in a follow-up). -->
@@ -9689,7 +9721,7 @@ function renderCalendar() {
   const routine = document.getElementById('cal-routine-view');
   [month, agenda, routine].forEach(el => { if (el) el.style.display = 'none'; });
   if (_calState.view === 'agenda') { if (agenda) agenda.style.display = ''; _calRenderAgenda(); }
-  else if (_calState.view === 'routine') { if (routine) routine.style.display = ''; }
+  else if (_calState.view === 'routine') { if (routine) routine.style.display = ''; _calRenderRoutine(); }
   else { if (month) month.style.display = ''; _calRenderMonth(); }
 }
 const _CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -9764,6 +9796,99 @@ function _calRenderAgenda() {
   }
   wrap.innerHTML = html || '<div class="cal-placeholder">Nothing scheduled in the next few weeks.</div>';
 }
+/* ── Routine view: rings (per-day per-side work time) + Category dot grids ── */
+function _calSideCount() { return (typeof _pillarFaceCount === 'function') ? _pillarFaceCount() : (typeof _PILLAR_NAMES !== 'undefined' ? _PILLAR_NAMES.length : 7); }
+function _calSideColor(side) { return (typeof _pillarSwatchColor === 'function') ? _pillarSwatchColor(side) : (typeof _PILLAR_COLORS !== 'undefined' ? _PILLAR_COLORS[side % _PILLAR_COLORS.length] : '#888'); }
+function _calSideName(side) { try { const ft = state.bucket && state.bucket.faceText && state.bucket.faceText[side]; if (ft && ft.title) return ft.title; } catch (_) {} return (typeof _PILLAR_NAMES !== 'undefined' && _PILLAR_NAMES[side]) || ('Side ' + (side + 1)); }
+function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
+  if (!e || e.type !== 'pomodoro') return null;
+  if (typeof e.pillar === 'number') return e.pillar;
+  const t = (state.tasks[e.q] || [])[e.taskIdx];
+  return (t && typeof t.pillar === 'number') ? t.pillar : null;
+}
+function _sideMinutesOnDate(key) {            // { side: minutes } for productive WORK that day
+  const out = {};
+  (state.watchLog || []).forEach(e => {
+    if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
+    if (_calDateKey(e.startedAt) !== key) return;
+    const side = _calEntrySide(e);
+    if (side == null || side < 0) return;
+    out[side] = (out[side] || 0) + (e.durationMs || 0) / 60000;
+  });
+  return out;
+}
+/* RULE (confirmed): 30 min on a side = one HALF-ring of that colour, clockwise
+   from 12 o'clock; ONE ring holds 2 halves; pack 2 per ring (minimise count).
+   ≥30 min = the half is fully that colour; a remainder fills its half partially. */
+function _calDayRings(key) {
+  const mins = _sideMinutesOnDate(key);
+  const halves = [];
+  Object.keys(mins).map(Number).sort((a, b) => a - b).forEach(side => {
+    let m = mins[side]; const col = _calSideColor(side);
+    while (m >= 30 && halves.length < 6) { halves.push({ color: col, fill: 1 }); m -= 30; }
+    if (m > 0 && halves.length < 6) halves.push({ color: col, fill: Math.max(0.12, m / 30) });
+  });
+  const rings = [];
+  for (let i = 0; i < halves.length && rings.length < 3; i += 2) rings.push([halves[i], halves[i + 1]].filter(Boolean));
+  return rings;
+}
+function _calRingSVG(halves) {
+  const C = 2 * Math.PI * 15, H = C / 2;
+  let s = '<svg class="cal-ring" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="15" fill="none" stroke="var(--card-border,#e5e7eb)" stroke-width="4.5"/>';
+  if (halves[0]) s += '<circle cx="18" cy="18" r="15" fill="none" stroke="' + halves[0].color + '" stroke-width="4.5" stroke-dasharray="' + (halves[0].fill * H).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(-90 18 18)"/>';
+  if (halves[1]) s += '<circle cx="18" cy="18" r="15" fill="none" stroke="' + halves[1].color + '" stroke-width="4.5" stroke-dasharray="' + (halves[1].fill * H).toFixed(1) + ' ' + C.toFixed(1) + '" transform="rotate(90 18 18)"/>';
+  return s + '</svg>';
+}
+function _calRenderRoutine() {
+  _calInit();
+  const sub = _calState.routineSub || 'routine';
+  const seg = document.getElementById('cal-rt-seg');
+  if (seg) seg.querySelectorAll('.cal-rt-btn').forEach(b => b.classList.toggle('active', b.dataset.sub === sub));
+  const rings = document.getElementById('cal-rt-rings'), cat = document.getElementById('cal-rt-category');
+  if (sub === 'category') { if (rings) rings.style.display = 'none'; if (cat) { cat.style.display = ''; _calRenderCategory(); } }
+  else { if (cat) cat.style.display = 'none'; if (rings) { rings.style.display = ''; _calRenderRings(); } }
+}
+function _calRenderRings() {
+  const y = _calState.y, m = _calState.m;
+  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  const grid = document.getElementById('cal-rt-grid'); if (!grid) return;
+  const startDow = new Date(y, m, 1).getDay();
+  const dim = new Date(y, m + 1, 0).getDate();
+  const todayKey = _calDateKey(new Date());
+  let html = '';
+  ['S','M','T','W','T','F','S'].forEach(d => html += '<div class="cal-dow">' + d + '</div>');
+  for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
+  for (let day = 1; day <= dim; day++) {
+    const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    const rings = _calDayRings(key);
+    const ringsHtml = rings.length ? '<span class="cal-rings">' + rings.map(r => _calRingSVG(r)).join('') + '</span>' : '';
+    html += '<div class="cal-cell cal-rt-cell' + (key === todayKey ? ' cal-today' : '') + '"><span class="cal-day">' + day + '</span>' + ringsHtml + '</div>';
+  }
+  grid.innerHTML = html;
+}
+function _calRenderCategory() {
+  const wrap = document.getElementById('cal-rt-category'); if (!wrap) return;
+  const totals = {}, dayMap = {};
+  (state.watchLog || []).forEach(e => {
+    if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
+    const side = _calEntrySide(e);
+    if (side == null || side < 0) return;
+    totals[side] = (totals[side] || 0) + 1;
+    const k = _calDateKey(e.startedAt); (dayMap[k] = dayMap[k] || new Set()).add(side);
+  });
+  const days = []; const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  for (let i = 24; i >= 0; i--) days.push(_calDateKey(new Date(t0.getTime() - i * 86400000)));
+  const N = _calSideCount();
+  let html = '<div class="cal-cat-grid">';
+  for (let s = 0; s < N; s++) {
+    const col = _calSideColor(s), nm = _calSideName(s), cnt = totals[s] || 0;
+    let dots = '';
+    days.forEach(k => { const on = dayMap[k] && dayMap[k].has(s); dots += '<span class="cal-cat-dot"' + (on ? ' style="background:' + col + '"' : '') + '></span>'; });
+    html += '<div class="cal-cat-card"><div class="cal-cat-head"><span class="cal-cat-name" style="color:' + col + '">' + escapeHTML(nm) + '</span><span class="cal-cat-cnt">/ ' + cnt + '</span></div><div class="cal-cat-dots">' + dots + '</div></div>';
+  }
+  html += '</div>';
+  wrap.innerHTML = html;
+}
 async function _calAddTask() {
   if (typeof openNoteEditor !== 'function') return;
   const v = await openNoteEditor('', { title: 'New task', singleLine: true, maxLength: 200 });
@@ -9829,6 +9954,25 @@ async function _calAddEvent() {
   const addT = document.getElementById('cal-add-task'), addE = document.getElementById('cal-add-event');
   if (addT) addT.addEventListener('click', _calAddTask);
   if (addE) addE.addEventListener('click', _calAddEvent);
+  // Routine sub-toggle [Routine | Category] + the rings month nav / swipe.
+  const rtSeg = document.getElementById('cal-rt-seg');
+  if (rtSeg) rtSeg.querySelectorAll('.cal-rt-btn').forEach(b => b.addEventListener('click', () => {
+    _calInit(); _calState.routineSub = b.dataset.sub || 'routine'; _calRenderRoutine();
+  }));
+  const rtPrev = document.getElementById('cal-rt-prev'), rtNext = document.getElementById('cal-rt-next');
+  if (rtPrev) rtPrev.addEventListener('click', () => _calMonthShift(-1));
+  if (rtNext) rtNext.addEventListener('click', () => _calMonthShift(1));
+  const rtClip = document.getElementById('cal-rt-grid-clip');
+  if (rtClip) {
+    let sx = 0, sy = 0, tracking = false;
+    rtClip.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; tracking = true; });
+    rtClip.addEventListener('pointerup', (e) => {
+      if (!tracking) return; tracking = false;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) _calMonthShift(dx < 0 ? 1 : -1);
+    });
+    rtClip.addEventListener('pointercancel', () => { tracking = false; });
+  }
 })();
 
 /* ===== Sound mode (Settings page #sound-panel) — loud / soft(Library) / off.
@@ -14222,6 +14366,7 @@ function logPomodoroPhase(at, phaseEndMs) {
     name: task.text || '(task)',
     q: at.q,
     taskIdx: at.idx,
+    pillar: (task && typeof task.pillar === 'number') ? task.pillar : null,   // bucket SIDE → Routine rings (survives task reindex/delete)
     phase: at.phase,
     penalty: 0,
     money: 0
