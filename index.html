@@ -4043,7 +4043,7 @@
      the selection (marked by .gtd-wheel-mask). Scroll-snap = wheel feel. */
   #gtd-modal .gtd-picker-panel { position: relative; display: flex; align-items: stretch; justify-content: center; gap: 2px; height: 132px; margin: 2px 0 6px; }
   #gtd-modal .gtd-picker-panel.hidden { display: none; }
-  #gtd-modal .gtd-wheel { height: 132px; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; text-align: center; min-width: 50px; }
+  #gtd-modal .gtd-wheel { height: 132px; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; text-align: center; min-width: 50px; overscroll-behavior: contain; touch-action: pan-y; }
   #gtd-modal .gtd-wheel::-webkit-scrollbar { display: none; }
   #gtd-modal .gtd-wheel .gw-pad { height: 51px; }
   #gtd-modal .gtd-wheel .gw-it { height: 30px; line-height: 30px; scroll-snap-align: center; font-size: 1.05rem; font-weight: 700; color: var(--text-muted, #9ca3af); cursor: pointer; }
@@ -5899,6 +5899,7 @@
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;   /* iOS momentum */
     touch-action: pan-y;
+    overscroll-behavior: contain;        /* sliding the timeline never scrolls the page behind it */
     /* default height set by JS — fallback in case JS hasn't run */
     height: 180px;
   }
@@ -6334,6 +6335,12 @@
   #bucket-section .bucket-buttons  { transform: translate(var(--tu-bs-x,0px), var(--tu-bs-y,0px)) scale(var(--tu-bs-s,1)); }
   #bucket-section .fc-money-big    { display: inline-block; transform: translate(var(--tu-bm-x,0px), var(--tu-bm-y,0px)) scale(var(--tu-bm-s,1)); transform-origin: left center; }
   #bucket-section .fc-money-change { display: inline-block; transform: translate(var(--tu-bd-x,0px), var(--tu-bd-y,0px)) scale(var(--tu-bd-s,1)); transform-origin: left center; }
+  /* q4 (not important / not urgent): comment text (left) + mini-pomodoro ring (right). */
+  .focus-card.fc-q4-run .fc-head-left { transform: translate(var(--tu-qt-x,0px), var(--tu-qt-y,0px)) scale(var(--tu-qt-s,1)); transform-origin: left center; }
+  .focus-card.fc-q4-run .fc-ring-wrap { transform: translate(var(--tu-qr-x,0px), var(--tu-qr-y,0px)) scale(var(--tu-qr-s,1)); }
+  /* Earned / done reward: message (left) + comment.png (right). */
+  .focus-card .fc-done-msg { transform: translate(var(--tu-ct-x,0px), var(--tu-ct-y,0px)) scale(var(--tu-ct-s,1)); transform-origin: left center; }
+  .focus-card .fc-done-img { transform: translate(var(--tu-ci-x,0px), var(--tu-ci-y,0px)) scale(var(--tu-ci-s,1)); transform-origin: right center; }
   /* .bucket-stage (3D bucket) is tuned via an INLINE transform set by the panel JS,
      applied ONLY when non-identity — an always-on transform here breaks the 3D
      compositing (blank/garbled capture). See the 'bb' branch in objTunePanel. */
@@ -6347,7 +6354,12 @@
   #tune-panel .tune-head:active { cursor: grabbing; }
   #tune-panel .tune-drag-hint { opacity: .45; font-weight: 600; font-size: 11px; }
   #tune-panel .tune-copybtn { margin-left: auto; background: #2563eb; color: #fff; border: none; border-radius: 7px; padding: 4px 12px; cursor: pointer; font-weight: 700; }
-  #tune-panel .tune-body { overflow-y: auto; padding: 4px 10px 10px; }
+  #tune-panel .tune-body { overflow-y: auto; max-height: 56vh; overscroll-behavior: contain; padding: 4px 10px 10px; }
+  /* Landscape / Portrait tabs (each edits its own value set). */
+  #tune-panel.tune-collapsed .tune-tabs { display: none; }
+  #tune-panel .tune-tabs { display: flex; gap: 6px; padding: 6px 10px 2px; }
+  #tune-panel .tune-tab { flex: 1 1 0; background: #1f2937; color: #9ca3af; border: 1px solid #374151; border-radius: 7px; padding: 5px; font-weight: 700; cursor: pointer; font-size: 12px; }
+  #tune-panel .tune-tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
   #tune-panel .tune-colhdr, #tune-panel .tune-row { display: grid; grid-template-columns: 88px 1fr 1fr 1fr; gap: 6px; align-items: center; }
   #tune-panel .tune-colhdr { opacity: .55; padding: 2px 0; }
   #tune-panel .tune-row { padding: 2px 0; }
@@ -28827,17 +28839,51 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
 (function objTunePanel(){
   if (document.getElementById('tune-panel')) return;
   const CFG = [
-    ['grp','Focus — no task'],   ['dt','text', true], ['di','image', true],
+    ['grp','Focus — no task'],     ['dt','text', true], ['di','image', true],
     ['grp','Focus — not started'], ['st','text', true], ['si','image', true],
-    ['grp','Focus — running'],   ['rt','text', true], ['rr','timer', true],
-    ['grp','Bucket'],            ['bs','sprout', true], ['bm','money', true], ['bd','today', true], ['bb','bucket', true],
+    ['grp','Focus — running'],     ['rt','text', true], ['rr','timer', true],
+    ['grp','Focus — q4 (not imp/urgent)'], ['qt','comment', true], ['qr','mini-pomo', true],
+    ['grp','Focus — earned / done'],       ['ct','message', true], ['ci','comment.png', true],
+    ['grp','Bucket'],              ['bs','sprout', true], ['bm','money', true], ['bd','today', true], ['bb','bucket', true],
   ];
+  const IDS = CFG.filter(r => r[0] !== 'grp').map(r => r[0]);
+  const ORI = () => (window.matchMedia && window.matchMedia('(orientation: portrait)').matches) ? 'portrait' : 'landscape';
+  // Per-orientation value sets (raw slider numbers). The set matching the CURRENT
+  // device orientation is the one applied live; each tab edits its own set.
+  const vals = { landscape: {}, portrait: {} };
+  IDS.forEach(id => { vals.landscape[id] = { s:0, x:0, y:0 }; vals.portrait[id] = { s:0, x:0, y:0 }; });
+  let editOri = ORI();
   const root = document.documentElement.style;
+  // 3D bucket: INLINE transform only when non-identity (an always-on transform on
+  // the 3D-rendered .bucket-stage garbles its compositing/capture).
+  function applyBucketTransform(){
+    const v = vals[ORI()].bb || { s:0, x:0, y:0 };
+    const el = document.querySelector('#bucket-section .bucket-stage'); if (!el) return;
+    const s = 1 + (v.s||0)*0.05, x = v.x||0, y = v.y||0;
+    el.style.transform = (s===1 && x===0 && y===0) ? '' : ('translate('+x+'px,'+y+'px) scale('+s+')');
+  }
+  // Apply the CURRENT-orientation set to the live --tu-* vars.
+  function applyActive(){
+    const set = vals[ORI()];
+    IDS.forEach(id => {
+      if (id === 'bb') return;
+      const v = set[id] || { s:0, x:0, y:0 };
+      root.setProperty('--tu-'+id+'-s', String(1 + (v.s||0)*0.05));
+      root.setProperty('--tu-'+id+'-x', (v.x||0)+'px');
+      root.setProperty('--tu-'+id+'-y', (v.y||0)+'px');
+    });
+    applyBucketTransform();
+  }
   const panel = document.createElement('div'); panel.id = 'tune-panel'; panel.className = 'tune-collapsed';
   const head = document.createElement('div'); head.className = 'tune-head';
   const ttl = document.createElement('span'); ttl.textContent = '🎛 Tune (temp) — tap to open';
   const copyBtn = document.createElement('button'); copyBtn.className = 'tune-copybtn'; copyBtn.textContent = 'Copy';
   head.appendChild(ttl); head.appendChild(copyBtn);
+  // Landscape / Portrait tabs — pick which orientation's set you're editing.
+  const tabs = document.createElement('div'); tabs.className = 'tune-tabs';
+  const tabL = document.createElement('button'); tabL.className = 'tune-tab'; tabL.type = 'button'; tabL.textContent = 'Landscape';
+  const tabP = document.createElement('button'); tabP.className = 'tune-tab'; tabP.type = 'button'; tabP.textContent = 'Portrait';
+  tabs.appendChild(tabL); tabs.appendChild(tabP);
   const body = document.createElement('div'); body.className = 'tune-body';
   const hdr = document.createElement('div'); hdr.className = 'tune-colhdr';
   hdr.innerHTML = '<span></span><span>size</span><span>&larr; x &rarr;</span><span>&uarr; y &darr;</span>';
@@ -28851,29 +28897,40 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     function mk(suffix){
       const inp = document.createElement('input'); inp.type = 'number'; inp.step = '1'; inp.value = '0';
       inp.addEventListener('input', () => {
-        if (id === 'bb') { applyBucketTransform(); return; }   // 3D bucket → inline, non-identity only
-        const v = parseFloat(inp.value) || 0;
-        if (suffix === 's') root.setProperty('--tu-' + id + '-s', String(1 + v * 0.05));
-        else root.setProperty('--tu-' + id + '-' + suffix, v + 'px');
+        vals[editOri][id][suffix] = parseFloat(inp.value) || 0;
+        if (editOri === ORI()) applyActive();   // live only while editing the active orientation
       });
       r.appendChild(inp); return inp;
     }
     const s = mk('s'); const x = xy ? mk('x') : null; const y = xy ? mk('y') : null;
     if (!xy) { r.appendChild(document.createElement('span')); r.appendChild(document.createElement('span')); }
-    fields.push({ id, label, s, x, y }); body.appendChild(r);
+    fields.push({ id, s, x, y }); body.appendChild(r);
   });
-  // 3D bucket: apply an INLINE transform only when non-identity (an always-on
-  // transform on the 3D-rendered .bucket-stage garbles its compositing/capture).
-  function applyBucketTransform(){
-    const f = fields.find(x => x.id === 'bb'); if (!f) return;
-    const el = document.querySelector('#bucket-section .bucket-stage'); if (!el) return;
-    const s = 1 + (parseFloat(f.s.value) || 0) * 0.05;
-    const x = parseFloat(f.x.value) || 0, y = parseFloat(f.y.value) || 0;
-    el.style.transform = (s === 1 && x === 0 && y === 0) ? '' : ('translate(' + x + 'px,' + y + 'px) scale(' + s + ')');
+  function refreshInputs(){
+    const set = vals[editOri];
+    fields.forEach(f => {
+      const v = set[f.id] || { s:0, x:0, y:0 };
+      f.s.value = String(v.s||0);
+      if (f.x) f.x.value = String(v.x||0);
+      if (f.y) f.y.value = String(v.y||0);
+    });
   }
+  function selectTab(ori){
+    editOri = ori;
+    tabL.classList.toggle('active', ori === 'landscape');
+    tabP.classList.toggle('active', ori === 'portrait');
+    refreshInputs();
+  }
+  tabL.addEventListener('click', (e) => { e.stopPropagation(); selectTab('landscape'); });
+  tabP.addEventListener('click', (e) => { e.stopPropagation(); selectTab('portrait'); });
+  // Re-apply the active set + follow the device when the orientation changes.
+  function onOri(){ applyActive(); selectTab(ORI()); }
+  window.addEventListener('resize', onOri);
+  if (window.matchMedia) { const mq = window.matchMedia('(orientation: portrait)'); const h = () => onOri(); if (mq.addEventListener) mq.addEventListener('change', h); else if (mq.addListener) mq.addListener(h); }
   copyBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const txt = fields.map(f => f.id + ' (' + f.label + '): size=' + f.s.value + (f.x ? ' x=' + f.x.value + ' y=' + f.y.value : '')).join('\n');
+    const dump = (ori) => ori + ':\n' + IDS.map(id => { const v = vals[ori][id]; return '  ' + id + ': size=' + v.s + ' x=' + v.x + ' y=' + v.y; }).join('\n');
+    const txt = dump('landscape') + '\n' + dump('portrait');
     try { navigator.clipboard.writeText(txt); } catch (_) {}
     copyBtn.textContent = 'Copied'; setTimeout(() => copyBtn.textContent = 'Copy', 1200);
     try { console.log('[tune]\n' + txt); } catch (_) {}
@@ -28916,7 +28973,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     if (!panel.classList.contains('tune-collapsed')) clampIntoView();   // keep the opened panel on-screen
   });
   setTitle();
-  panel.appendChild(head); panel.appendChild(body);
+  selectTab(editOri);   // highlight the current-orientation tab + load its values
+  applyActive();        // apply the active set on boot
+  panel.appendChild(head); panel.appendChild(tabs); panel.appendChild(body);
   if (document.body) document.body.appendChild(panel);
   // Only show while the home / Focus page is visible.
   function sync(){ const fp = document.getElementById('focus-page'); if (panel.parentNode) panel.style.display = (fp && fp.offsetParent !== null) ? 'flex' : 'none'; }
