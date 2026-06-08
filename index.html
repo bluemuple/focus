@@ -1001,26 +1001,41 @@
     -webkit-tap-highlight-color: transparent; touch-action: none;
   }
   .ff-btn:active { background: var(--ff-border, #e5e7eb); transform: translateX(-50%) scale(.95); }
-  /* Side buttons (stop / play) — hidden until a phase-confirm slider is up. */
+  /* Phase menu (boundary) = ONE ROW of three tappable buttons —
+     계속 (continue) · 정지 (stop) · Auto. No slide-drag: each is tapped to act.
+     The centre pause button is hidden while the menu is up. */
   .ff-side-btn { display: none; }
-  .ff-controls.confirming .ff-side-btn { display: flex; }
-  .ff-stop { left: 25%; }
-  .ff-play { left: 75%; background: #dcfce7; color: #16a34a; }
-  .ff-play:active { background: #bbf7d0; transform: translateX(-50%) scale(.95); }
-  /* "Armed" = the dragged button is overlapping this target → it darkens to
-     signal "release here to choose me". */
-  .ff-stop.armed { background: #cbd5e1; }
-  .ff-play.armed { background: #4ade80; color: #064e3b; }
-  /* Auto target — gray circle labelled "Auto", just below the centre button.
-     Visible while running (manual) and during a confirm slider; hidden once
+  .ff-controls.confirming {
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+  }
+  .ff-controls.confirming .ff-pause { display: none; }
+  .ff-controls.confirming .ff-side-btn,
+  .ff-controls.confirming .ff-auto-btn { display: flex; }
+  /* In the row every button flows statically (drop the absolute slide coords). */
+  .ff-controls.confirming .ff-btn {
+    position: static; left: auto; top: auto; transform: none;
+  }
+  .ff-controls.confirming .ff-btn:active { transform: scale(.95); }
+  /* Row order: 계속 → 정지 → Auto (DOM order is stop, play, auto). */
+  .ff-controls.confirming .ff-play { order: 1; }
+  .ff-controls.confirming .ff-stop { order: 2; }
+  .ff-controls.confirming .ff-auto-btn { order: 3; }
+  /* 계속 = green (go); 정지 = soft red (end the session). Side buttons only ever
+     show inside the menu row, so these colours never leak into the running view. */
+  .ff-play { background: #dcfce7; color: #16a34a; }
+  .ff-play:active { background: #bbf7d0; }
+  .ff-stop { background: #fee2e2; color: #dc2626; }
+  .ff-stop:active { background: #fecaca; }
+  /* Auto target — neutral circle labelled "Auto", just below the centre button
+     while running (manual); slots into the menu row at a boundary. Hidden once
      Auto mode is ON (the centre button itself then reads "Auto"). */
   .ff-auto-btn {
     top: calc(100% + 18px); left: 50%;
     background: var(--ff-fill, #f1f3f5); color: var(--ff-ink, #4b5563);
     font-size: .78rem; font-weight: 800; letter-spacing: .02em;
   }
-  .ff-auto-btn.armed { background: #cbd5e1; color: #1f2937; }
   .ff-controls.auto-on .ff-auto-btn { display: none; }
+  .ff-btn-label { font-size: .96rem; font-weight: 800; letter-spacing: .01em; }
   /* The centre button while being dragged — no easing (follows finger 1:1),
      lifted above the targets with a soft shadow. */
   .ff-btn.dragging {
@@ -1560,17 +1575,21 @@
     animation: task-droplet-fall 0.85s linear forwards;
   }
   @keyframes task-droplet-fall {
-    /* Water-gun arc: X advances faster than Y in the first half (the shot
-       rising/flying out), then Y catches up as gravity arcs it down into
-       the bucket. Droplets stay ROUND (no scaleY stretch) per request —
-       only translate + a tiny end-grow so they read as circles. */
+    /* Water-gun arc into the bucket. X leads Y early (the shot), then gravity
+       arcs it down to the bottom-face centre. Once it crosses into the bucket
+       mouth (~66%) the opacity drops — it's now BEHIND the semi-transparent
+       front glass, so it reads as dimmed (per user request) — and settles faint
+       at the floor. Droplets stay ROUND (translate + tiny scale only). */
     0%   { transform: translate(0, 0) scale(0.85); opacity: 0; }
     12%  { transform: translate(calc(var(--arc-x, 0px) * 0.35),
                                  calc(var(--fall-px) * 0.05)) scale(1); opacity: 1; }
-    50%  { transform: translate(calc(var(--arc-x, 0px) * 0.72),
-                                 calc(var(--fall-px) * 0.32)) scale(1); opacity: 1; }
-    85%  { transform: translate(var(--arc-x, 0px), var(--fall-px)) scale(1); opacity: 1; }
-    100% { transform: translate(var(--arc-x, 0px), var(--fall-px)) scale(1.1); opacity: 0; }
+    48%  { transform: translate(calc(var(--arc-x, 0px) * 0.70),
+                                 calc(var(--fall-px) * 0.30)) scale(1); opacity: 1; }
+    66%  { transform: translate(calc(var(--arc-x, 0px) * 0.88),
+                                 calc(var(--fall-px) * 0.55)) scale(1); opacity: 0.85; }
+    82%  { transform: translate(calc(var(--arc-x, 0px) * 0.98),
+                                 calc(var(--fall-px) * 0.82)) scale(0.95); opacity: 0.42; }
+    100% { transform: translate(var(--arc-x, 0px), var(--fall-px)) scale(0.8); opacity: 0; }
   }
   /* Splash — small expanding ring at the bucket landing point. Fires once
      per task tick (not per droplet, to keep visual noise down). */
@@ -1630,16 +1649,29 @@
     background: radial-gradient(circle at 40% 35%,
                 #BAE6FD 0%, #38BDF8 65%, #0EA5E9 100%);
     box-shadow: 0 0 4px rgba(56,189,248,0.5);
-    /* Strong ease-IN: very slow off the surface, accelerating hard as it
-       nears the bar. The 50% keyframe only reaches ~28% of the way up, so
-       the FIRST HALF is much slower than the second (per user request). */
-    animation: distraction-rise var(--dur, 850ms) cubic-bezier(.5,0,.78,.5) forwards;
+    /* Strong ease-IN: very slow off the floor, accelerating hard as it nears
+       the bar. The 50% keyframe only reaches ~28% of the way up, so the FIRST
+       HALF is much slower than the second (per user request). Uses bucket-rise
+       (not distraction-rise) so it's dimmed while still inside the bucket. */
+    animation: bucket-rise var(--dur, 850ms) cubic-bezier(.5,0,.78,.5) forwards;
   }
   @keyframes distraction-rise {
     0%   { transform: translate(0, 0) scale(.65); opacity: 0; }
     14%  { opacity: 1; }
     50%  { transform: translate(calc(var(--dx) * 0.28 + var(--cx, 0px)),
                                  calc(var(--dy) * 0.28)) scale(1); }
+    100% { transform: translate(var(--dx), var(--dy)) scale(1.05); opacity: .95; }
+  }
+  /* Same rising path, but for a droplet that climbs UP THROUGH the bucket from
+     the floor: faint while still inside (behind the semi-transparent front
+     glass) then vivid once it clears the rim (~66% of the way up). */
+  @keyframes bucket-rise {
+    0%   { transform: translate(0, 0) scale(.6); opacity: 0; }
+    10%  { transform: translate(calc(var(--dx) * 0.04 + var(--cx, 0px) * 0.1),
+                                 calc(var(--dy) * 0.05)) scale(.8); opacity: .4; }
+    50%  { transform: translate(calc(var(--dx) * 0.28 + var(--cx, 0px)),
+                                 calc(var(--dy) * 0.28)) scale(.95); opacity: .5; }
+    66%  { opacity: 1; }
     100% { transform: translate(var(--dx), var(--dy)) scale(1.05); opacity: .95; }
   }
   /* Red "money" droplet — same rising path as the distraction droplet, but a
@@ -3084,6 +3116,16 @@
   .focus-card .fc-label {
     color: var(--text-muted); font-size: .95rem; font-weight: 600; margin-bottom: 4px;
   }
+  /* Brief redirect-praise (q4 → focus) flashed into the "Now focusing on" slot
+     by _flashFocusPraise — greener + bolder with a gentle pop, then it reverts. */
+  .focus-card .fc-label.fc-praise {
+    color: #3aa776; font-weight: 800;
+    animation: fc-praise-in .28s ease;
+  }
+  @keyframes fc-praise-in {
+    0%   { opacity: 0; transform: translateY(3px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
   /* Running header = LEFT text column ("Now focusing on" / name / Session badge) +
      a big pomodoro ring on the RIGHT (where the start-now cat's play-circle sat). */
   .focus-card .fc-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; }
@@ -3150,6 +3192,13 @@
     display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
     font-variant-numeric: tabular-nums; line-height: 1.12;
   }
+  /* Sprout button sits 5px above the balance (per request); the "Today" change
+     line stays tight (1px) under the balance. gap:0 here so the margins below
+     are the exact spacing. The column is already vertically centred in the
+     bucket-section row (align-items:center). */
+  #bucket-money-row { gap: 0; }
+  #bucket-money-row .bucket-buttons { margin-bottom: 5px; }
+  #bucket-money-row .fc-money-change { margin-top: 1px; }
   /* Balance is the hero of the left column; it shrinks itself as the number grows
      (renderMoneyCard adds .lots / .huge) so a big balance never overflows. */
   .fc-money-big { font-size: 1.75rem; font-weight: 800; color: var(--text-main); letter-spacing: -.5px; white-space: nowrap; }
@@ -3196,7 +3245,12 @@
   }
   /* idle (no active task) → hide the work stats + ring; keep name + GTD row */
   .focus-card.fc-idle .fc-stats { display: none; }
-  .focus-card.fc-q4-run .fc-ring-wrap { display: none; }   /* q4 tracker → name only, no ring */
+  .focus-card.fc-q4-run .fc-ring-wrap { display: block; }   /* q4 = gentle UP-TIMER ring (was hidden) */
+  /* q4 STOP button (reuses the pause slot) in the q4 theme blue. */
+  .focus-card.fc-q4-run .fc-ring-pause { background: #DCEAF8; color: #185FA5; }
+  :root[data-theme="solarized"] .focus-card.fc-q4-run .fc-ring-pause { background: #123A52; color: #93C5FD; }
+  /* q4 label = the gentle context message (small); wrap to ≤2 lines for the longer ones. */
+  .focus-card.fc-q4-run .fc-label { font-size: .82rem; line-height: 1.22; margin-bottom: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
   /* ===== Idle cat (no task running). FIXED section height = the running (mini-pomodoro)
      height, so it never jumps between states. Two cats fill that height bottom-flush:
      • cat-down   — no tasks at all → "Add a task." speech bubble.
@@ -3978,10 +4032,32 @@
   #gtd-modal .gtd-time-row .btn { flex: 0 0 auto; min-width: 74px; }
   #gtd-modal .gtd-btn-row { display: flex; gap: 8px; }
   #gtd-modal .gtd-btn-row .btn { flex: 1 1 0; min-width: 0; }
-  /* While the native time picker is open, hide the modal chrome so it doesn't peek
-     out below the picker (iOS). The input stays focused → the picker stays up. */
-  #gtd-modal.gtd-picking .modal-content,
-  #gtd-modal.gtd-picking .modal-backdrop { opacity: 0; }
+  /* Big tappable time display (hero). Tap → toggle the inline picker above it. */
+  #gtd-modal .gtd-time-display {
+    display: block; width: 100%; text-align: center; background: transparent; border: none;
+    cursor: pointer; font-size: 2.2rem; font-weight: 800; color: var(--text-main, #111827);
+    padding: 4px 0 12px; font-variant-numeric: tabular-nums; -webkit-tap-highlight-color: transparent;
+  }
+  #gtd-modal .gtd-time-display:active { opacity: .6; }
+  /* Inline wheel picker (Hour : Minute · AM/PM). 30px rows; the centre slot is
+     the selection (marked by .gtd-wheel-mask). Scroll-snap = wheel feel. */
+  #gtd-modal .gtd-picker-panel { position: relative; display: flex; align-items: stretch; justify-content: center; gap: 2px; height: 132px; margin: 2px 0 6px; }
+  #gtd-modal .gtd-picker-panel.hidden { display: none; }
+  #gtd-modal .gtd-wheel { height: 132px; overflow-y: auto; scroll-snap-type: y mandatory; -webkit-overflow-scrolling: touch; scrollbar-width: none; text-align: center; min-width: 50px; }
+  #gtd-modal .gtd-wheel::-webkit-scrollbar { display: none; }
+  #gtd-modal .gtd-wheel .gw-pad { height: 51px; }
+  #gtd-modal .gtd-wheel .gw-it { height: 30px; line-height: 30px; scroll-snap-align: center; font-size: 1.05rem; font-weight: 700; color: var(--text-muted, #9ca3af); cursor: pointer; }
+  #gtd-modal .gtd-wheel .gw-it.sel { color: var(--text-main, #111827); font-weight: 800; font-size: 1.25rem; }
+  #gtd-modal .gtd-wheel-colon { align-self: center; font-size: 1.3rem; font-weight: 800; color: var(--text-main, #111827); padding: 0 1px; }
+  #gtd-modal .gtd-wheel-mask { position: absolute; left: 8px; right: 8px; top: 51px; height: 30px; pointer-events: none; border-top: 1px solid var(--card-border, #e5e7eb); border-bottom: 1px solid var(--card-border, #e5e7eb); }
+  /* Today only / Every day radios (pick one). */
+  #gtd-modal .gtd-scope { display: flex; flex-direction: column; gap: 9px; margin: 12px 2px 14px; }
+  #gtd-modal .gtd-scope-opt { display: flex; align-items: center; gap: 9px; font-size: .95rem; font-weight: 600; color: var(--text-main, #111827); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #gtd-modal .gtd-scope-opt input { width: 18px; height: 18px; accent-color: #3aa776; flex: 0 0 auto; }
+  #gtd-modal .gtd-ok-btn { width: 100%; }
+  /* Bottom-right "Default goal time: …" confirmation (Every day + OK). */
+  .gtd-default-chip { position: fixed; right: 14px; bottom: 76px; z-index: 130; background: #111827; color: #fff; font-size: .82rem; font-weight: 700; padding: 9px 15px; border-radius: 999px; box-shadow: 0 4px 16px rgba(0,0,0,.32); transition: opacity .3s ease, transform .3s ease; }
+  .gtd-default-chip.hidden { opacity: 0; transform: translateY(10px); pointer-events: none; }
   /* Full-width merged header. The chip groups flow to the far left / right
      (flex space-between); "Time & Tasks" is absolutely centered on the header
      so it stays DEAD-center regardless of the (asymmetric) chip widths. The
@@ -4001,6 +4077,39 @@
   .hd-chip.hd-labeled { gap: 4px; padding: 5px 7px; font-size: .75rem; }
   .hd-chip .hd-lbl { line-height: 1; }
   .time-head .th-row2 { row-gap: 6px; }   /* (Undo/Redo moved into the edit tool) */
+  /* ===== E: Repeat chip + weekday multi-select ===== */
+  /* Repeat (↻) chip shows ONLY while a +Add flow is open. */
+  .repeat-toggle { display: none !important; }
+  body.tt-adding .repeat-toggle { display: inline-flex !important; }
+  .repeat-toggle.active { background: #374151; border-color: #374151; color: #fff; }
+  /* Repeat ON → swap the Matrix + Edit chips for the weekday selector. */
+  body.tt-repeat-days #split-view-toggle,
+  body.tt-repeat-days #edit-toggle { display: none !important; }
+  /* Fills the row width left of the Repeat chip; the 7 buttons share it equally so
+     3-letter English labels (Mon…Sun) fit even on a narrow phone. */
+  .weekday-row { display: none; align-items: center; gap: 3px; flex: 1 1 auto; min-width: 0; }
+  body.tt-repeat-days .weekday-row { display: inline-flex; }
+  .weekday-row .wd-btn {
+    flex: 1 1 0; min-width: 0; height: 27px; padding: 0 2px; border-radius: 999px;
+    border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6);
+    color: var(--text-muted, #6b7280); font-size: .74rem; font-weight: 700; line-height: 1;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .weekday-row .wd-btn:active { transform: scale(0.92); }
+  .weekday-row .wd-btn.on { background: #3aa776; border-color: #3aa776; color: #fff; }
+  /* Edit-task modal weekday row (opts.showWeekdays) — same toggle buttons. */
+  .nm-weekday-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .nm-weekday-row .wd-btn {
+    min-width: 34px; height: 32px; padding: 0 6px; border-radius: 999px;
+    border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6);
+    color: var(--text-muted, #6b7280); font-size: .85rem; font-weight: 700; line-height: 1;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .nm-weekday-row .wd-btn:active { transform: scale(0.92); }
+  .nm-weekday-row .wd-btn.on { background: #3aa776; border-color: #3aa776; color: #fff; }
+  /* Task-bar recurrence indicator (↻ + day count). */
+  .task-row .task-repeat-dot { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 1px; color: var(--text-muted, #6b7280); opacity: .85; font-size: .68rem; font-weight: 700; margin: 0 1px; }
+  .task-row .task-repeat-dot svg { display: block; }
   /* Shuffle + Edit are hidden until at least one task has been added. */
   body:not(.tt-has-tasks) #edit-toggle { display: none; }
   /* No Space + Shuffle live in EDIT mode only — hidden until the Edit button is pressed. */
@@ -4080,7 +4189,14 @@
      styling; the .ftt-chips group sits at the right of the "Tasks" title. The flip
      feature is phone-only, so hide the chips on PC. */
   .ftt-chips { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
-  @media (min-width: 701px) { .ftt-chips { display: none; } }
+  /* Wide / web: show ONLY the Edit chip beside the "Tasks" title (the T&T-flip +
+     collapse chips are mobile concepts — no flip on wide). Same chip as the iPhone:
+     toggles edit mode → per-bar pencil + grip → pencil opens the task popup. */
+  @media (min-width: 701px) {
+    .ftt-chips { display: inline-flex; }
+    .ftt-chips .matrix-view-toggle,
+    .ftt-chips .matrix-collapse-toggle { display: none; }
+  }
   /* GTD capsule on the matrix "Tasks" header — pinned to the far right. On narrow
      the .ftt-chips group (margin-left:auto) shoves the right cluster over and the
      capsule trails it; on wide .ftt-chips is hidden so the capsule itself takes
@@ -5528,6 +5644,8 @@
       padding: 2px 6px;
       font-size: .65rem;
     }
+    /* Blue GTD line capsule = single line "hh:mm · Goal" (overrides the wrap). */
+    .gauge-line-blue .gauge-line-time.gl-oneline { white-space: nowrap; }
   }
 
   /* ===== Task-Gauge scheduling overlay (tg = task-gauge) ===== */
@@ -6204,6 +6322,79 @@
     margin-left: 8px; font-size: .85rem;
     color: #6b7280; font-weight: 500;
   }
+
+  /* ===== TEMP object-tuning (REMOVE later, with #tune-panel + its JS). Each home
+     object is nudged/scaled by CSS vars the panel sets on :root. size step ≈ +5%. ===== */
+  .focus-card.fc-down .fc-idle-text     { transform: translate(var(--tu-dt-x,0px), var(--tu-dt-y,0px)) scale(var(--tu-dt-s,1)); transform-origin: left center; }
+  .focus-card.fc-down .fc-no-task       { transform: translate(var(--tu-di-x,0px), var(--tu-di-y,0px)) scale(var(--tu-di-s,1)); transform-origin: right center; }
+  .focus-card.fc-startnow .fc-idle-text { transform: translate(var(--tu-st-x,0px), var(--tu-st-y,0px)) scale(var(--tu-st-s,1)); transform-origin: left center; }
+  .focus-card.fc-startnow .fc-no-task   { transform: translate(var(--tu-si-x,0px), var(--tu-si-y,0px)) scale(var(--tu-si-s,1)); transform-origin: right center; }
+  .focus-card:not(.fc-idle):not(.fc-q4-run) .fc-head-left { transform: translate(var(--tu-rt-x,0px), var(--tu-rt-y,0px)) scale(var(--tu-rt-s,1)); transform-origin: left center; }
+  .focus-card:not(.fc-idle):not(.fc-q4-run) .fc-ring-wrap { transform: translate(var(--tu-rr-x,0px), var(--tu-rr-y,0px)) scale(var(--tu-rr-s,1)); }
+  #bucket-section .bucket-buttons  { transform: translate(var(--tu-bs-x,0px), var(--tu-bs-y,0px)) scale(var(--tu-bs-s,1)); }
+  #bucket-section .fc-money-big    { display: inline-block; transform: translate(var(--tu-bm-x,0px), var(--tu-bm-y,0px)) scale(var(--tu-bm-s,1)); transform-origin: left center; }
+  #bucket-section .fc-money-change { display: inline-block; transform: translate(var(--tu-bd-x,0px), var(--tu-bd-y,0px)) scale(var(--tu-bd-s,1)); transform-origin: left center; }
+  /* .bucket-stage (3D bucket) is tuned via an INLINE transform set by the panel JS,
+     applied ONLY when non-identity — an always-on transform here breaks the 3D
+     compositing (blank/garbled capture). See the 'bb' branch in objTunePanel. */
+  /* The panel itself */
+  #tune-panel { position: fixed; left: 8px; bottom: 8px; width: min(96vw, 400px); z-index: 99999;
+    background: rgba(17,21,28,.96); color: #e5e7eb; border-radius: 12px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.45); font: 12px/1.3 -apple-system, system-ui, sans-serif;
+    max-height: 56vh; display: flex; flex-direction: column; }
+  #tune-panel.tune-collapsed .tune-body { display: none; }
+  #tune-panel .tune-head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; cursor: grab; font-weight: 800; touch-action: none; user-select: none; -webkit-user-select: none; }
+  #tune-panel .tune-head:active { cursor: grabbing; }
+  #tune-panel .tune-drag-hint { opacity: .45; font-weight: 600; font-size: 11px; }
+  #tune-panel .tune-copybtn { margin-left: auto; background: #2563eb; color: #fff; border: none; border-radius: 7px; padding: 4px 12px; cursor: pointer; font-weight: 700; }
+  #tune-panel .tune-body { overflow-y: auto; padding: 4px 10px 10px; }
+  #tune-panel .tune-colhdr, #tune-panel .tune-row { display: grid; grid-template-columns: 88px 1fr 1fr 1fr; gap: 6px; align-items: center; }
+  #tune-panel .tune-colhdr { opacity: .55; padding: 2px 0; }
+  #tune-panel .tune-row { padding: 2px 0; }
+  #tune-panel .tune-row > span { opacity: .85; }
+  #tune-panel .tune-grp { margin-top: 6px; padding-top: 5px; border-top: 1px solid #374151; font-weight: 800; color: #93c5fd; }
+  #tune-panel input[type=number] { width: 100%; box-sizing: border-box; background: #0b0e14; color: #e5e7eb; border: 1px solid #374151; border-radius: 6px; padding: 3px 5px; font: 12px monospace; }
+  /* ===================== Calendar (D) ===================== */
+  .cal-seg { display: flex; gap: 6px; background: var(--button-bg, #f3f4f6); border-radius: 999px; padding: 4px; margin: 0 0 14px; }
+  .cal-seg-btn { flex: 1 1 0; border: none; background: transparent; color: var(--text-muted, #6b7280); font-weight: 700; font-size: .9rem; padding: 8px 4px; border-radius: 999px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .cal-seg-btn.active { background: var(--card-bg, #fff); color: var(--text-main, #111827); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+  .cal-month-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
+  .cal-month-head h2 { margin: 0; font-size: 1.25rem; }
+  .cal-nav { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #374151); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .cal-nav:active { transform: scale(.92); }
+  /* Month grid — 7 columns; weekday header + day cells. Swipe-animatable wrapper. */
+  .cal-grid-clip { overflow: hidden; touch-action: pan-y; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; transition: transform .26s ease, opacity .26s ease; }
+  .cal-grid.cal-anim-left  { transform: translateX(-12%); opacity: 0; }
+  .cal-grid.cal-anim-right { transform: translateX(12%);  opacity: 0; }
+  .cal-dow { text-align: center; font-size: .72rem; font-weight: 700; color: var(--text-muted, #9ca3af); padding: 2px 0 4px; }
+  .cal-cell { position: relative; aspect-ratio: 1 / 1; border: none; background: transparent; border-radius: 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--text-main, #1f2937); -webkit-tap-highlight-color: transparent; padding: 0; }
+  .cal-cell.cal-empty { cursor: default; }
+  .cal-cell .cal-day { font-size: .92rem; font-weight: 600; line-height: 1; }
+  .cal-cell.cal-today .cal-day { color: #fff; }
+  .cal-cell.cal-today { background: #EC4899; }
+  .cal-cell.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
+  .cal-cell.cal-today.cal-sel { box-shadow: inset 0 0 0 2px #fff; }
+  .cal-cell:active { background: var(--button-bg, #f3f4f6); }
+  .cal-cell.cal-today:active { background: #db2777; }
+  .cal-dots { display: flex; gap: 2px; align-items: center; height: 6px; }
+  .cal-dot { width: 5px; height: 5px; border-radius: 50%; background: #9ca3af; }
+  .cal-dot-task { background: #3aa776; }
+  /* Selected-day summary + Events / Tasks cards. */
+  .cal-day-head { margin: 16px 0 8px; font-weight: 800; font-size: 1.02rem; }
+  .cal-sub { display: flex; align-items: center; justify-content: space-between; margin: 14px 0 6px; }
+  .cal-sub h3 { margin: 0; font-size: .95rem; }
+  .cal-add-btn { border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #374151); border-radius: 999px; font-size: .8rem; font-weight: 700; padding: 5px 11px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .cal-add-btn:active { transform: scale(.95); }
+  .cal-ev-row { display: flex; align-items: center; gap: 9px; padding: 9px 11px; margin-bottom: 6px; border-radius: 10px; background: var(--surface-2, var(--button-bg, #f3f4f6)); border-left: 4px solid #9ca3af; }
+  .cal-ev-time { font-size: .82rem; font-weight: 700; color: var(--text-muted, #6b7280); min-width: 64px; }
+  .cal-ev-name { font-weight: 600; }
+  .cal-task-row { padding: 9px 12px; margin-bottom: 6px; border-radius: 10px; color: #fff; font-weight: 600; }
+  .cal-empty-note { color: var(--text-muted, #9ca3af); font-size: .85rem; padding: 4px 2px 8px; }
+  .cal-agenda-day { margin: 0 0 16px; }
+  .cal-agenda-date { font-weight: 800; margin: 0 0 6px; display: flex; align-items: center; gap: 8px; }
+  .cal-agenda-today { font-size: .7rem; font-weight: 700; color: #fff; background: #3aa776; border-radius: 999px; padding: 2px 8px; }
+  .cal-placeholder { color: var(--text-muted, #9ca3af); text-align: center; padding: 40px 16px; font-size: .95rem; }
 </style>
 </head>
 <body>
@@ -6236,6 +6427,10 @@
         <button class="tmd-item tmd-sub" id="tmd-fv-tt" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6" height="16" rx="1.4"/><line x1="14" y1="7" x2="20" y2="7"/><line x1="14" y1="12" x2="20" y2="12"/><line x1="14" y1="17" x2="20" y2="17"/></svg></span><span class="tmd-lbl">Time &amp; Tasks</span></button>
         <button class="tmd-item tmd-sub" id="tmd-fv-matrix" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.2"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.2"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.2"/></svg></span><span class="tmd-lbl">Decision Matrix</span></button>
       </div>
+      <!-- D: Calendar (iPhone app feature). Inline calendar icon. -->
+      <button class="tmd-item" id="tmd-calendar" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.2"/><line x1="3.5" y1="9.5" x2="20.5" y2="9.5"/><line x1="8" y1="3" x2="8" y2="6.5"/><line x1="16" y1="3" x2="16" y2="6.5"/></svg></span><span class="tmd-lbl">Calendar</span></button>
+      <!-- D: Garden (iPhone app feature). Sprout icon. -->
+      <button class="tmd-item" id="tmd-garden" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c0-3 2.4-5 5.4-5 .2 2.8-2 5-5.4 5z"/><path d="M12 13c0-2.6-2.1-4.4-4.7-4.4C7.1 11 9 13 12 13z"/></svg></span><span class="tmd-lbl">Garden</span></button>
       <button class="tmd-item" id="tmd-stats" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="4" y="13" width="3.6" height="7" rx="0.8" fill="currentColor"/><rect x="10.2" y="9" width="3.6" height="11" rx="0.8" fill="currentColor"/><rect x="16.4" y="5" width="3.6" height="15" rx="0.8" fill="currentColor"/></svg></span><span class="tmd-lbl">Statistics</span></button>
       <button class="tmd-item" id="tmd-notes" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5 h16 a1 1 0 0 1 1 1 v9 a1 1 0 0 1 -1 1 H9.5 L5 21 v-3.5 H4 a1 1 0 0 1 -1 -1 V6.5 a1 1 0 0 1 1 -1 Z"/><line x1="7" y1="9.5" x2="17" y2="9.5" stroke-linecap="round"/><line x1="7" y1="12.7" x2="14" y2="12.7" stroke-linecap="round"/></svg></span><span class="tmd-lbl">Notes</span></button>
       <button class="tmd-item" id="tmd-settings" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span><span class="tmd-lbl">Settings</span></button>
@@ -6510,11 +6705,7 @@
                task name (+ live pomodoro ring) → time LEFT (focal) → today's
                progress (secondary) → money (reward). -->
           <div class="fc-expanded">
-            <!-- Tiny top-right "expand → full screen" icon. CSS gates it to the
-                 running-pomodoro state; JS wires the click → openFocusFullscreen(). -->
-            <button class="fc-expand-btn" id="fc-expand-btn" type="button" aria-label="Expand to full screen" title="Full screen">
-              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-            </button>
+            <!-- (Top-right expand icon removed — tapping the pomodoro ring opens full screen now.) -->
             <!-- Idle (no task running): the cat fills the fixed-height section instead of
                  the "Now focusing on [name]" header (CSS swaps via .fc-idle). The image
                  swaps by state in JS: cat-down ("Add a task." — no tasks) vs cat-startnow
@@ -6613,6 +6804,9 @@
               <!-- Row 2: action buttons. Shuffle + Edit hide until a task exists. Undo/Redo
                    (icon-only) appear next to Edit only in edit mode. -->
               <div class="th-row2">
+              <!-- E: Repeat weekday multi-select — replaces Matrix+Edit while the
+                   Repeat chip is active (only during a +Add). Buttons built by JS. -->
+              <div class="weekday-row" id="weekday-row" role="group" aria-label="Repeat weekdays"></div>
               <!-- Matrix — flip to the 2×2 view. -->
               <button class="hd-chip hd-labeled split-view-toggle" id="split-view-toggle" type="button" title="Matrix 보기로 뒤집기" aria-label="Matrix view" style="touch-action:manipulation;">
                 <svg viewBox="0 0 14 14" width="15" height="15" aria-hidden="true">
@@ -6626,6 +6820,13 @@
               <button class="hd-chip hd-labeled edit-toggle" id="edit-toggle" type="button"
                       title="Edit tasks" aria-label="Edit tasks" style="touch-action:manipulation;">
                 <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg><span class="hd-lbl">Edit</span>
+              </button>
+              <!-- E: Repeat (↻) — shown ONLY while a +Add is open (body.tt-adding).
+                   Tap → swap Matrix+Edit for a 7-day weekday multi-select; the chosen
+                   days are stored on the new task as task.repeat. -->
+              <button class="hd-chip hd-labeled repeat-toggle" id="repeat-toggle" type="button"
+                      title="요일 반복" aria-label="Repeat on weekdays" style="touch-action:manipulation;">
+                <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span class="hd-lbl">Repeat</span>
               </button>
               <!-- No Space (edit-mode only) → pull the now-line block + everything below it together
                    (remove the gaps) and re-chunk into 25-min work / 5-min break. Icon = two arrows
@@ -6688,11 +6889,8 @@
               <button class="hd-chip hd-labeled matrix-edit-toggle" id="matrix-edit-toggle" type="button" title="Edit tasks" aria-label="Edit tasks">
                 <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg><span class="hd-lbl">Edit</span>
               </button>
-              <!-- Collapse / expand the Tasks panel — redesigned from the bare ▾ chevron into a
-                   chip matching the others; the chevron rotates when collapsed. -->
-              <button class="hd-chip matrix-collapse-toggle" id="matrix-collapse-toggle" type="button" title="Collapse / Expand" aria-label="Collapse or expand the Tasks panel">
-                <svg class="mct-chev" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
-              </button>
+              <!-- (Collapse/expand chip removed per user request — the Tasks panel
+                   still collapses by tapping the "Tasks" title.) -->
             </span>
             <!-- GTD capsule mirrored onto the matrix "Tasks" header, far right. On
                  wide (≥701px) .ftt-chips is hidden and only the 2×2 matrix view
@@ -6756,21 +6954,21 @@
                  keep working. "USD" label dropped per request; #fc-money-big shrinks
                  itself when the number gets long (renderMoneyCard sets .lots/.huge). -->
             <div class="fc-money-row" id="bucket-money-row">
+              <!-- Sprout (opens the watering full-screen). Lives INSIDE the money column
+                   so it always centres over the money NUMBER (the column shrinks to the
+                   number's width); order:-1 keeps it ON TOP of the money. -->
+              <div class="bucket-buttons">
+                <button class="bucket-btn bucket-sprout-btn" id="bucket-sprout-btn"
+                        type="button" aria-label="식물에 물 주기" title="식물에 물 주기">
+                  <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
+                    <path d="M12 22 V11" stroke="#15803d" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+                    <path d="M12 12.5 C7 12.5 4 9.5 4 5 C9 5 12 8 12 12.5 Z" fill="#4ade80"/>
+                    <path d="M12 12.5 C17 12.5 20 9.5 20 5 C15 5 12 8 12 12.5 Z" fill="#22c55e"/>
+                  </svg>
+                </button>
+              </div>
               <span class="fc-money-big" id="fc-money-big">$0.00</span>
               <span class="fc-money-change" id="fc-money-change"></span>
-            </div>
-            <!-- Sprout (open the watering full-screen) + fill / drain water. -->
-            <div class="bucket-buttons">
-              <button class="bucket-btn bucket-sprout-btn" id="bucket-sprout-btn"
-                      type="button" aria-label="식물에 물 주기" title="식물에 물 주기">
-                <svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true">
-                  <path d="M12 22 V11" stroke="#15803d" stroke-width="2.2" stroke-linecap="round" fill="none"/>
-                  <path d="M12 12.5 C7 12.5 4 9.5 4 5 C9 5 12 8 12 12.5 Z" fill="#4ade80"/>
-                  <path d="M12 12.5 C17 12.5 20 9.5 20 5 C15 5 12 8 12 12.5 Z" fill="#22c55e"/>
-                </svg>
-              </button>
-              <!-- (water-fill 💧 button removed per request — only the 🌱 sprout remains,
-                   centred above the money.) -->
             </div>
           </div>
           <!-- RIGHT: the bucket itself (3D scene; SVG kept laid-out at opacity 0). -->
@@ -6961,6 +7159,36 @@
       <p class="help">Replies you left on others' shared notes. Edit or remove yours with the pencil / ✕; the flag reports their note so it stops showing in your top bar.</p>
       <div class="note-list" id="my-replies-list"></div>
     </div>
+  </section>
+  <!-- D: Calendar page (Month / Agenda / Routine). Tasks appear on their creation
+       date; events are separate (state.events). iPhone-app feature. -->
+  <section id="calendar-page" style="display:none;">
+    <div class="panel">
+      <div class="cal-seg" id="cal-seg">
+        <button class="cal-seg-btn active" data-view="month" type="button">Month</button>
+        <button class="cal-seg-btn" data-view="agenda" type="button">Agenda</button>
+        <button class="cal-seg-btn" data-view="routine" type="button">Routine</button>
+      </div>
+      <div id="cal-month-view">
+        <div class="cal-month-head">
+          <button class="cal-nav" id="cal-prev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+          <h2 id="cal-title">Month</h2>
+          <button class="cal-nav" id="cal-next" type="button" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+        </div>
+        <div class="cal-grid-clip" id="cal-grid-clip"><div class="cal-grid" id="cal-grid"></div></div>
+        <div class="cal-day-head" id="cal-sel-label"></div>
+        <div class="cal-sub"><h3>Events</h3><button class="cal-add-btn" id="cal-add-event" type="button">+ Add Event</button></div>
+        <div id="cal-events-list"></div>
+        <div class="cal-sub"><h3>Tasks</h3><button class="cal-add-btn" id="cal-add-task" type="button">+ Add Task</button></div>
+        <div id="cal-tasks-list"></div>
+      </div>
+      <div id="cal-agenda-view" style="display:none;"></div>
+      <div id="cal-routine-view" style="display:none;"><div class="cal-placeholder">Routine rings &amp; category grid — coming soon.</div></div>
+    </div>
+  </section>
+  <!-- D: Garden page (placeholder — content coming in a follow-up). -->
+  <section id="garden-page" style="display:none;">
+    <div class="panel"><h2>Garden</h2><div class="cal-placeholder">Your garden is growing — coming soon.</div></div>
   </section>
 </main>
 
@@ -7213,18 +7441,33 @@
   <div class="modal-backdrop" id="gtd-modal-backdrop"></div>
   <div class="modal-content gtd-content">
     <button class="gtd-x" id="gtd-x" type="button" aria-label="Close"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
-    <h3 class="gtd-title">Get Things Done by...</h3>
-    <div class="gtd-time-row">
-      <input type="time" id="gtd-pick-time" class="gtd-pick-time" aria-label="Get things done before">
-      <button class="btn" id="gtd-now" type="button">Now</button>
+    <h3 class="gtd-title">Goal time</h3>
+    <!-- Custom inline time picker — appears ABOVE the time display; the modal
+         stays open (no native bottom-sheet that hides the window). -->
+    <div class="gtd-picker-panel hidden" id="gtd-picker-panel" aria-hidden="true">
+      <div class="gtd-wheel" id="gtd-wheel-h"></div>
+      <div class="gtd-wheel-colon">:</div>
+      <div class="gtd-wheel" id="gtd-wheel-m"></div>
+      <div class="gtd-wheel" id="gtd-wheel-ap"></div>
+      <div class="gtd-wheel-mask" aria-hidden="true"></div>
     </div>
+    <!-- Big tappable time → toggles the picker above. -->
+    <button class="gtd-time-display" id="gtd-time-display" type="button">--:--</button>
+    <input type="time" id="gtd-pick-time" aria-label="Goal time" style="display:none;">
     <div class="gtd-btn-row">
       <button class="btn" id="gtd-plus30" type="button">+30m</button>
       <button class="btn" id="gtd-plus60" type="button">+1h</button>
-      <button class="btn primary" id="gtd-ok" type="button">OK</button>
+      <button class="btn" id="gtd-now" type="button">Now</button>
     </div>
+    <div class="gtd-scope">
+      <label class="gtd-scope-opt"><input type="radio" name="gtd-scope" id="gtd-scope-today" value="today"><span>Today only</span></label>
+      <label class="gtd-scope-opt"><input type="radio" name="gtd-scope" id="gtd-scope-every" value="every"><span>Every day</span></label>
+    </div>
+    <button class="btn primary gtd-ok-btn" id="gtd-ok" type="button">OK</button>
   </div>
 </div>
+<!-- Confirmation shown bottom-right when "Every day" goal time is set. -->
+<div class="gtd-default-chip hidden" id="gtd-default-chip" aria-hidden="true"></div>
 
 <!-- Event creation / edit modal -->
 <div class="modal hidden" id="event-modal" aria-hidden="true">
@@ -7308,6 +7551,12 @@
     <div id="note-modal-pillars" style="display:none; margin: 0 0 12px;">
       <div class="help" style="font-size:.75rem; margin: 0 0 6px;">Bucket pillar (optional)</div>
       <div class="nm-pillar-row" id="note-modal-pillar-row"></div>
+    </div>
+    <!-- E: optional weekday recurrence (opts.showWeekdays, Edit task). 7 toggle
+         buttons Mon–Sun; chosen days are saved on the task as task.repeat. -->
+    <div id="note-modal-weekdays" style="display:none; margin: 0 0 12px;">
+      <div class="help" style="font-size:.75rem; margin: 0 0 6px;">반복 요일 (optional)</div>
+      <div class="nm-weekday-row" id="note-modal-weekday-row"></div>
     </div>
     <!-- Optional time-edit fields — shown only when the editor is opened with
          opts.entry pointing at a watch-log entry that has timing data. -->
@@ -7469,20 +7718,21 @@
     <input type="file" accept="image/*" id="ff-cat-file" style="display:none">
   </div>
   <div class="ff-controls">
-    <!-- Stop (¼ width): appears only at a phase boundary. Slide the centre
-         button onto it (or tap it) → stop the pomodoro entirely. -->
-    <button class="ff-btn ff-side-btn ff-stop" id="ff-stop" type="button" aria-label="Stop — do nothing">
-      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>
+    <!-- 정지 (stop): appears only at a phase boundary as part of the menu row.
+         Tap → stop the pomodoro entirely. -->
+    <button class="ff-btn ff-side-btn ff-stop" id="ff-stop" type="button" aria-label="정지 — 끝내기">
+      <span class="ff-btn-label">정지</span>
     </button>
-    <!-- Centre button: pause/resume while running, "?" at a phase boundary,
-         "Auto" while Auto mode is on. Draggable to the side / Auto targets. -->
-    <button class="ff-btn ff-pause" id="ff-pause" type="button" aria-label="Pause, resume, or choose"></button>
-    <!-- Play (¾ width): appears only at a phase boundary. Slide onto it (or
-         tap) → continue to the next phase (work→break, break→work). -->
-    <button class="ff-btn ff-side-btn ff-play" id="ff-play" type="button" aria-label="Continue to next phase">
-      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M8 5 L19 12 L8 19 Z" fill="currentColor"/></svg>
+    <!-- Centre button: pause/resume while running, "Auto" while Auto mode is on.
+         Hidden at a phase boundary (the menu row replaces it). Tap-only. -->
+    <button class="ff-btn ff-pause" id="ff-pause" type="button" aria-label="일시정지 / 다시 시작"></button>
+    <!-- 계속 (continue): appears only at a phase boundary as part of the menu row.
+         Tap → continue to the next phase (work→break, break→work). -->
+    <button class="ff-btn ff-side-btn ff-play" id="ff-play" type="button" aria-label="계속 — 다음 단계">
+      <span class="ff-btn-label">계속</span>
     </button>
-    <!-- Auto target: slide the centre button down onto it → enable Auto mode. -->
+    <!-- Auto: tap → enable Auto mode (auto-advance phases). In the menu row at a
+         boundary; just below the centre button while running (manual). -->
     <button class="ff-btn ff-auto-btn" id="ff-auto" type="button" aria-label="Auto mode"><span class="ff-auto-label">Auto</span></button>
   </div>
 </div>
@@ -7973,6 +8223,14 @@ function migrateState() {
   });
   if (!Array.isArray(state.scoreLog)) state.scoreLog = [];
   if (!Array.isArray(state.events))          state.events          = [];
+  // G: every task carries a creation timestamp so the calendar can list it on
+  // its day. Back-fill existing tasks (saved before this) with `now` once.
+  {
+    const _nowTs = Date.now();
+    ['q1','q2','q3','q4'].forEach(_q => (state.tasks[_q] || []).forEach(t => {
+      if (t && typeof t.createdAt !== 'number') t.createdAt = _nowTs;
+    }));
+  }
   if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
   if (!Array.isArray(state.versions)) state.versions = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
@@ -9259,7 +9517,7 @@ document.addEventListener('visibilitychange', () => {
 /* ===========================================================
    ROUTING
 =========================================================== */
-const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page', settings: 'settings-page', help: 'help-page', notes: 'notes-page' };
+const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page', settings: 'settings-page', help: 'help-page', notes: 'notes-page', calendar: 'calendar-page', garden: 'garden-page' };
 function showPage(name) {
   // setup-page is only a relocation SOURCE (its Settings/Account panels move to
   // the Settings page at boot) — never shown; legacy 'setup' → focus. Unknown → focus.
@@ -9285,6 +9543,7 @@ function showPage(name) {
   saveState();
   if (name === 'focus') initFocusPage();
   if (name === 'notes'    && typeof renderNotes   === 'function') { try { renderNotes(); }   catch(_){} }
+  if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} }
   if (name === 'settings') {
     try { if (typeof _syncSoundSeg === 'function') _syncSoundSeg(); } catch(_){}
     try { if (typeof _pillarEditorLoad === 'function') _pillarEditorLoad(); } catch(_){}
@@ -9361,10 +9620,215 @@ if (_topHomeBtn) _topHomeBtn.onclick = () => {
   wire('tmd-fv-pomo',   () => { try { if (typeof openFocusFullscreen === 'function') openFocusFullscreen(); } catch (_) {} });
   wire('tmd-fv-tt',     () => { try { if (typeof enterFocusView === 'function') enterFocusView('tt'); } catch (_) {} });
   wire('tmd-fv-matrix', () => { try { if (typeof enterFocusView === 'function') enterFocusView('matrix'); } catch (_) {} });
+  wire('tmd-calendar', () => { showPage('calendar'); scrollMainTop(); });
+  wire('tmd-garden',   () => { showPage('garden');   scrollMainTop(); });
   wire('tmd-stats',    () => { showPage('stats');    scrollMainTop(); });
   wire('tmd-notes',    () => { showPage('notes');    scrollMainTop(); });
   wire('tmd-settings', () => { showPage('settings'); scrollMainTop(); });
   wire('tmd-help',     () => { showPage('help');     scrollMainTop(); });
+})();
+
+/* =========================================================================
+   CALENDAR (D) — Month / Agenda / Routine. Tasks appear on their createdAt
+   date (G); events are separate (state.events). iPhone-app feature; shown on
+   web too for now (gating to native is a deferred refinement).
+========================================================================= */
+function _calDateKey(d) {                 // Date | ms → 'YYYY-MM-DD' (local)
+  const x = (d instanceof Date) ? d : new Date(+d || Date.now());
+  const p = n => String(n).padStart(2, '0');
+  return x.getFullYear() + '-' + p(x.getMonth() + 1) + '-' + p(x.getDate());
+}
+function _calKeyToDate(key) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || '');
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+}
+function _tasksOnDate(key) {               // [{q,idx,task}] created on that day
+  const out = [];
+  ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach((t, idx) => {
+    if (t && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) === key) out.push({ q, idx, task: t });
+  }));
+  return out;
+}
+function _eventsOnDate(key) {
+  return (state.events || []).filter(ev => ev && typeof ev.startMs === 'number' && _calDateKey(ev.startMs) === key);
+}
+function _calEventColor(ev) {               // bucket-side colour, else grey
+  if (ev && typeof ev.side === 'number' && ev.side >= 0) {
+    if (typeof _pillarSwatchColor === 'function') return _pillarSwatchColor(ev.side);
+    if (typeof _PILLAR_COLORS !== 'undefined') return _PILLAR_COLORS[ev.side % _PILLAR_COLORS.length];
+  }
+  return '#9ca3af';
+}
+let _calState = null;
+function _calInit() {
+  if (_calState) return;
+  const now = new Date();
+  _calState = { y: now.getFullYear(), m: now.getMonth(), selKey: _calDateKey(now), view: 'month' };
+}
+function _calMonthShift(delta) {
+  _calInit();
+  let m = _calState.m + delta, y = _calState.y;
+  while (m < 0)  { m += 12; y--; }
+  while (m > 11) { m -= 12; y++; }
+  _calState.m = m; _calState.y = y;
+  renderCalendar();
+}
+/* Subtle slide+fade when the month changes (button or swipe). */
+function _calAnimateShift(delta) {
+  const grid = document.getElementById('cal-grid');
+  if (!grid) { _calMonthShift(delta); return; }
+  grid.classList.add(delta > 0 ? 'cal-anim-left' : 'cal-anim-right');
+  setTimeout(() => { _calMonthShift(delta); grid.classList.remove('cal-anim-left', 'cal-anim-right'); }, 220);
+}
+function renderCalendar() {
+  _calInit();
+  const seg = document.getElementById('cal-seg');
+  if (seg) seg.querySelectorAll('.cal-seg-btn').forEach(b => b.classList.toggle('active', b.dataset.view === _calState.view));
+  const month = document.getElementById('cal-month-view');
+  const agenda = document.getElementById('cal-agenda-view');
+  const routine = document.getElementById('cal-routine-view');
+  [month, agenda, routine].forEach(el => { if (el) el.style.display = 'none'; });
+  if (_calState.view === 'agenda') { if (agenda) agenda.style.display = ''; _calRenderAgenda(); }
+  else if (_calState.view === 'routine') { if (routine) routine.style.display = ''; }
+  else { if (month) month.style.display = ''; _calRenderMonth(); }
+}
+const _CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+function _calRenderMonth() {
+  const y = _calState.y, m = _calState.m;
+  const title = document.getElementById('cal-title');
+  if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  const grid = document.getElementById('cal-grid');
+  if (!grid) return;
+  const startDow = new Date(y, m, 1).getDay();         // 0=Sun
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const todayKey = _calDateKey(new Date());
+  let html = '';
+  ['S','M','T','W','T','F','S'].forEach(d => html += '<div class="cal-dow">' + d + '</div>');
+  for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
+  for (let day = 1; day <= daysInMonth; day++) {
+    const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+    const evs = _eventsOnDate(key);
+    const tCount = _tasksOnDate(key).length;
+    let dots = '';
+    evs.slice(0, 3).forEach(ev => dots += '<span class="cal-dot" style="background:' + _calEventColor(ev) + '"></span>');
+    if (tCount) dots += '<span class="cal-dot cal-dot-task"></span>';
+    const cls = 'cal-cell' + (key === todayKey ? ' cal-today' : '') + (key === _calState.selKey ? ' cal-sel' : '');
+    html += '<button type="button" class="' + cls + '" data-key="' + key + '"><span class="cal-day">' + day + '</span><span class="cal-dots">' + dots + '</span></button>';
+  }
+  grid.innerHTML = html;
+  _calRenderDayLists();
+}
+function _calRenderDayLists() {
+  const key = _calState.selKey;
+  const lbl = document.getElementById('cal-sel-label');
+  if (lbl) { const d = _calKeyToDate(key); lbl.textContent = d ? d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) : key; }
+  const evWrap = document.getElementById('cal-events-list');
+  if (evWrap) {
+    const evs = _eventsOnDate(key).sort((a, b) => a.startMs - b.startMs);
+    evWrap.innerHTML = evs.length ? evs.map(ev => {
+      const t = new Date(ev.startMs), hh = t.getHours(), mm = t.getMinutes();
+      const tm = ((hh % 12) || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM');
+      return '<div class="cal-ev-row" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span></div>';
+    }).join('') : '<div class="cal-empty-note">No events</div>';
+  }
+  const tkWrap = document.getElementById('cal-tasks-list');
+  if (tkWrap) {
+    const tks = _tasksOnDate(key);
+    tkWrap.innerHTML = tks.length ? tks.map(o => {
+      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
+      return '<div class="cal-task-row" style="background:' + col + '">' + escapeHTML(o.task.text || '') + '</div>';
+    }).join('') : '<div class="cal-empty-note">No tasks</div>';
+  }
+}
+function _calRenderAgenda() {
+  const wrap = document.getElementById('cal-agenda-view');
+  if (!wrap) return;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let html = '';
+  for (let i = 0; i < 35; i++) {
+    const d = new Date(today.getTime() + i * 86400000);
+    const key = _calDateKey(d);
+    const evs = _eventsOnDate(key).sort((a, b) => a.startMs - b.startMs), tks = _tasksOnDate(key);
+    if (!evs.length && !tks.length) continue;
+    html += '<div class="cal-agenda-day"><div class="cal-agenda-date">' + d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) + (i === 0 ? '<span class="cal-agenda-today">Today</span>' : '') + '</div>';
+    evs.forEach(ev => {
+      const t = new Date(ev.startMs), hh = t.getHours(), mm = t.getMinutes();
+      const tm = ((hh % 12) || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM');
+      html += '<div class="cal-ev-row" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span></div>';
+    });
+    tks.forEach(o => {
+      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
+      html += '<div class="cal-task-row" style="background:' + col + '">' + escapeHTML(o.task.text || '') + '</div>';
+    });
+    html += '</div>';
+  }
+  wrap.innerHTML = html || '<div class="cal-placeholder">Nothing scheduled in the next few weeks.</div>';
+}
+async function _calAddTask() {
+  if (typeof openNoteEditor !== 'function') return;
+  const v = await openNoteEditor('', { title: 'New task', singleLine: true, maxLength: 200 });
+  if (v == null) return;
+  const text = ((typeof v === 'string') ? v : (v.text || '')).trim();
+  if (!text) return;
+  _calInit();
+  const d = _calKeyToDate(_calState.selKey) || new Date(); d.setHours(12, 0, 0, 0);
+  if (!Array.isArray(state.tasks.q1)) state.tasks.q1 = [];
+  state.tasks.q1.unshift({
+    text: text.slice(0, 200), done: false, elapsedMs: 0, segments: [],
+    bid: (state.moneyChangeFactors && state.moneyChangeFactors.finishTask) || 10,
+    addLogged: false, ord: (typeof _nextTaskOrd === 'function' ? _nextTaskOrd() : 0),
+    createdAt: d.getTime()
+  });
+  try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  renderCalendar();
+}
+async function _calAddEvent() {
+  if (typeof openNoteEditor !== 'function') return;
+  const v = await openNoteEditor('', { title: 'New event', subtitle: 'Starts 9:00 AM on the selected day (1 h).', singleLine: true, maxLength: 120 });
+  if (v == null) return;
+  const text = ((typeof v === 'string') ? v : (v.text || '')).trim();
+  if (!text) return;
+  _calInit();
+  const d = _calKeyToDate(_calState.selKey) || new Date(); d.setHours(9, 0, 0, 0);
+  if (!Array.isArray(state.events)) state.events = [];
+  state.events.push({ id: Date.now() + '_' + Math.random().toString(36).slice(2), name: text.slice(0, 120), startMs: d.getTime(), endMs: d.getTime() + 3600000 });
+  try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+  renderCalendar();
+}
+(function wireCalendar() {
+  const seg = document.getElementById('cal-seg');
+  if (seg) seg.querySelectorAll('.cal-seg-btn').forEach(b => b.addEventListener('click', () => {
+    _calInit(); _calState.view = b.dataset.view || 'month'; renderCalendar();
+  }));
+  const prev = document.getElementById('cal-prev'), next = document.getElementById('cal-next');
+  if (prev) prev.addEventListener('click', () => _calAnimateShift(-1));
+  if (next) next.addEventListener('click', () => _calAnimateShift(1));
+  const grid = document.getElementById('cal-grid');
+  if (grid) grid.addEventListener('click', (e) => {
+    if (grid._calSwiped) return;                       // a swipe just fired — ignore the tap
+    const cell = e.target.closest('.cal-cell');
+    if (!cell || cell.classList.contains('cal-empty')) return;
+    const key = cell.dataset.key; if (!key) return;
+    _calInit(); _calState.selKey = key; _calRenderMonth();   // re-render month (updates .cal-sel + lists)
+  });
+  const clip = document.getElementById('cal-grid-clip');
+  if (clip) {
+    let sx = 0, sy = 0, tracking = false;
+    clip.addEventListener('pointerdown', (e) => { sx = e.clientX; sy = e.clientY; tracking = true; });
+    clip.addEventListener('pointerup', (e) => {
+      if (!tracking) return; tracking = false;
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy) * 1.4) {
+        if (grid) { grid._calSwiped = true; setTimeout(() => { try { grid._calSwiped = false; } catch (_) {} }, 320); }
+        _calAnimateShift(dx < 0 ? 1 : -1);              // swipe left → next month
+      }
+    });
+    clip.addEventListener('pointercancel', () => { tracking = false; });
+  }
+  const addT = document.getElementById('cal-add-task'), addE = document.getElementById('cal-add-event');
+  if (addT) addT.addEventListener('click', _calAddTask);
+  if (addE) addE.addEventListener('click', _calAddEvent);
 })();
 
 /* ===== Sound mode (Settings page #sound-panel) — loud / soft(Library) / off.
@@ -10184,6 +10648,49 @@ function _commitReorder(dragged, target, insertBefore) {
   if (document.getElementById('setup-page') && document.getElementById('setup-page').style.display !== 'none' && typeof renderTasks === 'function') renderTasks();
   if (typeof drawGauge === 'function') drawGauge();
 }
+/* B: move a task to a DIFFERENT quadrant (drag between 2×2 Matrix cells).
+   The task leaves state.tasks[srcQ] and is APPENDED to state.tasks[targetQ]
+   (array position is irrelevant to display — `ord` controls that); its gauge
+   blocks are re-tagged to the new (q, idx) and the source's later blocks shift
+   down, mirroring deleteTaskAt's bookkeeping so per-task colour/identity stays
+   correct. Then _commitReorder sets the display order at the drop slot and does
+   the gauge re-chunk + save + render. targetIdx = the task to insert next to
+   (in targetQ) or null = end of that cell. */
+function _commitTaskQuadrantMove(dragged, targetQ, targetIdx, insertBefore) {
+  if (!dragged) return;
+  const srcQ = dragged.q, i = +dragged.idx;
+  const T = state.tasks[srcQ] && state.tasks[srcQ][i];
+  if (!T) return;
+  if (srcQ === targetQ) {   // same cell → plain ord reorder
+    _commitReorder(dragged, (targetIdx != null && Number.isFinite(+targetIdx)) ? { q: targetQ, idx: +targetIdx } : null, insertBefore);
+    return;
+  }
+  if (!Array.isArray(state.tasks[targetQ])) state.tasks[targetQ] = [];
+  const newIdx = state.tasks[targetQ].length;   // T will be appended here
+  // 1) Re-tag T's blocks (incl. combined-block taskSegs) to the new quadrant + idx.
+  (state.scheduledBlocks || []).forEach(b => {
+    if (b.q === srcQ && b.taskIdx === i) { b.q = targetQ; b.taskIdx = newIdx; }
+    if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => { if (sg.q === srcQ && sg.taskIdx === i) { sg.q = targetQ; sg.taskIdx = newIdx; } });
+  });
+  // 2) Remove T from the source array.
+  state.tasks[srcQ].splice(i, 1);
+  // 3) Source blocks AFTER i shift down one (T's were re-tagged above → skipped).
+  (state.scheduledBlocks || []).forEach(b => {
+    if (b.q === srcQ && typeof b.taskIdx === 'number' && b.taskIdx > i) b.taskIdx -= 1;
+    if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => { if (sg.q === srcQ && typeof sg.taskIdx === 'number' && sg.taskIdx > i) sg.taskIdx -= 1; });
+  });
+  // 4) Append T to the target array (lands exactly at newIdx).
+  state.tasks[targetQ].push(T);
+  // 5) Keep an active pomodoro pinned to its task / shifted for the source splice.
+  const at = state.activeTimer;
+  if (at && at.q === srcQ && typeof at.idx === 'number') {
+    if (at.idx === i) { at.q = targetQ; at.idx = newIdx; }
+    else if (at.idx > i) at.idx -= 1;
+  }
+  // 6) Display order at the drop slot + gauge re-chunk + save + render + redraw.
+  const tgt = (targetIdx != null && Number.isFinite(+targetIdx)) ? { q: targetQ, idx: +targetIdx } : null;
+  _commitReorder({ q: targetQ, idx: newIdx }, tgt, insertBefore);
+}
 /* Commit a reorder using a target insertion index. Pulled out of the row
    ondrop handler so the cell-level drop handler (used for the empty space
    below the last task) can share the same logic. */
@@ -10518,9 +11025,8 @@ function renderTasks() {
           }
           // Drop future scheduled blocks; cut the current covering block at NOW.
           trimFutureBlocksForTask(q, i);
-          // Visual reward: blue water stream pouring from the row down into
-          // the bucket. See window.bidoroTaskWaterDrop for direction logic.
-          try { if (typeof window.bidoroTaskWaterDrop === 'function') window.bidoroTaskWaterDrop(row, q); } catch (_) {}
+          // (Completion no longer pours water into the bucket — water now drips in
+          //  from FOCUS while a work phase runs. Completion = money only, no water change.)
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -11003,6 +11509,8 @@ function openNoteEditor(initialText, opts) {
     const durEl     = document.getElementById('note-modal-duration');
     const pillarsWrap = document.getElementById('note-modal-pillars');
     const pillarRow   = document.getElementById('note-modal-pillar-row');
+    const weekdaysWrap = document.getElementById('note-modal-weekdays');
+    const weekdayRow   = document.getElementById('note-modal-weekday-row');
     if (!modal || !textEl || !okBtn || !cancelBtn) {
       resolve(window.prompt(opts.title || 'Note', initialText || ''));
       return;
@@ -11060,6 +11568,14 @@ function openNoteEditor(initialText, opts) {
       pillarRow.appendChild(titleEl2);
       syncSel();
     }
+    // E: weekday recurrence picker — opt-in via opts.showWeekdays. Track chosen
+    // days in _selDays (Set of 0=Sun..6=Sat); seeded from opts.repeat.
+    const showWeekdays = !!opts.showWeekdays;
+    const _selDays = new Set(Array.isArray(opts.repeat) ? opts.repeat.filter(d => d >= 0 && d <= 6) : []);
+    if (weekdaysWrap) weekdaysWrap.style.display = showWeekdays ? '' : 'none';
+    if (showWeekdays && weekdayRow && typeof _buildWeekdayButtons === 'function') {
+      _buildWeekdayButtons(weekdayRow, _selDays, null);
+    }
     function updateCounter() {
       counterEl.textContent = maxLen > 0
         ? `${textEl.value.length} / ${maxLen}`
@@ -11090,8 +11606,11 @@ function openNoteEditor(initialText, opts) {
         const mins = Math.max(1, Math.min(600, +durEl.value || 0));
         return { text: textEl.value, durationMs: mins * 60 * 1000 };
       }
-      if (showPillar) {
-        return { text: textEl.value, pillar: _selPillar };
+      if (showPillar || showWeekdays) {
+        const r = { text: textEl.value };
+        if (showPillar)   r.pillar = _selPillar;
+        if (showWeekdays) r.repeat = Array.from(_selDays).sort((a, b) => a - b);
+        return r;
       }
       return textEl.value;
     }
@@ -11113,7 +11632,7 @@ function openNoteEditor(initialText, opts) {
           done({ text: '', startedAt: entry.startedAt, endedAt: entry.endedAt });
         } else if (showDuration) {
           done({ text: '', durationMs: null });
-        } else if (showPillar) {
+        } else if (showPillar || showWeekdays) {
           done({ text: '', pillar: _selPillar });
         } else {
           done('');
@@ -11301,7 +11820,8 @@ function createNewTask(q) {
   state.tasks[q].unshift({
     text: '', done: false, elapsedMs: 0, segments: [], bid: bid,
     addLogged: false,   // becomes true once the +$ reward + log entry have fired
-    ord: _nextTaskOrd()  // global display order — newest task lands at the BOTTOM (first-made stays on top)
+    ord: _nextTaskOrd(),  // global display order — newest task lands at the BOTTOM (first-made stays on top)
+    createdAt: Date.now()  // G: creation date → calendar lists the task on this day
   });
 }
 /* Fire the deferred "Added a task" reward + log when the task first gets
@@ -12032,8 +12552,75 @@ function startFocusTicker() {
     // renderImDoing keeps running regardless.
     if (!window._gaugeBusy) { _glueUnstartedToNowLine(); drawGauge(); }   // #22 un-started plan follows the line
     renderImDoing();
+    try { _focusWaterTick(); } catch (_) {}   // per-minute FOCUS → bucket water droplet
   }, 1000);
 }
+
+/* Per-minute FOCUS → bucket water droplet. While a pomodoro WORK phase runs, every
+   full focused minute ONE droplet flies from the running task bar into the bucket
+   (+ a small water bump). Water now comes from FOCUS, not completion. Fires only on
+   the focus page (bar + bucket visible); q4/uptask is excluded (not "focus"). */
+let _lastFocusDropMin = -1;
+function _focusWaterTick() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || at.phase !== 'work' || at.paused) { _lastFocusDropMin = -1; return; }
+  const phaseStart = (+at.phaseStartedAt || +at.startedAt) || Date.now();
+  const elapsedMin = Math.floor((Date.now() - phaseStart) / 60000);
+  if (elapsedMin <= 0) { _lastFocusDropMin = 0; return; }     // wait for the first full minute
+  if (elapsedMin === _lastFocusDropMin) return;               // already dripped this minute
+  _lastFocusDropMin = elapsedMin;
+  const row = document.querySelector('#focus-matrix .task-row.is-running');
+  if (row && typeof window.bidoroTaskWaterDrop === 'function') {
+    window.bidoroTaskWaterDrop(row, at.q, { count: 1, addWater: 0.004 });   // ONE droplet + small water
+  }
+}
+
+/* GLOBAL pomodoro boundary watcher — runs on EVERY page (not only the focus page,
+   whose ticker stops when you navigate away), so the work↔break transition popup
+   appears wherever the user is (Settings, Notes, Statistics…). tickPomodoro is
+   idempotent + cheap: it no-ops unless an active, un-paused, not-already-pending
+   pomodoro has actually hit its boundary. The focus ticker also calls it; the extra
+   call is a harmless no-op. The popup itself (customConfirm) is a fixed overlay. */
+let _globalPomoTickHandle = null;
+(function startGlobalPomoTicker(){
+  if (_globalPomoTickHandle) return;
+  _globalPomoTickHandle = setInterval(() => {
+    try { if (typeof tickPomodoro === 'function') tickPomodoro(); } catch (_) {}
+  }, 1000);
+})();
+
+/* iPad / wide web: the matrix +Add inputs in the LOWER cells (q3/q4) sit near the
+   bottom of the 2×2 grid, so the on-screen keyboard covers them. On focus, add
+   temporary bottom room to the focus page + scroll the input up above the keyboard;
+   clear it on blur. Touch + wide only (a desktop mouse has no covering keyboard). */
+(function wireMatrixAddKeyboardScroll(){
+  const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+  function room(on){ const fp = document.getElementById('focus-page'); if (fp) fp.style.paddingBottom = on ? '50vh' : ''; }
+  function lift(el){
+    try {
+      const m = document.querySelector('main');
+      if (m && el) {
+        const t = m.scrollTop + el.getBoundingClientRect().top - m.getBoundingClientRect().top - 70;
+        m.scrollTo({ top: Math.max(0, t), behavior: 'smooth' });
+      } else if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+    } catch (_) {}
+  }
+  document.addEventListener('focusin', (e) => {
+    const el = e.target;
+    if (!el || !el.classList || !el.classList.contains('add-task-input')) return;
+    if (!isTouch || !window.matchMedia('(min-width: 701px)').matches) return;   // wide iPad only
+    room(true);
+    setTimeout(() => lift(el), 300);
+  });
+  document.addEventListener('focusout', (e) => {
+    const el = e.target;
+    if (!el || !el.classList || !el.classList.contains('add-task-input')) return;
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (!a || !a.classList || !a.classList.contains('add-task-input')) room(false);
+    }, 120);
+  });
+})();
 
 function fmtHMS(ms) {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -12350,12 +12937,19 @@ function renderFocusMatrix() {
       const isPomo = at && at.type==='pomodoro' && at.q===q && at.idx===i;
       const isUp   = at && at.type==='uptask'   && at.q===q && at.idx===i;  // q4 stopwatch
       // q4 = "Not Important · Not Urgent" — the distraction quadrant. These
-      // tasks have NO completion checkbox (you don't "finish" a distraction),
-      // their name carries a ☹, and tapping runs an UP-timer (stopwatch)
-      // rather than a 25/5 Pomodoro.
+      // tasks have NO completion checkbox (you don't "finish" a distraction)
+      // and tapping runs an UP-timer (stopwatch) rather than a 25/5 Pomodoro.
       const isQ4 = (q === 'q4');
       if (isPomo || isUp) row.classList.add('is-running');
-      const _nameHtml = escapeHTML(t.text||'(unnamed)') + (isQ4 ? ' ☹' : '');
+      const _nameHtml = escapeHTML(t.text||'(unnamed)');
+      // E: weekday recurrence indicator (↻) — shown when the task repeats. The
+      // chosen days (Mon→Sun order) go in the tooltip; the bar stays compact.
+      const _repLabel = (Array.isArray(t.repeat) && t.repeat.length)
+        ? _WEEKDAYS.filter(w => t.repeat.indexOf(w.d) >= 0).map(w => w.lbl).join(' ')
+        : '';
+      const _repeatHtml = _repLabel
+        ? `<span class="task-repeat-dot" title="반복: ${_repLabel}" aria-label="반복 ${_repLabel}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>`
+        : '';
       // q4 rows omit the checkbox entirely. A pillar-tagged task tints the CHECKBOX itself
       // with its bucket-side colour (the old separate colour dot is removed) — same colour
       // unchecked AND checked; the tick is forced dark (CSS) so it reads on the pastel.
@@ -12385,6 +12979,7 @@ function renderFocusMatrix() {
       row.innerHTML = `
         ${_cbHtml}
         <span class="task-text ${t.done?'done':''} ${(isPomo||isUp)?'running':''}">${_nameHtml}</span>
+        ${_repeatHtml}
         <span class="task-bid-wrap"></span>
         <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         <button class="task-grip" aria-label="Drag to reorder" title="Drag to reorder"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="16" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
@@ -12397,6 +12992,8 @@ function renderFocusMatrix() {
       // qTaskTextColor text (per-task), so the bar and its gauge box match.
       row.style.setProperty('background', bidoroTaskBg(q, i), 'important');
       textEl.style.setProperty('color', bidoroTaskText(q, i), 'important');
+      const repDot = row.querySelector('.task-repeat-dot');   // E: match the bar's text colour
+      if (repDot) repDot.style.setProperty('color', bidoroTaskText(q, i), 'important');
       // Play/pause colours from the bar's own palette so it harmonises in any theme:
       // idle = play triangle in the bar's TEXT colour on the frosted circle (CSS); running =
       // circle FILLED with the text colour + icon inverted to the bar colour ("active" look).
@@ -12434,10 +13031,8 @@ function renderFocusMatrix() {
           // The block currently being passed by the time line is cut at NOW;
           // blocks entirely in the future are deleted.
           trimFutureBlocksForTask(q, i);
-          // Visual reward: blue water stream pouring from the row down into
-          // the bucket. Fired BEFORE the re-render below so the geometry is
-          // captured from the row that actually got ticked.
-          try { if (typeof window.bidoroTaskWaterDrop === 'function') window.bidoroTaskWaterDrop(row, q); } catch (_) {}
+          // (Completion no longer pours water into the bucket — water now drips in
+          //  from FOCUS while a work phase runs. Completion = money only, no water change.)
         }
         task.done = cb.checked;
         task.completedAt = cb.checked ? Date.now() : null;
@@ -12466,13 +13061,22 @@ function renderFocusMatrix() {
           logEvent({ type: 'finish-task', name: task.text || '(task)', money: +rw.total, q });
           playFx('complete');
           if (rw.total > 0) _taskFinishMoneyFx(_sx, _sy, +rw.total, `Finished: ${task.text || '(task)'}`);
-          // Reward message now shows in the done-cat overlay (the old now-focusing reward
-          // badge is removed per spec).
-          try { if (typeof _fcShowDoneReward === 'function') _fcShowDoneReward(rw, task.text); } catch (_) {}
           // Pillar coupling: a pillar-tagged task grows that bucket face by a level.
+          // Capture what happened so the done overlay can also announce the raised side.
+          let _pillarFx = null;
           if (task.pillar != null && typeof window.bidoroBucketRaisePillar === 'function') {
-            try { window.bidoroBucketRaisePillar(task.pillar); } catch (_) {}
+            try {
+              const _res = window.bidoroBucketRaisePillar(task.pillar);
+              if (_res && _res.rose) {
+                const _ft = state.bucket && state.bucket.faceText && state.bucket.faceText[task.pillar];
+                const _nm = (_ft && _ft.title) || (typeof _PILLAR_NAMES !== 'undefined' && _PILLAR_NAMES[task.pillar]) || ('Side ' + (task.pillar + 1));
+                _pillarFx = { name: _nm, level: _res.level, max: _res.max };
+              }
+            } catch (_) {}
           }
+          // Reward message in the done overlay: money earned + (if a pillar task) the
+          // bucket side that just grew. Shows in the "Now focusing on" card like the pay.
+          try { if (typeof _fcShowDoneReward === 'function') _fcShowDoneReward(rw, task.text, _pillarFx); } catch (_) {}
         } else {
           const back = (typeof task.lastReward === 'number') ? task.lastReward : taskPlannedReward(task, q);
           if (back !== 0) applyMoney(-back, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
@@ -12523,6 +13127,11 @@ function renderFocusMatrix() {
           renderFocusMatrix(); drawGauge(); renderImDoing();
           return;
         }
+
+        // Switching FROM a q4 distraction up-timer TO a real focus task is a
+        // redirect worth celebrating (ADHD: reward catching yourself). Flash a
+        // brief praise in the "Now focusing on" slot; it reverts on its own.
+        if (at && at.type === 'uptask') { try { _flashFocusPraise(); } catch (_) {} }
 
         // Multi-task focus window: if a WORK phase is already running on a
         // DIFFERENT task, switching to THIS task continues the SAME 25-min
@@ -12707,28 +13316,10 @@ function renderFocusMatrix() {
         toggleTaskTimer(q, i);
       };
       penBtn.onclick = (ev) => { ev.stopPropagation(); editTaskNameFromFocus(q, i); };
-      // The pomodoro remaining-time ("nnm") capsule was removed per user
-      // request — remaining time now lives only in the focus card + ring.
-      // (Pause is done by tapping the running task row.) The q4 stopwatch
-      // up-timer pill stays, since tapping it is how you stop a q4 session.
-      if (isUp) {
-        // q4 stopwatch — an UP-timer (HH:MM:SS counting up) in place of the
-        // 25m pomodoro circle. Tap to stop. The .uptimer class reuses the
-        // pomodoro-display pill shape with a q4 tint.
-        const ref = at.paused ? at.pausedAt : Date.now();
-        const elapsed = Math.max(0, ref - at.startedAt - (at.totalPausedMs || 0));
-        const display = document.createElement('span');
-        display.className = `pomodoro-display uptimer q-${q}`;
-        display.title = 'Tap to stop';
-        display.innerHTML = `<span class="time">${fmtHMS(elapsed)}</span>`;
-        display.onclick = (e) => {
-          e.stopPropagation();
-          stopActiveTimer('finish');
-          renderFocusMatrix(); drawGauge(); renderImDoing();
-        };
-        bidWrap.appendChild(display);
-        bidWrap.classList.add('has-pomo');
-      }
+      // Both inline timer capsules were removed per user request: the pomodoro
+      // remaining-time ("nnm") pill AND the q4 stopwatch up-timer pill. Elapsed
+      // / remaining time now lives only in the focus card + ring + gauge block.
+      // A running q4 task is still stopped by tapping its row (see row.onclick).
       // Delete × + drag handle — rendered on all screen sizes.
       // Visibility is controlled by CSS: hidden when the parent .focus-cell
       // lacks .show-actions, revealed when the user taps/clicks the cell title.
@@ -12777,7 +13368,8 @@ function renderFocusMatrix() {
             state.tasks[q].unshift({
               text: v.slice(0, 200),
               done: false, elapsedMs: 0, segments: [],
-              bid: bid, addLogged: false, ord: _nextTaskOrd()
+              bid: bid, addLogged: false, ord: _nextTaskOrd(),
+              createdAt: Date.now()   // G
             });
             // Fire the +$ reward + activity log entry on first non-empty text.
             if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
@@ -12869,7 +13461,9 @@ async function editTaskNameFromFocus(q, i) {
     maxLength: 200,
     singleLine: true,                                  // task names are one line
     showPillar: true,                                  // + bucket-pillar picker
-    pillar: (task.pillar != null ? task.pillar : null)
+    pillar: (task.pillar != null ? task.pillar : null),
+    showWeekdays: true,                                // E: + weekday recurrence picker
+    repeat: (Array.isArray(task.repeat) ? task.repeat : [])
   });
   if (v === null) return;            // Cancel
   // openNoteEditor returns { text, pillar } here (showPillar path).
@@ -12889,6 +13483,11 @@ async function editTaskNameFromFocus(q, i) {
       if ('pillar' in v) {
         if (v.pillar != null && +v.pillar >= 0) task.pillar = +v.pillar;
         else delete task.pillar;
+      }
+      // E: save the weekday recurrence (empty array clears it).
+      if ('repeat' in v) {
+        if (Array.isArray(v.repeat) && v.repeat.length) task.repeat = v.repeat.slice();
+        else delete task.repeat;
       }
       if (!task.addLogged) firstTextLogIfNeeded(q, i);
     }
@@ -13373,9 +13972,17 @@ function _stopDistractionFx() {
 function _spawnRisingDroplet() {
   const at = state.activeTimer;
   if (!at || at.type !== 'uptask') return;
-  const from = (typeof window.bidoroBucketSurfaceRandomPoint === 'function')
-    ? window.bidoroBucketSurfaceRandomPoint() : null;
-  if (!from) return;                                   // no water → nothing rises
+  // No water → nothing rises.
+  const hasWater = (typeof window.bidoroBucketHasWater === 'function') ? window.bidoroBucketHasWater() : true;
+  if (!hasWater) return;
+  // Source = the dead-centre of the bucket's BOTTOM face, so the droplet climbs
+  // up through the interior (dimmed behind the front glass) and out the top
+  // toward the running task bar — instead of starting on the surface.
+  const from = (typeof window.bidoroBucket3DFloorPoint === 'function')
+    ? window.bidoroBucket3DFloorPoint()
+    : ((typeof window.bidoroBucketSurfaceRandomPoint === 'function')
+        ? window.bidoroBucketSurfaceRandomPoint() : null);
+  if (!from) return;
   // The running q4 task bar (target).
   let row = document.querySelector('#focus-matrix .focus-cell.' + at.q + ' .task-row.is-running');
   if (!row) row = document.querySelector('#focus-matrix .task-row.is-running');
@@ -13514,7 +14121,7 @@ function _tickRedFlash(x, y) {
   } catch (_) {}
 }
 function _taskFinishMoneyFx(srcX, srcY, bid, label) {
-  const FILL_DELAY = 1200;                 // wait for the falling water + bucket fill
+  const FILL_DELAY = 0;                     // money rises IMMEDIATELY on completion (no completion water to wait for now)
   let credited = false;
   const credit = () => {
     if (credited) return; credited = true;
@@ -14308,7 +14915,7 @@ function drawGauge() {
   // ---- Goal lines: deadline ("Go home") + bedtime ("Sleep") ----
   // deadline → blue, bedtime → green. Drawn whenever the user has supplied
   // a time (date is optional — falls back to rolling within the 24h window).
-  function placeGoalLine(line, label, timeStr, dateStr, name) {
+  function placeGoalLine(line, label, timeStr, dateStr, name, oneLine) {
     if (!line || !label) return;
     if (!timeStr) { line.style.display = 'none'; return; }
     // Anchor used by combineDateTime when the user only set a time (no date):
@@ -14321,14 +14928,20 @@ function drawGauge() {
     line.style.display = 'block';
     line.style.top = pct(tMs) + '%';
     const isPhone = window.matchMedia && window.matchMedia('(max-width: 700px)').matches;
-    if (isPhone) {
-      label.innerHTML = `${fmtTimeShort(tMs)}<br>${name}`;   // deadline → "Finish by", bedtime → "Sleep" (#N-gtd-label)
+    if (oneLine) {
+      // Blue GTD line → single capsule "hh:mm · Goal" (no two-line stack).
+      label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
+      label.classList.add('gl-oneline');
+    } else if (isPhone) {
+      label.innerHTML = `${fmtTimeShort(tMs)}<br>${name}`;   // bedtime → "Sleep" (#N-gtd-label)
+      label.classList.remove('gl-oneline');
     } else {
       label.textContent = `${fmtTimeShort(tMs)} · ${name}`;
+      label.classList.remove('gl-oneline');
     }
   }
-  placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Finish by');
-  placeGoalLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep');
+  placeGoalLine(dlLineEl, dlLabelEl, state.deadline, state.deadlineDate, 'Goal', true);
+  placeGoalLine(btLineEl, btLabelEl, state.bedtime,  state.bedtimeDate,  'Sleep', false);
 
   // Scheduled task blocks — rendered AFTER goal lines so they sit on top.
   if (typeof window.renderScheduledBlocks === 'function') {
@@ -14493,6 +15106,44 @@ function wireGtdGaugeArm() {
     document.addEventListener('touchend', u);
     document.addEventListener('touchcancel', u);
   }, { capture: true, passive: false });
+}
+
+/* True when the block `b` is the one a timer is actively running on — i.e. its
+   task matches state.activeTimer AND the now-line is passing through it (open
+   session, or now within its span). Used to warn before deleting a live block. */
+function _blockHasRunningTimer(b) {
+  const at = state.activeTimer;
+  if (!at || !b) return false;
+  if (!(at.q === b.q && at.idx === b.taskIdx)) return false;   // timer not for this block's task
+  if (b.activeAt && !b.activeEndMs) return true;               // open session on this block
+  const now = Date.now();
+  return (b.startMs <= now && now <= b.endMs);                 // now-line within the block
+}
+
+/* Delete a scheduled gauge block. If a timer is running on it (now-line passing
+   through), first ask "delete + stop the timer?" via the styled confirm; on No
+   the block is restored (redraw). `onResolve(deleted)` runs after the decision. */
+function _deleteScheduledBlock(b, onResolve) {
+  const finish = (deleted) => {
+    if (deleted) {
+      const idx = state.scheduledBlocks.indexOf(b);
+      if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
+      if (window.__tgSelectBlock) window.__tgSelectBlock(null);
+      try { saveState(); } catch (_) {}
+      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+    }
+    if (typeof drawGauge === 'function') drawGauge();
+    else if (typeof drawTimeArea === 'function') drawTimeArea();
+    if (typeof onResolve === 'function') onResolve(!!deleted);
+  };
+  if (_blockHasRunningTimer(b) && typeof customConfirm === 'function') {
+    customConfirm('Timer running',
+      'A timer is running on this block. Delete the block and stop the timer?',
+      { yesLabel: 'Yes', noLabel: 'No' })
+      .then((ok) => { if (ok) { try { stopActiveTimer('reset'); } catch (_) {} } finish(!!ok); });
+  } else {
+    finish(true);
+  }
 }
 
 function drawTimeArea() {
@@ -14721,7 +15372,22 @@ function drawTimeArea() {
     const isBreakBox = !!b.isBreak || (Array.isArray(b.breakSegments) &&
       b.breakSegments.some(s => s.startMs <= b.startMs + 1000 && s.endMs >= b.endMs - 1000) &&
       !(Array.isArray(b.workedSegments) && b.workedSegments.length));
-    if (isBreakBox) div.classList.add('is-break-box');
+    if (isBreakBox) {
+      div.classList.add('is-break-box');
+      // Color-code the elapsed break SKY-BLUE as the now-line passes it (just like a
+      // work block fills with its quadrant colour). Fill from the top down to the
+      // now-line — or the whole block if it's already in the past.
+      const _bh = b.endMs - b.startMs;
+      const _fEnd = Math.min(b.endMs, now);
+      if (_bh > 0 && _fEnd > b.startMs) {
+        const _bf = document.createElement('div');
+        _bf.className = 'time-block-fill';
+        _bf.style.top = '0%';
+        _bf.style.height = Math.min(100, (_fEnd - b.startMs) / _bh * 100) + '%';
+        _bf.style.background = (typeof _breakColor === 'function') ? _breakColor() : '#BAE6FD';
+        div.appendChild(_bf);
+      }
+    }
     if (!isBreakBox) {
       const segments = getBlockColorSegments(b, now);
       const blockH = b.endMs - b.startMs;
@@ -14899,13 +15565,7 @@ function drawTimeArea() {
     /* ---- X delete ---- */
     xBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      const idx = state.scheduledBlocks.indexOf(b);
-      if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
-      if (window.__tgSelectBlock) window.__tgSelectBlock(null);
-      saveState();
-      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-      if (typeof drawGauge === 'function') drawGauge();
-      else drawTimeArea();
+      _deleteScheduledBlock(b);   // warns first if a timer is running on this block
     });
 
     /* ---- Body drag → move block (tap → select if no movement) ----------
@@ -15134,13 +15794,7 @@ function drawTimeArea() {
           el.style.opacity   = Math.max(0.25, 1 - Math.abs(dx) / W).toFixed(3);
         }
         function _swipeDelete() {
-          const idx = state.scheduledBlocks.indexOf(b);
-          if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
-          if (window.__tgSelectBlock) window.__tgSelectBlock(null);
-          try { saveState(); } catch (_) {}
-          if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-          if (typeof drawGauge === 'function') drawGauge();
-          else if (typeof drawTimeArea === 'function') drawTimeArea();
+          _deleteScheduledBlock(b);   // warns first if a timer is running on this block
         }
         function _swipeEnd(ev) {
           const el = activeDiv || div;
@@ -17322,7 +17976,7 @@ function _fcStartFirstTask() {
    now-focusing reward badge. ===== */
 let _fcDoneTimer = null;
 function _fcTruncate(s, n) { s = String(s == null ? '' : s); return s.length > n ? (s.slice(0, n - 1).replace(/\s+$/, '') + '…') : s; }
-function _fcShowDoneReward(rw, taskName) {
+function _fcShowDoneReward(rw, taskName, pillar) {
   const card = document.getElementById('focus-card');
   const l1 = document.getElementById('fdm-l1'), l2 = document.getElementById('fdm-l2');
   if (!card || !l1 || !l2 || !rw) return;
@@ -17339,6 +17993,11 @@ function _fcShowDoneReward(rw, taskName) {
     msgs = [{ a: 'You got paid', b: '$' + total + ' for ' + name }];
     if (rw.kind === 'early' && rw.delta > 0)     msgs.push({ a: 'Finished early', b: '+$' + Math.abs(rw.delta) + ' extra' });
     else if (rw.kind === 'late' && rw.delta < 0) msgs.push({ a: 'Finished late', b: '−$' + Math.abs(rw.delta) + ' less' });
+  }
+  // A pillar-tagged task also raised a bucket SIDE — announce it in the same overlay
+  // (cycles in after the pay line, like the early/late detail). Mirrors the pay feedback.
+  if (pillar && pillar.name) {
+    msgs.push({ a: 'Side raised', b: pillar.name + ' → Lv ' + pillar.level + (pillar.level >= pillar.max ? ' (full!)' : '') });
   }
   let mi = 0;
   function show(i) {
@@ -17382,18 +18041,54 @@ function _fitFocusName() {
     guard++;
   }
 }
+/* ADHD redirect reward — when the user switches FROM a q4 distraction up-timer
+   TO a real focus task, a short praise briefly replaces "Now focusing on" in the
+   focus card, then reverts on its own. Plain + encouraging, never shaming.
+   var (not let) so a read before init can't throw a TDZ ReferenceError. */
+var _focusPraiseUntil = 0;
+var _focusPraiseMsg = '';
+const _FOCUS_PRAISE = [
+  'Nice — you caught yourself.',
+  "Great pivot. Let's go.",
+  "That's the redirect — proud of you.",
+  'Back on track. Well done.',
+  'You chose focus. That counts.',
+  'Strong move. Here we go.'
+];
+function _focusPraiseActive() { return Date.now() < _focusPraiseUntil; }
+function _flashFocusPraise() {
+  _focusPraiseMsg = _FOCUS_PRAISE[Math.floor(Math.random() * _FOCUS_PRAISE.length)];
+  _focusPraiseUntil = Date.now() + 2600;
+  try {
+    const card = document.getElementById('focus-card');
+    const lbl = card && card.querySelector('.fc-label');
+    if (lbl) { lbl.textContent = _focusPraiseMsg; lbl.classList.add('fc-praise'); }
+  } catch (_) {}
+  // Revert: drop the praise + re-render so the normal label returns.
+  setTimeout(() => {
+    _focusPraiseUntil = 0;
+    try {
+      const card = document.getElementById('focus-card');
+      const lbl = card && card.querySelector('.fc-label');
+      if (lbl) lbl.classList.remove('fc-praise');
+    } catch (_) {}
+    try { renderImDoing(); } catch (_) {}
+  }, 2600);
+}
 function renderImDoing() {
   // Populates the sticky "Now focusing on" card (expanded + compact layouts).
   // Reuses the exact same call sites the old "I'm doing" area used.
   const card = document.getElementById('focus-card');
   if (!card) return;
-  // Tiny top-right "expand → full screen" icon (wired once). CSS gates its
-  // visibility to the running-pomodoro state.
-  const _exp = document.getElementById('fc-expand-btn');
-  if (_exp && !_exp._wired) {
-    _exp._wired = true;
-    _exp.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation();
+  // Tap the pomodoro RING → open the full-screen view (wired once). The corner
+  // expand icon was removed; the ring itself is the trigger now. A tap on the pause
+  // button inside the ring is ignored here so it pauses without also expanding.
+  const _ring = document.getElementById('fc-ring-wrap');
+  if (_ring && !_ring._wiredFs) {
+    _ring._wiredFs = true;
+    _ring.style.cursor = 'pointer';
+    _ring.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('#fc-ring-pause')) return;
       try { openFocusFullscreen(); } catch (_) {}
     });
   }
@@ -17517,10 +18212,15 @@ function renderImDoing() {
   if (at.type === 'pomodoro' || at.type === 'uptask') {
     const t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     if (t) name = t.text || '(task)';
-    if (at.type === 'uptask') name += ' \u2639';   // ☹ = distraction face
   }
   setName(name);
   setDot(QDOT[at.q] || '#9ca3af');
+  // Default label; the q4 branch below swaps it for a duration-toned message.
+  // A just-earned redirect praise (q4 → focus) also briefly wins this slot.
+  try {
+    const _lbl0 = card.querySelector('.fc-label');
+    if (_lbl0) _lbl0.textContent = _focusPraiseActive() ? _focusPraiseMsg : 'Now focusing on';
+  } catch (_) {}
   if (at.type === 'pomodoro') {
     // Focusing on a real (q1/q2/q3) task: today's accumulated focus time,
     // the running session number, and the pomodoro time left.
@@ -17557,7 +18257,8 @@ function renderImDoing() {
         _pz._wired = true;
         _pz.addEventListener('click', (e) => {
           e.preventDefault(); e.stopPropagation();
-          if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
+          if (typeof toggleActiveTimerPause === 'function') toggleActiveTimerPause();   // pomo → pause · uptask → stop
+          else if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
           try { renderImDoing(); } catch (_) {}
           try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
           try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
@@ -17579,13 +18280,142 @@ function renderImDoing() {
     const ringSegs = [{ endFrac: 1, color: accent }];
     setPomo(fracElapsed, ringSegs);
   } else {
-    // q4 distraction / tracker — show the "Now focusing on [name]" header (no idle cat, no
-    // ring, no countdown). fc-q4-run hides the mm:ss row; fc-idle/cat classes are cleared.
+    // q4 (Not important · Not urgent) — a gentle UP-TIMER ring (no countdown). The label
+    // rotates a duration-toned, non-nagging message; the ring fills + darkens per 25-min
+    // lap; the up-timer sits inside, a STOP button below.
     card.classList.remove('fc-idle', 'fc-down', 'fc-startnow');
     card.classList.add('fc-q4-run');
     try { _fcStopClock(); } catch (_) {}
-    setLeft('00:00'); setPomo(null);
+    const _now = (at.paused && at.pausedAt) ? at.pausedAt : Date.now();
+    const _elapsed = Math.max(0, _now - (+at.startedAt || _now));
+    const _t = state.tasks[at.q] && state.tasks[at.q][at.idx];
+    setName((_t && _t.text) || '(task)');                 // task name (no ☹ in the card now)
+    const _lbl = card.querySelector('.fc-label');
+    if (_lbl) _lbl.textContent = _q4Message(_elapsed);    // duration-message replaces "Now focusing on"
+    _renderQ4Ring(_elapsed);                               // ring + up-timer + STOP button
     const _se = document.getElementById('fc-session'); if (_se) _se.textContent = '';   // q4 has no session badge
+  }
+}
+
+/* ===== q4 (Not important · Not urgent) up-timer ring + gentle messages =====
+   q4 tasks run an UP-timer (no completion). Instead of nagging, the "Now focusing on"
+   label rotates a random, duration-toned message; the ring fills over each 25-min lap
+   and DARKENS one shade per lap (very light → q4 blue); the up-timer sits inside it,
+   the STOP button below. Designed for ADHD: time-aware, never shaming. ===== */
+const Q4_RING_SHADES = ['#D6E6F6', '#AFD0EE', '#86B5E3', '#5B93D0', '#3972B5', '#185FA5']; // very light → q4 blue
+const Q4_MESSAGES = {
+  early: ['Rest counts too', 'Just for now', "You're allowed this", 'Recharge mode', 'Taking a detour'],            // < 5 min
+  mid:   ["Time's adding up…", 'Still on this one?', 'A low-stakes one', 'Off-task, on purpose', 'Down the rabbit hole'], // 5–15 min
+  late:  ['Something bigger waiting?', 'Ready to switch?', 'Back to it soon?', 'Worth it still?', 'Long detour…'],   // 15 min+
+};
+let _q4MsgState = { sig: null, text: '', pickedAt: 0 };
+function _q4Message(elapsedMs) {
+  // Reference the IMPORTANT tasks (q1/q2/q3) — finished vs still-to-do — so the gentle
+  // line connects this q4 break to real work (ADHD: praise + soft nudge, never nagging).
+  const done = [], todo = [];
+  ['q1', 'q2', 'q3'].forEach((qq) => {
+    ((state.tasks && state.tasks[qq]) || []).forEach((t) => {
+      if (!t || !t.text || !String(t.text).trim()) return;
+      (t.done ? done : todo).push(_fcTruncate(t.text, 12));
+    });
+  });
+  let pool;
+  if (done.length && todo.length) {            // some finished, some still to do
+    const d = done[done.length - 1], u = todo[0];
+    pool = [
+      'Nice job on ' + d + '. ' + u + "'s still there",
+      d + ' done — ' + u + ' when you’re ready',
+      'Good work on ' + d + '. ' + u + ' too, no rush',
+      d + ' ✓ — then ' + u + ', easy does it',
+    ];
+  } else if (done.length) {                     // everything finished — pure praise
+    const d = done[done.length - 1];
+    pool = [
+      'Nice job finishing ' + d + '!',
+      d + ' all done — enjoy this',
+      'You finished ' + d + '. Rest easy',
+      d + ' done! You earned this',
+    ];
+  } else if (todo.length) {                     // added but none finished yet — soft, by name
+    const u = todo[0];
+    pool = [
+      u + "'s waiting — no pressure",
+      'When you’re ready: ' + u,
+      u + ' is there for later, no rush',
+      'No hurry — ' + u + ' can wait',
+    ];
+  } else {                                      // no important tasks → duration-toned fallback
+    const min = elapsedMs / 60000;
+    const tier = min < 5 ? 'early' : (min < 15 ? 'mid' : 'late');
+    pool = Q4_MESSAGES[tier] || Q4_MESSAGES.early;
+  }
+  // Stability: re-pick on a context/pool change (a task finished, etc.) OR every ~45 s.
+  const sig = pool.length + '|' + (pool[0] || '');
+  const now = Date.now();
+  if (sig !== _q4MsgState.sig || (now - _q4MsgState.pickedAt) > 45000 || !_q4MsgState.text) {
+    _q4MsgState = { sig, text: pool[Math.floor(Math.random() * pool.length)], pickedAt: now };
+  }
+  return _q4MsgState.text;
+}
+function _fmtUptimer(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  const mm = String(m).padStart(2, '0'), sss = String(ss).padStart(2, '0');
+  return h > 0 ? (h + ':' + mm + ':' + sss) : (mm + ':' + sss);
+}
+function _renderQ4Ring(elapsedMs) {
+  const wrap = document.getElementById('fc-ring-wrap');
+  if (wrap) wrap.style.visibility = '';
+  const LAP = 25 * 60 * 1000;
+  const lap = Math.floor(elapsedMs / LAP);
+  const frac = (elapsedMs % LAP) / LAP;
+  const SH = Q4_RING_SHADES;
+  const curColor  = SH[Math.min(lap, SH.length - 1)];                 // current (growing) lap — a touch darker each lap
+  // Completed laps STAY painted: the full ring keeps the last completed lap's
+  // colour and the darker current-lap arc rotates ON TOP. Lap 0 → faint base track.
+  const baseColor = (lap > 0) ? SH[Math.min(lap - 1, SH.length - 1)] : curColor;
+  const C = 2 * Math.PI * 52;
+  const track = document.getElementById('fc-ring-track');
+  if (track) { track.style.stroke = baseColor; track.style.strokeOpacity = (lap > 0) ? '1' : '.16'; }
+  const arc = document.getElementById('fc-ring-arc');
+  if (arc) {
+    // Kill the tween only on the frame a lap rolls over, so the arc doesn't
+    // visibly animate backwards (full → 0) when the next lap starts on top.
+    const lapChanged = (arc._q4lap !== lap);
+    arc._q4lap = lap;
+    arc.style.transition = lapChanged ? 'none' : '';
+    arc.style.stroke = curColor;
+    arc.style.strokeDasharray = (frac * C).toFixed(1) + ' ' + C.toFixed(1);   // FILL the lap clockwise from 12 o'clock
+    arc.style.strokeDashoffset = '0';
+    if (lapChanged) void arc.getBoundingClientRect();   // commit the no-transition reset before the next tween
+  }
+  const knob = document.getElementById('fc-ring-knob'); if (knob) knob.style.display = 'none';
+  const _left = document.getElementById('fc-left');
+  if (_left) {
+    const txt = _fmtUptimer(elapsedMs);
+    _left.textContent = txt;
+    _left.style.color = curColor;
+    // #2: shrink so h:mm:ss (hours present, 7–8 chars) fits inside the ring.
+    _left.style.fontSize = (txt.length >= 8) ? '0.95rem' : (txt.length >= 7 ? '1.1rem' : '');
+  }
+  // STOP button (reuse the pause slot below the time). Square icon; the shared click
+  // handler routes uptask → stopActiveTimer via toggleActiveTimerPause.
+  const _pz = document.getElementById('fc-ring-pause');
+  if (_pz) {
+    if (!_pz._wired) {
+      _pz._wired = true;
+      _pz.addEventListener('click', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (typeof toggleActiveTimerPause === 'function') toggleActiveTimerPause();
+        else if (typeof togglePomodoroPause === 'function') togglePomodoroPause();
+        try { renderImDoing(); } catch (_) {}
+        try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+        try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+        try { saveState(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+      });
+    }
+    _pz.style.background = ''; _pz.style.color = '';   // drop any pomodoro inline colour so the q4-blue CSS wins
+    _pz.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.4" fill="currentColor"/></svg>';   // ▣ STOP
   }
 }
 
@@ -20165,8 +20995,12 @@ function placeManaSlider() { /* no-op — sliders no longer surfaced */ }
 function _syncEditClasses() {
   const on = !!state.splitActionsVisible;
   const back = !!state.ttFlipped;
+  // On WIDE (web / iPad) the gauge is its own left-hand column, so the on-gauge edit
+  // widget (tt-edit, the move/undo pad that replaces the mobile gauge) doesn't apply —
+  // Edit there simply reveals the per-bar pencil + grip (tt-show-actions).
+  const wide = window.matchMedia('(min-width: 701px)').matches;
   document.body.classList.toggle('tt-show-actions', on);
-  document.body.classList.toggle('tt-edit', on && !back);
+  document.body.classList.toggle('tt-edit', on && !back && !wide);
 }
 function applyTtState() {
   const back = !!state.ttFlipped;
@@ -20238,6 +21072,16 @@ function _onResizeFocusHome() {
 }
 window.addEventListener('resize', _onResizeFocusHome);
 window.addEventListener('orientationchange', () => setTimeout(_onResizeFocusHome, 300));
+// iPad / WKWebView: after the screen is locked + unlocked in landscape the webview can
+// resume with a STALE portrait-width layout (the page renders in a narrow left column).
+// The native layer forces a viewport recompute; here, whenever the page becomes visible
+// again, fire resize ticks so every width-dependent layout (gauge, cards, matrix) re-fits
+// the current viewport — also covers plain web Safari where there's no native layer.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  try { window.dispatchEvent(new Event('resize')); } catch (_) {}
+  setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch (_) {} }, 350);
+});
 let _ttFlipBusy = false;
 function flipTimeTasks(toBack) {
   toBack = !!toBack;
@@ -20423,6 +21267,9 @@ if (_editToggle) {
   _editToggle.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
+    // F: a +Add flow open in this column → silently cancel it first (no close
+    // animation) so pressing Edit reads as if only Edit was pressed.
+    if (typeof window._ttAddCancel === 'function') { try { window._ttAddCancel(); } catch (_) {} }
     state.splitActionsVisible = !state.splitActionsVisible;
     try { saveState(); } catch (_) {}
     const on = !!state.splitActionsVisible;
@@ -20762,34 +21609,100 @@ try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000)
       try { area.scrollTo({ top: orig, behavior: 'smooth' }); } catch (_) { area.scrollTop = orig; }
     }, 3000);
   }
+  // ── 12-hour display + custom inline wheel picker ──
+  function _to12(hhmm) { const p = String(hhmm || '').split(':'); let H = +p[0], M = +p[1]; if (isNaN(H)) H = 0; if (isNaN(M)) M = 0; const ap = H >= 12 ? 'PM' : 'AM'; let h12 = H % 12; if (h12 === 0) h12 = 12; return { h12, m: M, ap }; }
+  function _from12(h12, m, ap) { let H = h12 % 12; if (ap === 'PM') H += 12; return _pad(H) + ':' + _pad(m); }
+  function _fmtDisp(hhmm) { if (!hhmm) return '--:--'; const o = _to12(hhmm); return o.h12 + ':' + _pad(o.m) + ' ' + o.ap; }
+  const disp   = document.getElementById('gtd-time-display');
+  const panel  = document.getElementById('gtd-picker-panel');
+  const wheelH = document.getElementById('gtd-wheel-h');
+  const wheelM = document.getElementById('gtd-wheel-m');
+  const wheelAP= document.getElementById('gtd-wheel-ap');
+  function _updateDisp() { if (disp) disp.textContent = _fmtDisp(timeInp.value); }
+  function _buildWheel(el, count, fmt, sel, onPick) {
+    if (!el) return;
+    el.innerHTML = '<div class="gw-pad"></div>' +
+      Array.from({ length: count }, (_, i) => '<div class="gw-it" data-i="' + i + '">' + fmt(i) + '</div>').join('') +
+      '<div class="gw-pad"></div>';
+    const items = el.querySelectorAll('.gw-it');
+    const mark = (idx) => items.forEach((it, i) => it.classList.toggle('sel', i === idx));
+    el._sel = sel; mark(sel); el.scrollTop = sel * 30;
+    items.forEach((it, i) => it.addEventListener('click', () => { try { el.scrollTo({ top: i * 30, behavior: 'smooth' }); } catch (_) { el.scrollTop = i * 30; } }));
+    el.addEventListener('scroll', () => {
+      clearTimeout(el._t);
+      el._t = setTimeout(() => {
+        const idx = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / 30)));
+        if (idx !== el._sel) { el._sel = idx; mark(idx); onPick(); }
+      }, 90);
+    });
+  }
+  function _applyWheels() {
+    const h12 = (wheelH ? wheelH._sel : 0) + 1;
+    const m   = (wheelM ? wheelM._sel : 0);
+    const ap  = (wheelAP && wheelAP._sel === 1) ? 'PM' : 'AM';
+    timeInp.value = _from12(h12, m, ap);
+    _updateDisp();
+  }
+  function _openWheels() {
+    const o = _to12(timeInp.value || _nowHHMM());
+    _buildWheel(wheelH, 12, (i) => String(i + 1), o.h12 - 1, _applyWheels);
+    _buildWheel(wheelM, 60, (i) => _pad(i), o.m, _applyWheels);
+    _buildWheel(wheelAP, 2, (i) => (i ? 'PM' : 'AM'), o.ap === 'PM' ? 1 : 0, _applyWheels);
+  }
+  function _togglePicker(force) {
+    if (!panel) return;
+    const open = (force != null) ? force : panel.classList.contains('hidden');
+    if (open) { panel.classList.remove('hidden'); _openWheels(); }
+    else panel.classList.add('hidden');
+  }
+  function _afterChange() { _updateDisp(); if (panel && !panel.classList.contains('hidden')) _openWheels(); }
+  if (disp) disp.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _togglePicker(); });
+
+  function _showDefaultChip() {
+    const chip = document.getElementById('gtd-default-chip');
+    if (!chip) return;
+    chip.textContent = 'Default goal time: ' + _fmtDisp(state.gtdDefaultTime || state.deadline || '');
+    chip.classList.remove('hidden');
+    clearTimeout(chip._t);
+    chip._t = setTimeout(() => { chip.classList.add('hidden'); }, 3600);
+  }
   function _commit() {
     state.deadline = timeInp.value || '';
-    state.deadlineDate = '';               // rolling (today / next occurrence)
+    const every = !!(document.getElementById('gtd-scope-every') && document.getElementById('gtd-scope-every').checked);
+    state.gtdScope = every ? 'every' : 'today';
+    if (every) {
+      state.deadlineDate = '';                          // rolling → the goal time applies every day
+      state.gtdDefaultTime = timeInp.value || '';
+    } else {
+      state.deadlineDate = (typeof _calDateKey === 'function') ? _calDateKey(new Date()) : '';   // pinned to today only
+    }
     _syncLegacyInputs();
     _redrawAll();
     _close();
     if (state.deadline) { try { _animateGaugeToGtd(); } catch (_) {} }
-  }
-  function _clear() {
-    state.deadline = ''; state.deadlineDate = '';
-    _syncLegacyInputs();
-    _redrawAll();
-    _close();
+    if (every) _showDefaultChip();
   }
   const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn(); }); };
-  on('gtd-now',    () => { timeInp.value = _nowHHMM(); });
-  on('gtd-plus30', () => _addMin(30));
-  on('gtd-plus60', () => _addMin(60));
+  on('gtd-now',    () => { timeInp.value = _nowHHMM(); _afterChange(); });
+  on('gtd-plus30', () => { _addMin(30); _afterChange(); });
+  on('gtd-plus60', () => { _addMin(60); _afterChange(); });
   on('gtd-ok',     _commit);
   on('gtd-x',      _close);
-  // While the native time picker is focused, hide the modal chrome so it doesn't
-  // peek out below the wheel picker on iOS. Restore on blur (Done / tap-away).
-  if (timeInp) {
-    timeInp.addEventListener('focus', () => { modal.classList.add('gtd-picking'); });
-    timeInp.addEventListener('blur',  () => { modal.classList.remove('gtd-picking'); });
-  }
   const bd = document.getElementById('gtd-modal-backdrop');
   if (bd) bd.addEventListener('click', _close);
+
+  // Re-point _openGtdPicker to also seed the display + scope radios + collapse the picker.
+  window._openGtdPicker = function () {
+    timeInp.value = state.deadline || _nowHHMM();
+    const scope = state.gtdScope || 'today';
+    const rt = document.getElementById('gtd-scope-today'), re = document.getElementById('gtd-scope-every');
+    if (rt) rt.checked = (scope !== 'every');
+    if (re) re.checked = (scope === 'every');
+    _togglePicker(false);
+    _updateDisp();
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+  };
 })();
 
 /* ===== "Time" label click → smooth-scroll the gauge back to current time
@@ -20830,6 +21743,60 @@ if (_masterAddBtn) {
     openMasterQuadrantPicker(_masterAddBtn);
   });
 }
+/* ===== E: Repeat weekday recurrence (+Add header chip + Edit-task modal) =====
+   _addRepeatDays holds the weekday ints (0=Sun..6=Sat) chosen for the task being
+   ADDED; it's read by _commitDurationTask and reset whenever the +Add flow opens
+   or closes. task.repeat = sorted array of those ints (absent = one-off). */
+const _WEEKDAYS = [
+  { d: 1, lbl: 'Mon' }, { d: 2, lbl: 'Tue' }, { d: 3, lbl: 'Wed' }, { d: 4, lbl: 'Thu' },
+  { d: 5, lbl: 'Fri' }, { d: 6, lbl: 'Sat' }, { d: 0, lbl: 'Sun' }
+];               // display order = Mon → Sun
+let _addRepeatDays = new Set();
+/* Fill a container with 7 weekday toggle buttons. selSet is a LIVE Set of day
+   ints; tapping a button flips its membership + .on class and calls onToggle. */
+function _buildWeekdayButtons(container, selSet, onToggle) {
+  if (!container) return;
+  container.innerHTML = '';
+  _WEEKDAYS.forEach(w => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'wd-btn' + (selSet.has(w.d) ? ' on' : '');
+    b.textContent = w.lbl;
+    b.dataset.d = String(w.d);
+    b.setAttribute('aria-pressed', selSet.has(w.d) ? 'true' : 'false');
+    b.addEventListener('click', (ev) => {
+      ev.preventDefault(); ev.stopPropagation();
+      if (selSet.has(w.d)) selSet.delete(w.d); else selSet.add(w.d);
+      const on = selSet.has(w.d);
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (typeof onToggle === 'function') onToggle(selSet);
+    });
+    container.appendChild(b);
+  });
+}
+/* Reset the +Add repeat state: clear chosen days, leave repeat-days mode,
+   un-highlight the chip, rebuild the (now empty) header weekday row. */
+function _resetAddRepeat() {
+  _addRepeatDays.clear();
+  document.body.classList.remove('tt-repeat-days');
+  const rt = document.getElementById('repeat-toggle');
+  if (rt) rt.classList.remove('active');
+  const row = document.getElementById('weekday-row');
+  if (row) _buildWeekdayButtons(row, _addRepeatDays, null);
+}
+(function wireRepeatToggle() {
+  const rt  = document.getElementById('repeat-toggle');
+  const row = document.getElementById('weekday-row');
+  if (!rt || !row) return;
+  _buildWeekdayButtons(row, _addRepeatDays, null);   // seed empty buttons
+  rt.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    const on = !document.body.classList.contains('tt-repeat-days');
+    document.body.classList.toggle('tt-repeat-days', on);
+    rt.classList.toggle('active', on);
+  });
+})();
 /* While the picker height animates (open / close), the matrix below it moves
    over ~0.3 s. Re-run drawTimeArea each frame so the gauge's bottom edge (and
    the handle below it) track the moving matrix in real time. The gauge's own
@@ -20988,6 +21955,21 @@ function _trackGaugeDuringReflow(ms, dir) {
   requestAnimationFrame(frame);
 }
 
+/* F: instantly tear down an open +Add flow (quadrant picker OR duration input)
+   with NO close animation — used when Edit is pressed mid-add so the result
+   looks like only Edit was pressed. Restores the +Add button to its default
+   state and drops the "adding" layout. The caller (the stage's _ttAddCancel
+   hook) detaches any outside-tap listeners + discards the preview block. */
+function _silentRemovePicker(picker, masterBtn) {
+  document.body.classList.remove('tt-adding');
+  try { if (picker && picker.parentNode) picker.remove(); } catch (_) {}
+  if (masterBtn) {
+    ['overflow','minHeight','maxHeight','transition','opacity','paddingTop',
+     'paddingBottom','marginTop','display','pointerEvents'].forEach(p => masterBtn.style[p] = '');
+  }
+  window._ttAddCancel = null;
+  if (typeof _resetAddRepeat === 'function') _resetAddRepeat();   // E: clear repeat state on silent cancel
+}
 function openMasterQuadrantPicker(masterBtn) {
   // Replace the master button with a vertical 4-button picker (+ cancel).
   const parent = masterBtn.parentNode;
@@ -21011,6 +21993,7 @@ function openMasterQuadrantPicker(masterBtn) {
   const gen = (openMasterQuadrantPicker._gen = (openMasterQuadrantPicker._gen || 0) + 1);
   // Enter the "adding" layout: Time column shrinks, Tasks widens, header → "T & T".
   document.body.classList.add('tt-adding');
+  if (typeof _resetAddRepeat === 'function') _resetAddRepeat();   // E: fresh repeat state per add
   const picker = document.createElement('div');
   picker.className = 'quadrant-picker';
   // Negation is shown as a STRIKETHROUGH on the word itself instead of a
@@ -21046,6 +22029,14 @@ function openMasterQuadrantPicker(masterBtn) {
   // everything below slides down continuously. (Total height interpolates;
   // there's no instant insert-then-collapse, which is what used to rebound.)
   parent.insertBefore(picker, masterBtn);
+  // F: let the Edit button (or any external caller) silently abort THIS add — no
+  // close animation. At the quadrant-pick stage there are no outside-tap
+  // listeners or preview block yet, so a DOM teardown plus neutralizing the
+  // gen-guarded open-cleanup timer (via _closing) is enough.
+  window._ttAddCancel = function () {
+    picker._closing = true;
+    _silentRemovePicker(picker, masterBtn);
+  };
   const _mh = masterBtn.offsetHeight || 40;
   picker.style.overflow = 'hidden';
   picker.style.maxHeight = '0px';
@@ -21114,7 +22105,9 @@ function openMasterQuadrantPicker(masterBtn) {
     ev.stopPropagation();
     if (picker._closing) return;
     picker._closing = true;
+    window._ttAddCancel = null;                     // normal close owns the teardown now
     document.body.classList.remove('tt-adding');   // morph columns back as the picker closes
+    if (typeof _resetAddRepeat === 'function') _resetAddRepeat();   // E: clear repeat state on cancel
     // REVERSE of the open animation. Buttons fade OUT bottom→top (Cancel
     // first … q1 last), AND — mirroring the open — the picker's height
     // collapses full → 0 while the +Add button grows 0 → full, so the task
@@ -21385,6 +22378,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
       window._previewBlock = null;                              // discard the preview rectangle
     }
     done = true;
+    window._ttAddCancel = null;                                // this close owns the teardown now
     document.removeEventListener('touchstart', onOutside, true);
     document.removeEventListener('mousedown', onOutside, true);
     _closeDurationPicker(picker, masterBtn, commitIt);
@@ -21406,6 +22400,19 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
     document.addEventListener('touchstart', onOutside, true);
     document.addEventListener('mousedown', onOutside, true);
   }, 60);
+
+  // F: Edit button silently aborts the add — drop the preview, detach the
+  // outside-tap listeners, remove the picker with no close animation, redraw.
+  window._ttAddCancel = function () {
+    if (done) return;
+    done = true;
+    window._previewBlock = null;
+    document.removeEventListener('touchstart', onOutside, true);
+    document.removeEventListener('mousedown', onOutside, true);
+    _silentRemovePicker(picker, masterBtn);
+    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+  };
 
   input.addEventListener('keydown', (e) => {
     if (e.isComposing || e.keyCode === 229) return;            // Korean IME guard
@@ -21539,8 +22546,13 @@ function _commitDurationTask(q, name) {
   state.tasks[q].unshift({
     text: name.slice(0, 200), done: false, elapsedMs: 0, segments: [],
     bid: bid, addLogged: false, durationMs: workMs, ord: _nextTaskOrd(),
-    pillar: (_pickedPillar != null ? _pickedPillar : null)   // life pillar tag (0-6 | null)
+    pillar: (_pickedPillar != null ? _pickedPillar : null),   // life pillar tag (0-6 | null)
+    createdAt: Date.now()   // G: creation date → calendar lists the task on this day
   });
+  // E: weekday recurrence — store the days chosen via the Repeat chip (if any).
+  if (_addRepeatDays && _addRepeatDays.size) {
+    state.tasks[q][0].repeat = Array.from(_addRepeatDays).sort((a, b) => a - b);
+  }
   if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
   // The unshift pushed every existing task of this quadrant up one index → bump
   // their scheduled blocks' taskIdx (and shuffle sub-segments) so the per-task
@@ -21572,6 +22584,7 @@ function _commitDurationTask(q, name) {
    height returns to normal. Mirrors the cancel-picker close. */
 function _closeDurationPicker(picker, masterBtn, committed) {
   document.body.classList.remove('tt-adding');
+  if (typeof _resetAddRepeat === 'function') _resetAddRepeat();   // E: clear repeat state (commit already read it)
   Array.prototype.forEach.call(picker.children, (el) => {
     el.style.transition = 'opacity .16s ease'; el.style.opacity = '0';
   });
@@ -21963,73 +22976,15 @@ function _ffPhaseChoice() {
   });
 }
 
-/* One pointer handler for the centre button, shared by every state. A clean
-   TAP runs the context action (pause/resume, or toggle Auto off); a DRAG arms
-   the nearest visible target (stop/play/Auto) and, on release over it, fires
-   that choice. */
+/* Tap-only handler for the centre button. While running, a tap pauses / resumes
+   (or, in Auto mode, taps back to manual) via _ffTapCenter. At a phase boundary
+   the centre button is hidden — the boundary is answered by tapping the
+   계속 / 정지 / Auto buttons in the menu row (wired in wireFocusFullscreen). */
 function _ffWireCenter() {
   const center = document.getElementById('ff-pause');
   if (!center || center._ffWired) return;
   center._ffWired = true;
-  const ARM = 52;                              // px: how close counts as "over" a target
-  let sx = 0, sy = 0, hx = 0, hy = 0, moved = false, armed = null;
-  function activeTargets() {
-    const list = [];
-    const add = (id, key) => {
-      const el = document.getElementById(id);
-      if (el && el.offsetParent !== null) {
-        const r = el.getBoundingClientRect();
-        list.push({ key, el, x: r.left + r.width / 2, y: r.top + r.height / 2 });
-      }
-    };
-    if (_ffConfirmResolve) { add('ff-stop', 'stop'); add('ff-play', 'play'); add('ff-auto', 'auto'); }
-    else if (!state.pomodoroAuto) { add('ff-auto', 'auto'); }   // running-manual: only Auto (downward)
-    return list;
-  }
-  function clearArm() {
-    ['ff-stop', 'ff-play', 'ff-auto'].forEach(id => {
-      const e = document.getElementById(id); if (e) e.classList.remove('armed');
-    });
-    armed = null;
-  }
-  function onDown(e) {
-    const r = center.getBoundingClientRect();
-    hx = r.left + r.width / 2; hy = r.top + r.height / 2;
-    sx = e.clientX; sy = e.clientY; moved = false; armed = null;
-    _ffCenterDragging = true;
-    center.classList.add('dragging');
-    try { center.setPointerCapture(e.pointerId); } catch (_) {}
-  }
-  function onMove(e) {
-    if (!_ffCenterDragging) return;
-    const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) moved = true;
-    center.style.transform = `translate(calc(-50% + ${dx}px), ${dy}px)`;
-    const bx = hx + dx, by = hy + dy;
-    let best = null, bestD = ARM;
-    activeTargets().forEach(t => {
-      const d = Math.hypot(bx - t.x, by - t.y);
-      if (d < bestD) { bestD = d; best = t; }
-    });
-    if (!best || !armed || best.key !== armed) clearArm();
-    if (best) { best.el.classList.add('armed'); armed = best.key; }
-  }
-  function onUp(e) {
-    if (!_ffCenterDragging) return;
-    _ffCenterDragging = false;
-    center.classList.remove('dragging');
-    try { center.releasePointerCapture(e.pointerId); } catch (_) {}
-    const fired = armed;
-    clearArm();
-    center.style.transform = '';               // animate snap back to centre (CSS)
-    if (fired) { _ffFireChoice(fired); }
-    else if (!moved) { _ffTapCenter(); }
-    _ffRenderControls();
-  }
-  center.addEventListener('pointerdown', onDown);
-  center.addEventListener('pointermove', onMove);
-  center.addEventListener('pointerup', onUp);
-  center.addEventListener('pointercancel', onUp);
+  center.addEventListener('click', _ffTapCenter);
 }
 
 /* A target was chosen (by drag-release or direct tap). */
@@ -24194,11 +25149,13 @@ setInterval(() => {
         // center-line and above the lower row's center-line.
         const gap = _findInsertGapByGhostCenter(_td);
         if (gap) {
-          _placeDropIndicator(gap.tasksDiv, gap.beforeNode, _td.q, gap.insertAt);
+          // Indicator coloured for the cell it lands in (the target quadrant).
+          _placeDropIndicator(gap.tasksDiv, gap.beforeNode, gap.cellQ || _td.q, gap.insertAt);
           // Record the drop TARGET ROW (any colour) for the ord-based commit.
           if (_dropTarget) {
             _dropTarget.targetQ = (gap.beforeNode && gap.beforeNode.dataset) ? gap.beforeNode.dataset.q : null;
             _dropTarget.targetIdx = (gap.beforeNode && gap.beforeNode.dataset) ? +gap.beforeNode.dataset.idx : null;
+            _dropTarget.cellQ = gap.cellQ || null;   // B: target QUADRANT cell (cross-cell move)
             _dropTarget.before = true;   // insert BEFORE beforeNode (null → end)
           }
         } else {
@@ -24220,30 +25177,42 @@ setInterval(() => {
        tasksDiv (no source cell visible / no rows). */
     function _findInsertGapByGhostCenter(td) {
       if (!td || !td.rowGhost) return null;
-      // Phone flat-list mode = ONE flat list → scan EVERY row (cross-colour
-      // reorder). Matrix mode (incl. iPad split) → only the source quadrant's
-      // cell (same colour).
-      let tasksDiv;
+      // Phone flat-list mode = ONE flat list → scan EVERY row (cross-colour ord
+      // reorder, q unchanged). 2×2 Matrix (tt-flip) → find the cell UNDER the
+      // ghost centre so a task can be dragged BETWEEN cells (B: cross-quadrant
+      // move). iPad/desktop split grid → source cell only (same-quadrant reorder).
+      let tasksDiv, cellQ = null;
+      const gRect = td.rowGhost.getBoundingClientRect();
+      const gcx = gRect.left + gRect.width / 2, gcy = gRect.top + gRect.height / 2;
       if (_isFlatListMode()) {
         tasksDiv = document.querySelector('#focus-matrix .flat-list .tasks');
+      } else if (document.body.classList.contains('tt-flip')) {
+        let cell = null;
+        document.querySelectorAll('#focus-matrix .focus-cell').forEach(c => {
+          const cr = c.getBoundingClientRect();
+          if (gcx >= cr.left && gcx <= cr.right && gcy >= cr.top && gcy <= cr.bottom) cell = c;
+        });
+        if (!cell) cell = document.querySelector('.focus-cell.' + td.q);   // fallback: source cell
+        cellQ = cell ? (_QORDER.find(q => cell.classList.contains(q)) || td.q) : td.q;
+        tasksDiv = cell ? cell.querySelector('.tasks') : null;
       } else {
         const sourceCell = document.querySelector('.focus-cell.' + td.q);
         tasksDiv = sourceCell ? sourceCell.querySelector('.tasks') : null;
+        cellQ = td.q;
       }
       if (!tasksDiv) return null;
       const rows = Array.from(tasksDiv.querySelectorAll(':scope > .task-row'))
         .filter(r => !r.classList.contains('task-row-ghost'));
-      const gRect = td.rowGhost.getBoundingClientRect();
       const cy = gRect.top + gRect.height / 2;
       for (let k = 0; k < rows.length; k++) {
         const r = rows[k];
         const rect = r.getBoundingClientRect();
         const rowCy = rect.top + rect.height / 2;
         if (cy < rowCy) {
-          return { tasksDiv, beforeNode: r, insertAt: k };
+          return { tasksDiv, beforeNode: r, insertAt: k, cellQ };
         }
       }
-      return { tasksDiv, beforeNode: null, insertAt: rows.length };
+      return { tasksDiv, beforeNode: null, insertAt: rows.length, cellQ };
     }
 
     document.addEventListener('pointerup', ev => {
@@ -24314,16 +25283,23 @@ setInterval(() => {
         return;
       }
       // ----- Reorder branch -----
-      // If the drop indicator is showing AND it's for the same quadrant as
-      // the source row, commit a within-quadrant reorder (matches PC drag).
+      // Commit a reorder. In the 2×2 Matrix (tt-flip) a drop into a DIFFERENT
+      // cell moves the task to that quadrant (B); otherwise it's an ord reorder
+      // (cross-colour in the phone flat list; same-colour in a cell grid).
       if (_td.dragging && _dropTarget) {
         const dragged = { q: _td.q, idx: _td.idx };
+        const cellQ = _dropTarget.cellQ || null;
         const tgt = (_dropTarget.targetQ != null)
           ? { q: _dropTarget.targetQ, idx: +_dropTarget.targetIdx }
           : null;
         const before = _dropTarget.before !== false;
         _clearDropIndicator();
-        _commitReorder(dragged, tgt, before);   // cross-colour in split mode; same-colour in matrix
+        if (cellQ && cellQ !== _td.q && document.body.classList.contains('tt-flip')
+            && typeof _commitTaskQuadrantMove === 'function') {
+          _commitTaskQuadrantMove(dragged, cellQ, (tgt ? tgt.idx : null), before);
+        } else {
+          _commitReorder(dragged, tgt, before);
+        }
         _draggedTask = null;
         _td = null;
         return;
@@ -24792,7 +25768,10 @@ setInterval(() => {
      - PC matrix mode, q1 or q3 (left column): pour RIGHT into the
        same centre gap
    ================================================================ */
-window.bidoroTaskWaterDrop = function (row, q) {
+window.bidoroTaskWaterDrop = function (row, q, opts) {
+  opts = opts || {};
+  const _dropN = (+opts.count) || 12;                                   // droplets in the spray
+  const _addW  = (opts.addWater != null) ? +opts.addWater : 0.07;       // bucket water bump on landing
   if (!row || !row.getBoundingClientRect) return;
   try {
     // Source = the tick CHECKBOX itself (the ✓ icon acts like a punched
@@ -24804,23 +25783,27 @@ window.bidoroTaskWaterDrop = function (row, q) {
     const startX = srcRect.left + srcRect.width / 2;
     const startY = srcRect.top + srcRect.height / 2;
 
-    // Target = the WATER SURFACE CENTRE (top of the water column), not the
-    // bucket floor. bidoroBucketSurfacePoint() returns the predicted-post-fill
-    // surface centre in screen coords so the droplet lands right on the
-    // surface. Fall back to the floor-centre (0.533 of the stage) if the
-    // bucket isn't ready.
+    // Target = the dead-centre of the bucket's BOTTOM face (per user request):
+    // the droplet falls all the way down through the interior — behind the
+    // semi-transparent front glass, so it reads as dimmed in there (see the
+    // task-droplet-fall keyframe) — and the water rises to meet it, instead of
+    // splashing on the surface. Prefer the rendered floor point; fall back to
+    // the surface point, then a low point in the bucket stage.
     let endX, endY;
-    const surf = (typeof window.bidoroBucketSurfacePoint === 'function')
-      ? window.bidoroBucketSurfacePoint() : null;
-    if (surf) {
-      endX = surf.x;
-      endY = surf.y;
+    let tgt = (typeof window.bidoroBucket3DFloorPoint === 'function')
+      ? window.bidoroBucket3DFloorPoint() : null;
+    if (!tgt && typeof window.bidoroBucketSurfacePoint === 'function') {
+      tgt = window.bidoroBucketSurfacePoint();
+    }
+    if (tgt) {
+      endX = tgt.x;
+      endY = tgt.y;
     } else {
       const bEl = document.getElementById('bucket-section');
       const stageEl = bEl ? bEl.querySelector('.bucket-stage') : null;
       const stageRect = stageEl ? stageEl.getBoundingClientRect() : null;
       if (stageRect && stageRect.height > 0) {
-        endY = stageRect.top + stageRect.height * 0.533;
+        endY = stageRect.top + stageRect.height * 0.6;
         endX = stageRect.left + stageRect.width / 2;
       } else {
         endY = window.innerHeight - 80;
@@ -24840,7 +25823,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       } catch (_) {}
     }
 
-    const DROPLET_COUNT = 12;
+    const DROPLET_COUNT = _dropN;
     const STAGGER_MS    = 55;
     const FALL_MS       = 850;
     const SPLASH_DELAY  = FALL_MS - 50;
@@ -24919,8 +25902,8 @@ window.bidoroTaskWaterDrop = function (row, q) {
     // itself is now half-speed (see bidoroBucketAddWater duration).
     setTimeout(() => {
       try {
-        if (typeof window.bidoroBucketAddWater === 'function') {
-          window.bidoroBucketAddWater(0.07);
+        if (_addW > 0 && typeof window.bidoroBucketAddWater === 'function') {
+          window.bidoroBucketAddWater(_addW);
         }
       } catch (_) {}
     }, FALL_MS - 80);
@@ -25061,7 +26044,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
       if (band){ const df = Math.max(5, Math.min(9.5, sTop * 0.115)); const d = document.createElement('div'); d.className = 'b3d-face-desc'; const descTop = top0 + tf + 3; d.textContent = band; d.style.fontSize = df.toFixed(1) + 'px'; d.style.top = descTop + 'px'; d.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.34 : 0.46); el.appendChild(d); fitFont(d, df, 4.5); pendingDescs.push({ el: d, panelH: panelH, descTop: descTop }); }
     }
 
-    ngon(R_BOT, topY(BOT), '#D2D7E0', 0.66, false, bucketG);                                   // bottom face
+    WATER.floorEl = ngon(R_BOT, topY(BOT), '#D2D7E0', 0.66, false, bucketG);                   // bottom face (kept as the floor target for droplets)
     const Rw = Math.max(8, R_BOT - wallT / cN), botY = ((1 - BOT) * 100).toFixed(2);
     WATER.walls = []; WATER.surfInner = null; WATER.surfEl = null; WATER.base = waterLvl; WATER.wr = Rw; WATER.apo = apo(Rw); WATER.cN = cN; WATER.botY = botY;
     const waterG = document.createElement('div'); waterG.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;'; bucketG.appendChild(waterG); WATER.g = waterG;
@@ -25343,6 +26326,18 @@ window.bidoroTaskWaterDrop = function (row, q) {
     if (!r || r.width < 2) return c;
     return { x: c.x + (Math.random() - 0.5) * r.width * 0.6, y: c.y + (Math.random() - 0.5) * r.height * 0.6 };
   };
+  /* Dead-centre of the BOTTOM face in screen coords. Water droplets target this
+     (instead of the surface) so they fall all the way down through the interior
+     — behind the semi-transparent front glass — and the water rises to meet
+     them. Uses the rendered bottom-face element's rect centre; falls back to a
+     point low in the scene. */
+  window.bidoroBucket3DFloorPoint = function () {
+    if (!scene || scene.offsetParent === null) return null;
+    const r = WATER.floorEl ? WATER.floorEl.getBoundingClientRect() : null;
+    if (r && r.width > 2) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const sc = scene.getBoundingClientRect();
+    return { x: sc.left + sc.width / 2, y: sc.top + sc.height * 0.6 };
+  };
   render();
   try { syncLive(); } catch (_) {}                                      // show immediately (don't wait for the rAF loop)
   requestAnimationFrame(sloshLoop);
@@ -25483,7 +26478,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
     fillBtnEl   = document.getElementById('bucket-fill-btn');
     drainBtnEl  = document.getElementById('bucket-drain-btn');
     moneyBtnEl  = document.getElementById('bucket-money-btn');
-    if (!svgEl || !fillBtnEl || isMounted) return;   // money + drain btns removed (water-only, no drain)
+    if (!svgEl || isMounted) return;   // money + drain + fill btns all removed (fill happens in the watering full-screen now) — only the SVG host is required to mount
     isMounted = true;
     // Restore persisted/synced bucket state (water + wall heights + fill type).
     try {
@@ -26046,7 +27041,7 @@ window.bidoroTaskWaterDrop = function (row, q) {
     svgEl.addEventListener('pointermove',   onMove);
     svgEl.addEventListener('pointerup',     onUp);
     svgEl.addEventListener('pointercancel', onUp);
-    fillBtnEl.addEventListener('click',  onFillClick);
+    if (fillBtnEl) fillBtnEl.addEventListener('click',  onFillClick);   // fill btn was removed; guard
     if (drainBtnEl) drainBtnEl.addEventListener('click', onDrainClick);
     if (moneyBtnEl) moneyBtnEl.addEventListener('click', onMoneyClick);
   }
@@ -26405,14 +27400,17 @@ window.bidoroTaskWaterDrop = function (row, q) {
      task tagged with that pillar is completed, so the life pillar visibly grows. The
      CSS-3D mirror picks up the new height on its next poll. */
   window.bidoroBucketRaisePillar = function (faceIdx, levels) {
-    if (!isMounted) return;
+    if (!isMounted) return null;
     faceIdx = +faceIdx;
-    if (!(faceIdx >= 0 && faceIdx < FACE_COUNT)) return;
-    const lvl = Math.min(LEVELS, levelForHeight(heights[faceIdx]) + (typeof levels === 'number' ? levels : 1));
+    if (!(faceIdx >= 0 && faceIdx < FACE_COUNT)) return null;
+    const before = levelForHeight(heights[faceIdx]);
+    const lvl = Math.min(LEVELS, before + (typeof levels === 'number' ? levels : 1));
     heights[faceIdx] = heightForLevel(lvl);
     tiltFace = -1;
     render();
     try { window.bidoroBucketPersist(); } catch (_) {}
+    // Return what happened so the caller can show a "side raised" feedback.
+    return { idx: faceIdx, level: lvl, before: before, rose: lvl > before, max: LEVELS };
   };
   /* Set one pillar face to an exact level 1-10 — used by the 3D bucket's own
      drag-to-adjust interaction (commits on pointer-up). render() mirrors to state. */
@@ -27568,10 +28566,113 @@ window.bidoroTaskWaterDrop = function (row, q) {
   if (window.__c7Tune) { if (document.body) mount(); else document.addEventListener('DOMContentLoaded', mount); }
   try { window._c7TuneMount = mount; } catch (_) {}
 })();
+
+/* ===== TEMP object-tuning panel (REMOVE later, together with the matching CSS var
+   block tagged "TEMP object-tuning"). Number inputs for size/x/y of the home-page
+   objects; live-applies via :root CSS vars (--tu-<id>-s/x/y). size N → scale 1+N*0.05,
+   x/y in px. "Copy" dumps the values so they can be read off + baked in. ===== */
+(function objTunePanel(){
+  if (document.getElementById('tune-panel')) return;
+  const CFG = [
+    ['grp','Focus — no task'],   ['dt','text', true], ['di','image', true],
+    ['grp','Focus — not started'], ['st','text', true], ['si','image', true],
+    ['grp','Focus — running'],   ['rt','text', true], ['rr','timer', true],
+    ['grp','Bucket'],            ['bs','sprout', true], ['bm','money', true], ['bd','today', true], ['bb','bucket', true],
+  ];
+  const root = document.documentElement.style;
+  const panel = document.createElement('div'); panel.id = 'tune-panel'; panel.className = 'tune-collapsed';
+  const head = document.createElement('div'); head.className = 'tune-head';
+  const ttl = document.createElement('span'); ttl.textContent = '🎛 Tune (temp) — tap to open';
+  const copyBtn = document.createElement('button'); copyBtn.className = 'tune-copybtn'; copyBtn.textContent = 'Copy';
+  head.appendChild(ttl); head.appendChild(copyBtn);
+  const body = document.createElement('div'); body.className = 'tune-body';
+  const hdr = document.createElement('div'); hdr.className = 'tune-colhdr';
+  hdr.innerHTML = '<span></span><span>size</span><span>&larr; x &rarr;</span><span>&uarr; y &darr;</span>';
+  body.appendChild(hdr);
+  const fields = [];
+  CFG.forEach(row => {
+    if (row[0] === 'grp') { const g = document.createElement('div'); g.className = 'tune-grp'; g.textContent = row[1]; body.appendChild(g); return; }
+    const id = row[0], label = row[1], xy = row[2];
+    const r = document.createElement('div'); r.className = 'tune-row';
+    const lbl = document.createElement('span'); lbl.textContent = label; r.appendChild(lbl);
+    function mk(suffix){
+      const inp = document.createElement('input'); inp.type = 'number'; inp.step = '1'; inp.value = '0';
+      inp.addEventListener('input', () => {
+        if (id === 'bb') { applyBucketTransform(); return; }   // 3D bucket → inline, non-identity only
+        const v = parseFloat(inp.value) || 0;
+        if (suffix === 's') root.setProperty('--tu-' + id + '-s', String(1 + v * 0.05));
+        else root.setProperty('--tu-' + id + '-' + suffix, v + 'px');
+      });
+      r.appendChild(inp); return inp;
+    }
+    const s = mk('s'); const x = xy ? mk('x') : null; const y = xy ? mk('y') : null;
+    if (!xy) { r.appendChild(document.createElement('span')); r.appendChild(document.createElement('span')); }
+    fields.push({ id, label, s, x, y }); body.appendChild(r);
+  });
+  // 3D bucket: apply an INLINE transform only when non-identity (an always-on
+  // transform on the 3D-rendered .bucket-stage garbles its compositing/capture).
+  function applyBucketTransform(){
+    const f = fields.find(x => x.id === 'bb'); if (!f) return;
+    const el = document.querySelector('#bucket-section .bucket-stage'); if (!el) return;
+    const s = 1 + (parseFloat(f.s.value) || 0) * 0.05;
+    const x = parseFloat(f.x.value) || 0, y = parseFloat(f.y.value) || 0;
+    el.style.transform = (s === 1 && x === 0 && y === 0) ? '' : ('translate(' + x + 'px,' + y + 'px) scale(' + s + ')');
+  }
+  copyBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const txt = fields.map(f => f.id + ' (' + f.label + '): size=' + f.s.value + (f.x ? ' x=' + f.x.value + ' y=' + f.y.value : '')).join('\n');
+    try { navigator.clipboard.writeText(txt); } catch (_) {}
+    copyBtn.textContent = 'Copied'; setTimeout(() => copyBtn.textContent = 'Copy', 1200);
+    try { console.log('[tune]\n' + txt); } catch (_) {}
+  });
+  // Drag the head to move the panel anywhere; a tap (no movement) expands/collapses
+  // IN PLACE. Drop the bottom/right CSS anchor → top/left on first grab so it floats.
+  function setTitle(){ ttl.textContent = panel.classList.contains('tune-collapsed') ? '🎛 Tune — drag · tap to open' : '🎛 Tune — drag · tap to close'; }
+  function clampIntoView(){
+    let l = parseFloat(panel.style.left), t = parseFloat(panel.style.top);
+    if (isNaN(l) || isNaN(t)) return;   // still on the bottom/left CSS anchor — nothing to clamp
+    const w = panel.offsetWidth, h = panel.offsetHeight;
+    panel.style.left = Math.max(2, Math.min(window.innerWidth  - w - 2, l)) + 'px';
+    panel.style.top  = Math.max(2, Math.min(window.innerHeight - h - 2, t)) + 'px';
+  }
+  let drag = null;
+  head.addEventListener('pointerdown', (e) => {
+    if (e.target.closest && e.target.closest('.tune-copybtn')) return;   // Copy isn't a drag handle
+    const r = panel.getBoundingClientRect();
+    panel.style.left = r.left + 'px'; panel.style.top = r.top + 'px';
+    panel.style.bottom = 'auto'; panel.style.right = 'auto';
+    drag = { sx: e.clientX, sy: e.clientY, bl: r.left, bt: r.top, moved: false };
+    try { head.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  head.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (!drag.moved) return;
+    const w = panel.offsetWidth;
+    panel.style.left = Math.max(2, Math.min(window.innerWidth - w - 2, drag.bl + dx)) + 'px';
+    panel.style.top  = Math.max(2, Math.min(window.innerHeight - 36,    drag.bt + dy)) + 'px';   // keep the head on-screen
+  });
+  head.addEventListener('pointerup', (e) => {
+    if (!drag) return;
+    const wasDrag = drag.moved; drag = null;
+    try { head.releasePointerCapture(e.pointerId); } catch (_) {}
+    if (wasDrag) { clampIntoView(); return; }     // real drag → don't toggle
+    panel.classList.toggle('tune-collapsed');     // tap → expand/collapse in place
+    setTitle();
+    if (!panel.classList.contains('tune-collapsed')) clampIntoView();   // keep the opened panel on-screen
+  });
+  setTitle();
+  panel.appendChild(head); panel.appendChild(body);
+  if (document.body) document.body.appendChild(panel);
+  // Only show while the home / Focus page is visible.
+  function sync(){ const fp = document.getElementById('focus-page'); if (panel.parentNode) panel.style.display = (fp && fp.offsetParent !== null) ? 'flex' : 'none'; }
+  sync(); setInterval(sync, 800);
+})();
 </script>
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
      to hide the splash screen, style the status bar, schedule pomodoro-end
      local notifications, and add haptic feedback. Safe to load everywhere. -->
-<script defer src="ios-shim.js?v=ios-1"></script>
+<script defer src="ios-shim.js?v=ios-widget-2"></script>
 </body>
 </html>
