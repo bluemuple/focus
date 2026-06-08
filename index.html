@@ -2265,6 +2265,52 @@
     -webkit-user-select: text;
     -webkit-touch-callout: default;
   }
+  /* ===== (#19) Task-bar swipe actions — iOS-Reminders-style reveal =====
+     The row content lives in a sliding .tr-fg layer that carries the same bar
+     colour as the row (set inline like the row), so the row's padding frame
+     stays seamless and the action buttons behind it only show on a swipe.
+     RIGHT-swipe → ONE left button ("Do it tomorrow", green).
+     LEFT-swipe  → TWO right buttons (blue "add to timeline" + red ✕ delete).
+     The row keeps its own flex/padding/min-height; .tr-fg inherits them and
+     fills the row, so every existing `.task-row .child` (descendant) rule still
+     applies unchanged. */
+  /* Row padding moves onto the sliding .tr-fg so the bar colour reaches the row
+     edges — otherwise the action buttons (which span the full row) peek out as a
+     thin sliver in the row's padding gutter at rest. */
+  #focus-matrix .task-row { position: relative; overflow: hidden; padding: 0 !important; }
+  #focus-matrix .task-row > .tr-fg {
+    flex: 1 1 100%; min-width: 0; align-self: stretch; box-sizing: border-box;
+    display: flex; align-items: inherit;
+    gap: inherit; row-gap: inherit; flex-wrap: inherit;
+    position: relative; z-index: 2; margin: 0; border-radius: inherit;
+    padding: 5px 7px;   /* = .focus-cell .task-row padding (non-split focus rows) */
+    /* transform is driven inline by the swipe (`transition:none` while the
+       finger tracks; a snap transition is set inline on release). */
+  }
+  body.tt-split #focus-matrix .task-row > .tr-fg { padding: 9px 9px; }   /* = the tt-split row padding */
+  #focus-matrix .task-row > .tr-actions {
+    position: absolute; top: 0; bottom: 0; z-index: 1;
+    display: flex; align-items: stretch; pointer-events: auto;
+    visibility: hidden;   /* only the side matching the swipe direction is shown */
+  }
+  #focus-matrix .task-row > .tr-actions-left  { left: 0; }
+  #focus-matrix .task-row > .tr-actions-right { right: 0; }
+  /* Reveal ONLY one side at a time — in the narrow split column a wide left
+     reveal would otherwise expose part of the right buttons too. */
+  #focus-matrix .task-row.tr-reveal-left  > .tr-actions-left  { visibility: visible; }
+  #focus-matrix .task-row.tr-reveal-right > .tr-actions-right { visibility: visible; }
+  #focus-matrix .task-row .tr-act {
+    border: none; margin: 0; padding: 0 13px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+    font-size: .72rem; font-weight: 700; line-height: 1.05; color: #fff;
+    white-space: nowrap; -webkit-tap-highlight-color: transparent;
+  }
+  #focus-matrix .task-row .tr-act svg { display: block; flex: 0 0 auto; }
+  #focus-matrix .task-row .tr-act-label { display: flex; flex-direction: column; align-items: flex-start; }
+  #focus-matrix .task-row .tr-act-tmrw  { background: #4FB06A; padding: 0 12px; }   /* light green */
+  #focus-matrix .task-row .tr-act-gauge { background: #2F73E6; }                    /* blue add-to-timeline */
+  #focus-matrix .task-row .tr-act-del   { background: #E24B4A; padding: 0 16px; }   /* red delete */
+  #focus-matrix .task-row .tr-act:active { filter: brightness(.92); }
   /* Default (compact) layout — applies on PC AND phone before the user taps
      "Tap to enlarge". Tight gap between the task name and the $bid button. */
   .matrix-wrap:not(.expanded) .task-row {
@@ -3809,10 +3855,12 @@
   .focus-cell.q4 { background: var(--q4); }
   /* Running task bar → a left accent stripe in the quadrant's ring colour (fast scan).
      inset box-shadow = no layout shift. Keep these 4 in sync with QUAD_TOKENS[*].stripe. */
-  .focus-cell.q1 .task-row.is-running { box-shadow: inset 4px 0 0 0 #B23A5B; }
-  .focus-cell.q2 .task-row.is-running { box-shadow: inset 4px 0 0 0 #A8650F; }
-  .focus-cell.q3 .task-row.is-running { box-shadow: inset 4px 0 0 0 #534AB7; }
-  .focus-cell.q4 .task-row.is-running { box-shadow: inset 4px 0 0 0 #185FA5; }
+  /* (#19) Running left-stripe lives on the sliding .tr-fg so the swipe layer
+     doesn't hide it (focus rows always have a .tr-fg). */
+  .focus-cell.q1 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #B23A5B; }
+  .focus-cell.q2 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #A8650F; }
+  .focus-cell.q3 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #534AB7; }
+  .focus-cell.q4 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #185FA5; }
   .focus-cell h4 {
     font-size: .68rem; opacity: .7; text-transform: uppercase;
     /* Pulled up so the title sits closer to the top edge of the cell. */
@@ -12053,6 +12101,24 @@ function firstTextLogIfNeeded(q, i) {
    any time accumulated under it. If the running pomodoro is on a task AFTER
    the deleted one, its `idx` is decremented so it keeps pointing at the same
    underlying task after the splice. */
+/* (#19) "Do it tomorrow" — defer a task to the next day. Sets createdAt to
+   tomorrow noon so renderFocusMatrix hides it from today's list (it reappears
+   on its day) and the calendar lists it on that date. Blocks/timer are left
+   untouched (defer only affects the home list). */
+function _deferTaskToTomorrow(q, i) {
+  const task = state.tasks[q] && state.tasks[q][i];
+  if (!task) return;
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(12, 0, 0, 0);
+  task.createdAt = d.getTime();
+  try { window._openSwipeRow = null; } catch (_) {}
+  try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
+  try { renderFocusMatrix(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+}
+
 function deleteTaskAt(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
@@ -12984,6 +13050,7 @@ function _pillarEditorLoad() {
 })();
 function renderFocusMatrix() {
   const root = document.getElementById('focus-matrix');
+  try { window._openSwipeRow = null; } catch (_) {}   // (#19) rows are rebuilt → drop any open-reveal reference
   try { if (typeof _renderGtdChip === 'function') _renderGtdChip(); } catch (_) {}   // keep the GTD "h:mm left" chip live
   // Shuffle + Edit appear only once at least one task exists.
   try {
@@ -12992,6 +13059,10 @@ function renderFocusMatrix() {
   } catch (_) {}
   if (typeof _ensureTaskOrds === 'function') _ensureTaskOrds();   // backfill global display order
   const order = ['q1','q2','q3','q4'];
+  // (#19) Tasks deferred via "Do it tomorrow" carry a FUTURE createdAt and are
+  // hidden from today's list until their day arrives (the calendar still lists
+  // them on that day by createdAt). String compare of 'YYYY-MM-DD' is chronological.
+  const _todayKey = (typeof _calDateKey === 'function') ? _calDateKey(new Date()) : null;
   // 2×2 grid cell headers. "Not X" is shown as a STRIKETHROUGH on the word
   // itself (e.g. "Not Urgent" → <s>Urgent</s>) instead of the literal word
   // "Not" — matches the quadrant-picker scheme. Static strings → innerHTML
@@ -13054,6 +13125,8 @@ function renderFocusMatrix() {
     });
     _order.forEach((i) => {
       const t = _qTasks[i];
+      // (#19) Skip tasks deferred to a future day ("Do it tomorrow").
+      if (_todayKey && t && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _todayKey) return;
       // Empty (newly-created) tasks render an inline input bar instead of a
       // popup. The input auto-focuses; Enter / blur commits and saves; an
       // empty commit deletes the task.
@@ -13187,21 +13260,36 @@ function renderFocusMatrix() {
       // Order: checkbox · name · bid/pomodoro slot · PEN · GRIP · PLAY. PLAY is pushed to
       // the FAR RIGHT (margin-left:auto) and is hidden in Edit mode; PEN+GRIP take the
       // right edge in Edit instead (PLAY hidden → PEN's own auto-margin wins).
+      // (#19) Swipe action layers sit BEHIND the sliding .tr-fg. RIGHT-swipe
+      // reveals the LEFT "Do it tomorrow" button; LEFT-swipe reveals the RIGHT
+      // "add to timeline" (blue) + delete (red) buttons. The .tr-fg wraps the
+      // real row content (carries the bar colour, set inline below) — all the
+      // existing `.task-row .child` rules are descendant selectors so they keep
+      // matching through the wrapper.
+      const _tmrwSvg = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="17" y2="12"/><polyline points="12 7 17 12 12 17"/></svg>';
+      const _gaugeSvg = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="14" y2="7"/><line x1="4" y1="12" x2="13" y2="12"/><line x1="4" y1="17" x2="10" y2="17"/><line x1="18" y1="13.5" x2="18" y2="20.5"/><line x1="14.5" y1="17" x2="21.5" y2="17"/></svg>';
+      const _delSvg = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>';
       row.innerHTML = `
+        <div class="tr-actions tr-actions-left" aria-hidden="true"><button type="button" class="tr-act tr-act-tmrw" title="Do it tomorrow" aria-label="Do it tomorrow">${_tmrwSvg}<span class="tr-act-label"><span>Do it</span><span>tomorrow</span></span></button></div>
+        <div class="tr-actions tr-actions-right" aria-hidden="true"><button type="button" class="tr-act tr-act-gauge" title="Add to timeline" aria-label="Add to timeline">${_gaugeSvg}</button><button type="button" class="tr-act tr-act-del" title="Delete task" aria-label="Delete task">${_delSvg}</button></div>
+        <div class="tr-fg">
         ${_cbHtml}
         <span class="task-text ${t.done?'done':''} ${(isPomo||isUp)?'running':''}">${_nameHtml}</span>
         ${_repeatHtml}
         <span class="task-bid-wrap"></span>
         <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         <button class="task-grip" aria-label="Drag to reorder" title="Drag to reorder"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="16" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
-        ${_playHtml}`;
+        ${_playHtml}
+        </div>`;
+      const fg = row.querySelector(':scope > .tr-fg');
       const cb      = isQ4 ? null : row.querySelector('input[type="checkbox"]');
       const textEl  = row.querySelector('.task-text');
       const bidWrap = row.querySelector('.task-bid-wrap');
       const penBtn  = row.querySelector('.task-edit-pen');
       // Task bar uses the SAME colours as its gauge block: qTaskColor fill +
       // qTaskTextColor text (per-task), so the bar and its gauge box match.
-      row.style.setProperty('background', bidoroTaskBg(q, i), 'important');
+      row.style.setProperty('background', bidoroTaskBg(q, i), 'important');             // full-bleed backing → seamless padding frame behind .tr-fg
+      if (fg) fg.style.setProperty('background', bidoroTaskBg(q, i), 'important');       // (#19) the sliding pill itself
       textEl.style.setProperty('color', bidoroTaskText(q, i), 'important');
       const repDot = row.querySelector('.task-repeat-dot');   // E: match the bar's text colour
       if (repDot) repDot.style.setProperty('color', bidoroTaskText(q, i), 'important');
@@ -13219,6 +13307,32 @@ function renderFocusMatrix() {
           playBtn.style.color = bidoroTaskText(q, i);
         }
       }
+      // (#19) Wire the revealed swipe action buttons.
+      const _actGauge = row.querySelector('.tr-act-gauge');
+      const _actDel   = row.querySelector('.tr-act-del');
+      const _actTmrw  = row.querySelector('.tr-act-tmrw');
+      if (_actGauge) _actGauge.onclick = (e) => {
+        e.stopPropagation();
+        // Close the reveal instantly, then run the existing send-to-gauge portal.
+        try { if (typeof window._closeSwipeRow === 'function') window._closeSwipeRow(row, false); } catch (_) {}
+        try { _commitTaskSwipeToGauge(row, q, i); } catch (_) {}
+      };
+      if (_actDel) _actDel.onclick = (e) => {
+        e.stopPropagation();
+        row.style.transition = 'opacity .2s ease, transform .2s ease';
+        row.style.opacity = '0';
+        row.style.transform = 'translateX(26px)';
+        setTimeout(() => {
+          try { deleteTaskAt(q, i); } catch (_) {}
+          try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+          try { window._openSwipeRow = null; } catch (_) {}
+          try { renderFocusMatrix(); } catch (_) {}
+        }, 200);
+      };
+      if (_actTmrw) _actTmrw.onclick = (e) => {
+        e.stopPropagation();
+        try { _deferTaskToTomorrow(q, i); } catch (_) {}
+      };
       // (The $ bid pill was removed — money is duration/finish-based now. The
       // .task-bid-wrap stays as the slot for the running-pomodoro display.)
       if (cb) cb.onchange = async () => {
@@ -13315,8 +13429,12 @@ function renderFocusMatrix() {
         // A just-completed swipe-to-gauge fires a trailing click — swallow it
         // so the bar doesn't also start/pause a pomodoro.
         if (row._swiped) { row._swiped = false; return; }
+        // (#19) If this row is revealed (swipe-open), a tap anywhere closes it.
+        if (row._swipeOpen) { try { if (typeof window._closeSwipeRow === 'function') window._closeSwipeRow(row, true); } catch (_) {} return; }
+        // Swallow the click that ends a reveal drag so it doesn't start/pause.
+        if (row._swallowClick) { row._swallowClick = false; return; }
         if (e && e.target && e.target.closest &&
-            e.target.closest('input[type="checkbox"], .task-bid, .task-edit-pen, button.x, .pomodoro-display')) {
+            e.target.closest('input[type="checkbox"], .task-bid, .task-edit-pen, button.x, .pomodoro-display, .tr-act')) {
           return;
         }
         const _tgNow = Date.now();
@@ -25138,6 +25256,41 @@ setInterval(() => {
 
     let _td = null; // { q, idx, durMs, rowGhost, ... } while touch drag is live
 
+    /* ===== (#19) Reveal-swipe state =====
+       Only ONE task row is revealed (open) at a time. `_setSwipeRowState` snaps
+       the row's sliding .tr-fg to open (left/right) or closed; `_closeSwipeRow`
+       is exposed on window so the row-builder's button handlers (a different
+       scope) + the outside-tap handler can close a row. */
+    if (typeof window._openSwipeRow === 'undefined') window._openSwipeRow = null;
+    function _setSwipeRowState(row, fg, open, leftW, rightW, animate) {
+      if (!row || !fg) return;
+      // Opening a row closes any other currently-open row.
+      if (open !== 0 && window._openSwipeRow && window._openSwipeRow !== row) {
+        try { _closeSwipeRow(window._openSwipeRow, true); } catch (_) {}
+      }
+      const tx = open > 0 ? leftW : (open < 0 ? -rightW : 0);
+      fg.style.transition = animate ? 'transform .2s cubic-bezier(.22,.61,.36,1)' : 'none';
+      fg.style.transform = 'translateX(' + tx + 'px)';
+      row.classList.toggle('tr-reveal-left',  open > 0);
+      row.classList.toggle('tr-reveal-right', open < 0);
+      row._swipeOpen = (open !== 0);
+      row._swipeOpenDir = open;
+      if (open !== 0) {
+        window._openSwipeRow = row;
+      } else if (window._openSwipeRow === row) {
+        window._openSwipeRow = null;
+      }
+      if (animate) setTimeout(() => { try { fg.style.willChange = ''; if (!row._swipeOpen) fg.style.transition = ''; } catch (_) {} }, 230);
+      else { try { fg.style.willChange = ''; } catch (_) {} }
+    }
+    function _closeSwipeRow(row, animate) {
+      if (!row) return;
+      const fg = row.querySelector(':scope > .tr-fg');
+      if (!fg) { row._swipeOpen = false; if (window._openSwipeRow === row) window._openSwipeRow = null; return; }
+      _setSwipeRowState(row, fg, 0, 0, 0, animate !== false);
+    }
+    window._closeSwipeRow = _closeSwipeRow;
+
     /* Haptic granularity while a task ghost is being dragged across the
        gauge / time area. The user requested 5-min steps; with light taps
        (iOS UIImpactFeedbackGenerator.light = short ~5 ms blip) and step-based
@@ -25233,6 +25386,11 @@ setInterval(() => {
     }
 
     document.addEventListener('pointerdown', ev => {
+      // (#19) Tapping anywhere OUTSIDE an open swipe row closes it (the tap on
+      // the row's own buttons / body is handled by their click handlers).
+      if (window._openSwipeRow && !window._openSwipeRow.contains(ev.target)) {
+        try { _closeSwipeRow(window._openSwipeRow, true); } catch (_) {}
+      }
       // Ignore touches on interactive controls or gauge elements — EXCEPT the
       // reorder grip (it's a <button> but must START a reorder drag).
       const _onGrip = !!ev.target.closest('.task-grip');
@@ -25251,6 +25409,15 @@ setInterval(() => {
               startX: t.clientX, startY: t.clientY, dragging: false,
               srcRow: row, rowGhost: null, fromGrip: _onGrip };
       _draggedTask = { q: info.q, idx: info.idx };
+      // (#19) Reveal-swipe: the sliding foreground + the measured action-layer
+      // widths (the snap targets), plus the row's current open offset (so a drag
+      // that STARTS on an already-open row adjusts from there).
+      _td.fg = row.querySelector(':scope > .tr-fg');
+      const _laL = row.querySelector('.tr-actions-left');
+      const _laR = row.querySelector('.tr-actions-right');
+      _td.leftW  = (_laL && _laL.offsetWidth) || 0;
+      _td.rightW = (_laR && _laR.offsetWidth) || 0;
+      _td.baseTx = row._swipeOpen ? (row._swipeOpenDir > 0 ? _td.leftW : -_td.rightW) : 0;
       // === Page-scroll lock — DEFERRED until a capture gesture commits ===
       // A vertical BAR-BODY drag must scroll the page (touch-action:pan-y), so we
       // do NOT lock on pointerdown anymore. Only grip-reorder / horizontal-swipe
@@ -25312,24 +25479,16 @@ setInterval(() => {
         // The 1.3× factor biases ties toward drag so an accidental diagonal
         // doesn't fire a horizontal action unexpectedly.
         const absDx = Math.abs(dx0), absDy = Math.abs(dy0);
-        if (!_td.fromGrip && dx0 > 0 && absDx > absDy * 1.3) {
-          _td.mode = 'swipe';
-          if (_td._lockScroll) _td._lockScroll();   // capture → hold the page now
-          // Disable transition initially so the row tracks the finger 1:1.
-          // Re-enabled on touchend for the snap-back / fly-out animation.
-          if (_td.srcRow && _td.srcRow.style) {
-            _td.srcRow.style.transition = 'none';
-            _td.srcRow.style.willChange = 'transform, opacity';
-          }
-        } else if (!_td.fromGrip && dx0 < 0 && absDx > absDy * 1.3) {
-          // Left swipe → send to gauge. NO row ghost is spawned (that's the
-          // whole point — a clean, effortless left swipe). The bar tracks the
-          // finger and is clipped at its own left edge (the "portal wall").
-          _td.mode = 'gaugeswipe';
+        if (!_td.fromGrip && absDx > absDy * 1.3) {
+          // (#19) Horizontal swipe → REVEAL the action buttons (iOS-Reminders
+          // style). The sliding foreground (.tr-fg) tracks the finger 1:1; the
+          // final offset's direction decides which side snaps open on release
+          // (right → "Do it tomorrow"; left → add-to-timeline + delete).
+          _td.mode = 'reveal';
           if (_td._lockScroll) _td._lockScroll();
-          if (_td.srcRow && _td.srcRow.style) {
-            _td.srcRow.style.transition = 'none';
-            _td.srcRow.style.willChange = 'transform, clip-path, opacity';
+          if (_td.fg && _td.fg.style) {
+            _td.fg.style.transition = 'none';
+            _td.fg.style.willChange = 'transform';
           }
         } else {
           // vertical/diagonal. ONLY the GRIP reorders; a bar-body vertical drag
@@ -25350,27 +25509,17 @@ setInterval(() => {
       }
       if (!_td || _td.mode === 'none') return;
       ev.preventDefault();   // committed capture gesture → block native scroll (lock already set)
-      // ===== Send-to-gauge (left swipe) branch =====
-      if (_td.mode === 'gaugeswipe') {
-        const dx = Math.min(0, t.clientX - _td.startX);     // leftward only
+      // ===== (#19) Reveal-swipe branch — slide .tr-fg, clamp to the buttons =====
+      if (_td.mode === 'reveal') {
+        const maxR = _td.leftW, maxL = -_td.rightW;        // right-swipe opens +leftW; left-swipe opens −rightW
+        let tx = (_td.baseTx || 0) + (t.clientX - _td.startX);
+        if (tx > maxR) tx = maxR + (tx - maxR) * 0.18;     // soft rubber-band past the open width
+        else if (tx < maxL) tx = maxL + (tx - maxL) * 0.18;
+        _td.curTx = tx;
+        if (_td.fg) _td.fg.style.transform = 'translateX(' + tx + 'px)';
         if (_td.srcRow) {
-          _td.srcRow.style.transform = 'translateX(' + dx + 'px)';
-          // Clip at the bar's own left edge so it vanishes "into the wall".
-          _td.srcRow.style.clipPath = 'inset(0 0 0 ' + (-dx) + 'px)';
-          _td.srcRow.style.opacity  = Math.max(0.25, 1 + dx / 240).toFixed(2);
-        }
-        return;
-      }
-      // (page scroll already prevented at top of this handler)
-      // ===== Swipe-to-delete branch =====
-      if (_td.mode === 'swipe') {
-        const dx = t.clientX - _td.startX;
-        const tx = Math.max(0, dx);                       // never pull left
-        const rowW = (_td.srcRow && _td.srcRow.offsetWidth) || 200;
-        const op = Math.max(0, 1 - (Math.abs(tx) / rowW));
-        if (_td.srcRow) {
-          _td.srcRow.style.transform = 'translateX(' + tx + 'px)';
-          _td.srcRow.style.opacity   = op.toFixed(2);
+          _td.srcRow.classList.toggle('tr-reveal-left',  tx > 0.5);
+          _td.srcRow.classList.toggle('tr-reveal-right', tx < -0.5);
         }
         return;
       }
@@ -25487,65 +25636,23 @@ setInterval(() => {
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       // Tear down the row-shaped ghost.
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
-      // ===== Send-to-gauge commit / snap-back (left swipe) =====
-      if (_td.dragging && _td.mode === 'gaugeswipe') {
-        const lastT = ev;
-        const dx    = lastT ? (lastT.clientX - _td.startX) : 0;
-        const row   = _td.srcRow;
-        const rowW  = (row && row.offsetWidth) || 200;
-        const q     = _td.q;
-        const idx   = _td.idx;
+      // ===== (#19) Reveal-swipe commit — snap OPEN (to the buttons) or CLOSED =====
+      if (_td.dragging && _td.mode === 'reveal') {
+        const fg = _td.fg, row = _td.srcRow;
+        const tx = _td.curTx || 0;
+        const leftW = _td.leftW, rightW = _td.rightW;
         _draggedTask = null;
         _td = null;
-        // Commit threshold: > 35 % of row width swiped LEFT.
-        if (row && dx < -rowW * 0.35) {
-          // Build the blocks + run the two-phase "portal" animation. The bar
-          // is mid-vanish (clip + translate) from the live drag; the animation
-          // continues it, then emerges the blocks from the gauge's right edge.
-          _commitTaskSwipeToGauge(row, q, idx);
-        } else if (row) {
-          // Below threshold → un-clip + snap back to rest.
-          row.style.transition = 'transform .18s ease-out, clip-path .18s ease-out, opacity .18s ease-out';
-          row.style.transform  = '';
-          row.style.clipPath   = '';
-          row.style.opacity    = '';
-          setTimeout(() => { row.style.transition = ''; row.style.willChange = ''; }, 200);
+        let open = 0;                                  // +1 = left "tomorrow" button; −1 = right gauge+delete
+        if (tx > leftW * 0.45) open = 1;
+        else if (tx < -rightW * 0.45) open = -1;
+        // A reveal drag happened → swallow the trailing click so releasing the
+        // swipe doesn't also start/pause the task.
+        if (row) {
+          row._swallowClick = true;
+          setTimeout(() => { try { row._swallowClick = false; } catch (_) {} }, 360);
         }
-        return;
-      }
-      // ===== Swipe-to-delete commit / snap-back =====
-      if (_td.dragging && _td.mode === 'swipe') {
-        const lastT = ev;
-        const dx    = lastT ? (lastT.clientX - _td.startX) : 0;
-        const row   = _td.srcRow;
-        const rowW  = (row && row.offsetWidth) || 200;
-        const q     = _td.q;
-        const idx   = _td.idx;
-        // Commit threshold: > 40 % of row width swiped RIGHT.
-        if (row && dx > rowW * 0.4) {
-          // Fly the row OUT (translate full width right + fade to 0), then
-          // delete the underlying task. Re-render drops the row entirely
-          // and the rows below it naturally slide up to fill the gap.
-          row.style.transition = 'transform .22s ease-out, opacity .22s ease-out';
-          row.style.transform  = 'translateX(' + (rowW + 20) + 'px)';
-          row.style.opacity    = '0';
-          setTimeout(() => {
-            try { deleteTaskAt(q, idx); } catch (_) {}
-            try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
-            try { renderFocusMatrix(); } catch (_) {}
-          }, 220);
-        } else if (row) {
-          // Below threshold → snap back to resting position.
-          row.style.transition = 'transform .18s ease-out, opacity .18s ease-out';
-          row.style.transform  = '';
-          row.style.opacity    = '';
-          setTimeout(() => {
-            row.style.transition = '';
-            row.style.willChange = '';
-          }, 200);
-        }
-        _draggedTask = null;
-        _td = null;
+        _setSwipeRowState(row, fg, open, leftW, rightW, true);
         return;
       }
       // ----- Reorder branch -----
@@ -25627,19 +25734,10 @@ setInterval(() => {
       if (!_td) return;
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
-      // If a swipe (delete OR send-to-gauge) was in progress, snap the row
-      // back instead of leaving it half-translated/clipped when the OS
-      // interrupts the touch.
-      if ((_td.mode === 'swipe' || _td.mode === 'gaugeswipe') && _td.srcRow) {
-        const row = _td.srcRow;
-        row.style.transition = 'transform .18s ease-out, clip-path .18s ease-out, opacity .18s ease-out';
-        row.style.transform  = '';
-        row.style.clipPath   = '';
-        row.style.opacity    = '';
-        setTimeout(() => {
-          row.style.transition = '';
-          row.style.willChange = '';
-        }, 200);
+      // (#19) If a reveal-swipe was in progress, snap the row's sliding
+      // foreground back to rest (closed) when the OS interrupts the touch.
+      if (_td.mode === 'reveal' && _td.fg && _td.srcRow) {
+        _setSwipeRowState(_td.srcRow, _td.fg, 0, _td.leftW, _td.rightW, true);
       }
       _clearDropIndicator();
       hideTimeGhost();
