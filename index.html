@@ -47,13 +47,39 @@
     } catch (_) { document.documentElement.setAttribute('data-theme', 'default'); }
     // The native iOS shell (MainViewController) calls this with the REAL system
     // appearance. WKWebView's matchMedia('(prefers-color-scheme)') can wrongly
-    // report 'light' in a dark system at launch (so the app never went dark even
-    // though Safari did) — native knows traitCollection.userInterfaceStyle for sure,
-    // so we trust it. Only auto-applies when the user hasn't explicitly picked a theme.
+    // report 'light' in a dark system at launch — native knows
+    // traitCollection.userInterfaceStyle for sure, so we trust it.
+    //
+    // LAST-WRITE-WINS policy (what the user asked for): whichever happened most
+    // recently decides the theme —
+    //   • the system Light/Dark setting CHANGING  → app jumps to the system default
+    //     (Dark → solarized, Light → default), even if the user had picked a theme;
+    //   • the user picking a theme in-app          → that theme sticks.
+    // The trick is reacting only to a GENUINE system change. Native/matchMedia also
+    // fire this at launch / every foreground with the CURRENT mode; if we treated
+    // those as "changes" we'd clobber the user's in-app pick on every relaunch. So
+    // we remember the last system mode we saw ('bidoro-system-mode') and only act
+    // when the incoming mode differs from it.
     window.__bidoroSystemAppearance = function (mode) {
       try {
-        if (localStorage.getItem('bidoro-theme')) return;                 // explicit choice wins
+        mode = (mode === 'dark') ? 'dark' : 'light';
         var want = (mode === 'dark') ? 'solarized' : 'default';
+        var lastSys = null;
+        try { lastSys = localStorage.getItem('bidoro-system-mode'); } catch (_) {}
+        if (lastSys === mode) return;                          // not a real change → keep current theme
+        var firstSeed = (lastSys === null);
+        try { localStorage.setItem('bidoro-system-mode', mode); } catch (_) {}
+        // First time we ever learn the real system mode: just record the baseline —
+        // don't override a theme the user had already chosen before this code existed.
+        // (Real CHANGES after this always win.) But if there's no theme yet, DO apply,
+        // so a fresh user / a WKWebView that mis-reported at boot still follows system.
+        if (firstSeed) {
+          var hasTheme = false;
+          try { hasTheme = !!localStorage.getItem('bidoro-theme'); } catch (_) {}
+          if (hasTheme) return;
+        }
+        // The system change is now the most-recent theme decision → apply + persist it.
+        try { localStorage.setItem('bidoro-theme', want); } catch (_) {}
         if (document.documentElement.getAttribute('data-theme') === want) return;
         if (window.__applyThemeKey) window.__applyThemeKey(want, true);    // full re-render once app JS is up
         else document.documentElement.setAttribute('data-theme', want);   // pre-app: just set the attribute
@@ -3244,6 +3270,16 @@
     display: flex; flex-direction: column; justify-content: center;
     min-height: 108px;
   }
+  /* When the card is STRETCHED taller than its content (e.g. a desktop/iPad grid
+     row matching a taller neighbour), block layout would pin .fc-expanded to the
+     top and leave all the slack at the bottom → unequal top/bottom margins. Make
+     the running/q4 card a centring flex column so the header block stays vertically
+     centred — equal gap above "Now focusing on" and below the name/Session. The
+     absolute .fc-done overlay + .fc-expand-btn are out of flow, so unaffected.
+     On phone the card already equals its content height, so this is a no-op there. */
+  .focus-card:not(.fc-idle):not(.fc-done-on) {
+    display: flex; flex-direction: column; justify-content: center;
+  }
   /* Top section (the focus card) gets a touch more breathing room on the sides.
      Higher specificity than `.panel` so it wins over the phone `.panel{padding}`. */
   .focus-right .focus-card { padding-left: 22px; padding-right: 22px; }
@@ -3550,9 +3586,10 @@
     text-align: left; flex: 1 1 auto; min-width: 0;
     color: var(--text-main, #111827); font-weight: 800; line-height: 1.14; gap: 1px;
   }
-  .fc-done-msg .fdm-l1, .fc-done-msg .fdm-l2 { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .fc-done-msg .fdm-l1 { font-size: .78rem; font-weight: 600; opacity: .6; }   /* small + faint LABEL on top ("You got paid") */
-  .fc-done-msg .fdm-l2 { font-size: 1.3rem; font-weight: 800; }                 /* big + bold "[money] for [task]" below */
+  .fc-done-msg .fdm-l1 { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .78rem; font-weight: 600; opacity: .6; }   /* small + faint LABEL on top ("You got paid") */
+  /* Big "[money] for [task]" line — wraps to up to 2 lines and is shrunk to fit by
+     _fitElTo2Lines (no ellipsis, never breaks a word mid-word). */
+  .fc-done-msg .fdm-l2 { max-width: 100%; overflow: hidden; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; font-size: 1.3rem; font-weight: 800; }   /* big + bold "[money] for [task]" below */
   .fc-done-img { flex: 0 0 auto; height: 46%; width: auto; max-width: 24%; object-fit: contain; align-self: center; }   /* ~half of the old size */
   /* ===== Topbar "now focusing" overlay =====
      Once the page is scrolled (body.scrolled-now) the topbar's button cluster
@@ -18147,13 +18184,25 @@ function openEventModal(existing, opts) {
       });
       markSelected(current());
     }
-    // Live-follow the device's Light/Dark setting — unless the user has
-    // explicitly picked a theme (a saved 'bidoro-theme' overrides auto-follow).
+    // Live-follow the device's Light/Dark setting with LAST-WRITE-WINS semantics:
+    // a system change beats the user's in-app pick, the next in-app pick beats the
+    // system, and so on. The shared window.__bidoroSystemAppearance handler holds
+    // that logic (change-detection via 'bidoro-system-mode'); we just feed it.
     try {
       const mq = window.matchMedia('(prefers-color-scheme: dark)');
+      // On plain web matchMedia is reliable, but its 'change' event only fires on an
+      // ACTUAL toggle — never at boot. So seed the baseline once here, or the very
+      // first toggle would just be absorbed as the baseline. In the native iOS shell
+      // matchMedia can mis-report at launch, so there we let native seed it instead.
+      try {
+        const isNative = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+        if (!isNative && localStorage.getItem('bidoro-system-mode') === null) {
+          localStorage.setItem('bidoro-system-mode', mq.matches ? 'dark' : 'light');
+        }
+      } catch (_) {}
       const onSys = () => {
-        let saved = null; try { saved = localStorage.getItem('bidoro-theme'); } catch (_) {}
-        if (!saved) apply(mq.matches ? 'solarized' : 'default', true);
+        if (window.__bidoroSystemAppearance) window.__bidoroSystemAppearance(mq.matches ? 'dark' : 'light');
+        else apply(mq.matches ? 'solarized' : 'default', true);
       };
       if (mq.addEventListener) mq.addEventListener('change', onSys);
       else if (mq.addListener) mq.addListener(onSys);
@@ -18977,7 +19026,9 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   const card = document.getElementById('focus-card');
   const l1 = document.getElementById('fdm-l1'), l2 = document.getElementById('fdm-l2');
   if (!card || !l1 || !l2 || !rw) return;
-  const name = _fcTruncate(taskName || 'task', 16);
+  // Full task name (no "…" truncation) — the message line wraps to 2 lines and
+  // shrinks to fit via _fitElTo2Lines in show() below, matching the focus name.
+  const name = String(taskName || 'task');
   const total = +rw.total || 0;
   // No money earned (kind 'none' / $0) → a simple praise message instead of "$0".
   // Otherwise: message 1 = total earned (no leading "+"); message 2 (early/late
@@ -19000,6 +19051,8 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   function show(i) {
     mi = i;
     l1.textContent = msgs[i].a; l2.textContent = msgs[i].b;
+    // Fit the big "$X for [name]" line into 2 lines (shrink instead of ellipsis).
+    try { _fitElTo2Lines(l2, 12); } catch (_) {}
     if (_fcDoneTimer) { clearTimeout(_fcDoneTimer); _fcDoneTimer = null; }
     // After 6 s: auto-advance to the next message, or (on the last) revert.
     _fcDoneTimer = setTimeout(() => { if (i < msgs.length - 1) show(i + 1); else _fcHideDone(); }, 6000);
@@ -19019,25 +19072,35 @@ function _fcHideDone() {
   try { renderImDoing(); } catch (_) {}
 }
 
-/* Shrink the "Now focusing on" task name only when a single word is too wide to
-   fit (so words NEVER break mid-word). Resets to the CSS size first, then steps
-   the font down until the widest word fits or it hits the floor. No-op when the
-   element is hidden (clientWidth 0). */
-function _fitFocusName() {
-  const el = document.getElementById('fc-name');
+/* Fit the "Now focusing on" task name into (at most) TWO lines. Resets to the CSS
+   size first, then steps the font down until BOTH conditions hold: (a) no single
+   word is too wide to fit (words NEVER break mid-word) and (b) the text wraps to
+   no more than 2 lines. This replaces ellipsis truncation — long names just shrink
+   to stay within two lines (e.g. "Finish the quarterly financial report and
+   review" goes small enough to fit instead of overflowing to 6 lines). No-op when
+   the element is hidden (clientWidth 0). */
+function _fitElTo2Lines(el, minPx) {
   if (!el) return;
   el.style.fontSize = '';                                  // back to the CSS default
   const avail = el.clientWidth;
   if (!avail) return;                                      // hidden / not laid out
-  const MIN = 11;                                          // px floor — small, but the user prefers shrinking over any wrap
-  let size = parseFloat(getComputedStyle(el).fontSize) || 30;
+  const MIN = minPx || 11;                                 // px floor — small, but the user prefers shrinking over any wrap
+  const cs = getComputedStyle(el);
+  let size = parseFloat(cs.fontSize) || 30;
+  // line-height is unitless in CSS → ratio is constant as the size changes.
+  const lhRatio = (parseFloat(cs.lineHeight) / size) || 1.14;
   let guard = 0;
-  while (el.scrollWidth > el.clientWidth + 1 && size > MIN && guard < 60) {
+  // offsetHeight grows with the wrapped line count (the box has no fixed height);
+  // > 2 line-heights means it spilled onto a 3rd line → shrink. +2px slack absorbs
+  // sub-pixel rounding so a clean 2-line block isn't shrunk needlessly.
+  while (size > MIN && guard < 80 &&
+         (el.scrollWidth > el.clientWidth + 1 || el.offsetHeight > size * lhRatio * 2 + 2)) {
     size = Math.max(MIN, size - 1);
     el.style.fontSize = size + 'px';
     guard++;
   }
 }
+function _fitFocusName() { _fitElTo2Lines(document.getElementById('fc-name'), 11); }
 /* ADHD redirect reward — when the user switches FROM a q4 distraction up-timer
    TO a real focus task, a short praise briefly replaces "Now focusing on" in the
    focus card, then reverts on its own. Plain + encouraging, never shaming.
@@ -19187,7 +19250,17 @@ function renderImDoing() {
       _fitL1.textContent = _anyTask ? 'Nice list.' : 'Add one.';
       _fitL2.textContent = _anyTask ? 'Now press start.' : "I'll pour it in.";
     }
-    if (_ntImg && !card.classList.contains('fc-swapping')) {
+    // The idle→active start swap (fc-swapping) normally suppresses this image swap
+    // so the cat doesn't flicker mid-fade. BUT when there are NO tasks we must still
+    // force the "Add one" cat — otherwise deleting the LAST task (e.g. via the swipe
+    // ✕ button) while a swap class lingers leaves the start-now cat ("Now press
+    // start") on screen even though no task exists. So: gate only applies when a
+    // task IS ready; the no-task state always wins (and clears the stuck swap).
+    if (_ntImg && (!_anyTask || !card.classList.contains('fc-swapping'))) {
+      if (!_anyTask && card.classList.contains('fc-swapping')) {
+        card.classList.remove('fc-swapping');
+        if (typeof _fcSwapTimer !== 'undefined' && _fcSwapTimer) { try { clearTimeout(_fcSwapTimer); } catch (_) {} _fcSwapTimer = null; }
+      }
       // Small face image (right) — start-small.gif (task ready) / add-small.png (no task),
       // + a dark-mode variant (cream-on-teal). All FOUR are the same size & crop, so the
       // face holds its exact place across the add↔start swap.
@@ -28182,6 +28255,20 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     if (drag.mode === 'rotate') {
       // Finger LEFT → bucket LEFT (front face follows the finger).
       rotation = drag.startRot - dx * ROT_PER_PX;
+      // Carousel haptic: a light tick each time the spin crosses onto a new
+      // bucket FACE, so turning to a different side feels notched like a wheel.
+      // (Matches the adjust-mode level ticks below.) Face count = the LIVE 3D
+      // side count (3‒8, Settings → Bucket Sides) so ticks line up with the
+      // visible faces; FACE_COUNT is this module's local fallback. (PI / N from
+      // the sibling bidoroBucket3D IIFE are NOT in scope here — use Math.PI.)
+      const _nFaces   = (typeof _pillarFaceCount === 'function') ? _pillarFaceCount() : FACE_COUNT;
+      const _faceStep = 2 * Math.PI / Math.max(1, _nFaces);
+      const _faceNow  = Math.round(rotation / _faceStep);
+      if (drag.lastFace == null) drag.lastFace = Math.round(drag.startRot / _faceStep);
+      if (_faceNow !== drag.lastFace) {
+        drag.lastFace = _faceNow;
+        try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {}
+      }
     } else if (drag.mode === 'adjust') {
       if (drag.lastLevel == null) drag.lastLevel = levelForHeight(drag.startH);
       let raw = drag.startH - dy;
