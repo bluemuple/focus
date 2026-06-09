@@ -13256,31 +13256,46 @@ let _globalPomoTickHandle = null;
    temporary bottom room to the focus page + scroll the input up above the keyboard;
    clear it on blur. Touch + wide only (a desktop mouse has no covering keyboard). */
 (function wireMatrixAddKeyboardScroll(){
+  // When a task-name input gets focus (the soft keyboard rises), bring the Time &
+  // Tasks section HEADER up to just under the top bar, so the +Add button / name
+  // input sit in the visible band ABOVE the keyboard (the keyboard was half-covering
+  // the +Add). Adds bottom room so there's something to scroll into, and restores
+  // BOTH the padding and the original scroll position when the add is done.
+  // Matches the per-cell .add-task-input AND the split-mode .qp-name-input, on any
+  // touch device (iPhone + iPad). iOS-only effect; no soft keyboard on desktop.
   const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-  function room(on){ const fp = document.getElementById('focus-page'); if (fp) fp.style.paddingBottom = on ? '50vh' : ''; }
-  function lift(el){
+  let _savedScroll = null;
+  function isAddInput(el){ return el && el.classList && (el.classList.contains('add-task-input') || el.classList.contains('qp-name-input')); }
+  function room(on){ const fp = document.getElementById('focus-page'); if (fp) fp.style.paddingBottom = on ? '55vh' : ''; }
+  function lift(){
     try {
-      const m = document.querySelector('main');
-      if (m && el) {
-        const t = m.scrollTop + el.getBoundingClientRect().top - m.getBoundingClientRect().top - 70;
-        m.scrollTo({ top: Math.max(0, t), behavior: 'smooth' });
-      } else if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+      const m = document.querySelector('main'); if (!m) return;
+      // The Time & Tasks header (the section title row). Fall back to the input.
+      const head = document.querySelector('#focus-page .time-head') || document.getElementById('time-toggle');
+      const ref = head || (isAddInput(document.activeElement) ? document.activeElement : null);
+      if (!ref) return;
+      // Scroll so `ref` sits at main's top edge (= just under the top bar, since
+      // main starts below the sticky top bar). Small 4px gap.
+      const t = m.scrollTop + (ref.getBoundingClientRect().top - m.getBoundingClientRect().top) - 4;
+      m.scrollTo({ top: Math.max(0, t), behavior: 'smooth' });
     } catch (_) {}
   }
   document.addEventListener('focusin', (e) => {
-    const el = e.target;
-    if (!el || !el.classList || !el.classList.contains('add-task-input')) return;
-    if (!isTouch || !window.matchMedia('(min-width: 701px)').matches) return;   // wide iPad only
+    if (!isTouch || !isAddInput(e.target)) return;
+    const m = document.querySelector('main');
+    if (_savedScroll == null && m) _savedScroll = m.scrollTop;   // remember where we were
     room(true);
-    setTimeout(() => lift(el), 300);
+    setTimeout(lift, 300);   // let the keyboard start rising + layout settle first
   });
   document.addEventListener('focusout', (e) => {
-    const el = e.target;
-    if (!el || !el.classList || !el.classList.contains('add-task-input')) return;
+    if (!isAddInput(e.target)) return;
     setTimeout(() => {
-      const a = document.activeElement;
-      if (!a || !a.classList || !a.classList.contains('add-task-input')) room(false);
-    }, 120);
+      if (isAddInput(document.activeElement)) return;            // moved to another add field — keep lifted
+      room(false);
+      const m = document.querySelector('main');
+      if (m && _savedScroll != null) m.scrollTo({ top: _savedScroll, behavior: 'smooth' });   // restore original scroll
+      _savedScroll = null;
+    }, 160);
   });
 })();
 
