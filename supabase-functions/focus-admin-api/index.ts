@@ -70,6 +70,20 @@ Deno.serve(async (req) => {
     }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }
     if (action === "deleteComment") { await sb.from("focus_memo_comments").delete().eq("id", b.id);    return json({ ok: true }); }
+    if (action === "addComment") {
+      // Admin replies to a shared note. Inserted as a NORMAL user reply (is_ai
+      // false, a random anonymous client id) so it looks exactly like any other
+      // user's reply on the user's screen.
+      const memoId = b.memo_id;
+      const text = String(b.text || "").trim().slice(0, 1000);
+      if (memoId == null || !text) return json({ ok: false, error: "memo_id + text required" }, 400);
+      await sb.from("focus_memo_comments").insert({
+        memo_id: memoId, text,
+        author_client_id: "c-" + Math.random().toString(36).slice(2, 10),
+        is_ai: false, hearted: false, reported: false,
+      });
+      return json({ ok: true });
+    }
     if (action === "setMaxViewers") { await sb.from("focus_shared_memos").update({ max_viewers: (b.max_viewers ?? null) }).eq("id", b.id); return json({ ok: true }); }
     if (action === "setControl") {
       const row = {

@@ -35,6 +35,12 @@
   .tag.reported { background: #fee2e2; color: #b91c1c; }
   .tag.heart { background: #fce7f3; color: #db2777; }
   .del { flex: 0 0 auto; border: 1px solid #fecaca; background: transparent; color: #b91c1c; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; }
+  .reply-btn { flex: 0 0 auto; border: 1px solid #93c5fd; background: transparent; color: #1d4ed8; border-radius: 8px; padding: 3px 10px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; margin-right: 6px; }
+  .reply-btn:hover { background: #eff6ff; }
+  .admin-reply-box { display: flex; gap: 8px; margin-top: 10px; }
+  .admin-reply-box .ar-input { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; background: transparent; color: inherit; }
+  .admin-reply-box .ar-send { flex: 0 0 auto; border: 1px solid #111827; background: #111827; color: #fff; border-radius: 8px; padding: 8px 16px; font: inherit; font-weight: 700; cursor: pointer; }
+  @media (prefers-color-scheme: dark) { .reply-btn { border-color: #1e3a8a; color: #93c5fd; } .reply-btn:hover { background: #0b1220; } .admin-reply-box .ar-input { border-color: #1f2937; } .admin-reply-box .ar-send { background: #e5e7eb; color: #0b0f17; border-color: #e5e7eb; } }
   .ai-settings { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: .88rem; }
   .ai-settings .ais-on { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
   .ai-settings .ais-on input { width: 18px; height: 18px; }
@@ -227,6 +233,7 @@ function render(){
     const flagged = replies.some(c => c.reported);
     const card = document.createElement('div'); card.className = 'memo' + (flagged ? ' flagged' : '');
     let html = '<div class="memo-head"><div class="memo-text">' + (m.emoji ? (esc(m.emoji) + ' ') : '') + esc(m.text) + '</div>'
+      + '<button class="reply-btn" data-reply-memo="' + m.id + '">Reply</button>'
       + '<button class="del" data-del-memo="' + m.id + '">Delete</button></div>'
       + '<div class="memo-meta">user <button class="userno" data-uid="' + esc(m.client_id) + '">#' + userNo(m.client_id) + '</button>'
       + ctrlBadges(m.client_id)
@@ -257,6 +264,23 @@ function render(){
   root.querySelectorAll('[data-del-cmt]').forEach(b => b.onclick = async () => {
     if (!confirm('Delete this reply?')) return;
     b.disabled = true; try { await callAdmin('deleteComment', { id: +b.getAttribute('data-del-cmt') }); } catch(e){ alert(e.message); } load();
+  });
+  root.querySelectorAll('[data-reply-memo]').forEach(b => b.onclick = () => {
+    const card = b.closest('.memo');
+    const existing = card.querySelector('.admin-reply-box');
+    if (existing) { existing.remove(); return; }               // toggle the composer
+    const box = document.createElement('div'); box.className = 'admin-reply-box';
+    const inp = document.createElement('input'); inp.className = 'ar-input'; inp.maxLength = 1000; inp.placeholder = 'Reply (shows as a normal user)…';
+    const send = document.createElement('button'); send.className = 'ar-send'; send.textContent = 'Send';
+    box.appendChild(inp); box.appendChild(send); card.appendChild(box); inp.focus();
+    const doSend = async () => {
+      const t = inp.value.trim(); if (!t) { inp.focus(); return; }
+      send.disabled = true; send.textContent = 'Sending…';
+      try { await callAdmin('addComment', { memo_id: +b.getAttribute('data-reply-memo'), text: t }); load(); }
+      catch (e) { send.disabled = false; send.textContent = 'Send'; alert(e.message); }
+    };
+    send.onclick = doSend;
+    inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } };
   });
   root.querySelectorAll('.userno').forEach(b => b.onclick = () => openUserPopup(b.getAttribute('data-uid')));
 }
