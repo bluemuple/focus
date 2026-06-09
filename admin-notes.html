@@ -95,6 +95,11 @@
   </div>
 
   <div id="app" style="display:none;">
+    <div class="toggle" id="page-toggle" style="margin:0 0 16px;">
+      <button id="pg-notes" class="on">Shared notes</button>
+      <button id="pg-subs">Subscriptions</button>
+    </div>
+    <div id="notes-view">
     <h1>Shared notes — all users</h1>
     <p class="sub">Every anonymous note + replies. Click a user # to <b>block</b> sharing/commenting or send them a message (shows in their top-bar quote). All actions are authorised server-side by your token.</p>
     <div class="bar" id="bar"></div>
@@ -108,6 +113,25 @@
       <span id="ais-status"></span>
     </div>
     <div id="root"><p class="empty">Loading…</p></div>
+    </div><!-- /notes-view -->
+    <div id="subs-view" style="display:none;">
+      <h1>Subscriptions</h1>
+      <p class="sub">Publish topic lists users can subscribe to, and approve user-submitted lists.</p>
+      <div class="memo">
+        <h3 style="margin:0 0 6px;">Publish a topic list</h3>
+        <p class="sub" style="margin:0 0 10px;">Name it (e.g. Self-help / Motivation / Thoughts), one quote per line. Publishing replaces that topic's quotes; subscribers see them randomly in their top-bar quote.</p>
+        <input id="subs-name" placeholder="List name" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin:0 0 8px;background:transparent;color:inherit;">
+        <textarea id="subs-lines" rows="6" placeholder="One quote per line…" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;resize:vertical;min-height:120px;background:transparent;color:inherit;"></textarea>
+        <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;">
+          <span id="subs-pub-status" class="sub" style="margin:0;"></span>
+          <button id="subs-publish" style="padding:8px 18px;border:1px solid #111827;background:#111827;color:#fff;border-radius:10px;font-weight:700;cursor:pointer;">Publish</button>
+        </div>
+      </div>
+      <h3 style="margin:18px 0 8px;">Pending approval</h3>
+      <div id="subs-pending"><p class="empty">Loading…</p></div>
+      <h3 style="margin:18px 0 8px;">Published</h3>
+      <div id="subs-published"></div>
+    </div>
   </div>
 
 <script>
@@ -289,6 +313,71 @@ document.getElementById('ais-save').onclick = async () => {
   const factor = parseInt(document.getElementById('ais-unit').value, 10) || 1;
   btn.disabled = true; st.textContent = 'Saving…';
   try { await callAdmin('setSettings', { ai_enabled: document.getElementById('ais-enabled').checked, ai_reply_after_minutes: num * factor }); st.textContent = 'Saved ✓'; }
+  catch (e) { st.textContent = 'Failed: ' + e.message; }
+  btn.disabled = false; setTimeout(() => { st.textContent = ''; }, 2500);
+};
+// ---- Page toggle: Shared notes / Subscriptions ----
+let _subsLists = [];
+function showAdminPage(p){
+  document.getElementById('notes-view').style.display = (p === 'notes') ? '' : 'none';
+  document.getElementById('subs-view').style.display  = (p === 'subs')  ? '' : 'none';
+  document.getElementById('pg-notes').classList.toggle('on', p === 'notes');
+  document.getElementById('pg-subs').classList.toggle('on', p === 'subs');
+  if (p === 'subs') loadSubs();
+}
+document.getElementById('pg-notes').onclick = () => showAdminPage('notes');
+document.getElementById('pg-subs').onclick  = () => showAdminPage('subs');
+
+async function loadSubs(){
+  const pend = document.getElementById('subs-pending'), pub = document.getElementById('subs-published');
+  pend.innerHTML = '<p class="empty">Loading…</p>'; pub.innerHTML = '';
+  let d;
+  try { d = await callAdmin('subsList'); }
+  catch (e) { pend.innerHTML = '<div class="err">Could not load (' + esc(e.message) + '). Did you run supabase-subscription-lists.sql and redeploy focus-admin-api?</div>'; return; }
+  _subsLists = d.lists || [];
+  renderSubs();
+}
+function renderSubs(){
+  const pend = document.getElementById('subs-pending'), pub = document.getElementById('subs-published');
+  const pending = _subsLists.filter(l => l.kind === 'user' && !l.approved);
+  const published = _subsLists.filter(l => l.approved);
+  // pending
+  if (!pending.length) pend.innerHTML = '<p class="empty">No pending submissions.</p>';
+  else {
+    pend.innerHTML = '';
+    pending.forEach(l => {
+      const card = document.createElement('div'); card.className = 'memo';
+      card.innerHTML = '<div class="memo-head"><div class="memo-text">' + esc(l.name) + '</div>'
+        + '<button class="subs-approve" data-id="' + l.id + '" style="border:1px solid #047857;background:#047857;color:#fff;border-radius:8px;padding:4px 12px;font:inherit;font-weight:700;cursor:pointer;">Confirm</button>'
+        + '<button class="del subs-del" data-id="' + l.id + '">Delete</button></div>'
+        + '<div class="memo-meta">by ' + esc(l.author_name || 'anon') + ' · ' + (l.lines || []).length + ' quotes · ' + fmt(l.created_at) + '</div>'
+        + '<ul class="replies">' + (l.lines || []).map(x => '<li><span class="r-arrow">⤷</span><span class="r-text">' + esc(x) + '</span></li>').join('') + '</ul>';
+      pend.appendChild(card);
+    });
+  }
+  // published
+  pub.innerHTML = '';
+  if (!published.length) pub.innerHTML = '<p class="empty">Nothing published yet.</p>';
+  published.forEach(l => {
+    const card = document.createElement('div'); card.className = 'memo';
+    card.innerHTML = '<div class="memo-head"><div class="memo-text">' + esc(l.name)
+      + (l.kind === 'topic' ? ' <span class="tag heart">topic</span>' : ' <span class="tag ai">user</span>') + '</div>'
+      + '<button class="del subs-del" data-id="' + l.id + '">Delete</button></div>'
+      + '<div class="memo-meta">' + (l.kind === 'user' ? ('by ' + esc(l.author_name || 'anon') + ' · ') : '')
+      + (l.lines || []).length + ' quotes · <b>' + (l.subscribe_count || 0) + '</b> subscribers</div>';
+    pub.appendChild(card);
+  });
+  // wire
+  document.querySelectorAll('.subs-approve').forEach(b => b.onclick = async () => { b.disabled = true; try { await callAdmin('subsApprove', { id: +b.dataset.id }); } catch (e) { alert(e.message); } loadSubs(); });
+  document.querySelectorAll('.subs-del').forEach(b => b.onclick = async () => { if (!confirm('Delete this list?')) return; b.disabled = true; try { await callAdmin('subsDelete', { id: +b.dataset.id }); } catch (e) { alert(e.message); } loadSubs(); });
+}
+document.getElementById('subs-publish').onclick = async () => {
+  const name = document.getElementById('subs-name').value.trim();
+  const lines = document.getElementById('subs-lines').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const st = document.getElementById('subs-pub-status');
+  if (!name || !lines.length) { st.textContent = 'Need a name + at least one quote.'; return; }
+  const btn = document.getElementById('subs-publish'); btn.disabled = true; st.textContent = 'Publishing…';
+  try { await callAdmin('subsPublishTopic', { name, lines }); st.textContent = 'Published ✓'; document.getElementById('subs-name').value = ''; document.getElementById('subs-lines').value = ''; loadSubs(); }
   catch (e) { st.textContent = 'Failed: ' + e.message; }
   btn.disabled = false; setTimeout(() => { st.textContent = ''; }, 2500);
 };

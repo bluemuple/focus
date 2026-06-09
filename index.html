@@ -10299,7 +10299,7 @@ function switchNoteTab(tab){
   const map = { notes:'ntab-notes', subs:'ntab-subs', replied:'ntab-replied' };
   Object.keys(map).forEach(k => { const el = document.getElementById(map[k]); if (el) el.style.display = (k === tab) ? '' : 'none'; });
   if (tab === 'notes') renderNotes();
-  else if (tab === 'subs') { try { renderSubscriptions(); } catch (_) {} }
+  else if (tab === 'subs') { try { renderSubscriptions(); } catch (_) {} try { _subsFetchApproved(); } catch (_) {} }   // refresh approved lists from cloud
   else if (tab === 'replied') { try { renderReplied(); } catch (_) {} }
 }
 function _addNoteTag(name){
@@ -10435,14 +10435,17 @@ function renderSubscriptions(){
   const h1 = document.createElement('h3'); h1.className = 'nsub-h'; h1.textContent = 'Subscribed topics'; pane.appendChild(h1);
   const topRow = document.createElement('div'); topRow.className = 'nsub-topics';
   const allTopics = SUBS_TOPICS.map(t => ({ key:t.key, usermade:false }))
-    .concat((state.subsApprovedLists || []).map(l => ({ key:l.name, usermade:true, by:l.by, lines:l.lines })));
+    .concat((state.subsApprovedLists || []).map(l => ({ key:l.name, usermade:true, by:l.by, lines:l.lines, id:l.id })));
   allTopics.forEach(tp => {
     const b = document.createElement('button'); b.type = 'button';
     b.className = 'nsub-topic' + (tp.usermade ? ' usermade' : '') + (_subsOpenTopic === tp.key ? ' active' : '');
     b.textContent = tp.key;
     b.addEventListener('click', () => {
       _subsOpenTopic = (_subsOpenTopic === tp.key) ? null : tp.key;
-      if (_subsOpenTopic && state.subscribedTopics.indexOf(tp.key) < 0) state.subscribedTopics.push(tp.key);
+      if (_subsOpenTopic && state.subscribedTopics.indexOf(tp.key) < 0) {
+        state.subscribedTopics.push(tp.key);
+        if (tp.usermade && tp.id != null) _subsSubscribeCount(tp.id);   // bump the author's subscribe count (once)
+      }
       try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
       renderSubscriptions();
     });
@@ -10489,7 +10492,66 @@ function renderSubscriptions(){
     pane.appendChild(box);
   }
 }
-function _subsSubmitToCloud(item){ /* TODO backend: POST submit-list to focus-admin-api. Local no-op for now. */ }
+/* ===== Subscriptions cloud (Supabase focus_subscription_lists) =====
+   Needs supabase-subscription-lists.sql run + focus-admin-api redeployed. All
+   calls fail-soft so the LOCAL seed (SUBS_TOPICS) keeps working if the table
+   isn't there yet. */
+async function _subsSubmitToCloud(item){
+  try {
+    const sb = await getSupabaseClient(); if (!sb || !item) return;
+    if (!state.shareClientId && typeof genShareClientId === 'function') state.shareClientId = genShareClientId();
+    const author = (_currentAuthEmail ? String(_currentAuthEmail).split('@')[0] : '') || 'a Bidoro user';
+    const { data, error } = await sb.from('focus_subscription_lists').insert({
+      kind: 'user', name: item.name, lines: item.lines, approved: false,
+      client_id: state.shareClientId || null, author_name: author
+    }).select('id').maybeSingle();
+    if (!error && data && data.id != null) { item.cloudId = data.id; try { saveState(); } catch (_) {} }
+  } catch (_) {}
+}
+/* Fetch APPROVED lists: admin topics override the seed; others' approved user
+   lists become subscribable (green); my own lists get their live status + count. */
+async function _subsFetchApproved(){
+  try {
+    const sb = await getSupabaseClient(); if (!sb) return;
+    const { data, error } = await sb.from('focus_subscription_lists')
+      .select('id, kind, name, lines, author_name, client_id, subscribe_count').eq('approved', true).limit(2000);
+    if (error || !Array.isArray(data)) return;
+    const pubTopics = {}, userLists = [];
+    data.forEach(r => {
+      if (r.kind === 'topic') pubTopics[r.name] = Array.isArray(r.lines) ? r.lines : [];
+      else userLists.push({ id: r.id, name: r.name, by: r.author_name || 'a Bidoro user', lines: Array.isArray(r.lines) ? r.lines : [], subs: r.subscribe_count || 0, client_id: r.client_id });
+    });
+    state.subsPublished = pubTopics;
+    state.subsApprovedLists = userLists.filter(l => l.client_id !== state.shareClientId);   // others' approved lists
+    const mineApproved = userLists.filter(l => l.client_id === state.shareClientId);
+    if (Array.isArray(state.myLists)) state.myLists.forEach(ml => {
+      const m = mineApproved.find(a => a.name === ml.name);
+      if (m) { ml.status = 'approved'; ml.subs = m.subs; ml.cloudId = m.id; }
+    });
+    try { saveState(); } catch (_) {}
+    if (_noteTab === 'subs') { try { renderSubscriptions(); } catch (_) {} }
+    try { refreshMotivation(true); } catch (_) {}
+  } catch (_) {}
+}
+/* One subscribe = one count bump (first time only). */
+function _subsSubscribeCount(listId){
+  if (listId == null) return;
+  if (!Array.isArray(state.subsCounted)) state.subsCounted = [];
+  if (state.subsCounted.indexOf(listId) >= 0) return;
+  state.subsCounted.push(listId);
+  try { saveState(); } catch (_) {}
+  (async () => { try { const sb = await getSupabaseClient(); if (sb) await sb.rpc('focus_subscribe_list', { p_id: listId }); } catch (_) {} })();
+}
+/* All quote lines from the topics/lists I'm subscribed to → top-bar rotation. */
+function _subscribedQuoteLines(){
+  const out = [];
+  (Array.isArray(state.subscribedTopics) ? state.subscribedTopics : []).forEach(name => {
+    const um = (state.subsApprovedLists || []).find(l => l.name === name);
+    const lines = um ? (um.lines || []) : (typeof _subsTopicLines === 'function' ? _subsTopicLines(name) : []);
+    (lines || []).forEach(l => { if (l) out.push(l); });
+  });
+  return out;
+}
 function _ensureNotes(){
   if (!Array.isArray(state.notes)) {
     const lines = (state.motivationalLines || '').split('\n').map(s => s.trim()).filter(Boolean);
@@ -10778,6 +10840,9 @@ function renderMyReplies(){
   // 3-tab switching (Notes / Subscriptions / Replied).
   document.querySelectorAll('#notes-tabs .ntab').forEach(b => b.addEventListener('click', () => switchNoteTab(b.dataset.ntab)));
   _noteEmojiBtnSync(); renderNotes(); _updateNoteCount();
+  // Pull approved subscription lists once on launch so subscribed quotes feed the
+  // top-bar rotation without opening the tab. Fail-soft (table may not exist yet).
+  setTimeout(() => { try { if (typeof _subsFetchApproved === 'function') _subsFetchApproved(); } catch (_) {} }, 3000);
 })();
 // Top-bar brand "Bidoro · Bid on your time" → Focus page (logo behaves as
 // home, like most apps).
@@ -20791,6 +20856,8 @@ function refreshMotivation(force) {
   const myMemo = (typeof cleanShareText === 'function') ? cleanShareText(state.sharedMemo) : (state.sharedMemo || '').trim();
   const mine = lines.slice();
   if (myMemo) mine.push(myMemo);
+  // Quotes from the topics/lists I subscribed to feed the rotation as "mine".
+  try { if (typeof _subscribedQuoteLines === 'function') { const _sl = _subscribedQuoteLines(); if (_sl.length) mine.push.apply(mine, _sl); } } catch (_) {}
   const others = (typeof getVisibleSharedMemos === 'function') ? getVisibleSharedMemos() : [];
   if (!mine.length && !others.length) { el.innerHTML = ''; el.classList.remove('is-marquee'); return; }
 

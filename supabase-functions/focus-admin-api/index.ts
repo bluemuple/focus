@@ -93,6 +93,37 @@ Deno.serve(async (req) => {
       await sb.from("focus_admin_settings").upsert(row, { onConflict: "id" });
       return json({ ok: true });
     }
+    // ---- Subscriptions: topic lists + user-submitted lists ----
+    if (action === "subsList") {
+      const { data } = await sb.from("focus_subscription_lists")
+        .select("id, kind, name, lines, author_name, client_id, approved, subscribe_count, created_at")
+        .order("created_at", { ascending: false }).limit(2000);
+      return json({ ok: true, lists: data || [] });
+    }
+    if (action === "subsPublishTopic") {
+      // Admin publishes (or replaces) a TOPIC list — upsert by (kind='topic', name).
+      const name = String(b.name || "").trim().slice(0, 60);
+      const lines = Array.isArray(b.lines)
+        ? b.lines.map((x: any) => String(x).slice(0, 300)).map((s: string) => s.trim()).filter(Boolean).slice(0, 200) : [];
+      if (!name || !lines.length) return json({ ok: false, error: "name + lines required" }, 400);
+      const { data: existing } = await sb.from("focus_subscription_lists")
+        .select("id").eq("kind", "topic").eq("name", name).maybeSingle();
+      if (existing?.id) await sb.from("focus_subscription_lists").update({ lines, approved: true }).eq("id", existing.id);
+      else await sb.from("focus_subscription_lists").insert({ kind: "topic", name, lines, approved: true });
+      return json({ ok: true });
+    }
+    if (action === "subsApprove") {
+      if (b.id == null) return json({ ok: false, error: "id required" }, 400);
+      const patch: Record<string, unknown> = { approved: true };
+      if (b.author_name) patch.author_name = String(b.author_name).slice(0, 60);
+      await sb.from("focus_subscription_lists").update(patch).eq("id", b.id);
+      return json({ ok: true });
+    }
+    if (action === "subsDelete") {
+      if (b.id == null) return json({ ok: false, error: "id required" }, 400);
+      await sb.from("focus_subscription_lists").delete().eq("id", b.id);
+      return json({ ok: true });
+    }
     return json({ ok: false, error: "unknown action" }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
