@@ -10512,7 +10512,12 @@ function renderSubscriptions(){
   pane.innerHTML = '';
   const h1 = document.createElement('h3'); h1.className = 'nsub-h'; h1.textContent = 'Subscribed topics'; pane.appendChild(h1);
   const topRow = document.createElement('div'); topRow.className = 'nsub-topics';
-  const allTopics = SUBS_TOPICS.map(t => ({ key:t.key, usermade:false }))
+  // Topic capsules = the 3 built-in topics + ANY admin-published topic (any name),
+  // then approved user lists. (Admin topics not matching a built-in name used to
+  // be invisible.)
+  const _topicNames = SUBS_TOPICS.map(t => t.key);
+  Object.keys(state.subsPublished || {}).forEach(n => { if (_topicNames.indexOf(n) < 0) _topicNames.push(n); });
+  const allTopics = _topicNames.map(k => ({ key:k, usermade:false, id:(state.subsTopicIds || {})[k] }))
     .concat((state.subsApprovedLists || []).map(l => ({ key:l.name, usermade:true, by:l.by, lines:l.lines, id:l.id })));
   allTopics.forEach(tp => {
     const b = document.createElement('button'); b.type = 'button';
@@ -10527,7 +10532,7 @@ function renderSubscriptions(){
       } else {                                        // subscribe + show its content
         state.subscribedTopics.push(tp.key);
         _subsOpenTopic = tp.key;
-        if (tp.usermade && tp.id != null) _subsSubscribeCount(tp.id);   // bump the author's subscribe count (once)
+        if (tp.id != null) _subsSubscribeCount(tp.id);   // bump the subscribe count for ANY published list (admin topic OR user list)
       }
       try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
       try { refreshMotivation(true); } catch (_) {}   // subscribed quotes feed the top-bar rotation
@@ -10600,12 +10605,13 @@ async function _subsFetchApproved(){
     const { data, error } = await sb.from('focus_subscription_lists')
       .select('id, kind, name, lines, author_name, client_id, subscribe_count').eq('approved', true).limit(2000);
     if (error || !Array.isArray(data)) return;
-    const pubTopics = {}, userLists = [];
+    const pubTopics = {}, topicIds = {}, userLists = [];
     data.forEach(r => {
-      if (r.kind === 'topic') pubTopics[r.name] = Array.isArray(r.lines) ? r.lines : [];
+      if (r.kind === 'topic') { pubTopics[r.name] = Array.isArray(r.lines) ? r.lines : []; topicIds[r.name] = r.id; }
       else userLists.push({ id: r.id, name: r.name, by: r.author_name || 'a Bidoro user', lines: Array.isArray(r.lines) ? r.lines : [], subs: r.subscribe_count || 0, client_id: r.client_id });
     });
     state.subsPublished = pubTopics;
+    state.subsTopicIds = topicIds;   // name → cloud id, so subscribing bumps the right row's count
     state.subsApprovedLists = userLists.filter(l => l.client_id !== state.shareClientId);   // others' approved lists
     const mineApproved = userLists.filter(l => l.client_id === state.shareClientId);
     if (Array.isArray(state.myLists)) state.myLists.forEach(ml => {
