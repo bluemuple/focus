@@ -98,12 +98,16 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
     if (action === "getSettings") {
-      const { data } = await sb.from("focus_admin_settings").select("ai_enabled, ai_reply_after_minutes").eq("id", 1).maybeSingle();
-      return json({ ok: true, settings: data || { ai_enabled: true, ai_reply_after_minutes: 1440 } });
+      const { data } = await sb.from("focus_admin_settings").select("ai_enabled, ai_reply_after_minutes, subs_max_lines").eq("id", 1).maybeSingle();
+      return json({ ok: true, settings: data || { ai_enabled: true, ai_reply_after_minutes: 1440, subs_max_lines: 10 } });
     }
     if (action === "setSettings") {
-      const mins = Math.max(0, Math.min(1051200, parseInt(String(b.ai_reply_after_minutes), 10) || 1440));   // 0 .. ~2y
-      const row = { id: 1, ai_enabled: b.ai_enabled !== false, ai_reply_after_minutes: mins, updated_at: new Date().toISOString() };
+      // PARTIAL upsert — only the fields present in the request are written, so the
+      // AI tab and the Subscriptions tab don't overwrite each other's settings.
+      const row: Record<string, unknown> = { id: 1, updated_at: new Date().toISOString() };
+      if (b.ai_enabled !== undefined) row.ai_enabled = b.ai_enabled !== false;
+      if (b.ai_reply_after_minutes !== undefined) row.ai_reply_after_minutes = Math.max(0, Math.min(1051200, parseInt(String(b.ai_reply_after_minutes), 10) || 1440));
+      if (b.subs_max_lines !== undefined) row.subs_max_lines = Math.max(1, Math.min(100, parseInt(String(b.subs_max_lines), 10) || 10));
       await sb.from("focus_admin_settings").upsert(row, { onConflict: "id" });
       return json({ ok: true });
     }

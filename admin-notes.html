@@ -124,6 +124,14 @@
       <h1>Subscriptions</h1>
       <p class="sub">Publish topic lists users can subscribe to, and approve user-submitted lists.</p>
       <div class="memo">
+        <label style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-weight:700;">
+          Max lines a user can enter per list:
+          <input id="subs-maxlines" type="number" min="1" max="100" value="10" style="width:72px;padding:6px 8px;border:1px solid #d1d5db;border-radius:8px;font:inherit;background:transparent;color:inherit;">
+          <button id="subs-maxlines-save" style="border:1px solid #111827;background:#111827;color:#fff;border-radius:8px;padding:6px 14px;font:inherit;font-weight:700;cursor:pointer;">Save</button>
+          <span id="subs-maxlines-status" class="sub" style="margin:0;"></span>
+        </label>
+      </div>
+      <div class="memo">
         <h3 style="margin:0 0 6px;">Publish a topic list</h3>
         <p class="sub" style="margin:0 0 10px;">Name it (e.g. Self-help / Motivation / Thoughts), one quote per line. Publishing replaces that topic's quotes; subscribers see them randomly in their top-bar quote.</p>
         <input id="subs-name" placeholder="List name" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin:0 0 8px;background:transparent;color:inherit;">
@@ -360,6 +368,7 @@ async function loadSubs(){
   catch (e) { pend.innerHTML = '<div class="err">Could not load (' + esc(e.message) + '). Did you run supabase-subscription-lists.sql and redeploy focus-admin-api?</div>'; return; }
   _subsLists = d.lists || [];
   renderSubs();
+  try { const s = await callAdmin('getSettings'); const ml = (s.settings && s.settings.subs_max_lines != null) ? s.settings.subs_max_lines : 10; document.getElementById('subs-maxlines').value = ml; } catch (_) {}
 }
 function renderSubs(){
   const pend = document.getElementById('subs-pending'), pub = document.getElementById('subs-published');
@@ -402,6 +411,14 @@ document.getElementById('subs-publish').onclick = async () => {
   if (!name || !lines.length) { st.textContent = 'Need a name + at least one quote.'; return; }
   const btn = document.getElementById('subs-publish'); btn.disabled = true; st.textContent = 'Publishing…';
   try { await callAdmin('subsPublishTopic', { name, lines }); st.textContent = 'Published ✓'; document.getElementById('subs-name').value = ''; document.getElementById('subs-lines').value = ''; loadSubs(); }
+  catch (e) { st.textContent = 'Failed: ' + e.message; }
+  btn.disabled = false; setTimeout(() => { st.textContent = ''; }, 2500);
+};
+document.getElementById('subs-maxlines-save').onclick = async () => {
+  const v = Math.max(1, Math.min(100, parseInt(document.getElementById('subs-maxlines').value, 10) || 10));
+  const btn = document.getElementById('subs-maxlines-save'), st = document.getElementById('subs-maxlines-status');
+  btn.disabled = true; st.textContent = 'Saving…';
+  try { await callAdmin('setSettings', { subs_max_lines: v }); document.getElementById('subs-maxlines').value = v; st.textContent = 'Saved ✓'; }
   catch (e) { st.textContent = 'Failed: ' + e.message; }
   btn.disabled = false; setTimeout(() => { st.textContent = ''; }, 2500);
 };

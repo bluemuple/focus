@@ -81,3 +81,10 @@ select 'topic', 'Thoughts', array[
   'The quiet mind hears more.', 'What you focus on grows.', 'Let it be simple.', 'Breathe; then decide.'
 ], true
 where not exists (select 1 from public.focus_subscription_lists where kind='topic' and name='Thoughts');
+
+-- ---- Admin-set cap on lines per USER list (default 10). Stored on the existing
+-- focus_admin_settings row; granted anon SELECT so the app can read + enforce it. ----
+alter table public.focus_admin_settings add column if not exists subs_max_lines int not null default 10;
+grant select on public.focus_admin_settings to anon, authenticated;
+drop policy if exists focus_admin_settings_read on public.focus_admin_settings;
+create policy focus_admin_settings_read on public.focus_admin_settings for select using (true);

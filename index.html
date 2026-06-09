@@ -10554,11 +10554,15 @@ function renderSubscriptions(){
   const sub = document.createElement('div'); sub.className = 'nsub-sub'; sub.textContent = 'Make your own list of quotes or notes'; pane.appendChild(sub);
   const lblN = document.createElement('label'); lblN.className = 'nsub-field'; lblN.textContent = 'List Name'; pane.appendChild(lblN);
   const nameInp = document.createElement('input'); nameInp.className = 'nsub-name'; nameInp.maxLength = 40; pane.appendChild(nameInp);
-  const lblL = document.createElement('label'); lblL.className = 'nsub-field'; lblL.textContent = 'Quotes (one per line)'; pane.appendChild(lblL);
-  const linesInp = document.createElement('textarea'); linesInp.className = 'nsub-lines'; linesInp.rows = 5; linesInp.placeholder = 'One quote per line…'; pane.appendChild(linesInp);
+  const _maxL = (typeof state.subsMaxLines === 'number' && state.subsMaxLines > 0) ? state.subsMaxLines : 10;
+  const lblL = document.createElement('label'); lblL.className = 'nsub-field'; lblL.textContent = 'Quotes (one per line, max ' + _maxL + ')'; pane.appendChild(lblL);
+  const linesInp = document.createElement('textarea'); linesInp.className = 'nsub-lines'; linesInp.rows = Math.min(_maxL, 8); linesInp.placeholder = 'One quote per line…'; pane.appendChild(linesInp);
+  // Enforce the admin cap live — the box can never hold more than _maxL lines.
+  linesInp.addEventListener('input', () => { const L = linesInp.value.split('\n'); if (L.length > _maxL) linesInp.value = L.slice(0, _maxL).join('\n'); });
   const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'btn primary nsub-submit'; submit.textContent = 'Submit';
   submit.addEventListener('click', () => {
-    const nm = nameInp.value.trim(); const ls = linesInp.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const nm = nameInp.value.trim(); let ls = linesInp.value.split('\n').map(s => s.trim()).filter(Boolean);
+    if (ls.length > _maxL) ls = ls.slice(0, _maxL);   // cap to the admin max
     if (!nm || !ls.length){ if (!nm) nameInp.focus(); else linesInp.focus(); return; }
     state.myLists.unshift({ id:'L' + Date.now(), name:nm, lines:ls, status:'pending', subs:0 });
     try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
@@ -10618,6 +10622,8 @@ async function _subsFetchApproved(){
       const m = mineApproved.find(a => a.name === ml.name);
       if (m) { ml.status = 'approved'; ml.subs = m.subs; ml.cloudId = m.id; }
     });
+    // Admin-set cap on how many lines a user list may contain.
+    try { const r2 = await sb.from('focus_admin_settings').select('subs_max_lines').eq('id', 1).maybeSingle(); if (r2 && r2.data && r2.data.subs_max_lines != null) state.subsMaxLines = r2.data.subs_max_lines; } catch (_) {}
     try { saveState(); } catch (_) {}
     if (_noteTab === 'subs') { try { renderSubscriptions(); } catch (_) {} }
     try { refreshMotivation(true); } catch (_) {}
