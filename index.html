@@ -4213,6 +4213,20 @@
   .task-note-dot { flex: 0 0 auto; display: none; align-items: center; justify-content: center; background: transparent; border: none; padding: 0 1px; color: var(--text-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .task-note-dot.has-note { display: inline-flex; color: #3aa776; }
   body.tt-show-actions #focus-matrix .task-row .task-note-dot { display: inline-flex; }
+  /* Task-note rich-text editor (read-only view + Edit; B/I/U/lists/link) */
+  .tn-modal { width: min(96vw, 480px); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+  .tn-head { position: relative; display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--card-border); }
+  .tn-title { position: absolute; left: 50%; transform: translateX(-50%); font-weight: 700; font-size: 1.05rem; pointer-events: none; }
+  .tn-edit-btn { display: inline-flex; align-items: center; gap: 5px; background: transparent; border: none; color: var(--accent, #2563eb); font: inherit; font-weight: 600; cursor: pointer; padding: 4px; -webkit-tap-highlight-color: transparent; }
+  .tn-done-btn { margin-left: auto; background: transparent; border: none; color: var(--accent, #2563eb); font: inherit; font-weight: 700; cursor: pointer; padding: 4px 6px; -webkit-tap-highlight-color: transparent; }
+  .tn-editor { flex: 1 1 auto; min-height: 180px; overflow-y: auto; padding: 16px; font: inherit; line-height: 1.5; color: var(--text-main); outline: none; -webkit-user-select: text; user-select: text; }
+  .tn-editor[contenteditable="false"] { cursor: default; }
+  .tn-editor:empty::before { content: attr(data-placeholder); color: var(--text-muted, #9ca3af); }
+  .tn-editor a { color: var(--accent, #2563eb); }
+  .tn-toolbar { display: flex; align-items: center; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--card-border); background: var(--surface-2, #f8fafc); }
+  .tn-toolbar .tn-tb { flex: 0 0 auto; width: 40px; height: 38px; border: none; background: var(--card-bg, #fff); border-radius: 8px; color: var(--text-main); font: inherit; font-size: 1.05rem; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 1px 2px rgba(0,0,0,.08); -webkit-tap-highlight-color: transparent; }
+  .tn-toolbar .tn-tb:active { transform: scale(.92); }
+  .tn-toolbar .tn-tb svg { display: block; }
   /* Repeat ON → swap the Matrix + Edit chips for the weekday selector. */
   body.tt-repeat-days #split-view-toggle,
   body.tt-repeat-days #edit-toggle { display: none !important; }
@@ -7757,21 +7771,25 @@
 </div>
 
 <!-- Activity-log note editor modal — 150-char textarea -->
-<!-- Per-task NOTE modal — the +Add "Note" button and the per-task note dot both
-     open this to type a free-text note stored as task.note. -->
+<!-- Per-task NOTE editor. The +Add "Note" button opens it EDITABLE; the per-task
+     note dot opens an existing note READ-ONLY (no keyboard / no cursor) with an
+     Edit button. Rich text (B/I/U/lists/link); stored as HTML in task.note. -->
 <div class="modal hidden" id="task-note-modal" aria-hidden="true">
   <div class="modal-backdrop" id="task-note-backdrop"></div>
-  <div class="modal-content" style="width: 420px; max-width: 92vw;">
-    <h3 style="margin: 0 0 8px;">Task note</h3>
-    <p class="help" style="margin: 0 0 10px;">A note for this task — anything you want to remember.</p>
-    <textarea id="task-note-text" rows="6" maxlength="1000"
-      style="width: 100%; box-sizing: border-box; padding: 10px 12px;
-             border: 1px solid var(--card-border); border-radius: 10px; font: inherit;
-             resize: vertical; min-height: 120px; background: var(--surface-2,#fff); color: var(--text-main);"
-      placeholder="Write a note for this task…"></textarea>
-    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top: 12px;">
-      <button type="button" class="btn" id="task-note-cancel">Cancel</button>
-      <button type="button" class="btn primary" id="task-note-save">Save</button>
+  <div class="modal-content tn-modal">
+    <div class="tn-head">
+      <button type="button" class="tn-edit-btn" id="task-note-edit" aria-label="Edit note"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg><span>Edit</span></button>
+      <span class="tn-title">Note</span>
+      <button type="button" class="tn-done-btn" id="task-note-done">Done</button>
+    </div>
+    <div class="tn-editor" id="task-note-editor" contenteditable="false" data-placeholder="Add note" role="textbox" aria-multiline="true"></div>
+    <div class="tn-toolbar" id="task-note-toolbar">
+      <button type="button" class="tn-tb" data-cmd="bold" title="Bold" aria-label="Bold"><b>B</b></button>
+      <button type="button" class="tn-tb" data-cmd="italic" title="Italic" aria-label="Italic"><i>I</i></button>
+      <button type="button" class="tn-tb" data-cmd="underline" title="Underline" aria-label="Underline"><u>U</u></button>
+      <button type="button" class="tn-tb" data-cmd="insertOrderedList" title="Numbered list" aria-label="Numbered list"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="10" y1="6" x2="21" y2="6"/><line x1="10" y1="12" x2="21" y2="12"/><line x1="10" y1="18" x2="21" y2="18"/><path d="M4 6h1v4M4 10h2"/><path d="M4 14h2l-2 3h2"/></svg></button>
+      <button type="button" class="tn-tb" data-cmd="insertUnorderedList" title="Bulleted list" aria-label="Bulleted list"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="9" y1="6" x2="21" y2="6"/><line x1="9" y1="12" x2="21" y2="12"/><line x1="9" y1="18" x2="21" y2="18"/><circle cx="4.5" cy="6" r="1.4" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.4" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.4" fill="currentColor" stroke="none"/></svg></button>
+      <button type="button" class="tn-tb" data-cmd="createLink" title="Link" aria-label="Insert link"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1.5 1.5"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1.5-1.5"/></svg></button>
     </div>
   </div>
 </div>
@@ -13765,11 +13783,13 @@ function renderFocusMatrix() {
       const noteDot = row.querySelector('.task-note-dot');
       if (noteDot) noteDot.onclick = (e) => {
         e.stopPropagation();
+        // An EXISTING note opens read-only (no keyboard / no caret) + an Edit button;
+        // an empty one opens editable straight away.
         openTaskNoteModal(t.note || '', (v) => {
-          if (v && v.trim()) t.note = v.trim(); else { try { delete t.note; } catch (_) { t.note = ''; } }
+          if (_noteHasContent(v)) t.note = v; else { try { delete t.note; } catch (_) { t.note = ''; } }
           try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
           renderFocusMatrix();
-        });
+        }, { readOnly: _noteHasContent(t.note) });
       };
       // Play/pause colours from the bar's own palette so it harmonises in any theme:
       // idle = play triangle in the bar's TEXT colour on the frosted circle (CSS); running =
@@ -22675,30 +22695,81 @@ function _resetAddRepeat() {
 })();
 /* Per-task NOTE modal — opened by the +Add "Note" button and the per-task note
    dot. Simple textarea modal; onSave receives the text. */
-function openTaskNoteModal(text, onSave){
+function _noteHasContent(html){
+  if (!html) return false;
+  const d = document.createElement('div'); d.innerHTML = html;
+  return !!((d.textContent || '').trim()) || /<(img|hr)\b/i.test(html);
+}
+function _sanitizeNoteHtml(html){
+  // Light self-content sanitize: drop scripts + inline handlers + javascript: urls.
+  const d = document.createElement('div'); d.innerHTML = html || '';
+  d.querySelectorAll('script,style,iframe,object,embed').forEach(n => n.remove());
+  d.querySelectorAll('*').forEach(el => {
+    Array.prototype.slice.call(el.attributes).forEach(a => {
+      const n = a.name.toLowerCase();
+      if (n.indexOf('on') === 0) el.removeAttribute(a.name);
+      else if ((n === 'href' || n === 'src') && /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name);
+    });
+  });
+  return d.innerHTML;
+}
+/* Task-note editor. opts.readOnly → open in VIEW mode (no keyboard / no caret) with
+   an Edit button; otherwise editable. Rich text (B/I/U/lists/link) stored as HTML. */
+function openTaskNoteModal(html, onSave, opts){
+  opts = opts || {};
   const modal = document.getElementById('task-note-modal');
-  const ta = document.getElementById('task-note-text');
-  if (!modal || !ta) return;
-  ta.value = text || '';
-  modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false');
-  setTimeout(() => { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {} }, 30);
-  const save = document.getElementById('task-note-save');
-  const cancel = document.getElementById('task-note-cancel');
+  const ed = document.getElementById('task-note-editor');
+  const tb = document.getElementById('task-note-toolbar');
+  const editBtn = document.getElementById('task-note-edit');
+  const doneBtn = document.getElementById('task-note-done');
   const backdrop = document.getElementById('task-note-backdrop');
-  function cleanup(){ modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
-    save.removeEventListener('click', onSaveClick); cancel.removeEventListener('click', onCancel); backdrop.removeEventListener('click', onCancel); }
-  function onSaveClick(){ const v = ta.value; cleanup(); if (typeof onSave === 'function') onSave(v); }
-  function onCancel(){ cleanup(); }
-  save.addEventListener('click', onSaveClick);
-  cancel.addEventListener('click', onCancel);
-  backdrop.addEventListener('click', onCancel);
+  if (!modal || !ed) return;
+  ed.innerHTML = _sanitizeNoteHtml(html || '');
+  function setMode(on){
+    ed.setAttribute('contenteditable', on ? 'true' : 'false');
+    tb.style.display = on ? '' : 'none';
+    editBtn.style.display = on ? 'none' : '';
+    if (on) setTimeout(() => { try {
+      ed.focus();
+      const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false);
+      const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);   // caret to end
+    } catch (_) {} }, 30);
+    else { try { ed.blur(); } catch (_) {} }
+  }
+  setMode(!opts.readOnly);   // dot-view → read-only; +Add / empty → editable
+  modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false');
+  function cleanup(){
+    modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
+    editBtn.removeEventListener('click', onEdit);
+    doneBtn.removeEventListener('click', onDone);
+    backdrop.removeEventListener('click', onDone);
+    tb.removeEventListener('mousedown', onTbDown);
+    tb.removeEventListener('click', onTb);
+  }
+  function onEdit(){ setMode(true); }
+  function onDone(){ const v = _sanitizeNoteHtml(ed.innerHTML); cleanup(); if (typeof onSave === 'function') onSave(v); }
+  function onTbDown(e){ e.preventDefault(); }   // keep the editor's selection when tapping a toolbar button
+  function onTb(e){
+    const btn = e.target.closest('.tn-tb'); if (!btn) return;
+    e.preventDefault();
+    const cmd = btn.dataset.cmd;
+    try { ed.focus();
+      if (cmd === 'createLink') { const url = prompt('Link URL'); if (url) document.execCommand('createLink', false, url); }
+      else document.execCommand(cmd, false, null);
+    } catch (_) {}
+  }
+  editBtn.addEventListener('click', onEdit);
+  doneBtn.addEventListener('click', onDone);
+  backdrop.addEventListener('click', onDone);
+  tb.addEventListener('mousedown', onTbDown);
+  tb.addEventListener('click', onTb);
 }
 (function wireNoteToggle(){
   const nt = document.getElementById('note-toggle');
   if (!nt) return;
   nt.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
-    openTaskNoteModal(_addNoteText, (v) => { _addNoteText = v || ''; nt.classList.toggle('active', !!_addNoteText.trim()); });
+    openTaskNoteModal(_addNoteText, (v) => { _addNoteText = v || ''; nt.classList.toggle('active', _noteHasContent(_addNoteText)); });
   });
 })();
 /* While the picker height animates (open / close), the matrix below it moves
@@ -23461,8 +23532,8 @@ function _commitDurationTask(q, name) {
   if (_addRepeatDays && _addRepeatDays.size) {
     state.tasks[q][0].repeat = Array.from(_addRepeatDays).sort((a, b) => a - b);
   }
-  // Free-text note typed via the +Add "Note" button (if any).
-  if (typeof _addNoteText === 'string' && _addNoteText.trim()) state.tasks[q][0].note = _addNoteText.trim();
+  // Note typed via the +Add "Note" button (if any) — stored as HTML.
+  if (_noteHasContent(_addNoteText)) state.tasks[q][0].note = _addNoteText;
   if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
   // The unshift pushed every existing task of this quadrant up one index → bump
   // their scheduled blocks' taskIdx (and shuffle sub-segments) so the per-task
