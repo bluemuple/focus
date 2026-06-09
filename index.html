@@ -12465,6 +12465,7 @@ function _deferTaskToTomorrow(q, i) {
   try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
   try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
   try { renderFocusMatrix(); } catch (_) {}
+  try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // deferring the last task → refresh idle art
   try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
 }
 
@@ -13676,6 +13677,10 @@ function renderFocusMatrix() {
           try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
           try { window._openSwipeRow = null; } catch (_) {}
           try { renderFocusMatrix(); } catch (_) {}
+          // Re-render the focus card too — deleting the LAST task must flip the idle
+          // art from "Nice list / Now press start" to "Add one" (else it stays stale).
+          try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+          try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
         }, 200);
       };
       if (_actTmrw) _actTmrw.onclick = (e) => {
@@ -13765,7 +13770,7 @@ function renderFocusMatrix() {
         saveState();
         markSettingsChanged(); debouncedPushSettings();
         if (cb.checked) {
-          setTimeout(() => { _flipRenderMatrix(); if (typeof drawGauge === 'function') drawGauge(); }, 1100);
+          setTimeout(() => { _flipRenderMatrix(); if (typeof drawGauge === 'function') drawGauge(); if (typeof renderImDoing === 'function') renderImDoing(); }, 1100);
         } else {
           renderFocusMatrix();
           if (typeof drawGauge === 'function') drawGauge();
@@ -23131,6 +23136,10 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   // Touch on empty space / anything outside the picker → cancel (drop the block).
   function onOutside(e) {
     if (picker.contains(e.target)) return;
+    // The Repeat (↻) toggle + its weekday buttons + the Note button live in the
+    // header (outside the picker) but ARE part of this add flow — tapping them
+    // must NOT cancel the add (that was the bug: Repeat appeared to do nothing).
+    if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #note-toggle, #task-note-modal')) return;
     finish(false);
   }
   setTimeout(() => {                              // defer so the OPENING tap doesn't trip it
@@ -23839,6 +23848,7 @@ function _ffSetTransform(px, anim) {
 }
 function _ffStep(dir) {   // +1 = swipe-left → next slide, -1 = swipe-right → prev
   const n = _ffSlides.length; if (n < 2) { _ffSetTransform(0, true); return; }
+  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}   // haptic tick on each carousel move
   _ffAnimating = true;
   _ffSetTransform(dir > 0 ? -_ffW() : _ffW(), true);
   setTimeout(() => {
