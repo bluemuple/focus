@@ -11622,7 +11622,7 @@ function attachDragHandlers(row, q, i, isMatrix) {
        block the time line is currently in (the running row stays put).        */
 
 /* Build the planned block(s) for a swiped task, persist, then animate. */
-function _commitTaskSwipeToGauge(row, q, i) {
+function _commitTaskSwipeToGauge(row, q, i, opts) {
   if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
   const now = Date.now();
   const at = state.activeTimer;
@@ -11651,7 +11651,15 @@ function _commitTaskSwipeToGauge(row, q, i) {
   if (typeof markSettingsChanged === 'function') markSettingsChanged();
   if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
   try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
-  _animateSwipeToGauge(row, q, i, newIds, isRunning);
+  if (opts && opts.skipAnim) {
+    // The caller already faded the bar + buttons out — just add the block + re-render
+    // (no slide-portal animation).
+    try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+  } else {
+    _animateSwipeToGauge(row, q, i, newIds, isRunning);
+  }
 }
 
 /* The "portal" animation, in two sequenced phases:
@@ -13900,9 +13908,14 @@ function renderFocusMatrix() {
       const _actTmrw  = row.querySelector('.tr-act-tmrw');
       if (_actGauge) _actGauge.onclick = (e) => {
         e.stopPropagation();
-        // Close the reveal instantly, then run the existing send-to-gauge portal.
-        try { if (typeof window._closeSwipeRow === 'function') window._closeSwipeRow(row, false); } catch (_) {}
-        try { _commitTaskSwipeToGauge(row, q, i); } catch (_) {}
+        // Fade the bar + the blue (add) / red (delete) buttons out together (leave the
+        // reveal open so the buttons fade too), then add the gauge block.
+        row.style.transition = 'opacity .25s ease';
+        row.style.opacity = '0';
+        setTimeout(() => {
+          try { window._openSwipeRow = null; } catch (_) {}
+          try { _commitTaskSwipeToGauge(row, q, i, { skipAnim: true }); } catch (_) {}
+        }, 270);
       };
       if (_actDel) _actDel.onclick = (e) => {
         e.stopPropagation();
@@ -13922,7 +13935,11 @@ function renderFocusMatrix() {
       };
       if (_actTmrw) _actTmrw.onclick = (e) => {
         e.stopPropagation();
-        try { _deferTaskToTomorrow(q, i); } catch (_) {}
+        // Fade the bar + the green button out — 3× SLOWER than the gauge button (.75s
+        // vs .25s) — then defer to tomorrow.
+        row.style.transition = 'opacity .75s ease';
+        row.style.opacity = '0';
+        setTimeout(() => { try { _deferTaskToTomorrow(q, i); } catch (_) {} }, 780);
       };
       // (The $ bid pill was removed — money is duration/finish-based now. The
       // .task-bid-wrap stays as the slot for the running-pomodoro display.)
