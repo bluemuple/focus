@@ -651,8 +651,9 @@
   .note-tagsel .nts-addtag { flex: 0 0 auto; background: var(--surface-2,#f1f3f5); color: var(--text-muted); border: 1px solid var(--card-border); border-radius: 999px; padding: 7px 15px; font: inherit; font-weight: 700; font-size: .82rem; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: transform .1s ease, background .15s ease; }
   .note-tagsel .nts-addtag:hover { background: var(--button-bg, #e5e7eb); }
   .note-tagsel .nts-addtag:active { transform: scale(.95); }
+  .note-tagsel .nts-addtag.on { background: #1f2430; border-color: #1f2430; color: #fff; }   /* BLACK while open */
   .note-tagsel .nts-cap { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; background: var(--surface-2,#f1f3f5); color: var(--text-muted); border: 1px solid var(--card-border); border-radius: 999px; padding: 7px 13px; font: inherit; font-weight: 600; font-size: .88rem; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
-  .note-tagsel .nts-cap.sel { background: var(--accent,#2563eb); border-color: var(--accent,#2563eb); color: #fff; }
+  .note-tagsel .nts-cap.sel { background: #1f2430; border-color: #1f2430; color: #fff; }   /* selected = BLACK (not blue) */
   .note-tagsel .nts-cap .nts-x { display: none; width: 16px; height: 16px; border-radius: 50%; background: #dc2626; color: #fff; align-items: center; justify-content: center; font-size: .66rem; line-height: 1; flex: 0 0 auto; }
   .note-tagsel.editing .nts-cap .nts-x { display: inline-flex; }
   /* Per-note pencil row: [tag dropdown ▼] [Share] [Delete] + the share bubble */
@@ -10366,37 +10367,29 @@ function renderNoteFilters(){
 }
 /* Gray selectable capsules in the composer (scrollable): pencil + new-tag input + tags. */
 let _noteTagExpanded = false;   // collapsed: only the (+tag) button shows
-let _noteTagAdding = false;     // showing the inline new-tag input
 function renderNoteTagSel(){
   const wrap = document.getElementById('note-tagsel'); if (!wrap) return;
   _ensureNoteTags();
-  wrap.classList.toggle('editing', _noteTagEdit);
+  wrap.classList.toggle('editing', _noteTagExpanded && _noteTagEdit);   // ✕ on tags only in edit mode
   wrap.innerHTML = '';
-  // (+tag) FIRST — a solid gray button. Collapsed → tap reveals the rest;
-  // expanded → tap turns it into an input to type a new tag.
-  if (_noteTagExpanded && _noteTagAdding) {
-    const inp = document.createElement('input'); inp.className = 'nts-newtag'; inp.placeholder = 'new tag'; inp.maxLength = 18;
-    inp.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); const v = inp.value; _noteTagAdding = false; _addNoteTag(v); }
-      else if (e.key === 'Escape') { _noteTagAdding = false; renderNoteTagSel(); }
-    });
-    inp.addEventListener('blur', () => { const v = inp.value; _noteTagAdding = false; if (v && v.trim()) _addNoteTag(v); else renderNoteTagSel(); });
-    wrap.appendChild(inp);
-    setTimeout(() => { try { inp.focus(); } catch (_) {} }, 10);
-  } else {
-    const addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'nts-addtag'; addBtn.textContent = '+ tag';
-    addBtn.addEventListener('click', () => {
-      if (!_noteTagExpanded) { _noteTagExpanded = true; renderNoteTagSel(); }
-      else { _noteTagAdding = true; renderNoteTagSel(); }
-    });
-    wrap.appendChild(addBtn);
-  }
+  // (+tag) — toggles the row open/closed; turns BLACK while open. NEVER an input.
+  const addBtn = document.createElement('button'); addBtn.type = 'button'; addBtn.className = 'nts-addtag' + (_noteTagExpanded ? ' on' : ''); addBtn.textContent = '+ tag';
+  addBtn.addEventListener('click', () => { _noteTagExpanded = !_noteTagExpanded; if (!_noteTagExpanded) _noteTagEdit = false; renderNoteTagSel(); });
+  wrap.appendChild(addBtn);
   if (!_noteTagExpanded) return;   // collapsed → ONLY the (+tag) button
-  // Pencil → toggle delete-tag mode.
+  // Pencil → toggle EDIT mode: an add-tag input appears next to it + ✕ on each tag.
   const pen = document.createElement('button'); pen.type = 'button'; pen.className = 'nts-pen' + (_noteTagEdit ? ' on' : ''); pen.innerHTML = _NOTE_ICON_PEN; pen.title = 'Edit tags';
   pen.addEventListener('click', () => { _noteTagEdit = !_noteTagEdit; renderNoteTagSel(); });
   wrap.appendChild(pen);
-  // Tag capsules (selectable; in edit mode each shows a ✕ to delete the tag).
+  if (_noteTagEdit) {
+    const inp = document.createElement('input'); inp.className = 'nts-newtag'; inp.placeholder = 'new tag'; inp.maxLength = 18;
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); const v = inp.value; inp.value = ''; _addNoteTag(v);
+        setTimeout(() => { const ni = document.querySelector('#note-tagsel .nts-newtag'); if (ni) ni.focus(); }, 10); }   // keep adding
+    });
+    wrap.appendChild(inp);
+  }
+  // Tag capsules (selectable → BLACK; in edit mode each shows a ✕ to delete the tag).
   state.noteTags.forEach(t => {
     const cap = document.createElement('button'); cap.type = 'button';
     cap.className = 'nts-cap' + (_noteSelTags.indexOf(t) >= 0 ? ' sel' : '');
