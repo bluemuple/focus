@@ -267,4 +267,150 @@
     // Expose so the user / debugger can poke at it.
     window.__iCloudKV = { push: pushICloud, pull: pullICloudAndApply };
   }
+
+  // ---- 8. Home-screen widget data push ----
+  // The WidgetKit widget (BidoroWidget) can't read this WebView's localStorage,
+  // so we push a tiny JSON snapshot to native, which stashes it in the shared
+  // App Group (group.com.moonleon.bidoro) + reloads the widget timeline. Native
+  // dedupes (only reloads when the snapshot actually changed), so pushing
+  // liberally here is fine.
+  //
+  // Pairs with the "bidoroWidget" WKScriptMessageHandler in AppDelegate.swift
+  // and BidoroSnapshot.load() in BidoroWidget.swift — keep the field names in
+  // sync across all three.
+  (function widgetBridge() {
+    function handler() {
+      return (window.webkit && window.webkit.messageHandlers &&
+              window.webkit.messageHandlers.bidoroWidget) || null;
+    }
+    if (!handler()) return;   // older app build without the widget handler
+
+    // Today's earnings = sum of moneyLog deltas since local midnight — mirrors
+    // moneyChangeForScale('D') in index.html so the widget's "Today +$X" equals
+    // the in-app money card.
+    function todayDelta(state) {
+      try {
+        const d = new Date(); d.setHours(0, 0, 0, 0);
+        const cutoff = d.getTime();
+        let sum = 0;
+        const log = state.moneyLog || [];
+        for (let i = 0; i < log.length; i++) {
+          const e = log[i];
+          if (e && e.timestamp >= cutoff) sum += (+e.delta || 0);
+        }
+        return sum;
+      } catch (_) { return 0; }
+    }
+
+    // Bucket fill 0…1. Prefer the live 3D-bucket ratio; fall back to the raw
+    // state value (water / DEFAULT_H = 150) when the bucket isn't mounted yet.
+    function waterRatio(state) {
+      try {
+        if (typeof window.bidoroBucketWaterRatio === 'function') {
+          const r = window.bidoroBucketWaterRatio();
+          if (typeof r === 'number' && r > 0) return Math.max(0, Math.min(1, r));
+        }
+      } catch (_) {}
+      try {
+        const w = state.bucket && state.bucket.water;
+        if (typeof w === 'number') return Math.max(0, Math.min(1, w / 150));
+      } catch (_) {}
+      return 0;
+    }
+
+    // Bucket geometry for the widget's 3D rendering: face count N (3–8) + each
+    // face's wall height as a 0–1 fraction (px / DEFAULT_H=150). Mirrors the 3D
+    // bucket's per-face heights (state.bucket.heights) so the widget's faceted
+    // pail matches the in-app bucket's silhouette + pillar levels.
+    function bucketGeometry(state) {
+      try {
+        const b = state.bucket || {};
+        const n0 = +b.N;
+        const N = (n0 >= 3 && n0 <= 8) ? Math.round(n0) : 7;
+        const hs = Array.isArray(b.heights) ? b.heights : [];
+        const heights = [];
+        for (let i = 0; i < N; i++) {
+          const px = (typeof hs[i] === 'number' && hs[i] > 0) ? hs[i] : 150;
+          heights.push(Math.max(0.1, Math.min(1, px / 150)));
+        }
+        return { faces: N, heights: heights };
+      } catch (_) {
+        return { faces: 7, heights: [1, 1, 1, 1, 1, 1, 1] };
+      }
+    }
+
+    // Incomplete tasks across the matrix — mirrors the unfinished-task filter in
+    // index.html (!t.done && non-empty text).
+    function openTasks(state) {
+      try {
+        let n = 0;
+        ['q1', 'q2', 'q3', 'q4'].forEach(q => {
+          const arr = (state.tasks && state.tasks[q]) || [];
+          for (let i = 0; i < arr.length; i++) {
+            const t = arr[i];
+            if (t && !t.done && t.text && String(t.text).trim()) n++;
+          }
+        });
+        return n;
+      } catch (_) { return 0; }
+    }
+
+    function buildPayload() {
+      const state = window.state;
+      if (!state) return null;
+      let phase = '', phaseEndMs = 0, paused = false, taskTitle = '';
+      const at = state.activeTimer;
+      if (at && at.type === 'pomodoro' && (at.phase === 'work' || at.phase === 'break')) {
+        phase = at.phase;
+        paused = !!at.paused;
+        if (at.pendingPhaseConfirm) {
+          phaseEndMs = Date.now();   // boundary reached, awaiting confirm → ~0
+        } else {
+          phaseEndMs = (+at.phaseStartedAt || +at.startedAt || 0) +
+                       (+at.phaseDurationMs || 0);
+        }
+        try {
+          const arr = state.tasks && state.tasks[at.q];
+          const t = arr && arr[at.idx];
+          taskTitle = (t && t.text) ? String(t.text).trim() : '';
+        } catch (_) {}
+      }
+      const geo = bucketGeometry(state);
+      return {
+        money: (typeof state.money === 'number') ? state.money : 0,
+        todayDelta: todayDelta(state),
+        water: waterRatio(state),
+        faces: geo.faces,
+        heights: geo.heights,
+        phase: phase,
+        phaseEndMs: phaseEndMs,
+        paused: paused,
+        taskTitle: taskTitle,
+        tasksOpen: openTasks(state),
+        updatedMs: Date.now()
+      };
+    }
+
+    function pushWidget() {
+      const h = handler();
+      if (!h) return;
+      const payload = buildPayload();
+      if (!payload) return;
+      try { h.postMessage(payload); } catch (_) {}
+    }
+    window.__bidoroPushWidget = pushWidget;   // manual trigger for debugging
+
+    // Push on first paint (after state has loaded), on a gentle 12 s interval
+    // (covers the per-minute money drip + keeps the phase countdown end fresh),
+    // and — most importantly — right before the app backgrounds, since that's
+    // exactly when the user is looking at the home-screen widget. JS is frozen
+    // while backgrounded, so the interval costs nothing off-screen.
+    window.addEventListener('load', () => { setTimeout(pushWidget, 1200); });
+    setInterval(pushWidget, 12000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') pushWidget();
+    });
+    window.addEventListener('pagehide', pushWidget);
+    window.addEventListener('blur', pushWidget);
+  })();
 })();
