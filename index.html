@@ -4202,6 +4202,17 @@
   .repeat-toggle { display: none !important; }
   body.tt-adding .repeat-toggle { display: inline-flex !important; }
   .repeat-toggle.active { background: #374151; border-color: #374151; color: #fff; }
+  /* Note button — shown next to Repeat only while +Add is open; hidden in the
+     weekday-repeat sub-mode so the weekday row has room. */
+  .note-toggle { display: none !important; }
+  body.tt-adding .note-toggle { display: inline-flex !important; }
+  body.tt-repeat-days .note-toggle { display: none !important; }
+  .note-toggle.active { background: #3aa776; border-color: #3aa776; color: #fff; }
+  /* Tiny per-task note dot inside the bar — only on tasks that HAVE a note, plus
+     in Edit mode so you can add one. Kept small so it barely uses bar space. */
+  .task-note-dot { flex: 0 0 auto; display: none; align-items: center; justify-content: center; background: transparent; border: none; padding: 0 1px; color: var(--text-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .task-note-dot.has-note { display: inline-flex; color: #3aa776; }
+  body.tt-show-actions #focus-matrix .task-row .task-note-dot { display: inline-flex; }
   /* Repeat ON → swap the Matrix + Edit chips for the weekday selector. */
   body.tt-repeat-days #split-view-toggle,
   body.tt-repeat-days #edit-toggle { display: none !important; }
@@ -6996,6 +7007,12 @@
                       title="요일 반복" aria-label="Repeat on weekdays" style="touch-action:manipulation;">
                 <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg><span class="hd-lbl">Repeat</span>
               </button>
+              <!-- Note — shown ONLY while a +Add is open (body.tt-adding). Tap → a
+                   modal to type a free-text note for the new task (task.note). -->
+              <button class="hd-chip hd-labeled note-toggle" id="note-toggle" type="button"
+                      title="Add a note" aria-label="Add a task note" style="touch-action:manipulation;">
+                <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><span class="hd-lbl">Note</span>
+              </button>
               <!-- No Space (edit-mode only) → pull the now-line block + everything below it together
                    (remove the gaps) and re-chunk into 25-min work / 5-min break. Icon = two arrows
                    pressing toward a centre line (compress). -->
@@ -7740,6 +7757,24 @@
 </div>
 
 <!-- Activity-log note editor modal — 150-char textarea -->
+<!-- Per-task NOTE modal — the +Add "Note" button and the per-task note dot both
+     open this to type a free-text note stored as task.note. -->
+<div class="modal hidden" id="task-note-modal" aria-hidden="true">
+  <div class="modal-backdrop" id="task-note-backdrop"></div>
+  <div class="modal-content" style="width: 420px; max-width: 92vw;">
+    <h3 style="margin: 0 0 8px;">Task note</h3>
+    <p class="help" style="margin: 0 0 10px;">A note for this task — anything you want to remember.</p>
+    <textarea id="task-note-text" rows="6" maxlength="1000"
+      style="width: 100%; box-sizing: border-box; padding: 10px 12px;
+             border: 1px solid var(--card-border); border-radius: 10px; font: inherit;
+             resize: vertical; min-height: 120px; background: var(--surface-2,#fff); color: var(--text-main);"
+      placeholder="Write a note for this task…"></textarea>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top: 12px;">
+      <button type="button" class="btn" id="task-note-cancel">Cancel</button>
+      <button type="button" class="btn primary" id="task-note-save">Save</button>
+    </div>
+  </div>
+</div>
 <div class="modal hidden" id="note-modal" aria-hidden="true">
   <div class="modal-backdrop" id="note-modal-backdrop"></div>
   <div class="modal-content" style="width: 420px;">
@@ -13584,6 +13619,8 @@ function renderFocusMatrix() {
       const _repeatHtml = _repLabel
         ? `<span class="task-repeat-dot" title="반복: ${_repLabel}" aria-label="반복 ${_repLabel}"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg></span>`
         : '';
+      // Tiny note dot — visible only when the task HAS a note (CSS shows it always in Edit mode).
+      const _noteDotHtml = `<button type="button" class="task-note-dot${t.note ? ' has-note' : ''}" title="${t.note ? 'Edit note' : 'Add a note'}" aria-label="Task note"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg></button>`;
       // q4 rows omit the checkbox entirely. A pillar-tagged task tints the CHECKBOX itself
       // with its bucket-side colour (the old separate colour dot is removed) — same colour
       // unchecked AND checked; the tick is forced dark (CSS) so it reads on the pastel.
@@ -13626,6 +13663,7 @@ function renderFocusMatrix() {
         ${_cbHtml}
         <span class="task-text ${t.done?'done':''} ${(isPomo||isUp)?'running':''}">${_nameHtml}</span>
         ${_repeatHtml}
+        ${_noteDotHtml}
         <span class="task-bid-wrap"></span>
         <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         <button class="task-grip" aria-label="Drag to reorder" title="Drag to reorder"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="16" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
@@ -13643,6 +13681,16 @@ function renderFocusMatrix() {
       textEl.style.setProperty('color', bidoroTaskText(q, i), 'important');
       const repDot = row.querySelector('.task-repeat-dot');   // E: match the bar's text colour
       if (repDot) repDot.style.setProperty('color', bidoroTaskText(q, i), 'important');
+      // Per-task note dot → open the note modal (view / edit / add).
+      const noteDot = row.querySelector('.task-note-dot');
+      if (noteDot) noteDot.onclick = (e) => {
+        e.stopPropagation();
+        openTaskNoteModal(t.note || '', (v) => {
+          if (v && v.trim()) t.note = v.trim(); else { try { delete t.note; } catch (_) { t.note = ''; } }
+          try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+          renderFocusMatrix();
+        });
+      };
       // Play/pause colours from the bar's own palette so it harmonises in any theme:
       // idle = play triangle in the bar's TEXT colour on the frosted circle (CSS); running =
       // circle FILLED with the text colour + icon inverted to the bar colour ("active" look).
@@ -22495,6 +22543,7 @@ const _WEEKDAYS = [
   { d: 5, lbl: 'Fri' }, { d: 6, lbl: 'Sat' }, { d: 0, lbl: 'Sun' }
 ];               // display order = Mon → Sun
 let _addRepeatDays = new Set();
+let _addNoteText = '';   // free-text note typed via the +Add "Note" button → task.note on commit
 /* Fill a container with 7 weekday toggle buttons. selSet is a LIVE Set of day
    ints; tapping a button flips its membership + .on class and calls onToggle. */
 function _buildWeekdayButtons(container, selSet, onToggle) {
@@ -22527,6 +22576,8 @@ function _resetAddRepeat() {
   if (rt) rt.classList.remove('active');
   const row = document.getElementById('weekday-row');
   if (row) _buildWeekdayButtons(row, _addRepeatDays, null);
+  _addNoteText = '';
+  const nt = document.getElementById('note-toggle'); if (nt) nt.classList.remove('active');
 }
 (function wireRepeatToggle() {
   const rt  = document.getElementById('repeat-toggle');
@@ -22538,6 +22589,34 @@ function _resetAddRepeat() {
     const on = !document.body.classList.contains('tt-repeat-days');
     document.body.classList.toggle('tt-repeat-days', on);
     rt.classList.toggle('active', on);
+  });
+})();
+/* Per-task NOTE modal — opened by the +Add "Note" button and the per-task note
+   dot. Simple textarea modal; onSave receives the text. */
+function openTaskNoteModal(text, onSave){
+  const modal = document.getElementById('task-note-modal');
+  const ta = document.getElementById('task-note-text');
+  if (!modal || !ta) return;
+  ta.value = text || '';
+  modal.classList.remove('hidden'); modal.setAttribute('aria-hidden', 'false');
+  setTimeout(() => { try { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } catch (_) {} }, 30);
+  const save = document.getElementById('task-note-save');
+  const cancel = document.getElementById('task-note-cancel');
+  const backdrop = document.getElementById('task-note-backdrop');
+  function cleanup(){ modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
+    save.removeEventListener('click', onSaveClick); cancel.removeEventListener('click', onCancel); backdrop.removeEventListener('click', onCancel); }
+  function onSaveClick(){ const v = ta.value; cleanup(); if (typeof onSave === 'function') onSave(v); }
+  function onCancel(){ cleanup(); }
+  save.addEventListener('click', onSaveClick);
+  cancel.addEventListener('click', onCancel);
+  backdrop.addEventListener('click', onCancel);
+}
+(function wireNoteToggle(){
+  const nt = document.getElementById('note-toggle');
+  if (!nt) return;
+  nt.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    openTaskNoteModal(_addNoteText, (v) => { _addNoteText = v || ''; nt.classList.toggle('active', !!_addNoteText.trim()); });
   });
 })();
 /* While the picker height animates (open / close), the matrix below it moves
@@ -23300,6 +23379,8 @@ function _commitDurationTask(q, name) {
   if (_addRepeatDays && _addRepeatDays.size) {
     state.tasks[q][0].repeat = Array.from(_addRepeatDays).sort((a, b) => a - b);
   }
+  // Free-text note typed via the +Add "Note" button (if any).
+  if (typeof _addNoteText === 'string' && _addNoteText.trim()) state.tasks[q][0].note = _addNoteText.trim();
   if (typeof firstTextLogIfNeeded === 'function') firstTextLogIfNeeded(q, 0);
   // The unshift pushed every existing task of this quadrant up one index → bump
   // their scheduled blocks' taskIdx (and shuffle sub-segments) so the per-task
