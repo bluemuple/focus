@@ -12012,6 +12012,18 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
   const vanishEl = fg || row;
   const acts = row.querySelectorAll(':scope > .tr-actions, :scope > .tr-actions-left, :scope > .tr-actions-right');
   acts.forEach(a => { a.style.transition = `opacity ${PHASE1_MS}ms ease`; a.style.opacity = '0'; });
+  // Grey backing (Edit-chip grey, --button-bg) fills the gap the bar leaves behind as it
+  // slides left — from the original bar's left edge up to the blue button. Inserted FIRST
+  // (z-index:1, under the bar's z-index:2 and behind the blue/red buttons, which paint over
+  // it on the right). Fades out together with the buttons as the bar moves left.
+  let greyFill = null;
+  try {
+    greyFill = document.createElement('div');
+    greyFill.style.cssText = `position:absolute;inset:0;z-index:1;background:var(--button-bg,#f3f4f6);transition:opacity ${PHASE1_MS}ms ease;pointer-events:none;`;
+    row.insertBefore(greyFill, row.firstChild);
+    requestAnimationFrame(() => { if (greyFill) greyFill.style.opacity = '0'; });   // fade with the buttons
+    setTimeout(() => { try { greyFill.remove(); } catch (_) {} }, PHASE1_MS + 60);
+  } catch (_) {}
   vanishEl.style.transition =
     `transform ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), clip-path ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${PHASE1_MS}ms ease`;
   requestAnimationFrame(() => {
@@ -12022,9 +12034,12 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
 
   // ---- Phase 2: blocks emerge from the gauge's RIGHT edge ----
   setTimeout(() => {
-    if (typeof drawGauge === 'function') drawGauge();   // create the block DOM (blocks are VISIBLE here → clone from them)
-    // Now keep the REAL block(s) hidden across any re-render until the clone lands.
+    // Hide the new block(s) BEFORE drawing so the real ones NEVER flash at their final
+    // spot (the "block appears in the middle then disappears"). drawTimeArea honours
+    // _tgFlyHideIds → it renders them visibility:hidden (still laid out, so we can read
+    // their rect + clone). Only the ONE clone sliding in from the right is ever visible.
     window._tgFlyHideIds = new Set(newIds);
+    if (typeof drawGauge === 'function') drawGauge();   // renders the new block(s) hidden
     const blocksEl = document.getElementById('time-blocks');
     const area = document.getElementById('time-area');
     const areaVisible = !!(area && area.offsetParent !== null);
