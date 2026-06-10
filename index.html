@@ -12864,11 +12864,12 @@ function _deferTaskToTomorrow(q, i) {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   d.setHours(12, 0, 0, 0);
-  task.createdAt = d.getTime();
   try { window._openSwipeRow = null; } catch (_) {}
-  try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
+  // Defer (future createdAt → hidden from today) + slide the bars BELOW up into the gap.
+  try { _flipRenderMatrixByTask(() => { task.createdAt = d.getTime(); saveState(); markSettingsChanged(); pushSettingsToCloud(); }); } catch (_) {
+    try { task.createdAt = d.getTime(); saveState(); markSettingsChanged(); pushSettingsToCloud(); renderFocusMatrix(); } catch (__) {}
+  }
   try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {}
-  try { renderFocusMatrix(); } catch (_) {}
   try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // deferring the last task → refresh idle art
   try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
 }
@@ -13658,18 +13659,32 @@ let _globalPomoTickHandle = null;
     const m = document.querySelector('main');
     if (_savedScroll == null && m) _savedScroll = m.scrollTop;   // remember where we were
     room(true);
-    setTimeout(lift, 300);   // let the keyboard start rising + layout settle first
+    // Lift the section up so the name input sits above the keyboard. Re-run a few
+    // times because the iOS keyboard rise + the +Add→picker layout morph (tt-adding)
+    // settle at different moments; a single early scroll can land before the layout
+    // is final (the regression after the +Add button got shorter shifted that timing).
+    setTimeout(lift, 60);    // first nudge once room() has applied
+    setTimeout(lift, 320);   // after the keyboard starts rising
+    setTimeout(lift, 600);   // after both the keyboard + picker morph have settled
   });
+  // Undo the +Add lift: drop the bottom room and scroll back. toTop=true reveals the
+  // top section (used after a COMMIT); otherwise return to the pre-add position
+  // (used on CANCEL / blur — the reported "Cancel didn't scroll back / left the gap").
+  function restore(toTop) {
+    room(false);
+    const m = document.querySelector('main');
+    const _tgt = toTop ? 0 : _savedScroll;
+    if (m && _tgt != null) m.scrollTo({ top: _tgt, behavior: 'smooth' });
+    _savedScroll = null;
+  }
+  // Exposed so the +Add picker's Cancel / commit can restore deterministically instead
+  // of relying on the iOS focusout (which doesn't always fire when the input is removed).
+  window._ttAddScrollRestore = restore;
   document.addEventListener('focusout', (e) => {
     if (!isAddInput(e.target)) return;
     setTimeout(() => {
       if (isAddInput(document.activeElement)) return;            // moved to another add field — keep lifted
-      room(false);
-      const m = document.querySelector('main');
-      // After committing a task, reveal the TOP section; else restore where we were.
-      const _tgt = window._ttAddCommitted ? 0 : _savedScroll;
-      if (m && _tgt != null) m.scrollTo({ top: _tgt, behavior: 'smooth' });
-      _savedScroll = null;
+      restore(!!window._ttAddCommitted);
     }, 160);
   });
 })();
@@ -13702,6 +13717,35 @@ function _flipRenderMatrix() {
       r.style.transform  = '';
       setTimeout(() => { try { r.style.transition = ''; r.style.transform = ''; } catch (_) {} }, 480);
     }); });
+  });
+}
+/* FLIP re-render keyed by the TASK OBJECT (not q:idx) so it survives the index
+   shift a splice/hide causes — when a bar ABOVE is removed (swipe ✕ delete, "Do it
+   tomorrow", etc.), the bars BELOW slide UP into their new spots. `mutate` makes the
+   state change (delete/defer); snapshot happens before it, render + animate after. */
+function _flipRenderMatrixByTask(mutate) {
+  const before = new Map();
+  document.querySelectorAll('#focus-matrix .task-row[data-idx]').forEach(r => {
+    const arr = state.tasks[r.dataset.q]; const task = arr && arr[+r.dataset.idx];
+    if (task) before.set(task, r.getBoundingClientRect().top);
+  });
+  try { if (typeof mutate === 'function') mutate(); } catch (_) {}
+  renderFocusMatrix();
+  document.querySelectorAll('#focus-matrix .task-row[data-idx]').forEach(r => {
+    const arr = state.tasks[r.dataset.q]; const task = arr && arr[+r.dataset.idx];
+    const oldTop = task ? before.get(task) : undefined;
+    if (oldTop == null) return;
+    const dy = oldTop - r.getBoundingClientRect().top;
+    if (Math.abs(dy) < 2) return;
+    r.style.transition = 'none';
+    r.style.transform  = 'translateY(' + dy.toFixed(1) + 'px)';
+    requestAnimationFrame(() => { requestAnimationFrame(() => {
+      r.style.transition = 'transform .4s cubic-bezier(.22,1,.36,1)';
+      r.style.transform  = '';
+    }); });
+    // Safety net OUTSIDE rAF: if rAF is paused (tab hidden / throttled) the row would
+    // otherwise stay stuck at translateY(dy) — force it back to its final spot.
+    setTimeout(() => { try { r.style.transition = ''; r.style.transform = ''; } catch (_) {} }, 520);
   });
 }
 /* 7 life pillars — same order + colours as the bucket faces. Used by the +Add
@@ -14332,10 +14376,11 @@ function renderFocusMatrix() {
         row.style.opacity = '0';
         row.style.transform = 'translateX(26px)';
         setTimeout(() => {
-          try { deleteTaskAt(q, i); } catch (_) {}
-          try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
           try { window._openSwipeRow = null; } catch (_) {}
-          try { renderFocusMatrix(); } catch (_) {}
+          // Delete + slide the bars BELOW up into the gap (FLIP keyed by task object).
+          try { _flipRenderMatrixByTask(() => { deleteTaskAt(q, i); saveState(); markSettingsChanged(); pushSettingsToCloud(); }); } catch (_) {
+            try { deleteTaskAt(q, i); saveState(); markSettingsChanged(); pushSettingsToCloud(); renderFocusMatrix(); } catch (__) {}
+          }
           // Re-render the focus card too — deleting the LAST task must flip the idle
           // art from "Nice list / Now press start" to "Add one" (else it stays stale).
           try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
@@ -16671,6 +16716,15 @@ function drawTimeArea() {
   const _renderBlocks = window._previewBlock
     ? (state.scheduledBlocks || []).concat([window._previewBlock])
     : (state.scheduledBlocks || []);
+  // The FIRST block at/after the now-line (the active or next-up one, whichever has
+  // the earliest start among blocks not yet finished). Its name is kept CENTRED — never
+  // the side-by-side .short layout — so it doesn't flicker left↔centre as the now-line
+  // passes its ~30-min boundary (the reported "first task block name jitters" bug).
+  let _nowLineBlock = null;
+  _renderBlocks.forEach(b => {
+    if (!b || b.endMs <= now || b._preview || (window._previewBlock && b === window._previewBlock)) return;
+    if (!_nowLineBlock || b.startMs < _nowLineBlock.startMs) _nowLineBlock = b;
+  });
   _renderBlocks.forEach(b => {
     if (b.endMs <= contentTopMs || b.startMs >= contentBotMs) return;
     const tPx = Math.max(0, msToPx(b.startMs));
@@ -16842,8 +16896,10 @@ function drawTimeArea() {
     // px (sub-pixel msToPx noise was flipping a ~30 px block every tick → the name
     // flickered left↔centre) AND never mark the block that contains the now-line
     // (the active/first block) — keep its name stably CENTRED.
-    const _touchesNow = (b.startMs <= now && now < b.endMs);
-    if (Math.round(_blockPx) < 30 && !_touchesNow) div.classList.add('short');
+    // Keep centred: the block CONTAINING the now-line, OR the first block at/after it
+    // (so the active/first task block never flickers between centre and left).
+    const _isNowLineBlock = (b === _nowLineBlock) || (b.startMs <= now && now < b.endMs);
+    if (Math.round(_blockPx) < 30 && !_isNowLineBlock) div.classList.add('short');
     if ((b.endMs - b.startMs) <= 10 * 60000) div.classList.add('short10');   // ≤10-min → × sits in the right gap (#B7)
 
     if (isBreakBox) {
@@ -23909,6 +23965,10 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
     window._ttAddCancel = null;                                // this close owns the teardown now
     document.removeEventListener('touchstart', onOutside, true);
     document.removeEventListener('mousedown', onOutside, true);
+    // CANCEL: scroll back down to the pre-add spot + drop the bottom room (commit does
+    // its own scroll-to-top + room-clear in _commitDurationTask). Done explicitly here
+    // because the iOS focusout that used to handle it doesn't reliably fire on Cancel.
+    if (!commitIt) { try { if (window._ttAddScrollRestore) window._ttAddScrollRestore(false); } catch (_) {} }
     _closeDurationPicker(picker, masterBtn, commitIt);
   }
   function addTap(ev)    { ev.preventDefault(); ev.stopPropagation(); finish(true); }
