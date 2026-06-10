@@ -225,10 +225,15 @@
     color: var(--card-border);
     background: var(--card-bg);   /* was a white pill — blend into the dark gauge */
   }
-  /* +Add button → darker solid + white text. */
+  /* +Add button = SECONDARY → transparent (no solid block) with a dashed cream
+     outline + muted cream text, so the filled task bars stay dominant. */
   :root[data-theme="solarized"] .add-task,
   :root[data-theme="solarized"] .focus-cell .add-task {
-    background: rgba(0,0,0,.30) !important; border-color: rgba(238,232,213,.30) !important; color: #FFFFFF !important;
+    background: transparent !important; border-color: rgba(238,232,213,.32) !important; color: #C9C3B0 !important;
+  }
+  :root[data-theme="solarized"] .add-task:hover,
+  :root[data-theme="solarized"] .focus-cell .add-task:hover {
+    background: rgba(238,232,213,.06) !important; color: #EEE8D5 !important;
   }
   /* The 4 quadrant-pick buttons (after +Add) + the picker Add-task button → dark + white. */
   :root[data-theme="solarized"] .quadrant-picker .qp.q1,
@@ -565,8 +570,9 @@
   .b3d-floor, .b3d-rim { position: absolute; }
   .b3d-face-title { position: absolute; left: 3%; right: 3%; text-align: center; font-weight: 800; white-space: pre-line; letter-spacing: -.02em; pointer-events: none; backface-visibility: hidden; }
   .b3d-face-desc { position: absolute; left: 7%; right: 7%; text-align: center; font-weight: 600; white-space: pre-line; line-height: 1.25; pointer-events: none; backface-visibility: hidden; }
-  /* Level badge (1-10) on the face title — iPhone notification-dot style. */
-  .b3d-face-badge { position: absolute; right: 4%; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: #ff3b30; color: #fff; font-weight: 800; box-sizing: border-box; box-shadow: 0 0 0 1.4px #fff; pointer-events: none; backface-visibility: hidden; }
+  /* Score pill "N/10" on the selected face — a small rounded pill in the AREA's own
+     colour (bg set inline per face), white text, NEVER red. */
+  .b3d-face-badge { position: absolute; right: 4%; display: flex; align-items: center; justify-content: center; border-radius: 999px; color: #fff; font-weight: 800; white-space: nowrap; box-sizing: border-box; box-shadow: 0 0 0 1.2px rgba(255,255,255,.9); pointer-events: none; backface-visibility: hidden; }
   /* Desc that didn't fit the face → lifted ABOVE it; white outline so it reads on the background. */
   /* When a wall is LOW the wall rect is tiny + hard to grab, but its description floats
      ABOVE it — so make THAT text a grab handle for the wall (it's a child of the
@@ -1261,6 +1267,98 @@
      touch-action to none so the browser doesn't intercept vertical pan. */
   .bucket-svg.has-selection { touch-action: none; }
   .bucket-svg:active { cursor: grabbing; }
+
+  /* ===== Life-balance bucket — State-2 coaching overlay + ⓘ popover (2026-06-12) ===== */
+  /* The left column stretches to the section (= bucket) height so the absolutely
+     positioned coaching overlay can fill it WITHOUT changing the section height — no
+     layout jump between state 1 (money) and state 2 (coaching). */
+  #bucket-section .bucket-left { position: relative; align-self: stretch; justify-content: center; }
+  /* State 2 = a bucket face is selected (#bucket-section.b3d-sel) AND it has coaching
+     content (.bc-active, added by the controller). A selected face with no coaching
+     (e.g. a custom 8th side) keeps the money card. */
+  #bucket-section.b3d-sel.bc-active #bucket-money-row { visibility: hidden; }   /* hide money + sprout, keep the box */
+  .bucket-coach { display: none; }
+  #bucket-section.b3d-sel.bc-active .bucket-coach {
+    display: flex; flex-direction: column; justify-content: center;
+    position: absolute; inset: 0; gap: 6px; min-width: 0; pointer-events: auto;
+  }
+  /* direction = the protagonist line: big, up to 2 lines, never one-line-ellipsised
+     (JS shrinks the font so the whole sentence fits in 2 lines). 22px on wide screens;
+     smaller on the narrow iPhone column (set below). The inline ⓘ trails the last word. */
+  /* No truncation ever (the message must be readable in full). The text wraps freely;
+     JS shrinks the font only if the whole card overflows the column height. On the
+     narrow iPhone column this wraps to a few lines; on wide screens it lands in ~2. */
+  .bc-direction {
+    margin: 0; font-size: 15px; font-weight: 800; line-height: 1.2; color: var(--text-main);
+    overflow-wrap: anywhere;
+  }
+  .bc-diagnostic {
+    margin: 0; font-size: 12px; font-weight: 600; line-height: 1.25; color: var(--text-muted);
+    overflow-wrap: anywhere;
+  }
+  /* compact one-line balance, pinned near the bottom of the column. */
+  .bc-balance { margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* inline ⓘ button — muted, ~16-18px, sits inline right after the text. */
+  .bc-info {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; margin-left: 4px; padding: 0; vertical-align: -3px;
+    border: none; background: transparent; color: var(--text-muted);
+    font-size: 15px; line-height: 1; cursor: pointer; border-radius: 50%; flex: 0 0 auto;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bc-info:hover, .bc-info[aria-expanded="true"] { color: var(--text-main); background: rgba(127,127,127,.16); }
+  .bc-info-sm { width: 16px; height: 16px; font-size: 13px; vertical-align: -2px; }
+  @media (min-width: 701px) {
+    .bc-direction { font-size: 22px; }
+    .bc-diagnostic { font-size: 13px; }
+    .bc-balance { font-size: 12.5px; }
+  }
+
+  /* ⓘ popover — anchored card with a tail; clamps to viewport; bottom-sheet on narrow. */
+  .coach-pop-backdrop { position: fixed; inset: 0; z-index: 1199; background: rgba(15,23,42,.42); }
+  .coach-pop-backdrop.hidden { display: none; }
+  .coach-pop {
+    position: fixed; z-index: 1200; max-width: 320px; width: max-content; min-width: 210px;
+    background: var(--card-bg, #fff); color: var(--text-main, #111827);
+    border: 1px solid var(--card-border, #e5e7eb); border-radius: 12px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.22); padding: 12px 14px; box-sizing: border-box;
+  }
+  .coach-pop.hidden { display: none; }
+  .coach-pop-x {
+    position: absolute; top: 5px; right: 5px; width: 26px; height: 26px; border: none;
+    background: transparent; color: var(--text-muted); font-size: 15px; cursor: pointer;
+    border-radius: 7px; display: flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .coach-pop-x:hover { background: rgba(127,127,127,.16); color: var(--text-main); }
+  .coach-pop-tabs { display: flex; gap: 6px; margin: 0 30px 9px 0; flex-wrap: wrap; }
+  .coach-pop-tabs.hidden { display: none; }
+  .coach-pop-tab {
+    flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb);
+    background: transparent; color: var(--text-muted); font-size: .82rem; font-weight: 700; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .coach-pop-tab.active { background: var(--text-main); color: var(--card-bg); border-color: var(--text-main); }
+  .coach-pop-body { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+  .coach-pop:not(.has-tabs) .coach-pop-body { padding-right: 24px; }   /* room beside the ✕ when there are no tabs */
+  .coach-pop-body li { position: relative; padding-left: 15px; font-size: .9rem; line-height: 1.35; color: var(--text-main); }
+  .coach-pop-body li::before { content: '•'; position: absolute; left: 1px; color: var(--text-muted); }
+  /* Tail — two stacked CSS triangles (border colour behind, card-bg in front). JS sets
+     .tail-up (popover BELOW the ⓘ) or .tail-down (popover ABOVE) + the tail's left. */
+  .coach-pop-tail { position: absolute; width: 0; height: 0; }
+  .coach-pop.tail-down .coach-pop-tail { bottom: -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-top: 9px solid var(--card-border, #e5e7eb); }
+  .coach-pop.tail-down .coach-pop-tail::after { content: ''; position: absolute; left: -8px; top: -9px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-top: 8px solid var(--card-bg, #fff); }
+  .coach-pop.tail-up .coach-pop-tail { top: -9px; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 9px solid var(--card-border, #e5e7eb); }
+  .coach-pop.tail-up .coach-pop-tail::after { content: ''; position: absolute; left: -8px; top: 1px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 8px solid var(--card-bg, #fff); }
+  /* Bottom-sheet fallback (narrow screens) — full-width, slides up from the bottom. */
+  .coach-pop.sheet {
+    left: 0 !important; right: 0; top: auto !important; bottom: 0 !important;
+    width: 100%; max-width: none; border-radius: 16px 16px 0 0; padding: 16px 18px 26px;
+    box-shadow: 0 -6px 30px rgba(0,0,0,.28);
+    animation: coach-sheet-in .2s ease both;
+  }
+  .coach-pop.sheet .coach-pop-tail { display: none; }
+  @keyframes coach-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
 
   /* ===== Task bar 3D "open side" effect on tick =====
      When a task checkbox is ticked, the row briefly tilts in 3D space and
@@ -2490,12 +2588,21 @@
      colour + the running "filled" look are set inline (see renderFocusMatrix) from the bar's
      own text / fill colours, so it always harmonises with its bar. */
   .task-row .task-play {
+    position: relative;   /* anchor the invisible 44×44 hit-area pseudo below */
     flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; padding: 0; margin-left: 2px;
     display: inline-flex; align-items: center; justify-content: center;
     background: rgba(255,255,255,.6); border: 1px solid rgba(0,0,0,.10);
     box-shadow: 0 1px 2px rgba(0,0,0,.12); cursor: pointer;
     -webkit-tap-highlight-color: transparent;
     transition: transform .12s ease, background .15s ease, box-shadow .15s ease;
+  }
+  /* The frosted circle stays 28px, but the TAP TARGET is ≥44×44pt (Apple HIG):
+     an invisible centred pseudo extends the clickable area. Pointer events on the
+     pseudo count as the button itself, so taps just outside the circle still fire. */
+  .task-row .task-play::before {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px; height: 44px; border-radius: 50%;
   }
   .task-row .task-play:active { transform: scale(.86); }
   .task-row .task-play svg { display: block; }
@@ -4699,23 +4806,26 @@
        empty groups keeps every +Add↔bar and bar↔bar gap a uniform 6px,
        regardless of which (colour-coded) quadrant each bar belongs to. */
     body.tt-split #focus-matrix .focus-cell .tasks:empty { display: none; }
-    /* Master +add task at top of the unified list. Grey shape matches
-       the regular .add-task look. */
+    /* Master +Add = SECONDARY action → a light dashed outline (like the desktop
+       per-cell +Add), NOT a solid grey block. No fill, muted text, and SHORTER
+       than the task bars so the task rows clearly outweigh it. Stays at the top
+       of the list but reads as a quiet "add" affordance, not a list item. */
     body.tt-split .master-add-task {
       display: flex; align-items: center; justify-content: center;
       width: 100%;
-      min-height: 40px;
-      background: #e5e7eb;
-      color: #4b5563;
-      border: 1px dashed #cbd5e1;
+      min-height: 30px;                       /* < the 44px task bars */
+      background: transparent;                 /* no grey fill block */
+      color: var(--text-muted, #6b7280);
+      border: 1px dashed rgba(0,0,0,.18);
       border-radius: 6px;
-      padding: 10px 8px;
+      padding: 5px 8px;
+      font-size: .8rem;
       font-weight: 600;
       cursor: pointer;
       text-align: center;
       margin-top: 0;            /* top edge aligns with the gauge top (no 6px gap) */
     }
-    body.tt-split .master-add-task:hover { background: #d1d5db; color: #1f2937; }
+    body.tt-split .master-add-task:hover { background: rgba(0,0,0,.04); color: var(--text-main); }
     /* Quadrant picker popup that appears in place of the master +add task
        after it's clicked. Stacks the 4 quadrant choices vertically with
        the corresponding pastel background tint. */
@@ -4904,23 +5014,32 @@
       white-space: nowrap; overflow: hidden;
       pointer-events: none; z-index: 2;
     }
-    /* Taller task bars in split mode so each bar matches the +add task
-       button's height. */
+    /* Task bars are the protagonist: a comfortable 44px floor (also guarantees a
+       ≥44pt tap target for the ▶ play control) and they auto-grow when the name
+       wraps to 2 lines. Taller + filled, they outweigh the dashed +Add above. */
     body.tt-split #focus-matrix .focus-cell .task-row {
-      min-height: 40px;
+      min-height: 44px;
       padding: 9px 9px;
       align-items: center;
     }
-    /* Keep every task name on a SINGLE line (ellipsis) so no bar ever grows
-       to two lines — that's what guarantees every task bar is exactly the
-       40px min-height, identical to the +Add button. Overrides the default
-       2-line clamp used elsewhere. */
+    /* The task NAME is the list's protagonist → never truncate it to one
+       ellipsised line. Allow up to 2 lines of word-wrap; the bar auto-grows to
+       fit (min-height is just a floor). Longer-than-2-lines names still clamp
+       (rare), but the common case reads in full. */
     body.tt-split #focus-matrix .focus-cell .task-row .task-text {
-      display: block;
-      -webkit-line-clamp: unset;
-      white-space: nowrap;
+      /* Fill the row's free width (so the name uses every available pixel before
+         wrapping → fewer truncations) and clamp to 2 lines. */
+      flex: 1 1 auto;
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      line-clamp: 2;
+      white-space: normal;
       overflow: hidden;
-      text-overflow: ellipsis;
+      text-overflow: clip;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      line-height: 1.25;
     }
     /* ===== +Add → picker → input choreography ===== */
     /* (a) When the picker opens, the +Add button slides down + collapses its
@@ -5072,9 +5191,15 @@
       touch-action: none; -webkit-tap-highlight-color: transparent;
     }
     body.tt-flip #focus-matrix .task-row .task-grip:active { cursor: grabbing; }
-    /* Name fills the row (max width) → pencil + grip ride at the right; ellipsis only
-       when the name is genuinely too long for the column. Always ONE line. */
-    #focus-matrix .task-row .task-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+    /* Name fills the row (max width) → pencil + grip ride at the right. The name
+       wraps to up to 2 lines (no one-line ellipsis) so the most important text
+       in the row is never cut off. */
+    #focus-matrix .task-row .task-text {
+      display: -webkit-box; -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2; line-clamp: 2;
+      white-space: normal; overflow: hidden; text-overflow: clip;
+      word-break: break-word; overflow-wrap: anywhere; min-width: 0;
+    }
     /* Compact the pencil + grip so short names aren't squeezed in the narrow column. */
     body.tt-split #focus-matrix .task-row .task-edit-pen { padding: 2px 1px; }
     /* × button intentionally NOT listed above — it's deleted from the
@@ -7221,6 +7346,16 @@
               <span class="fc-money-big" id="fc-money-big">$0.00</span>
               <span class="fc-money-change" id="fc-money-change"></span>
             </div>
+            <!-- State 2 (a bucket face is selected): coaching overlay. Absolutely
+                 positioned so it fills the left column WITHOUT changing the section
+                 height (no layout jump). direction (big, ≤2 lines, inline ⓘ) +
+                 diagnostic (small muted, ⓘ) + a compact one-line balance pinned at the
+                 bottom. Text content + the inline ⓘ buttons are built in JS. -->
+            <div class="bucket-coach" id="bucket-coach" aria-hidden="true">
+              <p class="bc-direction" id="bc-direction"></p>
+              <p class="bc-diagnostic" id="bc-diagnostic"></p>
+              <div class="bc-balance" id="bc-balance"></div>
+            </div>
           </div>
           <!-- RIGHT: the bucket itself (3D scene; SVG kept laid-out at opacity 0). -->
           <div class="bucket-stage">
@@ -7232,6 +7367,17 @@
                  reads state.bucket READ-ONLY. Becomes the live bucket after the swap. -->
             <div class="b3d-scene" id="b3d-scene"><div class="b3d-world" id="b3d-world"></div></div>
           </div>
+        </div>
+        <!-- Reusable ⓘ info popover (anchored to an ⓘ button, with a tail; clamps to the
+             viewport; falls back to a bottom sheet on narrow screens). One instance,
+             reused for every ⓘ. role=dialog; closes on outside-click / Esc / ✕. The
+             dim backdrop is only shown in bottom-sheet mode. -->
+        <div class="coach-pop-backdrop hidden" id="coach-pop-backdrop"></div>
+        <div class="coach-pop hidden" id="coach-pop" role="dialog" aria-modal="false" aria-label="Details">
+          <div class="coach-pop-tail" id="coach-pop-tail" aria-hidden="true"></div>
+          <button class="coach-pop-x" id="coach-pop-x" type="button" aria-label="Close">✕</button>
+          <div class="coach-pop-tabs hidden" id="coach-pop-tabs" role="tablist"></div>
+          <ul class="coach-pop-body" id="coach-pop-body"></ul>
         </div>
 
         <!-- Habits & Triggers panel removed (Mana system deleted) -->
@@ -13575,6 +13721,220 @@ const _PILLAR_DESC = {
   'Joy':          ['Almost no fun or play',                'About one breather a week',                         'Recharged by activities you love'],
   'Study / Work': ['Burnt out, no drive',                  'Doing it only because you have to',                 'Motivated, with a sense of accomplishment'],
 };
+/* ===== Life-balance bucket COACHING content (2026-06-12 redesign) =====
+   areas × tier(low 1‒3 / mid 4‒7 / high 8‒10) × { stateWord, direction, diagnostic,
+   directionDetail, diagnosticDetail }. The *Detail fields are EITHER { tabs:{students,
+   workers} } (→ "For students" / "For workers" tabs) OR { single:[...] } (→ no tabs).
+   Copy is fixed plain English — do NOT edit/extend without an explicit request. */
+const BUCKET_COACH = {
+  MIND: {
+    low: {
+      stateWord: "Rough seas",
+      direction: "Emotions have been hitting hard — try one small calming habit.",
+      diagnostic: "Big mood swings and frequent worry lately.",
+      directionDetail: { tabs: {
+        students: ["Try 3 slow breaths before each class.", "Step outside for fresh air at lunch.", "Tell someone you trust how today felt."],
+        workers: ["Take a 5-minute walk when stress spikes.", "Block one no-meeting break each day.", "Write worries down to park them for later."],
+      } },
+      diagnosticDetail: { single: ["A low score means feelings have been intense — not that something is wrong with you.", "Stressful stretches do this to everyone.", "Small daily resets usually steady things first."] },
+    },
+    mid: {
+      stateWord: "Coasting",
+      direction: "Running on autopilot lately — try one small check-in.",
+      diagnostic: "Feeling flat or distant from your emotions.",
+      directionDetail: { tabs: {
+        students: ["Pause for 1 minute between classes and name how you feel.", "Write one sentence about today before bed.", "Tell a friend one good thing and one hard thing from your day."],
+        workers: ["Take a 2-minute break away from your screen and just breathe.", "Jot down one feeling word before opening your inbox.", "End the day by noting one thing that went well."],
+      } },
+      diagnosticDetail: { single: ["A mid score means emotions feel muted, not bad.", "Common when busy weeks run on routine.", "Small daily check-ins usually bring color back."] },
+    },
+    high: {
+      stateWord: "Clear & steady",
+      direction: "You're reading your emotions well — keep the habit going.",
+      diagnostic: "Aware of your feelings and able to manage them.",
+      directionDetail: { single: ["Keep whatever routine got you here.", "Notice early signs when a hard week starts.", "Share what works with someone who's struggling."] },
+      diagnosticDetail: { single: ["A high score means you notice emotions early and respond well.", "This is a skill — it stays with practice."] },
+    },
+  },
+  BODY: {
+    low: {
+      stateWord: "Running on empty",
+      direction: "Your body needs the basics first — start with one steady meal or an earlier night.",
+      diagnostic: "Short on sleep and skipping meals lately.",
+      directionDetail: { tabs: {
+        students: ["Set a fixed lights-out time on school nights.", "Eat breakfast, even something small.", "Keep water at your desk."],
+        workers: ["Set a hard stop for screens at night.", "Don't skip lunch for work — book it like a meeting.", "Take a short walk every day."],
+      } },
+      diagnosticDetail: { single: ["Low here means sleep, food and movement got squeezed.", "It usually follows busy weeks, not laziness.", "Fixing one basic tends to lift the others."] },
+    },
+    mid: {
+      stateWord: "Halfway there",
+      direction: "One basic is solid — pick the missing one and give it a week.",
+      diagnostic: "Some habits are working, others are slipping.",
+      directionDetail: { tabs: {
+        students: ["Find your weakest one: sleep, food or movement.", "Trade 20 minutes of phone time for it.", "Keep the streak visible somewhere."],
+        workers: ["Name the weakest basic and schedule it.", "Pair it with something you already do daily.", "Review in a week — keep it small."],
+      } },
+      diagnosticDetail: { single: ["Mid means part of your routine works — that's a base to build on.", "Most people see-saw between basics.", "One small fix beats a full overhaul."] },
+    },
+    high: {
+      stateWord: "Steady",
+      direction: "Sleep, food and movement are all working — protect the routine.",
+      diagnostic: "Your basics are steady across the board.",
+      directionDetail: { single: ["Protect the routine in busy weeks — that's when it slips.", "A yearly health check keeps the picture complete.", "Enjoy it — this is what good looks like."] },
+      diagnosticDetail: { single: ["High means all three basics are holding at once.", "Consistency matters more than perfection."] },
+    },
+  },
+  JOY: {
+    low: {
+      stateWord: "All work",
+      direction: "Fun has gone missing — book one thing you enjoy this week.",
+      diagnostic: "Almost no time for play or hobbies lately.",
+      directionDetail: { single: ["Put one fun thing on the calendar like an appointment.", "Small counts: a show, a walk, a game.", "No goal, no productivity — just enjoy it."] },
+      diagnosticDetail: { single: ["Low joy drains energy for everything else.", "It usually means rest time got eaten — not that you changed."] },
+    },
+    mid: {
+      stateWord: "One breather",
+      direction: "You get about one breather a week — try adding one more.",
+      diagnostic: "Some fun, but it's thin on the ground.",
+      directionDetail: { single: ["Add one small weekday pleasure, not just weekends.", "Mix in something new once a month.", "Guard the breather you already have."] },
+      diagnosticDetail: { single: ["Mid means joy exists but runs on fumes.", "One extra hour a week makes a real difference."] },
+    },
+    high: {
+      stateWord: "Recharged",
+      direction: "Your fun time is filling your cup — keep it sacred.",
+      diagnostic: "Regularly recharged by activities you love.",
+      directionDetail: { single: ["Keep these slots even when busy.", "Invite someone along sometimes — joy doubles when shared."] },
+      diagnosticDetail: { single: ["High means rest is actually restoring you.", "This pillar fuels all the others."] },
+    },
+  },
+  MONEY: {
+    low: {
+      stateWord: "Stretched",
+      direction: "Money feels tight — try a simple plan for this week's spending.",
+      diagnostic: "Impulse buys are leaving you short.",
+      directionDetail: { tabs: {
+        students: ["Decide a weekly spend number and check it once a day.", "Wait one day before any want-not-need buy.", "Track just three things: food, fun, stuff."],
+        workers: ["Write a simple weekly spending plan and stick to it.", "Use a 24-hour rule for unplanned buys.", "Automate one small transfer to savings on payday."],
+      } },
+      diagnosticDetail: { single: ["Low means spending is running ahead of the plan — common and fixable.", "One visible weekly number beats a complex budget."] },
+    },
+    mid: {
+      stateWord: "Loose but okay",
+      direction: "No fires, but no plan — try giving your money one simple job.",
+      diagnostic: "Spending is loose, though nothing's broken.",
+      directionDetail: { tabs: {
+        students: ["Pick one saving goal you actually want.", "Move a small fixed amount toward it weekly.", "Notice where the loose spending goes."],
+        workers: ["Set one clear goal: buffer, trip or debt.", "Automate a fixed amount toward it.", "Do a 10-minute money check once a month."],
+      } },
+      diagnosticDetail: { single: ["Mid means you're safe but drifting.", "A single goal turns loose money into progress."] },
+    },
+    high: {
+      stateWord: "On plan",
+      direction: "You're spending to plan and saving — stay the course.",
+      diagnostic: "Money follows your plan, with savings growing.",
+      directionDetail: { single: ["Revisit the plan when life changes, not every week.", "Let some money stay guilt-free fun."] },
+      diagnosticDetail: { single: ["High means money causes little stress and serves your goals."] },
+    },
+  },
+  GROWTH: {
+    low: {
+      stateWord: "Paused",
+      direction: "Learning has stalled — try three pages or ten minutes a day.",
+      diagnostic: "Nothing new learned lately.",
+      directionDetail: { tabs: {
+        students: ["Read 3 pages of anything beyond homework before bed.", "Watch one short explainer on a topic you like.", "Ask one good question in class this week."],
+        workers: ["Read 3 pages or listen to 10 podcast minutes daily.", "Pick one skill that helps your next step.", "Block one lunch a week for learning."],
+      } },
+      diagnosticDetail: { single: ["Low means growth got crowded out — not that you stopped caring.", "Tiny daily inputs restart it fast."] },
+    },
+    mid: {
+      stateWord: "Dabbling",
+      direction: "You learn in bursts — pick one topic and stay with it for a month.",
+      diagnostic: "Occasional reading or videos, no steady thread.",
+      directionDetail: { tabs: {
+        students: ["Choose one subject or skill for the month.", "Same time, same place, 15 minutes.", "Tell someone what you learned each week."],
+        workers: ["Pick one thread: a book, course or skill.", "Attach it to a daily anchor like the commute or coffee.", "Note one takeaway per session."],
+      } },
+      diagnosticDetail: { single: ["Mid means curiosity is alive but scattered.", "Focus turns dabbling into compound growth."] },
+    },
+    high: {
+      stateWord: "Compounding",
+      direction: "You're learning steadily — keep stacking it.",
+      diagnostic: "Consistent learning and visible improvement.",
+      directionDetail: { single: ["Teach or share what you learn — it locks in.", "Review the month's notes once."] },
+      diagnosticDetail: { single: ["High means learning is a habit, not an event."] },
+    },
+  },
+  "STUDY/WORK": {
+    low: {
+      stateWord: "Burnt out",
+      direction: "The tank is empty — cut one thing and rest before pushing harder.",
+      diagnostic: "Feeling burnt out, with little drive.",
+      directionDetail: { tabs: {
+        students: ["Drop or postpone one non-essential commitment.", "Do the smallest possible version of today's task.", "Tell a teacher or parent how full your plate is."],
+        workers: ["Say no to one thing this week.", "Book real recovery time — not just less work.", "Talk to your manager about the load if it persists."],
+      } },
+      diagnosticDetail: { single: ["Low here is a signal to recover, not to try harder.", "Burnout fades with rest and small wins — not pressure."] },
+    },
+    mid: {
+      stateWord: "Going through the motions",
+      direction: "It's all 'have to' right now — find one part worth caring about.",
+      diagnostic: "Doing the work only because you must.",
+      directionDetail: { tabs: {
+        students: ["Pick the subject you dislike least and go deeper there.", "Connect one assignment to something you actually like.", "Change where or when you study for a fresh feel."],
+        workers: ["Find one task this week you can do with pride.", "Trade one dull block for your most meaningful work.", "Note which parts of the job ever felt good — do more of those."],
+      } },
+      diagnosticDetail: { single: ["Mid means effort without spark.", "Meaning usually returns through one engaging piece — not a whole new life."] },
+    },
+    high: {
+      stateWord: "In gear",
+      direction: "Motivated and getting things done — ride the wave.",
+      diagnostic: "Driven, with a real sense of accomplishment.",
+      directionDetail: { single: ["Note what's working so you can repeat it.", "Watch your other pillars — winning here can quietly eat them."] },
+      diagnosticDetail: { single: ["High means effort and reward are connected right now."] },
+    },
+  },
+  PEOPLE: {
+    low: {
+      stateWord: "Disconnected",
+      direction: "Connection is running low — reach out to one person today.",
+      diagnostic: "Feeling lonely, or running into conflict.",
+      directionDetail: { tabs: {
+        students: ["Message one friend you've lost touch with.", "Eat lunch with someone instead of alone once this week.", "If there's a conflict, start with one honest, kind sentence."],
+        workers: ["Send one no-agenda message to a friend.", "Plan one coffee or call this week.", "For conflict, name the issue calmly before it grows."],
+      } },
+      diagnosticDetail: { single: ["Low means connection needs care — it says nothing bad about you.", "One small reach-out usually starts the thaw."] },
+    },
+    mid: {
+      stateWord: "One-sided",
+      direction: "One circle gets all your time — give the other a turn.",
+      diagnostic: "Strong with one circle, thin with the other.",
+      directionDetail: { tabs: {
+        students: ["Plan one family thing this week, however small.", "Or invite a friend if family has been your whole circle.", "Keep it easy: a meal, a walk, a game."],
+        workers: ["Book one date night or family evening.", "Or one friends catch-up if home gets everything.", "Repeat weekly for a month."],
+      } },
+      diagnosticDetail: { single: ["Mid means care is flowing — just unevenly.", "Balance comes from scheduling, not guilt."] },
+    },
+    high: {
+      stateWord: "Connected",
+      direction: "Your circles are healthy — keep showing up.",
+      diagnostic: "Good connections across friends and family.",
+      directionDetail: { single: ["Keep the rituals that built this.", "Be the one who reaches out first sometimes."] },
+      diagnosticDetail: { single: ["High means your key relationships feel mutual and steady."] },
+    },
+  },
+};
+/* Face index → canonical coaching area key (aligned to _PILLAR_NAMES / 3D NAMES order:
+   Mind·Body·Joy·Money·Growth·Study/Work·People). Used so coaching stays tied to the
+   AREA at that index even if the user renames the face title in Settings. */
+const _COACH_AREA_KEYS = ['MIND', 'BODY', 'JOY', 'MONEY', 'GROWTH', 'STUDY/WORK', 'PEOPLE'];
+function _coachTier(level) { const L = +level || 1; return L <= 3 ? 'low' : (L <= 7 ? 'mid' : 'high'); }
+function _coachAreaKey(faceIdx) { return _COACH_AREA_KEYS[faceIdx] || null; }
+function _coachGet(faceIdx, level) {
+  const k = _coachAreaKey(faceIdx); if (!k || !BUCKET_COACH[k]) return null;
+  return BUCKET_COACH[k][_coachTier(level)] || null;
+}
 /* state.bucket.faceText = [{title,d1,d2,d3}×7] — the editable pillar names + band
    text. Seeded from the defaults on first access; the bucket module preserves it
    across its render mirror / Export so it survives sync + every redraw. */
@@ -18850,6 +19210,8 @@ function renderMoneyCard() {
     changeEl.className = 'fc-money-change ' + (up ? 'up' : 'down');
     changeEl.textContent = 'Today ' + (delta >= 0 ? '+' : '−') + '$' + _moneyDigits(delta);
   }
+  // Keep the bucket coaching card's compact balance line current too (state 2).
+  try { if (window.__bidoroBucketCoachRefreshMoney) window.__bidoroBucketCoachRefreshMoney(); } catch (_) {}
 }
 
 /* Refresh the Sleep button label based on time of day + viewport.
@@ -27191,21 +27553,27 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       const tlen = Math.max(1, Math.max.apply(null, ft.title.split('\n').map(s => s.length)));
       const tf = Math.max(5, Math.min(16, Math.min(sTop * 0.92 / (tlen * 0.58), panelH * 0.30)));
       const dk = isDark();
-      const t = document.createElement('div'); t.className = 'b3d-face-title'; t.textContent = ft.title; t.style.fontSize = tf.toFixed(1) + 'px'; t.style.top = top0 + 'px'; t.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.30 : 0.42); el.appendChild(t);
-      // Level badge (1-10) — small circle, white number, top-RIGHT of the title (iPhone
-      // notification-dot style). Re-rendered every build() → updates live as you drag.
-      // Level badge (1-10) — shown ONLY while this face is selected (per user).
+      const t = document.createElement('div'); t.className = 'b3d-face-title'; t.textContent = ft.title; t.style.fontSize = tf.toFixed(1) + 'px'; t.style.top = top0 + 'px'; t.style.fontWeight = sel ? '900' : '800'; t.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.26 : 0.42); el.appendChild(t);
+      // Score pill "N/10" — shown ONLY while this face is selected. Uses the AREA's own
+      // colour (a deep shade of the face hue + white text), NEVER red (red is reserved
+      // for the timeline's current-time line).
       if (sel) {
-        const bsz = Math.max(6, Math.min(8, (tf + 1) * 0.5));   // 50% smaller than before
-        const bdg = document.createElement('div'); bdg.className = 'b3d-face-badge'; bdg.textContent = String(lvl);
-        bdg.style.width = bdg.style.height = bsz.toFixed(1) + 'px';
-        bdg.style.fontSize = (bsz * 0.66).toFixed(1) + 'px';
-        bdg.style.lineHeight = bsz.toFixed(1) + 'px';
-        bdg.style.top = Math.max(1, Math.round(top0 - bsz * 0.2)) + 'px';
-        el.appendChild(bdg);
+        const ph = Math.max(7, Math.min(12, tf * 0.82));
+        const pill = document.createElement('div'); pill.className = 'b3d-face-badge'; pill.textContent = lvl + '/10';
+        pill.style.height = ph.toFixed(1) + 'px';
+        pill.style.fontSize = (ph * 0.70).toFixed(1) + 'px';
+        pill.style.lineHeight = ph.toFixed(1) + 'px';
+        pill.style.padding = '0 ' + Math.max(2, ph * 0.34).toFixed(1) + 'px';
+        pill.style.top = Math.max(1, Math.round(top0 - ph * 0.10)) + 'px';
+        pill.style.background = shade(COLORS[i % COLORS.length], 0.46);   // deep area hue; white text passes WCAG AA (≥5.5:1) on all 7 colours
+        pill.style.color = '#fff';
+        el.appendChild(pill);
       }
-      const band = lvl <= 3 ? ft.d1 : (lvl <= 7 ? ft.d2 : ft.d3);
-      if (band){ const df = Math.max(5, Math.min(9.5, sTop * 0.115)); const d = document.createElement('div'); d.className = 'b3d-face-desc'; const descTop = top0 + tf + 3; d.textContent = band; d.style.fontSize = df.toFixed(1) + 'px'; d.style.top = descTop + 'px'; d.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.34 : 0.46); el.appendChild(d); fitFont(d, df, 4.5); pendingDescs.push({ el: d, panelH: panelH, descTop: descTop }); }
+      // Face descriptor = the short stateWord (no long sentences). Falls back to the old
+      // editable band text only for faces beyond the 7 coaching areas (custom 8th side).
+      const coach = (typeof _coachGet === 'function') ? _coachGet(i, lvl) : null;
+      const band = coach ? coach.stateWord : (lvl <= 3 ? ft.d1 : (lvl <= 7 ? ft.d2 : ft.d3));
+      if (band){ const df = Math.max(5, Math.min(10.5, sTop * 0.125)); const d = document.createElement('div'); d.className = 'b3d-face-desc'; const descTop = top0 + tf + 3; d.textContent = band; d.style.fontSize = df.toFixed(1) + 'px'; d.style.top = descTop + 'px'; d.style.fontWeight = '700'; d.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.30 : 0.44); el.appendChild(d); fitFont(d, df, 4.5); pendingDescs.push({ el: d, panelH: panelH, descTop: descTop }); }
     }
 
     WATER.floorEl = ngon(R_BOT, topY(BOT), '#D2D7E0', 0.66, false, bucketG);                   // bottom face (kept as the floor target for droplets)
@@ -27224,7 +27592,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       const surf = ngon(Rw, topY(waterLvl), '#9BDAF5', 1, true, waterG); WATER.surfEl = surf; WATER.surfInner = surf.querySelector('.b3d-wsurf'); if (WATER.surfInner) WATER.surfInner.style.animation = 'none';   // OPAQUE lighter top (catches light) — no additive darkening at the meniscus
     }
     const faceOp = isDark() ? 0.46 : 0.30;   // dark theme: more opaque so pastel faces read on the dark bg
-    for (let i = 0; i < N; i++){ const op = (heightSel === i) ? 1 : faceOp; const el = wall(i, R_BOT, R_BOT, heights[i], COLORS[i % COLORS.length], op, false, bucketG); el.dataset.i = i; addFaceText(el, i, heights[i]); addThickness(i, heights[i], COLORS[i % COLORS.length]); }
+    for (let i = 0; i < N; i++){ const op = (heightSel === i) ? 0.85 : faceOp; const el = wall(i, R_BOT, R_BOT, heights[i], COLORS[i % COLORS.length], op, false, bucketG); el.dataset.i = i; addFaceText(el, i, heights[i]); addThickness(i, heights[i], COLORS[i % COLORS.length]); }
     for (const pd of pendingDescs){
       if (pd.descTop + pd.el.offsetHeight <= pd.panelH - 1) continue;   // fits on the face → leave it
       // Doesn't fit (would be cut) → LIFT it ABOVE the face's top edge. It stays a child of
@@ -27338,7 +27706,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     }
   }
   let _drag = null;
-  function _selClass(){ const s = document.getElementById('bucket-section'); if (s) s.classList.toggle('b3d-sel', heightSel >= 0); }
+  // Notify the coaching left-card whenever the SELECTED face or its level changes
+  // (idx = -1 when nothing is selected). The controller dedupes, so calling this
+  // generously (selection toggle + live drag) is cheap.
+  function _emitSel(){ try { if (window.__bidoroBucketSel) window.__bidoroBucketSel(heightSel, heightSel >= 0 ? levelOf(heights[heightSel]) : 0); } catch (_) {} }
+  function _emitSel2(idx, lvl){ try { if (window.__bidoroBucketSel) window.__bidoroBucketSel(idx, lvl); } catch (_) {} }
+  function _selClass(){ const s = document.getElementById('bucket-section'); if (s) s.classList.toggle('b3d-sel', heightSel >= 0); _emitSel(); }
   if (scene) {
     scene.addEventListener('pointerdown', (e) => {
       const wEl = e.target && e.target.closest ? e.target.closest('.b3d-wall[data-i]') : null;
@@ -27366,7 +27739,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       }
       if (_drag.mode === 'rotate') { spin = _drag.spin0 + dx * 0.55; apply(); return; }
       const lvl = Math.max(1, Math.min(10, Math.round((_drag.h0 - dy / H) * 10)));   // up = higher level
-      if (lvl !== _drag.lvl) { try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} }   // haptic per level step
+      if (lvl !== _drag.lvl) { try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} _emitSel2(_drag.i, lvl); }   // haptic + live coaching update per level step
       _drag.lvl = lvl; heights[_drag.i] = lvl / 10;
       // Water can't sit above the lowest wall: drop the level to the lowered face's top in
       // real time, and spill the excess down that face (∝ how far the water dropped).
@@ -27506,6 +27879,203 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   try { syncLive(); } catch (_) {}                                      // show immediately (don't wait for the rAF loop)
   requestAnimationFrame(sloshLoop);
   setInterval(function(){ try { syncLive(); } catch (_) {} }, 250);     // fallback poll if rAF is throttled (background tab)
+})();
+
+/* ===== Bucket coaching controller (State-2 left card + reusable ⓘ popover) =====
+   Driven by window.__bidoroBucketSel(faceIdx, level) which the 3D bucket calls on
+   every selection / live level change (idx<0 = nothing selected → CSS shows state 1).
+   Renders the selected face's direction + diagnostic + a compact balance, and opens an
+   anchored ⓘ popover (tail + viewport clamp + bottom-sheet on narrow). */
+(function bucketCoachController(){
+  const $ = id => document.getElementById(id);
+  const sec = () => $('bucket-section');
+  let _dirInfo = null, _diagInfo = null;
+  let _cur = { idx: -1, lvl: -1 };   // last rendered selection (dedupe)
+  let _curContent = null;
+
+  function _mkInfo(small, label){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'bc-info' + (small ? ' bc-info-sm' : '');
+    b.textContent = 'ⓘ';
+    b.setAttribute('aria-label', label);
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.setAttribute('aria-expanded', 'false');
+    return b;
+  }
+  /* Set a line's text + its trailing inline ⓘ, keeping the LAST word and the ⓘ together
+     (nowrap) so the ⓘ never orphans onto its own line. */
+  function _setLineWithInfo(el, text, btn){
+    el.textContent = '';
+    const words = String(text || '').split(' ');
+    const last = words.length ? words.pop() : '';
+    if (words.length) el.appendChild(document.createTextNode(words.join(' ') + ' '));
+    const tail = document.createElement('span'); tail.style.whiteSpace = 'nowrap';
+    tail.appendChild(document.createTextNode(last + ' '));
+    tail.appendChild(btn);
+    el.appendChild(tail);
+  }
+  function _compactBalance(){
+    try {
+      const m = (typeof state !== 'undefined') ? (state.money || 0) : 0;
+      const bal = (m < 0 ? '-' : '') + '$' + _moneyDigits(m);
+      let delta = 0; try { delta = moneyChangeForScale('D').delta; } catch (_) {}
+      return bal + ' · Today ' + (delta >= 0 ? '+' : '−') + '$' + _moneyDigits(delta);
+    } catch (_) { return ''; }
+  }
+  /* Shrink the direction font (the biggest line) until the whole coaching card fits
+     within the column height — so the full message always shows (no ellipsis) and the
+     section never grows (no layout jump). Resets to the responsive CSS size first. */
+  function _fitCoachToHeight(){
+    const coach = $('bucket-coach'), dE = $('bc-direction'); if (!coach || !dE) return;
+    dE.style.fontSize = '';
+    if (!coach.clientHeight) return;
+    const MIN = 12;
+    let size = parseFloat(getComputedStyle(dE).fontSize) || 15, guard = 0;
+    while (size > MIN && guard < 40 && coach.scrollHeight > coach.clientHeight + 1) {
+      size = Math.max(MIN, size - 1); dE.style.fontSize = size + 'px'; guard++;
+    }
+  }
+  function _render(content){
+    closeCoachPop();   // stale popover from a previous selection
+    const dE = $('bc-direction'), gE = $('bc-diagnostic'), bE = $('bc-balance');
+    if (!dE || !gE || !bE) return;
+    if (!_dirInfo)  _dirInfo  = _mkInfo(false, 'More on this suggestion');
+    if (!_diagInfo) _diagInfo = _mkInfo(true,  'More on this reading');
+    _setLineWithInfo(dE, content.direction, _dirInfo);
+    _setLineWithInfo(gE, content.diagnostic, _diagInfo);
+    bE.textContent = _compactBalance();
+    _curContent = content;
+    _coachAriaHidden(false);   // state 2 content is now visible → expose to screen readers
+    _dirInfo.onclick  = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_dirInfo,  'Suggestions',    content.directionDetail); };
+    _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail); };
+    requestAnimationFrame(_fitCoachToHeight);
+  }
+  function _coachAriaHidden(v){ const c = $('bucket-coach'); if (c) c.setAttribute('aria-hidden', v ? 'true' : 'false'); }
+  window.__bidoroBucketSel = function(idx, lvl){
+    idx = +idx; lvl = +lvl || 0;
+    if (idx === _cur.idx && lvl === _cur.lvl) return;   // dedupe (build()/slosh can fire often)
+    _cur = { idx, lvl };
+    const s = sec();
+    if (idx < 0) { closeCoachPop(); _curContent = null; if (s) s.classList.remove('bc-active'); _coachAriaHidden(true); return; }   // deselected → state 1
+    const content = (typeof _coachGet === 'function') ? _coachGet(idx, lvl) : null;
+    if (content) { if (s) s.classList.add('bc-active'); _render(content); }
+    else { _curContent = null; if (s) s.classList.remove('bc-active'); _coachAriaHidden(true); }   // selected but no coaching (8th side) → keep money
+  };
+  // Keep the compact balance current if money changes while a face is selected.
+  window.__bidoroBucketCoachRefreshMoney = function(){
+    const bE = $('bc-balance');
+    if (bE && _curContent && sec() && sec().classList.contains('b3d-sel')) bE.textContent = _compactBalance();
+  };
+
+  // ===== Reusable ⓘ popover =====
+  const pop = () => $('coach-pop');
+  let _popAnchor = null, _popOpen = false, _popTab = 'students';
+  function _renderBullets(items){
+    const body = $('coach-pop-body'); if (!body) return; body.innerHTML = '';
+    (items || []).forEach(t => { const li = document.createElement('li'); li.textContent = t; body.appendChild(li); });
+  }
+  function _renderTabs(detail){
+    const tabsEl = $('coach-pop-tabs'), p = pop();
+    if (detail && detail.tabs) {
+      p.classList.add('has-tabs'); tabsEl.classList.remove('hidden'); tabsEl.innerHTML = '';
+      [['students','For students'],['workers','For workers']].forEach(([k, lbl]) => {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'coach-pop-tab' + (_popTab === k ? ' active' : '');
+        b.textContent = lbl; b.setAttribute('role', 'tab'); b.setAttribute('aria-selected', _popTab === k ? 'true' : 'false');
+        b.onclick = () => {
+          _popTab = k;
+          tabsEl.querySelectorAll('.coach-pop-tab').forEach(x => { const on = x === b; x.classList.toggle('active', on); x.setAttribute('aria-selected', on ? 'true' : 'false'); });
+          _renderBullets(detail.tabs[k]); _positionPop();
+        };
+        tabsEl.appendChild(b);
+      });
+      _renderBullets(detail.tabs[_popTab] || detail.tabs.students);
+    } else {
+      p.classList.remove('has-tabs'); tabsEl.classList.add('hidden'); tabsEl.innerHTML = '';
+      _renderBullets((detail && detail.single) || []);
+    }
+  }
+  function _positionPop(){
+    const p = pop(), a = _popAnchor; if (!p || !a) return;
+    const narrow = window.innerWidth <= 560;
+    p.classList.remove('sheet', 'tail-up', 'tail-down');
+    const bd = $('coach-pop-backdrop');
+    if (narrow) { p.classList.add('sheet'); if (bd) bd.classList.remove('hidden'); return; }
+    if (bd) bd.classList.add('hidden');
+    p.style.left = '0px'; p.style.top = '0px';
+    const ar = a.getBoundingClientRect();
+    const pw = p.offsetWidth, ph = p.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, M = 8, GAP = 10;
+    let left = ar.left + ar.width / 2 - pw / 2;
+    left = Math.max(M, Math.min(left, vw - pw - M));
+    let top; const below = (ar.bottom + GAP + ph) <= (vh - M);
+    if (below) { top = ar.bottom + GAP; p.classList.add('tail-up'); }
+    else       { top = ar.top - GAP - ph; p.classList.add('tail-down'); }
+    top = Math.max(M, Math.min(top, vh - ph - M));
+    p.style.left = left + 'px'; p.style.top = top + 'px';
+    const tail = $('coach-pop-tail');
+    if (tail) { let tx = ar.left + ar.width / 2 - left; tx = Math.max(14, Math.min(pw - 14, tx)); tail.style.left = (tx - 9) + 'px'; }
+  }
+  // rAF-batch reposition so scroll/resize don't thrash layout (getBoundingClientRect +
+  // style writes once per frame at most). Scroll is passive so it never blocks momentum.
+  let _rafPos = 0;
+  function _scheduleReposition(){ if (_rafPos) return; _rafPos = requestAnimationFrame(() => { _rafPos = 0; if (_popOpen) _positionPop(); }); }
+  function openCoachPop(anchor, title, detail){
+    const p = pop(); if (!p || !anchor) return;
+    if (_popOpen && _popAnchor === anchor) { closeCoachPop(); return; }   // toggle off
+    closeCoachPop();
+    _popAnchor = anchor; _popTab = 'students';
+    p.setAttribute('aria-label', title || 'Details');
+    p.setAttribute('aria-modal', 'true');
+    _renderTabs(detail);
+    p.classList.remove('hidden');
+    _positionPop();
+    _popOpen = true;
+    if (anchor.setAttribute) anchor.setAttribute('aria-expanded', 'true');
+    setTimeout(() => { const x = $('coach-pop-x'); if (x) { try { x.focus(); } catch (_) {} } }, 0);
+    document.addEventListener('keydown', _onKey, true);
+    document.addEventListener('pointerdown', _onDocDown, true);
+    window.addEventListener('resize', _scheduleReposition);
+    window.addEventListener('scroll', _scheduleReposition, { capture: true, passive: true });
+  }
+  function closeCoachPop(){
+    const p = pop(); if (!p) return;
+    p.classList.add('hidden'); p.setAttribute('aria-modal', 'false'); const bd = $('coach-pop-backdrop'); if (bd) bd.classList.add('hidden');
+    if (_popOpen && _popAnchor && _popAnchor.setAttribute) { _popAnchor.setAttribute('aria-expanded', 'false'); try { _popAnchor.focus(); } catch (_) {} }
+    _popOpen = false; _popAnchor = null;
+    document.removeEventListener('keydown', _onKey, true);
+    document.removeEventListener('pointerdown', _onDocDown, true);
+    window.removeEventListener('resize', _scheduleReposition);
+    window.removeEventListener('scroll', _scheduleReposition, true);
+  }
+  window.__closeBucketCoachPop = closeCoachPop;   // let the deselect path close it too
+  function _onKey(e){ if (e.key === 'Escape') { e.preventDefault(); closeCoachPop(); } }
+  function _onDocDown(e){
+    const p = pop(); if (!p) return;
+    if (p.contains(e.target)) return;
+    if (_popAnchor && _popAnchor.contains && _popAnchor.contains(e.target)) return;
+    closeCoachPop();
+  }
+  function _wire(){
+    const x = $('coach-pop-x'); if (x) x.onclick = (e) => { e.preventDefault(); closeCoachPop(); };
+    const bd = $('coach-pop-backdrop'); if (bd) bd.onclick = closeCoachPop;
+    // Outside tap → back to state 1: while a face is selected, a pointerdown anywhere
+    // OUTSIDE the bucket section (the bucket + its coaching card) and outside the
+    // popover deselects the face. (Re-tapping the face already toggles it off in 3D.)
+    document.addEventListener('pointerdown', (e) => {
+      const s = sec(); if (!s || !s.classList.contains('b3d-sel')) return;
+      if (s.contains(e.target)) return;                                    // inside the bucket/coach → keep selection
+      if (e.target && e.target.closest && e.target.closest('#coach-pop')) return;   // inside the popover → keep
+      try { if (window.bidoroBucket3DDeselect) window.bidoroBucket3DDeselect(); } catch (_) {}
+    }, true);
+    // Re-fit the coaching text when the viewport changes while a face is selected (the
+    // column width/height can change → the direction font may need to re-shrink/grow).
+    let _rfTimer = 0;
+    window.addEventListener('resize', () => {
+      clearTimeout(_rfTimer);
+      _rfTimer = setTimeout(() => { const s = sec(); if (s && s.classList.contains('bc-active')) requestAnimationFrame(_fitCoachToHeight); }, 120);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wire); else _wire();
 })();
 
 (function bucketModule() {
