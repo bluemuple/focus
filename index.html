@@ -23607,11 +23607,28 @@ try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000)
     if (base == null) base = _toMin(_nowHHMM());
     timeInp.value = _toHHMM(base + delta);
   }
-  function _close() { modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true'); }
+  // While the modal is open, LOCK the home page (<main>) so spinning a wheel can't
+  // chain-scroll the page behind it. overscroll-behavior:contain on the wheels isn't
+  // honoured by iOS WKWebView, so we pin <main> (overflow:hidden + snap-back) — the
+  // wheels live in the fixed modal, not inside <main>, so their own scroll is unaffected.
+  let _gtdHomeLock = null;
+  function _lockHome() {
+    const m = document.querySelector('main'); if (!m || _gtdHomeLock) return;
+    const y0 = m.scrollTop; const snap = () => { if (m.scrollTop !== y0) m.scrollTop = y0; };
+    _gtdHomeLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
+    m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
+    m.addEventListener('scroll', snap, { passive: true });
+  }
+  function _unlockHome() {
+    if (!_gtdHomeLock) return; const b = _gtdHomeLock; _gtdHomeLock = null;
+    b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+  }
+  function _close() { modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true'); _unlockHome(); }
   window._openGtdPicker = function () {
     timeInp.value = state.deadline || _nowHHMM();
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
+    _lockHome();
   };
   function _syncLegacyInputs() {
     try { const fi = document.getElementById('fc-gtd-time'); if (fi) fi.value = state.deadline || ''; } catch (_) {}
@@ -23662,9 +23679,13 @@ try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000)
       '<div class="gw-pad"></div>';
     const items = el.querySelectorAll('.gw-it');
     const mark = (idx) => items.forEach((it, i) => it.classList.toggle('sel', i === idx));
-    el._sel = sel; mark(sel); el.scrollTop = sel * 30;
+    el._sel = sel; el._hapIdx = sel; mark(sel); el.scrollTop = sel * 30;
     items.forEach((it, i) => it.addEventListener('click', () => { try { el.scrollTo({ top: i * 30, behavior: 'smooth' }); } catch (_) { el.scrollTop = i * 30; } }));
     el.addEventListener('scroll', () => {
+      // Live haptic tick every time the wheel passes a new item (not just on settle),
+      // so spinning the picker feels notched like a physical dial.
+      const live = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / 30)));
+      if (live !== el._hapIdx) { el._hapIdx = live; try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {} }
       clearTimeout(el._t);
       el._t = setTimeout(() => {
         const idx = Math.max(0, Math.min(count - 1, Math.round(el.scrollTop / 30)));
@@ -23738,6 +23759,7 @@ try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000)
     _updateDisp();
     modal.classList.remove('hidden');
     modal.setAttribute('aria-hidden', 'false');
+    _lockHome();
   };
 })();
 
@@ -24350,7 +24372,7 @@ function _buildPillarPicker() {
   }
   wrap.appendChild(scroll);
 
-  let _raf = 0, _settle = 0, _stride = 0, _setH = 0, _lastSel = null;
+  let _raf = 0, _settle = 0, _stride = 0, _setH = 0, _lastSel = null, _hadSel = false;
   function measure() {
     const f = scroll.firstElementChild; if (!f) return;
     const cs = getComputedStyle(f);
@@ -24371,7 +24393,13 @@ function _buildPillarPicker() {
       kids[k]._on = 1;
     }
     const best = kids[Math.max(0, Math.min(kids.length - 1, ci))];
-    if (best && best !== _lastSel) { if (_lastSel) _lastSel.classList.remove('sel'); best.classList.add('sel'); _lastSel = best; }
+    if (best && best !== _lastSel) {
+      if (_lastSel) _lastSel.classList.remove('sel'); best.classList.add('sel'); _lastSel = best;
+      // Haptic tick per item as the wheel passes each side (notched-dial feel). Skip the
+      // first paint (_lastSel was null) so opening the picker doesn't buzz.
+      if (_hadSel) { try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light'); } catch (_) {} }
+      _hadSel = true;
+    }
     if (best) { const idx = best.dataset.idx; _pickedPillar = (idx === '') ? null : +idx; }
     const logical = ((center % N) + N) % N;        // wrapped position (0=None, 1=side0, …)
     const pf = logical - 1, _maxF = _nSides - 1;
