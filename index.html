@@ -12919,11 +12919,15 @@ function _deferTaskToTomorrow(q, i) {
 function deleteTaskAt(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
-  // ---- Pomodoro discard (this task's running timer is voided) ----
+  // ---- Running-timer discard (this task's timer is voided) ----
+  // Covers BOTH timer kinds: 'pomodoro' (q1–q3) and 'uptask' (the q4 stopwatch) —
+  // the uptask type used to leak here, leaving the "Now focusing on" pomodoro
+  // running for a task that no longer existed.
   const at = state.activeTimer;
-  if (at && at.type === 'pomodoro' && at.q === q && at.idx === i) {
+  if (at && (at.type === 'pomodoro' || at.type === 'uptask') && at.q === q && at.idx === i) {
     // Clear without calling stopActiveTimer/logPomodoroPhase so NO money is
     // credited for the elapsed minutes.
+    if (at.type === 'uptask') { try { if (typeof _stopDistractionFx === 'function') _stopDistractionFx(); } catch (_) {} }
     state.activeTimer = null;
   }
   // No add-task reward to reverse anymore — just log the deletion.
@@ -12947,10 +12951,10 @@ function deleteTaskAt(q, i) {
     if (b.q === q && typeof b.taskIdx === 'number' && b.taskIdx > i) b.taskIdx -= 1;
     if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => { if (sg.q === q && typeof sg.taskIdx === 'number' && sg.taskIdx > i) sg.taskIdx -= 1; });
   });
-  // After the splice, shift any active pomodoro index that pointed AFTER the
+  // After the splice, shift any active timer index that pointed AFTER the
   // deleted row, so it tracks the same underlying task.
   const at2 = state.activeTimer;
-  if (at2 && at2.type === 'pomodoro' && at2.q === q && typeof at2.idx === 'number' && at2.idx > i) {
+  if (at2 && (at2.type === 'pomodoro' || at2.type === 'uptask') && at2.q === q && typeof at2.idx === 'number' && at2.idx > i) {
     at2.idx = at2.idx - 1;
   }
   // Rebuild the gauge re-chunk so a combined block that referenced the deleted
@@ -16992,29 +16996,21 @@ function _blockHasRunningTimer(b) {
 }
 
 /* Delete a scheduled gauge block. If a timer is running on it (now-line passing
-   through), first ask "delete + stop the timer?" via the styled confirm; on No
-   the block is restored (redraw). `onResolve(deleted)` runs after the decision. */
+   through), the timer stops AUTOMATICALLY and the focus card drops back to its
+   idle art — no confirm dialog (user request 2026-06-10; deleting the block IS
+   the answer). `onResolve(deleted)` kept for callers. */
 function _deleteScheduledBlock(b, onResolve) {
-  const finish = (deleted) => {
-    if (deleted) {
-      const idx = state.scheduledBlocks.indexOf(b);
-      if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
-      if (window.__tgSelectBlock) window.__tgSelectBlock(null);
-      try { saveState(); } catch (_) {}
-      if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-    }
-    if (typeof drawGauge === 'function') drawGauge();
-    else if (typeof drawTimeArea === 'function') drawTimeArea();
-    if (typeof onResolve === 'function') onResolve(!!deleted);
-  };
-  if (_blockHasRunningTimer(b) && typeof customConfirm === 'function') {
-    customConfirm('Timer running',
-      'A timer is running on this block. Delete the block and stop the timer?',
-      { yesLabel: 'Yes', noLabel: 'No' })
-      .then((ok) => { if (ok) { try { stopActiveTimer('reset'); } catch (_) {} } finish(!!ok); });
-  } else {
-    finish(true);
-  }
+  if (_blockHasRunningTimer(b)) { try { stopActiveTimer('reset'); } catch (_) {} }
+  const idx = state.scheduledBlocks.indexOf(b);
+  if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
+  if (window.__tgSelectBlock) window.__tgSelectBlock(null);
+  try { saveState(); } catch (_) {}
+  if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+  if (typeof drawGauge === 'function') drawGauge();
+  else if (typeof drawTimeArea === 'function') drawTimeArea();
+  // The "Now focusing on" pomodoro must disappear right away (idle art takes over).
+  try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+  if (typeof onResolve === 'function') onResolve(true);
 }
 
 function drawTimeArea() {
@@ -17452,7 +17448,7 @@ function drawTimeArea() {
     /* ---- X delete ---- */
     xBtn.addEventListener('click', (ev) => {
       ev.stopPropagation();
-      _deleteScheduledBlock(b);   // warns first if a timer is running on this block
+      _deleteScheduledBlock(b);   // auto-stops a timer running on this block (no confirm)
     });
 
     /* ---- Body drag → move block (tap → select if no movement) ----------
@@ -17681,7 +17677,7 @@ function drawTimeArea() {
           el.style.opacity   = Math.max(0.25, 1 - Math.abs(dx) / W).toFixed(3);
         }
         function _swipeDelete() {
-          _deleteScheduledBlock(b);   // warns first if a timer is running on this block
+          _deleteScheduledBlock(b);   // auto-stops a timer running on this block (no confirm)
         }
         function _swipeEnd(ev) {
           const el = activeDiv || div;
@@ -20157,7 +20153,13 @@ function renderImDoing() {
     // cat-startnow (tasks exist but none started → a live "current time" pill + a play button).
     card.classList.add('fc-idle');
     card.classList.remove('fc-q4-run');
-    const _anyTask = ['q1','q2','q3','q4'].some(q => state.tasks && Array.isArray(state.tasks[q]) && state.tasks[q].some(t => t && t.text && String(t.text).trim() && !t.done));
+    // Count only tasks VISIBLE today: skip done AND skip "Do it tomorrow" deferrals
+    // (future createdAt — hidden from the matrix), so an empty-looking list says
+    // "Add one." instead of "Nice list. Now press start.".
+    const _idleTodayKey = (typeof _calDateKey === 'function') ? _calDateKey(new Date()) : null;
+    const _anyTask = ['q1','q2','q3','q4'].some(q => state.tasks && Array.isArray(state.tasks[q]) && state.tasks[q].some(t =>
+      t && t.text && String(t.text).trim() && !t.done &&
+      !(_idleTodayKey && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _idleTodayKey)));
     card.classList.toggle('fc-startnow', _anyTask);
     card.classList.toggle('fc-down', !_anyTask);
     const _ntImg = document.getElementById('fc-no-task');
