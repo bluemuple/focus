@@ -7257,7 +7257,7 @@
           <div class="fc-done" id="fc-done" aria-hidden="true">
             <div class="fc-done-row">
               <div class="fc-done-msg"><span class="fdm-l1" id="fdm-l1"></span><span class="fdm-l2" id="fdm-l2"></span></div>
-              <img class="fc-done-img" id="fc-done-img" src="images/focus/doro/comment.png?v=doro-5" alt="" aria-hidden="true">
+              <img class="fc-done-img" id="fc-done-img" src="images/focus/doro/comment.png?v=doro-6" alt="" aria-hidden="true">
             </div>
           </div>
         </div>
@@ -12014,43 +12014,50 @@ function _commitTaskSwipeToGauge(row, q, i, opts) {
    spring back via _tgReappearTask after the blocks land. */
 function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
   window._gaugeBusy = true;     // freeze the 1-s tick for the whole sequence
-  const PHASE1_MS = 260, PHASE2_MS = 380;
+  // Row animation, in 3 beats: the pink bar slides off LEFT (EXIT), the grey/blue/red
+  // revealed bar is held in its place (HOLD), then it TRANSFORMS back into the task bar
+  // (MORPH — the pink bar crossfades in as the grey backing + buttons fade out). The
+  // gauge block fly-in (PHASE2) runs in parallel, starting as the pink bar clears.
+  const EXIT_MS = 200, HOLD_MS = 150, MORPH_MS = 240, PHASE2_MS = 380;
   const rowRect = row.getBoundingClientRect();
   const rowW = rowRect.width || 200;
 
-  // ---- Phase 1: the bar vanishes into its own LEFT edge ----
-  // The REAL row vanishes left — running or not — continuing smoothly from the
-  // live-swipe transform, then springs back from the right via _tgReappearTask.
-  // (A running task's countdown lives in the focus card + state, NOT this list
-  // row, so briefly hiding the row never interrupts the timer.) Previously a
-  // running row was reset to its origin immediately + a ghost vanished instead —
-  // which read as "the bar slides left a bit then instantly snaps back".
-  // Slide the BAR FOREGROUND (.tr-fg) left — it may already be swipe-revealed, so this
-  // continues smoothly from the open position. The revealed action buttons (blue add /
-  // red delete) FADE OUT in lock-step. Falls back to the whole row if there's no .tr-fg.
   const fg = row.querySelector(':scope > .tr-fg');
   const vanishEl = fg || row;
   const acts = row.querySelectorAll(':scope > .tr-actions, :scope > .tr-actions-left, :scope > .tr-actions-right');
-  acts.forEach(a => { a.style.transition = `opacity ${PHASE1_MS}ms ease`; a.style.opacity = '0'; });
-  // Grey backing (Edit-chip grey, --button-bg) fills the gap the bar leaves behind as it
-  // slides left — from the original bar's left edge up to the blue button. Inserted FIRST
-  // (z-index:1, under the bar's z-index:2 and behind the blue/red buttons, which paint over
-  // it on the right). Fades out together with the buttons as the bar moves left.
+  // Grey backing (Edit-chip grey, --button-bg) that STAYS visible behind the bar — so once
+  // the pink bar slides off, the row reads as a GREY bar with the blue (add) + red (delete)
+  // buttons painted on its right (= the revealed-actions look). inset:0, z-index:1: under the
+  // bar (z-index:2) and, being first in DOM, behind the action buttons (z-index:1) too.
   let greyFill = null;
   try {
     greyFill = document.createElement('div');
-    greyFill.style.cssText = `position:absolute;inset:0;z-index:1;background:var(--button-bg,#f3f4f6);transition:opacity ${PHASE1_MS}ms ease;pointer-events:none;`;
+    greyFill.style.cssText = `position:absolute;inset:0;z-index:1;background:var(--button-bg,#f3f4f6);pointer-events:none;`;
     row.insertBefore(greyFill, row.firstChild);
-    requestAnimationFrame(() => { if (greyFill) greyFill.style.opacity = '0'; });   // fade with the buttons
-    setTimeout(() => { try { greyFill.remove(); } catch (_) {} }, PHASE1_MS + 60);
   } catch (_) {}
-  vanishEl.style.transition =
-    `transform ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), clip-path ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${PHASE1_MS}ms ease`;
+
+  // ---- Beat 1 (EXIT): the pink bar slides further LEFT and fades away. The grey backing
+  //      + blue/red buttons DO NOT fade — they remain, so a grey/blue/red bar is left behind. ----
+  vanishEl.style.transition = `transform ${EXIT_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${EXIT_MS}ms ease`;
   requestAnimationFrame(() => {
     vanishEl.style.transform = `translateX(${-rowW}px)`;
-    vanishEl.style.clipPath  = `inset(0 0 0 ${rowW}px)`;   // pin clip to the bar's left edge
     vanishEl.style.opacity   = '0';
   });
+
+  // ---- Beat 2 (HOLD) + Beat 3 (MORPH): after a brief hold showing the grey/blue/red bar,
+  //      it TRANSFORMS back into the task bar — the pink bar crossfades in AT its home spot
+  //      while the grey backing + buttons fade out beneath it. ----
+  setTimeout(() => {
+    vanishEl.style.transition = 'none';
+    vanishEl.style.transform  = 'translateX(0)';   // snap home while still invisible (no jump)
+    requestAnimationFrame(() => {
+      vanishEl.style.transition = `opacity ${MORPH_MS}ms ease`;
+      vanishEl.style.opacity    = '1';             // pink bar fades IN …
+      acts.forEach(a => { a.style.transition = `opacity ${MORPH_MS}ms ease`; a.style.opacity = '0'; });   // … buttons fade OUT
+      if (greyFill) { greyFill.style.transition = `opacity ${MORPH_MS}ms ease`; greyFill.style.opacity = '0'; }
+    });
+    setTimeout(() => { try { if (greyFill) greyFill.remove(); } catch (_) {} }, MORPH_MS + 40);
+  }, EXIT_MS + HOLD_MS);
 
   // ---- Phase 2: blocks emerge from the gauge's RIGHT edge ----
   setTimeout(() => {
@@ -12105,10 +12112,11 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
       try { if (container) container.remove(); } catch (_) {}
       window._gaugeBusy = false;
       if (typeof drawGauge === 'function') drawGauge();
-      _tgReappearTask = { q, i };   // running or not → the row springs back in from the right
+      // The row transforms back in-place (the MORPH beat above) — no spring-from-right.
+      // This final render just resets the row's inline animation styles to a clean state.
       if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
     }, PHASE2_MS + 50);
-  }, PHASE1_MS);
+  }, EXIT_MS);
 }
 
 /* Given a cursor Y inside a tasks div, figure out which inter-row gap is
@@ -20163,7 +20171,25 @@ function _fcStartFirstTask() {
    (or a 6 s timer) cycles to the early/late detail, then it reverts. Replaces the old
    now-focusing reward badge. ===== */
 let _fcDoneTimer = null;
+let _fcDoneMsg = null;   // the done-reward line CURRENTLY shown {a,b,name?}; _layoutFocusCard re-fits it so it obeys the same 6%/4.3% "Now focusing on" rules
 function _fcTruncate(s, n) { s = String(s == null ? '' : s); return s.length > n ? (s.slice(0, n - 1).replace(/\s+$/, '') + '…') : s; }
+/* Render the CURRENT done-reward message into .fc-done-msg (faint label on top + bold
+   money / early-late detail below). Split out of show() so _layoutFocusCard can re-run
+   it AFTER it has set the 6% padding + image size — the lines then fit the SAME text
+   budget the idle/running "Now focusing on" text uses, not the CSS-default width. */
+function _fcRenderDoneLines() {
+  const m = _fcDoneMsg; if (!m) return;
+  const l1 = document.getElementById('fdm-l1'), l2 = document.getElementById('fdm-l2');
+  if (!l1 || !l2) return;
+  l1.textContent = m.a;
+  if (m.name != null) {
+    try { _renderPayLine(l2, m.b, m.name); } catch (_) { l2.textContent = m.b + ' ' + m.name; }
+  } else {
+    l2.innerHTML = ''; l2.textContent = m.b;
+    // Fit a plain detail line into 2 lines (shrink instead of ellipsis).
+    try { _fitElTo2Lines(l2, 12); } catch (_) {}
+  }
+}
 function _fcShowDoneReward(rw, taskName, pillar) {
   const card = document.getElementById('focus-card');
   const l1 = document.getElementById('fdm-l1'), l2 = document.getElementById('fdm-l2');
@@ -20195,14 +20221,18 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   let mi = 0;
   function show(i) {
     mi = i;
-    l1.textContent = msgs[i].a;
-    if (msgs[i].name != null) {
-      try { _renderPayLine(l2, msgs[i].b, msgs[i].name); } catch (_) { l2.textContent = msgs[i].b + ' ' + msgs[i].name; }
-    } else {
-      l2.innerHTML = ''; l2.textContent = msgs[i].b;
-      // Fit a plain detail line into 2 lines (shrink instead of ellipsis).
-      try { _fitElTo2Lines(l2, 12); } catch (_) {}
-    }
+    _fcDoneMsg = msgs[i];
+    _fcRenderDoneLines();
+    // Re-apply the geometric focus-card layout (6% pad / 4.3% gap / 58%-height image) to
+    // this message — identical rules to the idle/running "Now focusing on" card. Clear the
+    // memo first so the re-layout isn't skipped just because only the message text changed.
+    // Run it SYNCHRONOUSLY (the card already carries fc-done-on + is visible) so the lines
+    // never flash at their unshrunk size, then once more after the next frame in case the
+    // comment.png width wasn't known yet (the rAF pass re-fits against the loaded image).
+    try {
+      _fcLayKey = ''; _layoutFocusCard();
+      requestAnimationFrame(() => requestAnimationFrame(_layoutFocusCard));
+    } catch (_) {}
     if (_fcDoneTimer) { clearTimeout(_fcDoneTimer); _fcDoneTimer = null; }
     // After 6 s: auto-advance to the next message, or (on the last) revert.
     _fcDoneTimer = setTimeout(() => { if (i < msgs.length - 1) show(i + 1); else _fcHideDone(); }, 6000);
@@ -20210,7 +20240,7 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   // Dark mode → the teal-background comment image (matches --card-bg) so it blends.
   try {
     const dimg = document.getElementById('fc-done-img');
-    if (dimg) { const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()); dimg.src = 'images/focus/doro/comment' + (_dk ? '-dark' : '') + '.png?v=doro-5'; }
+    if (dimg) { const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()); dimg.src = 'images/focus/doro/comment' + (_dk ? '-dark' : '') + '.png?v=doro-6'; }
   } catch (_) {}
   card.classList.add('fc-done-on');
   show(0);
@@ -20267,6 +20297,163 @@ function _fitIdleText() {
     l1.style.fontSize = size + 'px'; l2.style.fontSize = size + 'px';
     guard++;
   }
+}
+/* ===== Focus-card geometric auto-layout =====
+   Deterministic, percentage-based layout for the "Now focusing on" card that REPLACES
+   the manual --tu-* nudges. Rules (per spec, applied to all 3 layout families — idle
+   image / running ring / done image):
+     • The section's L/R inner padding (text-edge / image-edge → the card's vertical
+       line) = 6% of the section WIDTH, both sides.
+     • The gap between the left text block and the right media (image or pomodoro ring)
+       is ≥ 4.3% of the width. Text shrinks until the 6% padding + 4.3% gap both hold.
+     • The right IMAGE is sized so its top & bottom margins each = 21% of the section
+       HEIGHT (→ image height = 58% of height), and it is vertically centred. If the text
+       still can't fit, the image is shrunk a little. (The ring keeps its fixed size.)
+   Vertical centring + a 58%-height image automatically yields the 21% top/bottom margins. */
+const _FC_PAD_PCT = 0.06, _FC_GAP_PCT = 0.043, _FC_IMG_MARGIN_PCT = 0.21;
+let _fcLayKey = '';   // memo: skip the relayout when nothing layout-relevant changed (renderImDoing fires every 1 s while a timer runs)
+/* Shrink a set of single-line (nowrap) text elements until none exceeds `budget` px. */
+function _fcShrinkLines(els, budget, minPx) {
+  const list = [].slice.call(els).filter(Boolean);
+  if (!list.length || budget < 20) return;
+  list.forEach(el => { el.style.fontSize = ''; });
+  const MIN = minPx || 11;
+  let guard = 0;
+  const over = () => list.some(el => el.scrollWidth > budget + 1);
+  while (over() && guard < 90) {
+    let allMin = true;
+    list.forEach(el => {
+      const s = parseFloat(getComputedStyle(el).fontSize) || 22;
+      if (s > MIN) { el.style.fontSize = Math.max(MIN, s - 1) + 'px'; allMin = false; }
+    });
+    if (allMin) break;
+    guard++;
+  }
+}
+function _layoutFocusCard() {
+  try {
+    const card = document.getElementById('focus-card');
+    if (!card || card.offsetParent === null) return;
+    const W = card.clientWidth, H = card.clientHeight;   // inside the border = the section's vertical/horizontal lines
+    if (W < 60 || H < 60) return;
+    const pad = Math.round(W * _FC_PAD_PCT);
+    const gapMin = Math.round(W * _FC_GAP_PCT);
+    const contentW = W - 2 * pad;
+
+    // Base the family on the ACTUAL state (done overlay / active timer / else idle), not the
+    // transient classes — so the idle⇄running SWAP (fc-swapping) lays out the fading-IN face,
+    // giving it the 6% inset immediately instead of snapping when the swap class clears.
+    const _at = state.activeTimer;
+    const isDone = card.classList.contains('fc-done-on');
+    const isRun  = !isDone && !!(_at && (_at.type === 'pomodoro' || _at.type === 'uptask'));
+    const isIdle = !isDone && !isRun;
+
+    let rowEl, textEl, mediaEl, lineEls, isImg;
+    if (isDone) {
+      rowEl = card.querySelector('.fc-done-row'); textEl = card.querySelector('.fc-done-msg');
+      mediaEl = card.querySelector('#fc-done-img');
+      lineEls = card.querySelectorAll('.fc-done-msg .fdm-l1, .fc-done-msg .fdm-l2, .fc-done-msg .fdm-name');
+      isImg = true;
+    } else if (isIdle) {
+      rowEl = card.querySelector('.fc-cat-inner'); textEl = card.querySelector('.fc-idle-text');
+      mediaEl = card.querySelector('#fc-no-task');
+      lineEls = card.querySelectorAll('.fc-idle-text .fit-l1, .fc-idle-text .fit-l2');
+      isImg = true;
+    } else {
+      rowEl = card.querySelector('.fc-header'); textEl = card.querySelector('.fc-head-left');
+      mediaEl = card.querySelector('.fc-ring-wrap');
+      lineEls = card.querySelectorAll('#fc-name');
+      isImg = false;
+    }
+    if (!rowEl || !textEl || !mediaEl) return;
+
+    // Memo: renderImDoing fires every 1 s while a timer runs. Re-run the (reflow-heavy)
+    // layout only when something layout-relevant changed — size, family, media image, or the
+    // text content. The mm:ss countdown ticks elsewhere and isn't part of this key.
+    let _lineTxt = ''; lineEls.forEach(el => { if (el) _lineTxt += '' + el.textContent; });
+    const _mediaSrc = isImg ? (mediaEl.getAttribute('src') || '') : 'ring';
+    const _key = W + 'x' + H + '|' + (isDone ? 'done' : isIdle ? 'idle' : 'run') + '|' + _mediaSrc + '|' + _lineTxt;
+    if (_key === _fcLayKey) return;
+    _fcLayKey = _key;
+
+    // CLEAR every family's prior inline geometry first — otherwise a stale inline value on a
+    // now-hidden family (e.g. display/width left on .fc-header) survives the state change and
+    // fights the CSS that hides it (the running header bled into the idle card). We set NO
+    // display/flex/justify/align inline (the per-family CSS already supplies flex + centre +
+    // space-between), so visibility stays purely CSS-controlled.
+    ['.fc-cat-inner','.fc-idle-text','#fc-no-task','.fc-header','.fc-head-left','.fc-ring-wrap',
+     '.fc-done-row','.fc-done-msg','#fc-done-img'].forEach(s => {
+      const el = card.querySelector(s);
+      if (!el) return;
+      ['width','height','maxWidth','minWidth','paddingLeft','paddingRight','gap','transform',
+       'flex','alignSelf','objectFit','maxHeight','boxSizing','display'].forEach(p => { el.style[p] = ''; });
+    });
+    ['fit-l1','fit-l2','fdm-l1','fdm-l2','fc-name'].forEach(id => { const e = document.getElementById(id); if (e) e.style.fontSize = ''; });
+
+    // Section's L/R inset = 6% of width. Zero the card's responsive padding and carry the
+    // inset on the row (idle/swap put the cat full-bleed, so it must live on the row anyway).
+    card.style.paddingLeft = '0px'; card.style.paddingRight = '0px';
+    rowEl.style.boxSizing = 'border-box';
+    rowEl.style.width = W + 'px';
+    rowEl.style.maxWidth = 'none';
+    rowEl.style.paddingLeft = pad + 'px';
+    rowEl.style.paddingRight = pad + 'px';
+    rowEl.style.gap = '0px';
+    rowEl.style.transform = 'none';
+    // Image families: the row spans the full section HEIGHT so the centred image's top &
+    // bottom margins = (H − imgH)/2 = 21% of H.
+    if (isImg) rowEl.style.height = H + 'px';
+
+    textEl.style.flex = '0 1 auto';
+    textEl.style.minWidth = '0';
+    textEl.style.transform = 'none';
+
+    let imgScale = 1;
+    const applyImg = () => {
+      if (isImg) {
+        const ih = Math.round(H * (1 - 2 * _FC_IMG_MARGIN_PCT) * imgScale);   // 58% × scale
+        mediaEl.style.height = ih + 'px';
+        mediaEl.style.width = 'auto'; mediaEl.style.maxWidth = 'none'; mediaEl.style.maxHeight = 'none';
+        mediaEl.style.flex = '0 0 auto'; mediaEl.style.alignSelf = 'center';
+        mediaEl.style.objectFit = 'contain'; mediaEl.style.transform = 'none';
+        // If the image hasn't loaded yet its width is unknown → the gap/shrink maths use a
+        // stale width. Re-run once it loads (clear the memo so the re-run isn't skipped).
+        if (mediaEl.tagName === 'IMG' && !mediaEl.complete) {
+          mediaEl.addEventListener('load', () => { _fcLayKey = ''; try { _layoutFocusCard(); } catch (_) {} }, { once: true });
+        }
+      }
+      return Math.ceil(mediaEl.getBoundingClientRect().width);
+    };
+    const fitText = (budget) => {
+      budget = Math.max(36, budget);
+      textEl.style.maxWidth = budget + 'px';
+      if (!isImg) {                       // running: name wraps to ≤2 lines within the budget
+        const nm = document.getElementById('fc-name');
+        if (nm) { nm.style.fontSize = ''; nm.style.maxWidth = budget + 'px'; }
+        if (typeof _fitFocusName === 'function') _fitFocusName();
+      } else if (isDone) {
+        // Done family: re-render the reward lines into THIS budget with show()'s own
+        // fitters (pay-line split + 2-line shrink). _fcShrinkLines can't fit them — the
+        // money line wraps, so it never exceeds the budget WIDTH to trigger a shrink.
+        try { _fcRenderDoneLines(); } catch (_) {}
+      } else {
+        _fcShrinkLines(lineEls, budget, 11);
+      }
+      return Math.ceil(textEl.getBoundingClientRect().width);
+    };
+
+    let mediaW = applyImg();
+    let textW = fitText(contentW - mediaW - gapMin);
+    // If the image is so wide that text + image + min-gap still overflow at the text's min
+    // font, shrink the image a little (spec: "텍스트와 이미지 사이 거리가 너무 짧으면 이미지 약간 줄여도 됨").
+    let guard = 0;
+    while (isImg && imgScale > 0.62 && (mediaW + textW + gapMin > contentW + 1) && guard < 8) {
+      imgScale -= 0.06;
+      mediaW = applyImg();
+      textW = fitText(contentW - mediaW - gapMin);
+      guard++;
+    }
+  } catch (_) {}
 }
 /* Shrink a one-line element's font until it fits its width (no wrap, no overflow). */
 function _fitNameOneLine(el, minPx) {
@@ -20335,6 +20522,9 @@ function renderImDoing() {
   // Reuses the exact same call sites the old "I'm doing" area used.
   const card = document.getElementById('focus-card');
   if (!card) return;
+  // Geometric auto-layout runs AFTER this render settles (double-rAF so it wins over the
+  // per-state _fitIdleText/_fitFocusName calls scheduled inside this function).
+  try { requestAnimationFrame(() => requestAnimationFrame(_layoutFocusCard)); } catch (_) {}
   // Tap the pomodoro RING → open the full-screen view (wired once). The corner
   // expand icon was removed; the ring itself is the trigger now. A tap on the pause
   // button inside the ring is ignored here so it pauses without also expanding.
@@ -23367,6 +23557,7 @@ function _onResizeFocusHome() {
       if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime();
       try { if (typeof _fitIdleText === 'function') _fitIdleText(); } catch (_) {}   // re-fit idle text to the new column width
       try { if (typeof _fitFocusName === 'function') _fitFocusName(); } catch (_) {}
+      try { if (typeof _layoutFocusCard === 'function') requestAnimationFrame(_layoutFocusCard); } catch (_) {}   // re-apply the 6%/4.3%/21% geometry to the new section size
       // Re-fill the phone home gauge to the new viewport height (#3). drawTimeArea
       // resets the area then calls _fillHomeTimeArea, so the bucket re-tracks the bottom.
       if (typeof drawTimeArea === 'function') drawTimeArea();
@@ -31636,22 +31827,18 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   // baked LANDSCAPE values are the live "now focusing on" + bucket layout on PC / iPad
   // landscape. PORTRAIT is split by device via _setKey()/_isTablet(): `portrait` =
   // iPhone (≤700px), `portraitTablet` = iPad (≥701px). (Tuned 2026-06-10 via the temp panel.)
+  // The FOCUS-CARD offsets (dt/di/st/si/rt/rr/qt/qr/ct/ci) are RESET to identity — the
+  // "Now focusing on" card is now governed by the geometric auto-layout (_layoutFocusCard:
+  // 6% padding / 4.3% gap / 21% image margins). Only the BUCKET offsets (bs/bm/bd/bb) remain.
   const _BAKED = {
     landscape: {
-      dt:{s:4,x:35,y:0}, di:{s:0,x:-35,y:0}, st:{s:4,x:35,y:0}, si:{s:0,x:-35,y:0},
-      rt:{s:0,x:5,y:0},  rr:{s:0,x:-5,y:0}, qt:{s:0,x:0,y:0},  qr:{s:0,x:0,y:0},
-      ct:{s:6,x:10,y:0}, ci:{s:15,x:-10,y:0}, bs:{s:-4,x:15,y:0}, bm:{s:0,x:15,y:-3},
-      bd:{s:0,x:15,y:0}, bb:{s:5,x:0,y:0},
+      bs:{s:-4,x:15,y:0}, bm:{s:0,x:15,y:-3}, bd:{s:0,x:15,y:0}, bb:{s:5,x:0,y:0},
     },
     portrait: {
-      di:{s:-1.3,x:-2,y:0},   // iPhone portrait: nudge the idle face slightly smaller + left
-      ci:{s:12,x:-3,y:0},     // iPhone portrait: enlarge the earned/done image + nudge it left
     },
     // iPad PORTRAIT (≥701px, portrait) — distinct from iPhone portrait; selected by _setKey().
     portraitTablet: {
-      dt:{s:0,x:10,y:0},  di:{s:-1.3,x:-5,y:0}, st:{s:-3,x:10,y:0}, si:{s:0,x:-2,y:0},
-      ct:{s:0,x:-23,y:0}, ci:{s:16,x:23,y:0},
-      bs:{s:-2,x:0,y:0},  bm:{s:-2,x:0,y:0},    bd:{s:-2,x:0,y:0},  bb:{s:4,x:0,y:0},
+      bs:{s:-2,x:0,y:0}, bm:{s:-2,x:0,y:0}, bd:{s:-2,x:0,y:0}, bb:{s:4,x:0,y:0},
     },
   };
   const vals = { landscape: {}, portrait: {}, portraitTablet: {} };
