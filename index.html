@@ -16697,6 +16697,15 @@ function clickMuncherTimer(idx) { return clickManaTimer('muncher', idx); }
    Stop pathways still available: task completion checkbox, ×-delete button,
    phase-end popup's "No" choice, Sleep button, or starting a different task. */
 function toggleTaskTimer(q, i) {
+  // Fresh start from IDLE on q1‑q3 → play the start celebration first; the real timer
+  // starts only when the beat ends (or right away on interrupt-handoff / q4 / fallback).
+  if (!state.activeTimer && _qCelebImg(q) && typeof _fcRunCelebration === 'function') {
+    _fcRunCelebration(q, i, function () { _doToggleTaskTimer(q, i); });
+    return;
+  }
+  _doToggleTaskTimer(q, i);
+}
+function _doToggleTaskTimer(q, i) {
   state.pomodoroSessionsInCycle = 0;
   // startPomodoro internally invokes stopActiveTimer('switch') first, which
   // handles logging + money credit for whatever was running (including the
@@ -19967,6 +19976,64 @@ function _fcPlayTaskEnter() {
     }, FADE + 40);
   }, Math.max(0, FADE - 120));
 }
+/* ===== Start CELEBRATION (idle → qN.png + random praise → 2 s → active) =====
+   Tapping a fresh q1‑q3 start first plays a quick beat in the "Now focusing on" slot:
+   the idle start art fades to that quadrant's qN.png + one random phrase (never the
+   same one twice in a row), holds 2 s, then the real pomodoro starts and the active
+   header fades in (via _fcPlayTaskEnter). The TIMER only starts when the beat ends.
+   Tapping a DIFFERENT task mid‑beat just swaps the image (keeps the phrase) + re‑targets
+   the start. q4 (no qN image) starts immediately, no beat. */
+const _CELEB_PHRASES = ["You're awesome!", "Pouring it in...", "Let's go.", "I'm with you."];
+let _celebActive = false, _celebLastPhrase = null, _celebStartFn = null, _celebTask = null, _celebTimers = [];
+function _qCelebImg(q) {
+  if (q !== 'q1' && q !== 'q2' && q !== 'q3') return null;   // q4 (no image) → no beat
+  const dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
+  return 'images/focus/doro/' + q + (dk ? '-dark' : '') + '.png?v=qcel-1';
+}
+function _celebClearTimers() { _celebTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} }); _celebTimers = []; }
+function _fcRunCelebration(q, i, startFn) {
+  if (!_qCelebImg(q)) { try { startFn(); } catch (_) {} return; }
+  // INTERRUPT — already mid‑beat + another task tapped: swap to its image, KEEP the
+  // phrase, re‑target the deferred start (no restart of the beat).
+  if (_celebActive) {
+    _celebTask = { q: q, i: i }; _celebStartFn = startFn;
+    const img2 = document.getElementById('fc-no-task'); const ns = _qCelebImg(q);
+    if (img2 && ns) img2.setAttribute('src', ns);
+    return;
+  }
+  const card = document.getElementById('focus-card'), cat = document.getElementById('fc-cat');
+  const img = document.getElementById('fc-no-task');
+  const l1 = document.getElementById('fit-l1'), l2 = document.getElementById('fit-l2');
+  if (!card || !cat || !img || !l1 || !l2) { try { startFn(); } catch (_) {} return; }
+  _celebActive = true; _celebStartFn = startFn; _celebTask = { q: q, i: i };
+  _celebClearTimers();
+  try { _fcStopClock(); } catch (_) {}   // freeze the startnow time pill during the beat
+  // pick a phrase ≠ the previous one
+  let pool = _CELEB_PHRASES.filter(p => p !== _celebLastPhrase);
+  if (!pool.length) pool = _CELEB_PHRASES.slice();
+  const phrase = pool[Math.floor(Math.random() * pool.length)];
+  _celebLastPhrase = phrase;
+  // Phase 1 — fade idle art OUT, swap to qN.png + phrase, fade IN.
+  cat.style.transition = 'opacity .3s ease'; cat.style.opacity = '0';
+  _celebTimers.push(setTimeout(() => {
+    const ti = _celebTask || { q: q, i: i };
+    const ns = _qCelebImg(ti.q); if (ns) img.setAttribute('src', ns);
+    l1.textContent = phrase; l2.textContent = '';
+    try { _fitElTo2Lines(l1, 14); } catch (_) {}
+    cat.style.opacity = '1';
+    // Phase 2 — after the fade‑in + a 2 s hold, hand off to the real start.
+    _celebTimers.push(setTimeout(_fcFinishCelebration, 300 + 2000));
+  }, 320));
+}
+function _fcFinishCelebration() {
+  _celebClearTimers();
+  const fn = _celebStartFn, cat = document.getElementById('fc-cat');
+  _celebActive = false; _celebStartFn = null;
+  // Leave the qN.png + phrase showing — _fcPlayTaskEnter (fired by the start → active
+  // edge) pins + fades it OUT while the "Now focusing on" header fades IN.
+  if (cat) { cat.style.transition = ''; cat.style.opacity = ''; }
+  try { if (typeof fn === 'function') fn(); } catch (_) {}
+}
 /* Live "current time" clock for the startnow cat's red pill (#fc-cat-time). 12-hour h:mm,
    matching the gauge's now-line. Ticks every second only while that cat is shown. */
 let _fcClockTimer = null;
@@ -19991,7 +20058,7 @@ function _fcStartFirstTask() {
         const row = document.querySelector('#focus-matrix .task-row[data-q="' + q + '"][data-idx="' + i + '"]');
         const pb = row ? row.querySelector('.task-play') : null;
         if (pb) { pb.click(); return true; }                 // reuse the exact task-bar start flow
-        try { if (q === 'q4') { startUpTask(q, i); } else { startPomodoro(q, i); } renderImDoing(); } catch (_) {}
+        try { if (q === 'q4') { startUpTask(q, i); renderImDoing(); } else { toggleTaskTimer(q, i); renderImDoing(); } } catch (_) {}
         return true;
       }
     }
@@ -20276,7 +20343,7 @@ function renderImDoing() {
     const _fitL1 = document.getElementById('fit-l1'), _fitL2 = document.getElementById('fit-l2');
     // Idle card BIG text (left). Task ready → "Nice list. / Now press start."; no task →
     // "Add one. / I'll pour it in." Set always (cheap) even mid-swap so it fades correctly.
-    if (_fitL1 && _fitL2) {
+    if (_fitL1 && _fitL2 && !_celebActive) {   // during the start beat, keep the qN.png + phrase
       _fitL1.textContent = _anyTask ? 'Nice list.' : 'Add one.';
       _fitL2.textContent = _anyTask ? 'Now press start.' : "I'll pour it in.";
     }
@@ -20286,7 +20353,7 @@ function renderImDoing() {
     // ✕ button) while a swap class lingers leaves the start-now cat ("Now press
     // start") on screen even though no task exists. So: gate only applies when a
     // task IS ready; the no-task state always wins (and clears the stuck swap).
-    if (_ntImg && (!_anyTask || !card.classList.contains('fc-swapping'))) {
+    if (_ntImg && !_celebActive && (!_anyTask || !card.classList.contains('fc-swapping'))) {
       if (!_anyTask && card.classList.contains('fc-swapping')) {
         card.classList.remove('fc-swapping');
         if (typeof _fcSwapTimer !== 'undefined' && _fcSwapTimer) { try { clearTimeout(_fcSwapTimer); } catch (_) {} _fcSwapTimer = null; }
