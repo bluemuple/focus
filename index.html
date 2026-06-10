@@ -1359,6 +1359,33 @@
   }
   .coach-pop.sheet .coach-pop-tail { display: none; }
   @keyframes coach-sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  /* Sheet drag handle — a short horizontal bar just below the sheet's top edge; the
+     invisible full-width strip around it is the drag target. Sheet mode only. */
+  .coach-pop-handle { display: none; }
+  .coach-pop.sheet .coach-pop-handle {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; top: 0; left: 0; right: 0; height: 26px;
+    cursor: grab; touch-action: none; z-index: 2;
+  }
+  .coach-pop.sheet .coach-pop-handle span {
+    width: 44px; height: 4px; border-radius: 999px;
+    background: var(--text-muted, #9ca3af); opacity: .55;
+  }
+  .coach-pop.sheet .coach-pop-x { z-index: 3; }   /* keep ✕ tappable above the drag strip */
+  /* Sheet drag/snap mechanics: column layout so the bullet list is the scroller in the
+     expanded state; .snapping animates between snap points; .no-anim kills the slide-in
+     animation (its fill-mode would otherwise override the drag transform). */
+  .coach-pop.sheet { display: flex; flex-direction: column; padding-top: 26px; }
+  .coach-pop.sheet .coach-pop-body { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; min-height: 0; }
+  .coach-pop.sheet.expanded .coach-pop-body { flex: 1; }
+  .coach-pop.sheet.no-anim { animation: none; }
+  .coach-pop.sheet.snapping { transition: height .26s cubic-bezier(.22,1,.36,1), transform .26s cubic-bezier(.22,1,.36,1); }
+  .coach-pop.sheet.dragging { transition: none; cursor: grabbing; }
+  /* Expanded (tall) content — nested bullets: bold lead line + indented dash sub-points. */
+  .coach-pop-body li.has-sub > span { font-weight: 700; }
+  .coach-pop-body li ul { list-style: none; margin: 6px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+  .coach-pop-body li ul li { font-size: .85rem; line-height: 1.4; color: var(--text-muted); padding-left: 14px; }
+  .coach-pop-body li ul li::before { content: '–'; }
 
   /* ===== Task bar 3D "open side" effect on tick =====
      When a task checkbox is ticked, the row briefly tilts in 3D space and
@@ -7375,6 +7402,9 @@
         <div class="coach-pop-backdrop hidden" id="coach-pop-backdrop"></div>
         <div class="coach-pop hidden" id="coach-pop" role="dialog" aria-modal="false" aria-label="Details">
           <div class="coach-pop-tail" id="coach-pop-tail" aria-hidden="true"></div>
+          <!-- Sheet drag handle (bottom-sheet mode only): the short bar is the visual,
+               the full-width strip is the touch target. Drag up → expand, down → dismiss. -->
+          <div class="coach-pop-handle" id="coach-pop-handle" aria-hidden="true"><span></span></div>
           <button class="coach-pop-x" id="coach-pop-x" type="button" aria-label="Close">✕</button>
           <div class="coach-pop-tabs hidden" id="coach-pop-tabs" role="tablist"></div>
           <ul class="coach-pop-body" id="coach-pop-body"></ul>
@@ -13767,8 +13797,11 @@ const _PILLAR_DESC = {
 };
 /* ===== Life-balance bucket COACHING content (2026-06-12 redesign) =====
    areas × tier(low 1‒3 / mid 4‒7 / high 8‒10) × { stateWord, direction, diagnostic,
-   directionDetail, diagnosticDetail }. The *Detail fields are EITHER { tabs:{students,
-   workers} } (→ "For students" / "For workers" tabs) OR { single:[...] } (→ no tabs).
+   directionDetail, diagnosticDetail, expanded }. The *Detail fields are EITHER
+   { tabs:{students, workers} } (→ "For students" / "For workers" tabs) OR
+   { single:[...] } (→ no tabs). `expanded` ([{text, sub:[...]}]) is the deeper
+   nested-bullet view shown when the ⓘ bottom sheet is dragged up to full height
+   (added 2026-06-10 per the draggable-sheet request).
    Copy is fixed plain English — do NOT edit/extend without an explicit request. */
 const BUCKET_COACH = {
   MIND: {
@@ -13781,6 +13814,26 @@ const BUCKET_COACH = {
         workers: ["Take a 5-minute walk when stress spikes.", "Block one no-meeting break each day.", "Write worries down to park them for later."],
       } },
       diagnosticDetail: { single: ["A low score means feelings have been intense — not that something is wrong with you.", "Stressful stretches do this to everyone.", "Small daily resets usually steady things first."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Emotions have been hitting hard — big swings, looping worry, a shorter fuse than usual.",
+          "It's a snapshot of a rough stretch, not a verdict on you.",
+          "Rough seas calm faster when you steady the boat instead of fighting every wave." ] },
+        { text: "Steady the body first — the mind follows", sub: [
+          "Breathe in for 4, out for 6, for about a minute. Longer out-breaths tell your body the danger has passed.",
+          "Get outside once a day; daylight and a short walk reset more than they seem to.",
+          "Protect sleep this week. A tired mind feels everything twice as hard." ] },
+        { text: "Give the feeling a name", sub: [
+          "Say or write it in one plain sentence — \"I'm anxious about Friday.\" Named feelings shrink.",
+          "Students: one honest line in a notebook before bed is enough.",
+          "Workers: park worries on a list during the day and review them once, later — not all day long." ] },
+        { text: "Borrow someone else's calm", sub: [
+          "Tell one trusted person how today actually felt.",
+          "You don't need advice — being heard is most of the medicine." ] },
+        { text: "Know when to call in help", sub: [
+          "If the heaviness lasts for weeks or sleep keeps breaking, talk to a counselor or doctor.",
+          "Getting help early is a strength move, not a last resort." ] },
+      ],
     },
     mid: {
       stateWord: "Coasting",
@@ -13791,6 +13844,24 @@ const BUCKET_COACH = {
         workers: ["Take a 2-minute break away from your screen and just breathe.", "Jot down one feeling word before opening your inbox.", "End the day by noting one thing that went well."],
       } },
       diagnosticDetail: { single: ["A mid score means emotions feel muted, not bad.", "Common when busy weeks run on routine.", "Small daily check-ins usually bring color back."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "You're functioning fine, but feelings have gone quiet — days blur together.",
+          "Autopilot is the mind saving energy. Useful for a week, costly for a season.",
+          "The risk isn't crashing; it's missing your own life while it happens." ] },
+        { text: "Add tiny check-ins", sub: [
+          "Once a day, pause for one minute and name what you feel in one word.",
+          "Students: try it between classes — no notebook needed.",
+          "Workers: tie it to a trigger you already have, like waiting for coffee or opening your inbox." ] },
+        { text: "Put small color back in the week", sub: [
+          "Change one routine: a new route, a different lunch, music instead of silence.",
+          "Plan one thing to look forward to — anticipation wakes feelings up." ] },
+        { text: "Reconnect with people, lightly", sub: [
+          "Share one good thing and one hard thing from your day with someone.",
+          "Real conversation is the fastest way out of flat." ] },
+        { text: "Watch the trend, not the day", sub: [
+          "Flat weeks happen. If the numbness deepens or nothing sounds fun anymore, treat it like a low score and be gentler with yourself." ] },
+      ],
     },
     high: {
       stateWord: "Clear & steady",
@@ -13798,6 +13869,20 @@ const BUCKET_COACH = {
       diagnostic: "Aware of your feelings and able to manage them.",
       directionDetail: { single: ["Keep whatever routine got you here.", "Notice early signs when a hard week starts.", "Share what works with someone who's struggling."] },
       diagnosticDetail: { single: ["A high score means you notice emotions early and respond well.", "This is a skill — it stays with practice."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "You notice emotions early and handle them before they take over.",
+          "That's not luck — it's a skill you've been practicing, and it shows." ] },
+        { text: "Keep the engine that got you here", sub: [
+          "Whatever your routine is — sleep, walks, journaling, talks — protect it in busy weeks.",
+          "Good habits fail quietly first; notice when one starts slipping." ] },
+        { text: "Build your early-warning list", sub: [
+          "Write down your first signs of a hard week: short temper, bad sleep, skipped meals.",
+          "Catching the wobble early is what keeps high scores high." ] },
+        { text: "Spend some of the surplus", sub: [
+          "Steady people steady others. Check on a friend who seems off.",
+          "Sharing what works for you can be exactly what someone else needs." ] },
+      ],
     },
   },
   BODY: {
@@ -13810,6 +13895,25 @@ const BUCKET_COACH = {
         workers: ["Set a hard stop for screens at night.", "Don't skip lunch for work — book it like a meeting.", "Take a short walk every day."],
       } },
       diagnosticDetail: { single: ["Low here means sleep, food and movement got squeezed.", "It usually follows busy weeks, not laziness.", "Fixing one basic tends to lift the others."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Sleep, food and movement got squeezed — usually by busy weeks, not laziness.",
+          "Everything else (mood, focus, patience) runs on these three. Refill the tank before optimizing anything else." ] },
+        { text: "Start with sleep — it pays back fastest", sub: [
+          "Pick a lights-out time and defend it for one week.",
+          "Students: screens out of reach 30 minutes before bed.",
+          "Workers: a hard stop on evening screens beats any morning routine." ] },
+        { text: "Eat something real, on schedule", sub: [
+          "Don't skip meals to save time — you pay it back with interest.",
+          "Keep water nearby; tired is sometimes just thirsty.",
+          "Breakfast can be small. It just has to exist." ] },
+        { text: "Move a little, daily", sub: [
+          "A 10-minute walk counts. Outside counts double.",
+          "Pick the same time every day so it stops being a decision." ] },
+        { text: "Fix ONE basic first", sub: [
+          "Choose the weakest of the three and give it seven days.",
+          "One steady basic tends to pull the other two up with it." ] },
+      ],
     },
     mid: {
       stateWord: "Halfway there",
@@ -13820,6 +13924,24 @@ const BUCKET_COACH = {
         workers: ["Name the weakest basic and schedule it.", "Pair it with something you already do daily.", "Review in a week — keep it small."],
       } },
       diagnosticDetail: { single: ["Mid means part of your routine works — that's a base to build on.", "Most people see-saw between basics.", "One small fix beats a full overhaul."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Part of your routine works — that's a real base to build on.",
+          "Most people see-saw: exercise is up while sleep slips, or meals are fine but movement died." ] },
+        { text: "Find the weak leg", sub: [
+          "Be honest: of sleep, food and movement, which one slipped?",
+          "Track it for three days if you're not sure — memory flatters us." ] },
+        { text: "Attach the fix to something you already do", sub: [
+          "Students: stretch right after homework; water bottle on the desk.",
+          "Workers: walk during one call a day; lunch booked like a meeting.",
+          "Piggybacking on an existing habit beats building one from scratch." ] },
+        { text: "Keep it visibly small", sub: [
+          "A goal you can hit on a bad day is the right size.",
+          "Mark a streak somewhere you'll see it; streaks like to stay alive." ] },
+        { text: "Re-check in a week", sub: [
+          "If the weak leg improved, hold it another week before adding more.",
+          "Upgrading one notch at a time is how 'halfway' becomes 'steady'." ] },
+      ],
     },
     high: {
       stateWord: "Steady",
@@ -13827,6 +13949,19 @@ const BUCKET_COACH = {
       diagnostic: "Your basics are steady across the board.",
       directionDetail: { single: ["Protect the routine in busy weeks — that's when it slips.", "A yearly health check keeps the picture complete.", "Enjoy it — this is what good looks like."] },
       diagnosticDetail: { single: ["High means all three basics are holding at once.", "Consistency matters more than perfection."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Sleep, food and movement are all holding at once — that's the hard part, and you're doing it.",
+          "Consistency like this quietly powers every other pillar." ] },
+        { text: "Busy weeks are the test", sub: [
+          "Routines don't break on normal days; they break during exams, deadlines and trips.",
+          "Decide now what the minimum version looks like — the version you keep no matter what." ] },
+        { text: "Maintenance beats repair", sub: [
+          "A yearly check-up keeps the picture complete.",
+          "Small aches and bad-sleep streaks are worth fixing early, while they're cheap." ] },
+        { text: "Enjoy it on purpose", sub: [
+          "Notice how steady basics feel — that memory is what brings you back when life knocks them over." ] },
+      ],
     },
   },
   JOY: {
@@ -13836,6 +13971,22 @@ const BUCKET_COACH = {
       diagnostic: "Almost no time for play or hobbies lately.",
       directionDetail: { single: ["Put one fun thing on the calendar like an appointment.", "Small counts: a show, a walk, a game.", "No goal, no productivity — just enjoy it."] },
       diagnosticDetail: { single: ["Low joy drains energy for everything else.", "It usually means rest time got eaten — not that you changed."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Fun has gone missing — rest time got eaten by obligations.",
+          "Low joy doesn't stay in its lane; it drains energy for work, people and patience too." ] },
+        { text: "Book fun like an appointment", sub: [
+          "Put ONE enjoyable thing on the calendar this week, with a time.",
+          "If it isn't scheduled, busier things will eat it — they always do." ] },
+        { text: "Lower the bar for what counts", sub: [
+          "A show, a walk, a game, 30 minutes of a hobby — small counts.",
+          "No goals, no self-improvement, no productivity. Enjoyment IS the point." ] },
+        { text: "Remember what used to be fun", sub: [
+          "List three things you enjoyed a year ago. Pick the easiest and do a tiny version of it.",
+          "Old joys restart faster than new ones." ] },
+        { text: "Guard it once it's back", sub: [
+          "When the calendar fills up, fun gets cut first. Treat that slot as non-negotiable for a month." ] },
+      ],
     },
     mid: {
       stateWord: "One breather",
@@ -13843,6 +13994,20 @@ const BUCKET_COACH = {
       diagnostic: "Some fun, but it's thin on the ground.",
       directionDetail: { single: ["Add one small weekday pleasure, not just weekends.", "Mix in something new once a month.", "Guard the breather you already have."] },
       diagnosticDetail: { single: ["Mid means joy exists but runs on fumes.", "One extra hour a week makes a real difference."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Joy exists but it's thin — about one breather a week, running on fumes.",
+          "You're one busy week away from 'all work'. A little margin now prevents that." ] },
+        { text: "Add one weekday pleasure", sub: [
+          "Weekends carry all your fun right now; spread the load.",
+          "Something small after dinner — music, a hobby, a walk — changes the shape of a whole day." ] },
+        { text: "Protect the breather you already have", sub: [
+          "Name it. Know when it happens. Don't let it get traded away.",
+          "If someone asks for that time slot, offer a different one." ] },
+        { text: "Add a little novelty monthly", sub: [
+          "Once a month, try something new-ish: a place, a recipe, a game.",
+          "Newness makes time feel fuller — cheap fuel for joy." ] },
+      ],
     },
     high: {
       stateWord: "Recharged",
@@ -13850,6 +14015,19 @@ const BUCKET_COACH = {
       diagnostic: "Regularly recharged by activities you love.",
       directionDetail: { single: ["Keep these slots even when busy.", "Invite someone along sometimes — joy doubles when shared."] },
       diagnosticDetail: { single: ["High means rest is actually restoring you.", "This pillar fuels all the others."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Your fun time is actually restoring you — rest with a pulse, not just collapse.",
+          "This pillar quietly fuels all the others; protect it like infrastructure." ] },
+        { text: "Keep the slots sacred", sub: [
+          "Busy seasons will come for your hobby time first. Pre-decide that it stays.",
+          "Shrink it if you must — don't zero it." ] },
+        { text: "Share the surplus", sub: [
+          "Invite someone into what you love; joy doubles when shared.",
+          "Shared fun also strengthens your People pillar for free." ] },
+        { text: "Rotate before it goes stale", sub: [
+          "Even great hobbies fade. When one stops sparking, let a new one in without guilt." ] },
+      ],
     },
   },
   MONEY: {
@@ -13862,6 +14040,24 @@ const BUCKET_COACH = {
         workers: ["Write a simple weekly spending plan and stick to it.", "Use a 24-hour rule for unplanned buys.", "Automate one small transfer to savings on payday."],
       } },
       diagnosticDetail: { single: ["Low means spending is running ahead of the plan — common and fixable.", "One visible weekly number beats a complex budget."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Spending is running ahead of the plan — impulse buys are leaving you short.",
+          "This is one of the most fixable low scores on the bucket. Visibility fixes most of it." ] },
+        { text: "Make one number visible", sub: [
+          "Decide a weekly spend number and check it once a day. That's the whole system.",
+          "Students: track just three things — food, fun, stuff.",
+          "Workers: a simple weekly plan beats a complex budget you'll abandon." ] },
+        { text: "Put a speed bump before buys", sub: [
+          "Wait 24 hours on anything you want but don't need.",
+          "Most impulse urges don't survive the night.",
+          "Leave the card at home for trips that don't need it." ] },
+        { text: "Make saving automatic and tiny", sub: [
+          "Workers: auto-move a small amount on payday — before you can spend it.",
+          "Students: save a fixed slice of any money that comes in, even if it's small." ] },
+        { text: "Be kind about the past", sub: [
+          "Shame burns energy and changes nothing. The plan starts this week, not from zero." ] },
+      ],
     },
     mid: {
       stateWord: "Loose but okay",
@@ -13872,6 +14068,22 @@ const BUCKET_COACH = {
         workers: ["Set one clear goal: buffer, trip or debt.", "Automate a fixed amount toward it.", "Do a 10-minute money check once a month."],
       } },
       diagnosticDetail: { single: ["Mid means you're safe but drifting.", "A single goal turns loose money into progress."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "No fires — bills get paid, nothing's broken. But money has no job, so it drifts.",
+          "Drifting money disappears without making you happier. A goal turns it into progress." ] },
+        { text: "Give your money ONE job", sub: [
+          "Pick a single goal you actually want: a buffer, a trip, a thing, less debt.",
+          "One goal you care about beats five sensible ones you don't." ] },
+        { text: "Automate the boring part", sub: [
+          "Move a fixed amount toward the goal weekly or on payday — automatically.",
+          "If it needs willpower every week, it will eventually lose." ] },
+        { text: "Find the leak, gently", sub: [
+          "Skim one month of spending. Circle what you don't remember enjoying.",
+          "That's the loose money — redirect some of it, keep the rest guilt-free." ] },
+        { text: "Do a 10-minute monthly check", sub: [
+          "Goal on track? Any surprises? Done. Ten minutes a month keeps 'okay' from sliding." ] },
+      ],
     },
     high: {
       stateWord: "On plan",
@@ -13879,6 +14091,20 @@ const BUCKET_COACH = {
       diagnostic: "Money follows your plan, with savings growing.",
       directionDetail: { single: ["Revisit the plan when life changes, not every week.", "Let some money stay guilt-free fun."] },
       diagnosticDetail: { single: ["High means money causes little stress and serves your goals."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Money follows your plan and savings are growing.",
+          "Money stress is low because the decisions are already made — that's the win." ] },
+        { text: "Don't over-manage it", sub: [
+          "Revisit the plan when life changes — new job, new home, new goal — not every week.",
+          "Checking too often invites tinkering, and tinkering invites mistakes." ] },
+        { text: "Keep some fun money official", sub: [
+          "Budget a guilt-free amount on purpose. Plans without pleasure get abandoned.",
+          "On-plan should feel sustainable, not strict." ] },
+        { text: "Let the buffer buy calm", sub: [
+          "A cushion's real return is sleeping well and being able to say no to bad deals.",
+          "When the buffer is full enough, point the overflow at the next goal." ] },
+      ],
     },
   },
   GROWTH: {
@@ -13891,6 +14117,24 @@ const BUCKET_COACH = {
         workers: ["Read 3 pages or listen to 10 podcast minutes daily.", "Pick one skill that helps your next step.", "Block one lunch a week for learning."],
       } },
       diagnosticDetail: { single: ["Low means growth got crowded out — not that you stopped caring.", "Tiny daily inputs restart it fast."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Nothing new is coming in — growth got crowded out by the daily grind.",
+          "It says nothing about ability. 'Paused' restarts fast with tiny inputs." ] },
+        { text: "Go embarrassingly small", sub: [
+          "Three pages or ten minutes a day — small enough that skipping feels sillier than doing it.",
+          "Students: three pages of anything beyond homework, before bed.",
+          "Workers: ten podcast minutes on the commute counts." ] },
+        { text: "Pick by interest, not duty", sub: [
+          "Choose the topic you're actually curious about, not the one you 'should' learn.",
+          "Curiosity carries you on tired days; duty doesn't." ] },
+        { text: "Attach it to an anchor", sub: [
+          "Same time, same trigger: with coffee, on the bus, before sleep.",
+          "Anchored habits survive; floating ones drift away." ] },
+        { text: "Let it all count", sub: [
+          "Videos, podcasts and asking good questions are learning too.",
+          "Restarting is the win right now — volume can come later." ] },
+      ],
     },
     mid: {
       stateWord: "Dabbling",
@@ -13901,6 +14145,23 @@ const BUCKET_COACH = {
         workers: ["Pick one thread: a book, course or skill.", "Attach it to a daily anchor like the commute or coffee.", "Note one takeaway per session."],
       } },
       diagnosticDetail: { single: ["Mid means curiosity is alive but scattered.", "Focus turns dabbling into compound growth."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Curiosity is alive but scattered — bursts of reading and videos with no thread.",
+          "Dabbling feels like learning but evaporates fast. Focus is what makes it stick." ] },
+        { text: "Pick ONE thread for a month", sub: [
+          "One subject, one skill, one book — and stay on it for four weeks.",
+          "Depth on one thing compounds; breadth across ten things evaporates." ] },
+        { text: "Make it rhythmic", sub: [
+          "Students: same time and place, 15 minutes — after dinner, at your desk.",
+          "Workers: attach it to a daily anchor like the commute or the morning coffee." ] },
+        { text: "Close each session with one line", sub: [
+          "Write one takeaway sentence — it doubles what you keep.",
+          "Tell someone what you learned each week; explaining locks it in." ] },
+        { text: "Park the shiny things", sub: [
+          "New interests will appear mid-month. Put them on a 'next' list instead of switching.",
+          "The list honors the curiosity; the month protects the focus." ] },
+      ],
     },
     high: {
       stateWord: "Compounding",
@@ -13908,6 +14169,20 @@ const BUCKET_COACH = {
       diagnostic: "Consistent learning and visible improvement.",
       directionDetail: { single: ["Teach or share what you learn — it locks in.", "Review the month's notes once."] },
       diagnosticDetail: { single: ["High means learning is a habit, not an event."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Learning is a habit now, not an event — steady input, visible improvement.",
+          "This is where growth gets cheap: each new thing connects to things you already know." ] },
+        { text: "Teach it to keep it", sub: [
+          "Explain what you learn — to a friend, a colleague, or a note nobody reads.",
+          "If you can't explain it simply, you've found the next thing to study." ] },
+        { text: "Review monthly, lightly", sub: [
+          "Skim the month's notes once. Past-you keeps surprising future-you.",
+          "Patterns across notes often matter more than any single note." ] },
+        { text: "Raise the difficulty on purpose", sub: [
+          "Comfortable learning plateaus. Pick something slightly too hard now and then.",
+          "Projects beat pages: build, write or make something with what you know." ] },
+      ],
     },
   },
   "STUDY/WORK": {
@@ -13920,6 +14195,24 @@ const BUCKET_COACH = {
         workers: ["Say no to one thing this week.", "Book real recovery time — not just less work.", "Talk to your manager about the load if it persists."],
       } },
       diagnosticDetail: { single: ["Low here is a signal to recover, not to try harder.", "Burnout fades with rest and small wins — not pressure."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "The tank is empty — low drive, heavy mornings, work that used to be fine feels like sand.",
+          "Burnout is a signal to recover, not a character flaw. Pushing harder digs deeper." ] },
+        { text: "Subtract before you optimize", sub: [
+          "Drop or postpone ONE commitment this week. Something real has to come off the pile.",
+          "Students: tell a teacher or parent how full the plate is — out loud.",
+          "Workers: say no to one thing, and raise it with your manager if the load is structural." ] },
+        { text: "Shrink today's task to its minimum", sub: [
+          "Do the smallest honest version: one paragraph, one email, one problem.",
+          "Small wins are how drive comes back — momentum first, standards later." ] },
+        { text: "Make recovery real", sub: [
+          "Less work isn't rest. Book actual recovery: sleep, outdoors, people who recharge you.",
+          "Evenings without screens repair more than weekends with them." ] },
+        { text: "Watch the floor", sub: [
+          "If weeks of rest change nothing, or things slide toward hopeless, loop in a professional.",
+          "Burnout and depression overlap — checking is wisdom, not weakness." ] },
+      ],
     },
     mid: {
       stateWord: "Going through the motions",
@@ -13930,6 +14223,24 @@ const BUCKET_COACH = {
         workers: ["Find one task this week you can do with pride.", "Trade one dull block for your most meaningful work.", "Note which parts of the job ever felt good — do more of those."],
       } },
       diagnosticDetail: { single: ["Mid means effort without spark.", "Meaning usually returns through one engaging piece — not a whole new life."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Effort without spark — everything is 'have to', nothing is 'want to'.",
+          "The fix is rarely a whole new life. Meaning usually returns through one engaging piece." ] },
+        { text: "Find one thing worth caring about", sub: [
+          "Students: take the subject you dislike least and go one layer deeper.",
+          "Workers: pick one task this week you can do with real pride.",
+          "Caring about one thing tends to leak into the rest." ] },
+        { text: "Trade one dull block for a meaningful one", sub: [
+          "Swap one routine hour for your most interesting work, at your best hour of the day.",
+          "Energy follows interest; schedule around that." ] },
+        { text: "Change the scenery", sub: [
+          "New place, new order, new method — staleness lives in routine.",
+          "Students: a different study spot can reset a whole subject." ] },
+        { text: "Collect evidence of good days", sub: [
+          "Note which parts of the work ever felt good. Do more of exactly those.",
+          "If the list stays empty for months, that's real data about fit — worth a bigger think." ] },
+      ],
     },
     high: {
       stateWord: "In gear",
@@ -13937,6 +14248,20 @@ const BUCKET_COACH = {
       diagnostic: "Driven, with a real sense of accomplishment.",
       directionDetail: { single: ["Note what's working so you can repeat it.", "Watch your other pillars — winning here can quietly eat them."] },
       diagnosticDetail: { single: ["High means effort and reward are connected right now."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Motivated, productive, and effort is visibly paying off — you're in gear.",
+          "Waves like this are great and temporary. Ride it, and learn from it." ] },
+        { text: "Write down what's working", sub: [
+          "Capture the recipe: sleep, schedule, environment, the kind of task that lights you up.",
+          "Future flat-you will pay gold for these notes." ] },
+        { text: "Aim the momentum", sub: [
+          "Point the energy at what matters most, not just what's most fun to finish.",
+          "In-gear weeks are the time to tackle the big scary task." ] },
+        { text: "Don't let winning eat the other pillars", sub: [
+          "Productive streaks quietly consume sleep, people and joy.",
+          "Glance at the rest of the bucket — keep the win from becoming a trade." ] },
+      ],
     },
   },
   PEOPLE: {
@@ -13949,6 +14274,25 @@ const BUCKET_COACH = {
         workers: ["Send one no-agenda message to a friend.", "Plan one coffee or call this week.", "For conflict, name the issue calmly before it grows."],
       } },
       diagnosticDetail: { single: ["Low means connection needs care — it says nothing bad about you.", "One small reach-out usually starts the thaw."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Connection is running low — loneliness, or conflict that makes people feel like work.",
+          "It says nothing bad about you. Connection is a practice, and practices restart." ] },
+        { text: "Reach out to ONE person today", sub: [
+          "Message someone you've lost touch with. Two honest sentences beat a perfect paragraph.",
+          "Students: eat lunch with someone instead of alone once this week.",
+          "Workers: send one no-agenda message — \"thought of you, how are you?\"" ] },
+        { text: "If it's conflict, go first and small", sub: [
+          "Start with one honest, kind sentence: name the issue without blaming.",
+          "Aim to understand before being understood — it disarms most fights.",
+          "Some conflicts need distance instead; protecting yourself also counts as connection care." ] },
+        { text: "Use low-pressure formats", sub: [
+          "Walks, games and doing things side-by-side connect without forced deep talk.",
+          "Regular small contact beats rare big gestures." ] },
+        { text: "Loneliness lies", sub: [
+          "It says nobody wants to hear from you. Almost everyone is glad they got the message.",
+          "If the weight doesn't lift for weeks, talk to a counselor — isolation grows in silence." ] },
+      ],
     },
     mid: {
       stateWord: "One-sided",
@@ -13959,6 +14303,22 @@ const BUCKET_COACH = {
         workers: ["Book one date night or family evening.", "Or one friends catch-up if home gets everything.", "Repeat weekly for a month."],
       } },
       diagnosticDetail: { single: ["Mid means care is flowing — just unevenly.", "Balance comes from scheduling, not guilt."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Care is flowing, just unevenly — one circle gets everything, the other runs on crumbs.",
+          "Usually it's scheduling, not feelings. The fix is a calendar fix." ] },
+        { text: "Name the thin circle", sub: [
+          "Friends or family — which one has been waiting?",
+          "Students: if friends fill every hour, family is usually the quiet one.",
+          "Workers: home and work both full often means friendships went thin." ] },
+        { text: "Book one small thing this week", sub: [
+          "A meal, a walk, a call, a game — easy and short on purpose.",
+          "Workers: a standing date night or family evening removes the rescheduling battle.",
+          "Repeat weekly for a month; balance comes from rhythm, not guilt." ] },
+        { text: "Be fully there when you're there", sub: [
+          "One present hour beats three distracted ones. Phone away.",
+          "Let the thin circle pick the activity — it tells them they matter." ] },
+      ],
     },
     high: {
       stateWord: "Connected",
@@ -13966,6 +14326,20 @@ const BUCKET_COACH = {
       diagnostic: "Good connections across friends and family.",
       directionDetail: { single: ["Keep the rituals that built this.", "Be the one who reaches out first sometimes."] },
       diagnosticDetail: { single: ["High means your key relationships feel mutual and steady."] },
+      expanded: [
+        { text: "What this score is saying", sub: [
+          "Friends and family both feel mutual and steady.",
+          "Strong connection is one of the best predictors of a good life — and you're living it." ] },
+        { text: "Keep the rituals that built it", sub: [
+          "The weekly calls, game nights and shared meals — those structures ARE the relationship.",
+          "When busy seasons hit, shrink rituals instead of skipping them." ] },
+        { text: "Keep reaching out first sometimes", sub: [
+          "Healthy circles still need someone to start. Let it be you now and then.",
+          "Check on the quiet ones — strong networks notice who went missing." ] },
+        { text: "Widen the circle gently", sub: [
+          "Introduce friends to each other; bridge-building multiplies connection.",
+          "Leave a little room for new people — circles stay healthy by breathing." ] },
+      ],
     },
   },
 };
@@ -28007,8 +28381,8 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     bE.textContent = _compactBalance();
     _curContent = content;
     _coachAriaHidden(false);   // state 2 content is now visible → expose to screen readers
-    _dirInfo.onclick  = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_dirInfo,  'Suggestions',    content.directionDetail); };
-    _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail); };
+    _dirInfo.onclick  = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_dirInfo,  'Suggestions',    content.directionDetail, content.expanded); };
+    _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail, content.expanded); };
     requestAnimationFrame(_fitCoachToHeight);
   }
   function _coachAriaHidden(v){ const c = $('bucket-coach'); if (c) c.setAttribute('aria-hidden', v ? 'true' : 'false'); }
@@ -28031,6 +28405,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   // ===== Reusable ⓘ popover =====
   const pop = () => $('coach-pop');
   let _popAnchor = null, _popOpen = false, _popTab = 'students';
+  let _popDetail = null, _popExpanded = null;   // collapsed bullets / deep nested view (sheet drag-up)
   function _renderBullets(items){
     const body = $('coach-pop-body'); if (!body) return; body.innerHTML = '';
     (items || []).forEach(t => { const li = document.createElement('li'); li.textContent = t; body.appendChild(li); });
@@ -28060,7 +28435,19 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const narrow = window.innerWidth <= 560;
     p.classList.remove('sheet', 'tail-up', 'tail-down');
     const bd = $('coach-pop-backdrop');
-    if (narrow) { p.classList.add('sheet'); if (bd) bd.classList.remove('hidden'); return; }
+    if (narrow) {
+      p.classList.add('sheet');
+      if (bd) bd.classList.remove('hidden');
+      if (_sheetSt.expanded) p.style.height = _expTargetH() + 'px';   // keep tall on resize/rotate
+      else if (!_sheetSt.dragging && !p.classList.contains('snapping')) _sheetSt.collH = p.offsetHeight;
+      return;
+    }
+    // Leaving sheet mode (rotate/resize to wide) — drop any sheet drag state.
+    if (_sheetSt.expanded || p.style.height || p.style.transform) {
+      p.style.height = ''; p.style.transform = '';
+      p.classList.remove('expanded', 'snapping', 'dragging');
+      if (_sheetSt.expanded) { _sheetSt.expanded = false; _renderSheetContent(); }
+    }
     if (bd) bd.classList.add('hidden');
     p.style.left = '0px'; p.style.top = '0px';
     const ar = a.getBoundingClientRect();
@@ -28079,11 +28466,13 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   // style writes once per frame at most). Scroll is passive so it never blocks momentum.
   let _rafPos = 0;
   function _scheduleReposition(){ if (_rafPos) return; _rafPos = requestAnimationFrame(() => { _rafPos = 0; if (_popOpen) _positionPop(); }); }
-  function openCoachPop(anchor, title, detail){
+  function openCoachPop(anchor, title, detail, expanded){
     const p = pop(); if (!p || !anchor) return;
     if (_popOpen && _popAnchor === anchor) { closeCoachPop(); return; }   // toggle off
     closeCoachPop();
     _popAnchor = anchor; _popTab = 'students';
+    _popDetail = detail || null;
+    _popExpanded = (expanded && expanded.length) ? expanded : null;
     p.setAttribute('aria-label', title || 'Details');
     p.setAttribute('aria-modal', 'true');
     _renderTabs(detail);
@@ -28100,6 +28489,11 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   function closeCoachPop(){
     const p = pop(); if (!p) return;
     p.classList.add('hidden'); p.setAttribute('aria-modal', 'false'); const bd = $('coach-pop-backdrop'); if (bd) bd.classList.add('hidden');
+    // Reset sheet drag state so the next open starts collapsed at natural height.
+    p.classList.remove('expanded', 'no-anim', 'snapping', 'dragging');
+    p.style.height = ''; p.style.transform = '';
+    _sheetSt.expanded = false; _sheetSt.dragging = false; _sheetSt.collH = 0;
+    _popDetail = null; _popExpanded = null;
     if (_popOpen && _popAnchor && _popAnchor.setAttribute) { _popAnchor.setAttribute('aria-expanded', 'false'); try { _popAnchor.focus(); } catch (_) {} }
     _popOpen = false; _popAnchor = null;
     document.removeEventListener('keydown', _onKey, true);
@@ -28115,18 +28509,116 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     if (_popAnchor && _popAnchor.contains && _popAnchor.contains(e.target)) return;
     closeCoachPop();
   }
+
+  // ===== Sheet drag (bottom-sheet mode) =====
+  // Two snap states: collapsed (natural content height) ↔ expanded (top edge a few px
+  // below the top bar). The handle strip follows the finger 1:1; release snaps to the
+  // nearest state, or dismisses when dragged down past the resting point far/fast.
+  // Expanded swaps the body to the deeper nested-bullet view (BUCKET_COACH .expanded).
+  const _sheetSt = { collH: 0, expanded: false, dragging: false };
+  function _expTargetH(){
+    let topEdge = 56;
+    try { const tb = document.querySelector('header.topbar'); if (tb) topEdge = tb.getBoundingClientRect().bottom; } catch (_) {}
+    return Math.max(240, window.innerHeight - topEdge - 8);
+  }
+  function _renderSheetContent(){
+    if (_sheetSt.expanded && _popExpanded) _renderExpandedView();
+    else _renderTabs(_popDetail);
+  }
+  function _renderExpandedView(){
+    const p = pop(), tabsEl = $('coach-pop-tabs'), body = $('coach-pop-body');
+    if (!p || !body) return;
+    p.classList.remove('has-tabs');
+    if (tabsEl) { tabsEl.classList.add('hidden'); tabsEl.innerHTML = ''; }
+    body.innerHTML = '';
+    (_popExpanded || []).forEach(it => {
+      const li = document.createElement('li');
+      const lead = document.createElement('span'); lead.textContent = it.text; li.appendChild(lead);
+      if (it.sub && it.sub.length) {
+        li.classList.add('has-sub');
+        const ul = document.createElement('ul');
+        it.sub.forEach(s => { const sl = document.createElement('li'); sl.textContent = s; ul.appendChild(sl); });
+        li.appendChild(ul);
+      }
+      body.appendChild(li);
+    });
+    body.scrollTop = 0;
+  }
+  function _snapSheet(expand){
+    const p = pop(); if (!p) return;
+    _sheetSt.expanded = !!expand;
+    p.classList.add('no-anim', 'snapping');
+    p.classList.toggle('expanded', _sheetSt.expanded);
+    _renderSheetContent();
+    p.style.transform = '';
+    p.style.height = expand ? (_expTargetH() + 'px') : (_sheetSt.collH ? _sheetSt.collH + 'px' : '');
+    setTimeout(() => {
+      if (!_popOpen) return;
+      p.classList.remove('snapping');
+      // Collapsed → back to natural (auto) height so content changes re-size the sheet.
+      if (!_sheetSt.expanded) { p.style.height = ''; _sheetSt.collH = p.offsetHeight; }
+    }, 290);
+  }
+  function _dismissSheet(){
+    const p = pop(); if (!p) return;
+    p.classList.add('no-anim', 'snapping');
+    p.style.transform = 'translateY(' + (p.offsetHeight + 40) + 'px)';
+    setTimeout(() => { if (_popOpen) closeCoachPop(); }, 240);
+  }
+  function _wireSheetDrag(){
+    const h = $('coach-pop-handle'); if (!h) return;
+    let y0 = 0, baseH = 0, ty = 0, lastY = 0, lastT = 0, vel = 0;
+    h.addEventListener('pointerdown', (e) => {
+      const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
+      e.preventDefault();
+      _sheetSt.dragging = true; ty = 0; vel = 0;
+      y0 = lastY = e.clientY; lastT = performance.now();
+      p.classList.add('no-anim', 'dragging'); p.classList.remove('snapping');
+      if (!_sheetSt.collH && !_sheetSt.expanded) _sheetSt.collH = p.offsetHeight;
+      baseH = p.offsetHeight;
+      try { h.setPointerCapture(e.pointerId); } catch (_) {}
+    });
+    h.addEventListener('pointermove', (e) => {
+      if (!_sheetSt.dragging) return;
+      const p = pop(); if (!p) return;
+      const now = performance.now();
+      if (now > lastT) vel = (e.clientY - lastY) / (now - lastT);   // px/ms, + = downward
+      lastY = e.clientY; lastT = now;
+      const collH = _sheetSt.collH || baseH;
+      const expH  = _popExpanded ? _expTargetH() : collH;
+      const want  = baseH - (e.clientY - y0);                       // height the finger asks for
+      if (want >= collH) { ty = 0; p.style.height = Math.min(want, expH) + 'px'; p.style.transform = ''; }
+      else { ty = collH - want; p.style.height = collH + 'px'; p.style.transform = 'translateY(' + ty.toFixed(1) + 'px)'; }
+    });
+    const end = () => {
+      if (!_sheetSt.dragging) return;
+      _sheetSt.dragging = false;
+      const p = pop(); if (!p) return;
+      p.classList.remove('dragging');
+      const collH = _sheetSt.collH || p.offsetHeight;
+      if (ty > 0) {                                   // below the resting point
+        if (ty > 80 || vel > 0.5) { _dismissSheet(); return; }
+        _snapSheet(false); return;
+      }
+      const expH = _popExpanded ? _expTargetH() : collH;
+      let expand;
+      if (vel < -0.5) expand = true;                  // flick up
+      else if (vel > 0.5) expand = false;             // flick down
+      else expand = p.offsetHeight > (collH + expH) / 2;
+      if (!_popExpanded) expand = false;              // no deeper content → stay collapsed
+      _snapSheet(expand);
+    };
+    h.addEventListener('pointerup', end);
+    h.addEventListener('pointercancel', end);
+  }
+
   function _wire(){
     const x = $('coach-pop-x'); if (x) x.onclick = (e) => { e.preventDefault(); closeCoachPop(); };
     const bd = $('coach-pop-backdrop'); if (bd) bd.onclick = closeCoachPop;
-    // Outside tap → back to state 1: while a face is selected, a pointerdown anywhere
-    // OUTSIDE the bucket section (the bucket + its coaching card) and outside the
-    // popover deselects the face. (Re-tapping the face already toggles it off in 3D.)
-    document.addEventListener('pointerdown', (e) => {
-      const s = sec(); if (!s || !s.classList.contains('b3d-sel')) return;
-      if (s.contains(e.target)) return;                                    // inside the bucket/coach → keep selection
-      if (e.target && e.target.closest && e.target.closest('#coach-pop')) return;   // inside the popover → keep
-      try { if (window.bidoroBucket3DDeselect) window.bidoroBucket3DDeselect(); } catch (_) {}
-    }, true);
+    _wireSheetDrag();
+    // NOTE: tapping OUTSIDE the bucket deliberately KEEPS the selection + coaching
+    // text (user reversed the original outside-tap-deselect spec). The ONLY way back
+    // to state 1 is re-tapping the selected face (the 3D tap-toggle in _endDrag).
     // Re-fit the coaching text when the viewport changes while a face is selected (the
     // column width/height can change → the direction font may need to re-shrink/grow).
     let _rfTimer = 0;
