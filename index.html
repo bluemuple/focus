@@ -3463,7 +3463,9 @@
     fill: none; stroke: #B23A5B; stroke-width: 5; stroke-linecap: butt;   /* thinner so it doesn't overpower the number; butt = NO dot at 12-o'clock */
     transition: stroke-dasharray .9s linear, stroke-dashoffset .9s linear;
   }
-  .focus-card .fc-ring-knob { fill: #B23A5B; }
+  /* Progress dot: theme-coloured fill + a card-coloured (white on light) outline so it
+     reads like the full-screen dial's 12-o'clock indicator. */
+  .focus-card .fc-ring-knob { fill: #B23A5B; stroke: var(--card-bg, #fff); stroke-width: 3; }
   .focus-card .fc-ring-time {
     position: absolute; left: 50%; top: 42%; transform: translate(-50%,-50%);
     font-size: 1.5rem; font-weight: 800; color: #be123c; font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -4123,6 +4125,13 @@
   .focus-cell.q2 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #A8650F; }
   .focus-cell.q3 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #534AB7; }
   .focus-cell.q4 .task-row.is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #185FA5; }
+  /* Split (Time & Tasks) list flattens the rows OUT of the .focus-cell wrappers, so
+     the four rules above never match there — key the same stripe off the row's own
+     data-q instead (same QUAD_TOKENS stripe colours). */
+  #focus-matrix .task-row[data-q="q1"].is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #B23A5B; }
+  #focus-matrix .task-row[data-q="q2"].is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #A8650F; }
+  #focus-matrix .task-row[data-q="q3"].is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #534AB7; }
+  #focus-matrix .task-row[data-q="q4"].is-running > .tr-fg { box-shadow: inset 4px 0 0 0 #185FA5; }
   .focus-cell h4 {
     font-size: .68rem; opacity: .7; text-transform: uppercase;
     /* Pulled up so the title sits closer to the top edge of the cell. */
@@ -4392,6 +4401,14 @@
   .repeat-toggle { display: none !important; }
   body.tt-adding .repeat-toggle { display: inline-flex !important; }
   .repeat-toggle.active { background: #374151; border-color: #374151; color: #fff; }
+  /* Repeat days chosen / memo present → BLACK chip that PERSISTS after the weekday
+     row / note modal closes, so the +Add header shows at a glance that the new task
+     repeats or carries a note (request 2026-06-10). Wins over .active's colours. */
+  .repeat-toggle.has-set, .note-toggle.has-set {
+    background: var(--ink, #111827) !important;
+    border-color: var(--ink, #111827) !important;
+    color: #fff !important;
+  }
   /* Note button — shown next to Repeat only while +Add is open; hidden in the
      weekday-repeat sub-mode so the weekday row has room. */
   .note-toggle { display: none !important; }
@@ -20127,15 +20144,13 @@ function renderImDoing() {
     arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
     arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
     const tr = document.getElementById('fc-ring-track'); if (tr) tr.style.stroke = color;
-    // knob at the elapsed edge — hidden at the very start so there is NO dot at the top
-    if (fracElapsed < 0.012) { knob.style.display = 'none'; }
-    else {
-      knob.style.display = '';
-      const ang = (-90 + fracElapsed * 360) * Math.PI / 180;   // 12 o'clock + clockwise
-      knob.setAttribute('cx', (60 + 52 * Math.cos(ang)).toFixed(1));
-      knob.setAttribute('cy', (60 + 52 * Math.sin(ang)).toFixed(1));
-      knob.style.fill = color;
-    }
+    // knob at the elapsed edge — ALWAYS shown (from 12 o'clock at the very start) as a
+    // white-outlined dot, matching the full-screen dial's indicator (request 2026-06-10).
+    knob.style.display = '';
+    const ang = (-90 + fracElapsed * 360) * Math.PI / 180;   // 12 o'clock + clockwise
+    knob.setAttribute('cx', (60 + 52 * Math.cos(ang)).toFixed(1));
+    knob.setAttribute('cy', (60 + 52 * Math.sin(ang)).toFixed(1));
+    knob.style.fill = color;
     if (_instant) {
       void getComputedStyle(arc).strokeDashoffset;   // flush the no-transition paint
       arc.style.transition = ''; knob.style.transition = '';   // restore CSS .9s for ticks
@@ -23782,15 +23797,25 @@ function _resetAddRepeat() {
   const rt = document.getElementById('repeat-toggle');
   if (rt) rt.classList.remove('active');
   const row = document.getElementById('weekday-row');
-  if (row) _buildWeekdayButtons(row, _addRepeatDays, null);
+  if (row) _buildWeekdayButtons(row, _addRepeatDays, _syncAddSetChips);
   _addNoteText = '';
   const nt = document.getElementById('note-toggle'); if (nt) nt.classList.remove('active');
+  _syncAddSetChips();
+}
+/* BLACK "set" state on the +Add header chips: Repeat goes black while weekdays are
+   chosen, Memo goes black while the note has content — both persist after their
+   row/modal closes so the user can tell the new task repeats / has a note. */
+function _syncAddSetChips() {
+  const rt = document.getElementById('repeat-toggle');
+  if (rt) rt.classList.toggle('has-set', _addRepeatDays.size > 0);
+  const nt = document.getElementById('note-toggle');
+  if (nt) nt.classList.toggle('has-set', _noteHasContent(_addNoteText));
 }
 (function wireRepeatToggle() {
   const rt  = document.getElementById('repeat-toggle');
   const row = document.getElementById('weekday-row');
   if (!rt || !row) return;
-  _buildWeekdayButtons(row, _addRepeatDays, null);   // seed empty buttons
+  _buildWeekdayButtons(row, _addRepeatDays, _syncAddSetChips);   // seed empty buttons
   rt.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
     const on = !document.body.classList.contains('tt-repeat-days');
@@ -23874,7 +23899,7 @@ function openTaskNoteModal(html, onSave, opts){
   if (!nt) return;
   nt.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
-    openTaskNoteModal(_addNoteText, (v) => { _addNoteText = v || ''; nt.classList.toggle('active', _noteHasContent(_addNoteText)); });
+    openTaskNoteModal(_addNoteText, (v) => { _addNoteText = v || ''; nt.classList.toggle('active', _noteHasContent(_addNoteText)); _syncAddSetChips(); });
   });
 })();
 /* While the picker height animates (open / close), the matrix below it moves
