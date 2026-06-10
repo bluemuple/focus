@@ -19925,8 +19925,20 @@ function _fcPlayTaskEnter() {
   if (!card || !header) return;
   if (_fcSwapTimer) { clearTimeout(_fcSwapTimer); _fcSwapTimer = null; }
   try { _fcStopClock(); } catch (_) {}
+  // Capture the cat's CURRENT screen rect BEFORE the card reflows to the active layout,
+  // then PIN it there (position:fixed) so it fades out exactly in place — removing
+  // fc-idle adds the card padding + flex-centres .fc-expanded, which used to drift the
+  // cat down ~12px before it faded (the reported "drops then fades").
+  let _catRect = null;
+  if (cat) { try { _catRect = cat.getBoundingClientRect(); } catch (_) {} }
   card.classList.add('fc-swapping');   // clip the card + overlay the cat
   void card.offsetHeight;              // lay out (the .fc-swapping rule shows the header)
+  if (cat && _catRect && _catRect.width) {
+    cat.style.position = 'fixed';
+    cat.style.left = _catRect.left + 'px'; cat.style.top = _catRect.top + 'px';
+    cat.style.width = _catRect.width + 'px'; cat.style.height = _catRect.height + 'px';
+    cat.style.right = 'auto'; cat.style.bottom = 'auto'; cat.style.margin = '0';
+  }
   // The "Now focusing on" header + the "mm:ss left" row FADE IN together (no slide).
   const fadeEls = [header, leftRow].filter(Boolean);
   if (cat) { cat.style.transition = 'none'; cat.style.opacity = '1'; }
@@ -19940,7 +19952,11 @@ function _fcPlayTaskEnter() {
     fadeEls.forEach(el => { el.style.transition = 'opacity ' + FADE + 'ms ' + ease; el.style.opacity = '1'; });
     _fcSwapTimer = setTimeout(() => {
       card.classList.remove('fc-swapping');
-      if (cat) { cat.style.transition = ''; cat.style.opacity = ''; }
+      if (cat) {
+        cat.style.transition = ''; cat.style.opacity = '';
+        cat.style.position = ''; cat.style.left = ''; cat.style.top = '';
+        cat.style.width = ''; cat.style.height = ''; cat.style.right = ''; cat.style.bottom = ''; cat.style.margin = '';
+      }
       fadeEls.forEach(el => { el.style.transition = ''; el.style.opacity = ''; });
       _fcSwapTimer = null;
     }, FADE + 40);
