@@ -1303,13 +1303,13 @@
   /* inline ⓘ button — muted, ~16-18px, sits inline right after the text. */
   .bc-info {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 18px; height: 18px; margin-left: 4px; padding: 0; vertical-align: -3px;
+    width: 18px; height: 18px; margin-left: 4px; padding: 0; vertical-align: middle;
     border: none; background: transparent; color: var(--text-muted);
     font-size: 15px; line-height: 1; cursor: pointer; border-radius: 50%; flex: 0 0 auto;
     -webkit-tap-highlight-color: transparent;
   }
   .bc-info:hover, .bc-info[aria-expanded="true"] { color: var(--text-main); background: rgba(127,127,127,.16); }
-  .bc-info-sm { width: 16px; height: 16px; font-size: 13px; vertical-align: -2px; }
+  .bc-info-sm { width: 16px; height: 16px; font-size: 13px; vertical-align: middle; }
   @media (min-width: 701px) {
     .bc-direction { font-size: 22px; }
     .bc-diagnostic { font-size: 13px; }
@@ -1389,6 +1389,22 @@
   .coach-pop-body li ul { list-style: none; margin: 6px 0 2px; padding: 0; display: flex; flex-direction: column; gap: 5px; }
   .coach-pop-body li ul li { font-size: .85rem; line-height: 1.4; color: var(--text-muted); padding-left: 14px; }
   .coach-pop-body li ul li::before { content: '–'; }
+  /* "more" capsule — anchored popover only (PC / iPad); grey pill, bottom-right. */
+  .coach-pop-more {
+    display: block; width: fit-content; margin: 8px 0 0 auto;
+    padding: 4px 12px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb);
+    background: var(--button-bg, #f3f4f6); color: var(--text-muted, #6b7280);
+    font: inherit; font-size: .78rem; font-weight: 700; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .coach-pop-more:hover { background: var(--card-border, #e5e7eb); color: var(--text-main); }
+  .coach-pop-more.hidden { display: none; }
+  .coach-pop.sheet .coach-pop-more { display: none; }   /* sheet uses drag-up, not the capsule */
+  /* "more" expansion (block flow — NO flex, which collapsed the popover height): the
+     bubble width (popover) + body max-height animate for the "grow" feel; overflow stays
+     visible so the tail isn't clipped, and the body scrolls if it exceeds the cap. */
+  .coach-pop:not(.sheet).more-open { max-width: 420px; }
+  .coach-pop:not(.sheet).more-open .coach-pop-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding-right: 4px; }
 
   /* ===== Task bar 3D "open side" effect on tick =====
      When a task checkbox is ticked, the row briefly tilts in 3D space and
@@ -7152,7 +7168,7 @@
                      no task → "Add one." / "I'll pour it in." + add-small.png ·
                      task not started → "Nice list." / "Now press start." + start-small.gif. -->
                 <div class="fc-idle-text" id="fc-idle-text"><span class="fit-l1" id="fit-l1"></span><span class="fit-l2" id="fit-l2"></span></div>
-                <img class="fc-no-task" id="fc-no-task" src="images/focus/doro/add-small.png?v=doro-9" alt="" aria-hidden="true">
+                <img class="fc-no-task" id="fc-no-task" src="images/focus/doro/add-small.png?v=doro-10" alt="" aria-hidden="true">
                 <span class="fc-cat-bubble" id="fc-cat-bubble">Add a task.</span>
                 <span class="fc-cat-time" id="fc-cat-time"></span>
                 <button class="fc-cat-play" id="fc-cat-play" type="button" aria-label="Start a task"></button>
@@ -7447,6 +7463,9 @@
           <button class="coach-pop-x" id="coach-pop-x" type="button" aria-label="Close">✕</button>
           <div class="coach-pop-tabs hidden" id="coach-pop-tabs" role="tablist"></div>
           <ul class="coach-pop-body" id="coach-pop-body"></ul>
+          <!-- "more" capsule (anchored popover only, PC / iPad): tap → the bubble grows
+               and swaps to the deeper nested detail (same copy as the iPhone drag-up sheet). -->
+          <button class="coach-pop-more hidden" id="coach-pop-more" type="button">more</button>
         </div>
 
         <!-- Habits & Triggers panel removed (Mana system deleted) -->
@@ -20220,8 +20239,8 @@ function renderImDoing() {
       // face holds its exact place across the add↔start swap.
       const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
       const _want = _anyTask
-        ? ('images/focus/doro/start-small' + (_dk ? '-dark' : '') + '.gif?v=doro-9')
-        : ('images/focus/doro/add-small' + (_dk ? '-dark' : '') + '.png?v=doro-9');
+        ? ('images/focus/doro/start-small' + (_dk ? '-dark' : '') + '.gif?v=doro-10')
+        : ('images/focus/doro/add-small' + (_dk ? '-dark' : '') + '.png?v=doro-10');
       if ((_ntImg.getAttribute('src') || '') !== _want) _ntImg.setAttribute('src', _want);
     }
     if (_anyTask) { try { _fcStartClock(); } catch (_) {} } else { try { _fcStopClock(); } catch (_) {} }
@@ -28684,6 +28703,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   const pop = () => $('coach-pop');
   let _popAnchor = null, _popOpen = false, _popTab = 'students';
   let _popDetail = null, _popExpanded = null;   // collapsed bullets / deep nested view (sheet drag-up)
+  let _popMoreOpen = false;                      // anchored popover (PC/iPad) "more" expanded?
   function _renderBullets(items){
     const body = $('coach-pop-body'); if (!body) return; body.innerHTML = '';
     (items || []).forEach(t => { const li = document.createElement('li'); li.textContent = t; body.appendChild(li); });
@@ -28708,18 +28728,21 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       _renderBullets((detail && detail.single) || []);
     }
   }
-  function _positionPop(){
+  function _positionPop(forceW, forceH){
     const p = pop(), a = _popAnchor; if (!p || !a) return;
     const narrow = window.innerWidth <= 560;
-    p.classList.remove('sheet', 'tail-up', 'tail-down');
+    p.classList.remove('tail-up', 'tail-down');
     const bd = $('coach-pop-backdrop');
     if (narrow) {
+      // Switching to the bottom sheet (e.g. rotate) — drop any anchored "more" expansion.
+      if (_popMoreOpen) _resetMore();
       p.classList.add('sheet');
       if (bd) bd.classList.remove('hidden');
       if (_sheetSt.expanded) p.style.height = _expTargetH() + 'px';   // keep tall on resize/rotate
       else if (!_sheetSt.dragging && !p.classList.contains('snapping')) _sheetSt.collH = p.offsetHeight;
       return;
     }
+    p.classList.remove('sheet');
     // Leaving sheet mode (rotate/resize to wide) — drop any sheet drag state.
     if (_sheetSt.expanded || p.style.height || p.style.transform) {
       p.style.height = ''; p.style.transform = '';
@@ -28729,7 +28752,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     if (bd) bd.classList.add('hidden');
     p.style.left = '0px'; p.style.top = '0px';
     const ar = a.getBoundingClientRect();
-    const pw = p.offsetWidth, ph = p.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, M = 8, GAP = 10;
+    const pw = forceW || p.offsetWidth, ph = forceH || p.offsetHeight, vw = window.innerWidth, vh = window.innerHeight, M = 8, GAP = 10;
     let left = ar.left + ar.width / 2 - pw / 2;
     left = Math.max(M, Math.min(left, vw - pw - M));
     let top; const below = (ar.bottom + GAP + ph) <= (vh - M);
@@ -28739,6 +28762,60 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     p.style.left = left + 'px'; p.style.top = top + 'px';
     const tail = $('coach-pop-tail');
     if (tail) { let tx = ar.left + ar.width / 2 - left; tx = Math.max(14, Math.min(pw - 14, tx)); tail.style.left = (tx - 9) + 'px'; }
+  }
+  // ===== Anchored popover (PC / iPad) "more" → grow + show the deeper detail =====
+  function _resetMore(){
+    const p = pop(), body = $('coach-pop-body'), mb = $('coach-pop-more');
+    _popMoreOpen = false;
+    if (p) { p.classList.remove('more-open'); p.style.width = ''; p.style.transition = ''; }
+    if (body) { body.style.maxHeight = ''; body.style.overflow = ''; body.style.transition = ''; }
+    if (mb) mb.classList.add('hidden');
+  }
+  // Show the grey "more" pill only in the ANCHORED popover (not the sheet) when there's
+  // deeper content to reveal and it isn't already expanded.
+  function _syncMoreBtn(){
+    const mb = $('coach-pop-more'), p = pop(); if (!mb || !p) return;
+    const show = _popOpen && !!_popExpanded && !_popMoreOpen && !p.classList.contains('sheet');
+    mb.classList.toggle('hidden', !show);
+  }
+  // Tap "more": swap to the deep nested view + animate the bubble bigger (width on the
+  // popover, max-height on the body so the tail isn't clipped). Body scrolls if it
+  // exceeds the viewport-clamped height.
+  function _expandAnchored(){
+    const p = pop(), body = $('coach-pop-body');
+    if (!p || !body || _popMoreOpen || !_popExpanded || p.classList.contains('sheet')) return;
+    _popMoreOpen = true;
+    const startW = p.offsetWidth, startBodyH = body.offsetHeight;   // collapsed sizes (pre-render)
+    _renderExpandedView();                 // taller content
+    _syncMoreBtn();                        // hides the pill
+    p.classList.add('more-open');
+    // Measure the UNCAPPED target. Use scrollHeight for the body content height — it's
+    // reliable even when offsetHeight is constrained (iPad returned a capped offsetHeight,
+    // which made the bubble fail to grow). chrome = popover padding around the body.
+    body.style.maxHeight = ''; body.style.overflow = '';
+    p.style.transition = 'none'; p.style.width = '';
+    void p.offsetHeight;
+    const M = 8, vh = window.innerHeight, vw = window.innerWidth;
+    const fullW = Math.min(p.offsetWidth, vw - 2 * M, 420);
+    const contentH = body.scrollHeight;
+    const chrome = Math.max(0, p.offsetHeight - body.offsetHeight);
+    const targetBodyH = Math.min(contentH, Math.max(120, (vh - 2 * M) - chrome));
+    // start collapsed, then transition to the target
+    p.style.width = startW + 'px';
+    body.style.maxHeight = startBodyH + 'px'; body.style.overflow = 'hidden';
+    void p.offsetHeight;
+    p.style.transition = 'width .28s cubic-bezier(.22,1,.36,1)';
+    body.style.transition = 'max-height .28s cubic-bezier(.22,1,.36,1)';
+    p.style.width = fullW + 'px';
+    body.style.maxHeight = targetBodyH + 'px';
+    _positionPop(fullW, chrome + targetBodyH);            // clamp to the viewport at final size
+    setTimeout(() => {
+      const q = pop(), b = $('coach-pop-body');
+      if (!q || !_popOpen || !_popMoreOpen) return;
+      q.style.transition = '';
+      if (b) { b.style.transition = ''; b.style.overflow = ''; }   // → CSS overflow-y:auto
+      _positionPop(fullW, chrome + targetBodyH);
+    }, 320);
   }
   // rAF-batch reposition so scroll/resize don't thrash layout (getBoundingClientRect +
   // style writes once per frame at most). Scroll is passive so it never blocks momentum.
@@ -28751,12 +28828,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     _popAnchor = anchor; _popTab = 'students';
     _popDetail = detail || null;
     _popExpanded = (expanded && expanded.length) ? expanded : null;
+    _popMoreOpen = false;
     p.setAttribute('aria-label', title || 'Details');
     p.setAttribute('aria-modal', 'true');
     _renderTabs(detail);
     p.classList.remove('hidden');
     _positionPop();
     _popOpen = true;
+    _syncMoreBtn();   // reveal the "more" pill on PC/iPad when deeper detail exists
     if (anchor.setAttribute) anchor.setAttribute('aria-expanded', 'true');
     setTimeout(() => { const x = $('coach-pop-x'); if (x) { try { x.focus(); } catch (_) {} } }, 0);
     document.addEventListener('keydown', _onKey, true);
@@ -28772,6 +28851,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     p.style.height = ''; p.style.transform = '';
     _sheetSt.expanded = false; _sheetSt.dragging = false; _sheetSt.collH = 0;
     try { _unlockHomeScroll(); } catch (_) {}   // a close mid-drag must release the <main> hold
+    try { _resetMore(); } catch (_) {}          // clear any anchored "more" expansion
     _popDetail = null; _popExpanded = null;
     if (_popOpen && _popAnchor && _popAnchor.setAttribute) { _popAnchor.setAttribute('aria-expanded', 'false'); try { _popAnchor.focus(); } catch (_) {} }
     _popOpen = false; _popAnchor = null;
@@ -28967,6 +29047,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   function _wire(){
     const x = $('coach-pop-x'); if (x) x.onclick = (e) => { e.preventDefault(); closeCoachPop(); };
     const bd = $('coach-pop-backdrop'); if (bd) bd.onclick = closeCoachPop;
+    const more = $('coach-pop-more'); if (more) more.onclick = (e) => { e.preventDefault(); e.stopPropagation(); _expandAnchored(); };
     _wireSheetDrag();
     // NOTE: tapping OUTSIDE the bucket deliberately KEEPS the selection + coaching
     // text (user reversed the original outside-tap-deselect spec). The ONLY way back
