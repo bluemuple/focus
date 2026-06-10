@@ -3370,6 +3370,28 @@
     body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-stage { width: 128px; max-width: 128px; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section.b3d-active #b3d-scene { transform: scale(0.5); }
   }
+  /* iPhone LANDSCAPE (~700–940px wide, side-by-side now-focusing + bucket). The columns
+     are much narrower than iPad-landscape, so the idle text/image and the bucket money/
+     bucket overlapped. Scale the inner padding + image + bucket DOWN (keeping the iPad-
+     landscape ratios) for a comfortable gap, and NEUTRALISE the landscape tuning x-shifts
+     (dt/st +35, di/si −35) — those are tuned for the wide iPad column and shove the text
+     + face together on the narrow phone column. The idle text also auto-shrinks (_fitIdleText). */
+  @media (orientation: landscape) and (min-width: 701px) and (max-width: 940px) {
+    body:not(.fv-active) #focus-page .focus-right > #focus-card { padding-left: 14px; padding-right: 14px; }
+    body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-idle-text,
+    body:not(.fv-active) #focus-page .focus-card.fc-down .fc-idle-text,
+    body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-no-task,
+    body:not(.fv-active) #focus-page .focus-card.fc-down .fc-no-task { transform: none !important; }
+    body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-no-task,
+    body:not(.fv-active) #focus-page .focus-card.fc-idle .fc-no-task { max-width: 38%; height: 74%; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section { padding: 10px 14px; gap: 14px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-left { min-width: 0; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .fc-money-big { font-size: 1.35rem; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .fc-money-change { font-size: .72rem; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-btn { width: 34px; height: 34px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-stage { flex: 0 0 104px; width: 104px; max-width: 104px; }
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section.b3d-active #b3d-scene { transform: scale(0.40); }
+  }
 
   .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 700px) { .scores { grid-template-columns: 1fr; } }
@@ -20192,6 +20214,23 @@ function _fitElTo2Lines(el, minPx) {
   }
 }
 function _fitFocusName() { _fitElTo2Lines(document.getElementById('fc-name'), 11); }
+/* Shrink the idle "Nice list." / "Add one." two-liner so it fits its slot beside the
+   face image WITHOUT overflowing into it (the lines are white-space:nowrap). Keeps a
+   comfortable text↔image gap at any column width — esp. the narrow side-by-side wide
+   layout (iPhone landscape) where 1.4rem text used to run under the image. */
+function _fitIdleText() {
+  const l1 = document.getElementById('fit-l1'), l2 = document.getElementById('fit-l2');
+  if (!l1 || !l2) return;
+  l1.style.fontSize = ''; l2.style.fontSize = '';
+  const slot = l1.parentElement ? l1.parentElement.clientWidth : 0;   // .fc-idle-text width
+  if (!slot) return;
+  let size = parseFloat(getComputedStyle(l1).fontSize) || 22, guard = 0;
+  while (size > 11 && guard < 48 && (l1.scrollWidth > l1.clientWidth + 1 || l2.scrollWidth > l2.clientWidth + 1)) {
+    size = Math.max(11, size - 1);
+    l1.style.fontSize = size + 'px'; l2.style.fontSize = size + 'px';
+    guard++;
+  }
+}
 /* Shrink a one-line element's font until it fits its width (no wrap, no overflow). */
 function _fitNameOneLine(el, minPx) {
   if (!el) return;
@@ -20372,6 +20411,7 @@ function renderImDoing() {
     if (_fitL1 && _fitL2 && !_celebActive) {   // during the start beat, keep the qN.png + phrase
       _fitL1.textContent = _anyTask ? 'Nice list.' : 'Add one.';
       _fitL2.textContent = _anyTask ? 'Now press start.' : "I'll pour it in.";
+      requestAnimationFrame(_fitIdleText);     // shrink to fit beside the face (no overlap)
     }
     // The idle→active start swap (fc-swapping) normally suppresses this image swap
     // so the cat doesn't flicker mid-fade. BUT when there are NO tasks we must still
@@ -23285,6 +23325,8 @@ function _onResizeFocusHome() {
     if (state.currentPage === 'focus' && !document.body.classList.contains('fv-active')) {
       if (typeof layoutFocusHomeWide === 'function') layoutFocusHomeWide();
       if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime();
+      try { if (typeof _fitIdleText === 'function') _fitIdleText(); } catch (_) {}   // re-fit idle text to the new column width
+      try { if (typeof _fitFocusName === 'function') _fitFocusName(); } catch (_) {}
       // Re-fill the phone home gauge to the new viewport height (#3). drawTimeArea
       // resets the area then calls _fillHomeTimeArea, so the bucket re-tracks the bottom.
       if (typeof drawTimeArea === 'function') drawTimeArea();
