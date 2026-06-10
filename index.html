@@ -28720,6 +28720,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   let _popAnchor = null, _popOpen = false, _popTab = 'students';
   let _popDetail = null, _popExpanded = null;   // collapsed bullets / deep nested view (sheet drag-up)
   let _popMoreOpen = false;                      // anchored popover (PC/iPad) "more" expanded?
+  let _moreTopY = 0, _moreChrome = 0;            // expanded bubble: fixed top edge + padding around body
   function _renderBullets(items){
     const body = $('coach-pop-body'); if (!body) return; body.innerHTML = '';
     (items || []).forEach(t => { const li = document.createElement('li'); li.textContent = t; body.appendChild(li); });
@@ -28747,6 +28748,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   function _positionPop(forceW, forceH){
     const p = pop(), a = _popAnchor; if (!p || !a) return;
     const narrow = window.innerWidth <= 560;
+    // Expanded "more" bubble keeps its fixed top edge + full-height geometry on
+    // scroll/resize (don't re-anchor it like the small popover).
+    if (_popMoreOpen && !narrow) { _layoutMoreOpen(); return; }
     p.classList.remove('tail-up', 'tail-down');
     const bd = $('coach-pop-backdrop');
     if (narrow) {
@@ -28794,43 +28798,60 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const show = _popOpen && !!_popExpanded && !_popMoreOpen && !p.classList.contains('sheet');
     mb.classList.toggle('hidden', !show);
   }
-  // Tap "more": swap to the deep nested view + animate the bubble bigger (width on the
-  // popover, max-height on the body so the tail isn't clipped). Body scrolls if it
-  // exceeds the viewport-clamped height.
+  // Re-apply the expanded bubble's fixed geometry: its TOP edge stays where the small
+  // bubble was, and it extends DOWN to ~10px above the screen bottom (body scrolls).
+  // Used on first expand + on scroll/resize while expanded.
+  const _MORE_BOT_GAP = 10;
+  function _moreFinalH(){ return Math.max(160, (window.innerHeight - _MORE_BOT_GAP) - _moreTopY); }
+  function _layoutMoreOpen(){
+    const p = pop(), body = $('coach-pop-body'); if (!p || !body) return;
+    p.style.top = _moreTopY + 'px';
+    // max-height is set INSTANTLY (transition:none) — a CSS `transition: all` on the
+    // body otherwise kept max-height perpetually mid-animation (stuck near the start).
+    body.style.transition = 'none';
+    body.style.maxHeight = Math.max(80, _moreFinalH() - _moreChrome) + 'px';
+    body.style.overflow = 'auto';
+  }
+  // Tap "more": swap to the deep nested view + animate the bubble bigger. The TOP edge
+  // is pinned to the small bubble's top; the bottom grows to 10px above the screen
+  // bottom; the body scrolls. (Width also grows up to 420 for readability.)
   function _expandAnchored(){
     const p = pop(), body = $('coach-pop-body');
     if (!p || !body || _popMoreOpen || !_popExpanded || p.classList.contains('sheet')) return;
     _popMoreOpen = true;
     const startW = p.offsetWidth, startBodyH = body.offsetHeight;   // collapsed sizes (pre-render)
+    const topY = p.getBoundingClientRect().top;                     // KEEP the small bubble's top edge
     _renderExpandedView();                 // taller content
     _syncMoreBtn();                        // hides the pill
     p.classList.add('more-open');
-    // Measure the UNCAPPED target. Use scrollHeight for the body content height — it's
-    // reliable even when offsetHeight is constrained (iPad returned a capped offsetHeight,
-    // which made the bubble fail to grow). chrome = popover padding around the body.
+    // chrome = popover padding around the body (measured with the body uncapped).
     body.style.maxHeight = ''; body.style.overflow = '';
     p.style.transition = 'none'; p.style.width = '';
     void p.offsetHeight;
-    const M = 8, vh = window.innerHeight, vw = window.innerWidth;
+    const M = 8, vw = window.innerWidth;
     const fullW = Math.min(p.offsetWidth, vw - 2 * M, 420);
-    const contentH = body.scrollHeight;
-    const chrome = Math.max(0, p.offsetHeight - body.offsetHeight);
-    const targetBodyH = Math.min(contentH, Math.max(120, (vh - 2 * M) - chrome));
-    // start collapsed, then transition to the target
+    _moreChrome = Math.max(0, p.offsetHeight - body.offsetHeight);
+    _moreTopY = topY;
+    // keep the left edge but re-clamp so the grown width doesn't overflow the right.
+    let left = parseFloat(p.style.left); if (isNaN(left)) left = p.getBoundingClientRect().left;
+    left = Math.max(M, Math.min(left, vw - fullW - M));
+    // re-aim the tail at the ⓘ for the (possibly shifted) left + new width.
+    const tail = $('coach-pop-tail'), a = _popAnchor;
+    // The WIDTH grows with a quick transition for a little "grow" feel; the HEIGHT is
+    // set instantly by _layoutMoreOpen (body max-height has no transition — see note there).
+    p.style.transition = 'width .28s cubic-bezier(.22,1,.36,1), left .28s cubic-bezier(.22,1,.36,1)';
     p.style.width = startW + 'px';
-    body.style.maxHeight = startBodyH + 'px'; body.style.overflow = 'hidden';
     void p.offsetHeight;
-    p.style.transition = 'width .28s cubic-bezier(.22,1,.36,1)';
-    body.style.transition = 'max-height .28s cubic-bezier(.22,1,.36,1)';
+    p.style.left = left + 'px';
+    p.style.top = topY + 'px';
     p.style.width = fullW + 'px';
-    body.style.maxHeight = targetBodyH + 'px';
-    _positionPop(fullW, chrome + targetBodyH);            // clamp to the viewport at final size
+    _layoutMoreOpen();                                   // pin top + body max-height → bottom 10px above screen
+    if (tail && a) { try { const ar = a.getBoundingClientRect(); let tx = ar.left + ar.width / 2 - left; tx = Math.max(14, Math.min(fullW - 14, tx)); tail.style.left = (tx - 9) + 'px'; } catch (_) {} }
     setTimeout(() => {
-      const q = pop(), b = $('coach-pop-body');
+      const q = pop();
       if (!q || !_popOpen || !_popMoreOpen) return;
       q.style.transition = '';
-      if (b) { b.style.transition = ''; b.style.overflow = ''; }   // → CSS overflow-y:auto
-      _positionPop(fullW, chrome + targetBodyH);
+      _layoutMoreOpen();
     }, 320);
   }
   // rAF-batch reposition so scroll/resize don't thrash layout (getBoundingClientRect +
