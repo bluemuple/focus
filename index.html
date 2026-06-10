@@ -18887,7 +18887,13 @@ function openEventModal(existing, opts) {
       }
     }
     function onMove(clientY) { _commit(clientY, false); }
+    // Idempotent: onUp can now arrive twice (touchend AND the visibilitychange
+    // safety below) — only the first run tears down, so the lock can't double-free.
+    let _upDone = false;
     function onUp() {
+      if (_upDone) return; _upDone = true;
+      document.removeEventListener('visibilitychange', _visSafety);
+      window.removeEventListener('pagehide', _visSafety);
       _commit(_lastY, true);                     // exact final height (bypass dead-band)
       if (isTouch) {
         document.removeEventListener('touchmove', tMove);
@@ -18908,7 +18914,10 @@ function openEventModal(existing, opts) {
       // The frozen floor override already makes them agree in most cases — this
       // glides whatever's left so there's never a visible hop.
       if (_areaEl) { _areaEl.classList.remove('no-height-anim'); _areaEl.style.transition = ''; }
-      if (typeof drawTimeArea === 'function') drawTimeArea();
+      // try/catch: an exception here used to abort onUp BEFORE the overflow restore
+      // below → #time-area stayed overflow:hidden + _gaugeBusy true until reload
+      // (one suspected source of the "page stuck mid-operation" scroll bug).
+      try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
       // (Skip the durationMs reconciliation in 2×2 mode — there the gauge height is
       // the flipGaugeH override, already applied by drawTimeArea; touching durationMs
       // would be wrong and the snap-back glide isn't needed.)
@@ -18944,6 +18953,11 @@ function openEventModal(existing, opts) {
     function mUp()     { onUp(); }
     function tMove(ev) { if (ev.touches[0]) { ev.preventDefault(); onMove(ev.touches[0].clientY); } }
     function tUp()     { onUp(); }
+    // Safety net: if the app is backgrounded / page hidden mid-drag, touchend may
+    // never arrive — release the drag (and its overflow:hidden hold) right away.
+    function _visSafety(e){ if ((e && e.type === 'pagehide') || document.hidden) onUp(); }
+    document.addEventListener('visibilitychange', _visSafety);
+    window.addEventListener('pagehide', _visSafety);
     if (isTouch) {
       document.addEventListener('touchmove', tMove, { passive: false });
       document.addEventListener('touchend',  tUp);
@@ -23987,8 +24001,12 @@ function _trackGaugeDuringReflow(ms, dir) {
       area.scrollTop = _frozenScroll;
       // Freeze the now-settled floor so the final drawTimeArea() and the next
       // 1-s tick compute the SAME height as this last reflow frame → no 1 px hop.
-      const _settled = _measureGaugeFloorMs();
-      if (_settled != null) _setGaugeFloorOverride(_settled);
+      // (try/catch — an exception here would skip the overflow restore below and
+      // leave the gauge unscrollable + the 1-s tick paused until reload.)
+      try {
+        const _settled = _measureGaugeFloorMs();
+        if (_settled != null) _setGaugeFloorOverride(_settled);
+      } catch (_) {}
       // Re-enable the .28s height transition BEFORE the final drawTimeArea so the
       // residual difference between the last (monotonic-clamped) animation frame
       // and the exact resting height EASES instead of snapping. That snap is the
@@ -24332,10 +24350,26 @@ function _buildPillarPicker() {
     _mLock = { m, ob: m.style.overscrollBehavior, snap };
     m.style.overscrollBehavior = 'none'; m.addEventListener('scroll', snap, { passive: true });
   };
-  const _unlockMain = () => { if (!_mLock) return; const b = _mLock; _mLock = null; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap); };
-  scroll.addEventListener('touchstart', () => { _dropKb(); _lockMain(); }, { passive: true });
+  const _unlockMain = () => {
+    if (window.__bidoroWheelUnlock === _unlockMain) window.__bidoroWheelUnlock = null;
+    if (!_mLock) return; const b = _mLock; _mLock = null; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+  };
+  scroll.addEventListener('touchstart', () => { _dropKb(); _lockMain(); window.__bidoroWheelUnlock = _unlockMain; }, { passive: true });
   scroll.addEventListener('touchend', _unlockMain, { passive: true });
   scroll.addEventListener('touchcancel', _unlockMain, { passive: true });
+  // Safety net: the wheel can be REMOVED mid-touch (picker torn down while a finger
+  // is still on it) — its element-bound touchend then never fires and the <main>
+  // snap-back pin leaked, freezing the page scroll at one position until reload.
+  // The wheel is rebuilt per picker open, so the document/lifecycle fallbacks are
+  // registered ONCE and delegate to the CURRENT instance via __bidoroWheelUnlock.
+  if (!window.__bidoroWheelUnlockWired) {
+    window.__bidoroWheelUnlockWired = true;
+    const _safeUnlock = () => { try { if (window.__bidoroWheelUnlock) window.__bidoroWheelUnlock(); } catch (_) {} };
+    document.addEventListener('touchend', _safeUnlock, { capture: true, passive: true });
+    document.addEventListener('touchcancel', _safeUnlock, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) _safeUnlock(); });
+    window.addEventListener('pagehide', _safeUnlock);
+  }
   scroll.addEventListener('mousedown', _dropKb, { passive: true });
   // Lay out: pad so an item centres, measure the stride, start in the middle copy ("None"
   // centred). Retry over a few frames until the wheel actually has a height — otherwise the
@@ -27426,7 +27460,7 @@ setInterval(() => {
       _td = null;
     });
 
-    document.addEventListener('pointercancel', () => {
+    function _cancelRowDrag() {
       if (!_td) return;
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
@@ -27440,9 +27474,38 @@ setInterval(() => {
       if (_ghost) { _ghost = null; placeGhost(); }
       _draggedTask = null;
       _td = null;
-    });
+    }
+    document.addEventListener('pointercancel', _cancelRowDrag);
+    // Safety net: a leaked _td doesn't just hold the scroll lock — the permanent
+    // _rowDragGuard touchmove preventDefault keys on it, so a stale _td killed ALL
+    // touch scrolling on <main> until reload. Release on lifecycle losses where
+    // neither pointerup nor pointercancel is guaranteed to arrive.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) _cancelRowDrag(); });
+    window.addEventListener('pagehide', _cancelRowDrag);
   })();
 
+})();
+
+/* ===== Scroll-lock watchdog (the "stuck mid-operation, can't scroll" bug) =====
+   Every page-scroll lock in the app is touch-scoped (gauge resize, +Add reflow,
+   task-bar swipe, 3D face adjust, +Add wheel) and restores the scroller styles on
+   touchend — but a missed release (OS gesture steal, element removed mid-touch,
+   app backgrounded, an exception mid-teardown) used to freeze scrolling until
+   reload. The per-lock lifecycle fallbacks handle their own release; this is the
+   final backstop: on the FIRST finger of a fresh gesture no touch-scoped lock can
+   legitimately be held (its owning touch has ended), so any leftover inline
+   overflow:hidden / overscroll-behavior on the scrollers is a leak — clear it. */
+(function scrollLockWatchdog(){
+  document.addEventListener('touchstart', (e) => {
+    try {
+      if (e.touches && e.touches.length > 1) return;   // a held finger may own a LIVE lock
+      [document.querySelector('main'), document.getElementById('time-area')].forEach(el => {
+        if (!el) return;
+        if (el.style.overflow === 'hidden') el.style.overflow = '';
+        if (el.style.overscrollBehavior) el.style.overscrollBehavior = '';
+      });
+    } catch (_) {}
+  }, { capture: true, passive: true });
 })();
 
 /* =========================================================================
@@ -28331,6 +28394,13 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     scene.addEventListener('touchmove', (e) => { if (_bLock) e.preventDefault(); }, { passive: false });
     scene.addEventListener('touchend', _unlockScroll);
     scene.addEventListener('touchcancel', _unlockScroll);
+    // Safety net: if the scene's own touchend is swallowed (face rebuilt mid-gesture,
+    // OS gesture steal, app backgrounded) the <main> overflow:hidden + snap-back pin
+    // leaked and froze the page until reload. _unlockScroll is idempotent.
+    document.addEventListener('touchend', _unlockScroll, { capture: true, passive: true });
+    document.addEventListener('touchcancel', _unlockScroll, { capture: true, passive: true });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) _unlockScroll(); });
+    window.addEventListener('pagehide', _unlockScroll);
   }
   function render(){ syncFromState(); build(); apply(); }
   window.bidoroBucket3DRender = render;
