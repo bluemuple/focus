@@ -3750,6 +3750,11 @@
   /* Big "[money] for [task]" line — wraps to up to 2 lines and is shrunk to fit by
      _fitElTo2Lines (no ellipsis, never breaks a word mid-word). */
   .fc-done-msg .fdm-l2 { max-width: 100%; overflow: hidden; white-space: normal; word-break: normal; overflow-wrap: normal; hyphens: none; font-size: 1.3rem; font-weight: 800; color: #059669; }   /* big + bold money line — green, same as the bucket "Today +$…" (#059669) */
+  /* 3-line treatment for a long task name: when "$… for [name]" would wrap, the
+     "$… for" lead sits on its own line + the name on the line below, shrunk by JS to
+     fit ONE line so it never overlaps the right-hand image. */
+  .fc-done-msg .fdm-lead { display: block; }
+  .fc-done-msg .fdm-name { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; }
   .fc-done-img { flex: 0 0 auto; height: 46%; width: auto; max-width: 24%; object-fit: contain; align-self: center; }   /* ~half of the old size */
   /* ===== Topbar "now focusing" overlay =====
      Once the page is scrolled (body.scrolled-now) the topbar's button cluster
@@ -7219,7 +7224,7 @@
           <div class="fc-done" id="fc-done" aria-hidden="true">
             <div class="fc-done-row">
               <div class="fc-done-msg"><span class="fdm-l1" id="fdm-l1"></span><span class="fdm-l2" id="fdm-l2"></span></div>
-              <img class="fc-done-img" id="fc-done-img" src="images/focus/doro/comment.png?v=doro-4" alt="" aria-hidden="true">
+              <img class="fc-done-img" id="fc-done-img" src="images/focus/doro/comment.png?v=doro-5" alt="" aria-hidden="true">
             </div>
           </div>
         </div>
@@ -20020,10 +20025,13 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   // only) = the early/late detail.
   let msgs;
   // a = small faint LABEL (top line); b = big bold money + task (bottom line).
+  // Messages that END in the task name carry it separately (b = the lead, name = the
+  // task) so show() can keep it on ONE line — short names stay 2 lines ("$X for name"),
+  // long names go 3 lines ("$X for" / "name", name shrunk to fit + no image overlap).
   if (rw.kind === 'none' || total <= 0) {
-    msgs = [{ a: 'Nice work', b: 'Finished ' + name }];
+    msgs = [{ a: 'Nice work', b: 'Finished', name: name }];
   } else {
-    msgs = [{ a: 'You got paid', b: '$' + total + ' for ' + name }];
+    msgs = [{ a: 'You got paid', b: '$' + total + ' for', name: name }];
     if (rw.kind === 'early' && rw.delta > 0)     msgs.push({ a: 'Finished early', b: '+$' + Math.abs(rw.delta) + ' extra' });
     else if (rw.kind === 'late' && rw.delta < 0) msgs.push({ a: 'Finished late', b: '−$' + Math.abs(rw.delta) + ' less' });
   }
@@ -20035,9 +20043,14 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   let mi = 0;
   function show(i) {
     mi = i;
-    l1.textContent = msgs[i].a; l2.textContent = msgs[i].b;
-    // Fit the big "$X for [name]" line into 2 lines (shrink instead of ellipsis).
-    try { _fitElTo2Lines(l2, 12); } catch (_) {}
+    l1.textContent = msgs[i].a;
+    if (msgs[i].name != null) {
+      try { _renderPayLine(l2, msgs[i].b, msgs[i].name); } catch (_) { l2.textContent = msgs[i].b + ' ' + msgs[i].name; }
+    } else {
+      l2.innerHTML = ''; l2.textContent = msgs[i].b;
+      // Fit a plain detail line into 2 lines (shrink instead of ellipsis).
+      try { _fitElTo2Lines(l2, 12); } catch (_) {}
+    }
     if (_fcDoneTimer) { clearTimeout(_fcDoneTimer); _fcDoneTimer = null; }
     // After 6 s: auto-advance to the next message, or (on the last) revert.
     _fcDoneTimer = setTimeout(() => { if (i < msgs.length - 1) show(i + 1); else _fcHideDone(); }, 6000);
@@ -20045,7 +20058,7 @@ function _fcShowDoneReward(rw, taskName, pillar) {
   // Dark mode → the teal-background comment image (matches --card-bg) so it blends.
   try {
     const dimg = document.getElementById('fc-done-img');
-    if (dimg) { const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()); dimg.src = 'images/focus/doro/comment' + (_dk ? '-dark' : '') + '.png?v=doro-4'; }
+    if (dimg) { const _dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme()); dimg.src = 'images/focus/doro/comment' + (_dk ? '-dark' : '') + '.png?v=doro-5'; }
   } catch (_) {}
   card.classList.add('fc-done-on');
   show(0);
@@ -20086,6 +20099,34 @@ function _fitElTo2Lines(el, minPx) {
   }
 }
 function _fitFocusName() { _fitElTo2Lines(document.getElementById('fc-name'), 11); }
+/* Shrink a one-line element's font until it fits its width (no wrap, no overflow). */
+function _fitNameOneLine(el, minPx) {
+  if (!el) return;
+  el.style.fontSize = '';
+  const avail = el.clientWidth; if (!avail) return;
+  const MIN = minPx || 11;
+  let size = parseFloat(getComputedStyle(el).fontSize) || 24, guard = 0;
+  while (size > MIN && guard < 90 && el.scrollWidth > el.clientWidth + 1) {
+    size = Math.max(MIN, size - 1); el.style.fontSize = size + 'px'; guard++;
+  }
+}
+/* Done-reward money line. Try "lead name" on ONE line; if it would wrap, split into
+   the lead ("$X for") on its own line + the task name below, shrunk to ONE line so it
+   never wraps or overlaps the right-hand image. (3-line layout for long task names.) */
+function _renderPayLine(l2, lead, name) {
+  if (!l2) return;
+  l2.style.fontSize = ''; l2.innerHTML = '';
+  l2.textContent = lead + ' ' + name;
+  const cs = getComputedStyle(l2), size = parseFloat(cs.fontSize) || 20;
+  const lh = parseFloat(cs.lineHeight) || size * 1.14;
+  const fitsOneLine = (l2.scrollWidth <= l2.clientWidth + 1) && (l2.offsetHeight <= lh + 2);
+  if (fitsOneLine) return;                                  // short name → keep the 2-line total
+  l2.innerHTML = '';
+  const leadEl = document.createElement('span'); leadEl.className = 'fdm-lead'; leadEl.textContent = lead;
+  const nameEl = document.createElement('span'); nameEl.className = 'fdm-name'; nameEl.textContent = name;
+  l2.appendChild(leadEl); l2.appendChild(nameEl);
+  _fitNameOneLine(nameEl, 11);
+}
 /* ADHD redirect reward — when the user switches FROM a q4 distraction up-timer
    TO a real focus task, a short praise briefly replaces "Now focusing on" in the
    focus card, then reverts on its own. Plain + encouraging, never shaming.
