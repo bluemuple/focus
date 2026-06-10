@@ -1300,8 +1300,6 @@
     margin: 0; font-size: 12px; font-weight: 600; line-height: 1.25; color: var(--text-muted);
     overflow-wrap: anywhere;
   }
-  /* compact one-line balance, pinned near the bottom of the column. */
-  .bc-balance { margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* inline ⓘ button — muted, ~16-18px, sits inline right after the text. */
   .bc-info {
     display: inline-flex; align-items: center; justify-content: center;
@@ -1315,7 +1313,6 @@
   @media (min-width: 701px) {
     .bc-direction { font-size: 22px; }
     .bc-diagnostic { font-size: 13px; }
-    .bc-balance { font-size: 12.5px; }
   }
 
   /* ⓘ popover — anchored card with a tail; clamps to viewport; bottom-sheet on narrow. */
@@ -1379,8 +1376,10 @@
   /* Sheet drag/snap mechanics: column layout so the bullet list is the scroller in the
      expanded state; .snapping animates between snap points; .no-anim kills the slide-in
      animation (its fill-mode would otherwise override the drag transform). */
-  .coach-pop.sheet { display: flex; flex-direction: column; padding-top: 26px; }
-  .coach-pop.sheet .coach-pop-body { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; min-height: 0; }
+  /* touch-action: the sheet's whitespace (paddings, tabs row) is a DRAG zone — the
+     browser must not pan there; only the bullet list keeps native vertical scroll. */
+  .coach-pop.sheet { display: flex; flex-direction: column; padding-top: 26px; touch-action: none; }
+  .coach-pop.sheet .coach-pop-body { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; min-height: 0; touch-action: pan-y; }
   .coach-pop.sheet.expanded .coach-pop-body { flex: 1; }
   .coach-pop.sheet.no-anim { animation: none; }
   .coach-pop.sheet.snapping { transition: height .26s cubic-bezier(.22,1,.36,1), transform .26s cubic-bezier(.22,1,.36,1); }
@@ -7385,7 +7384,8 @@
             <div class="bucket-coach" id="bucket-coach" aria-hidden="true">
               <p class="bc-direction" id="bc-direction"></p>
               <p class="bc-diagnostic" id="bc-diagnostic"></p>
-              <div class="bc-balance" id="bc-balance"></div>
+              <!-- (the grey compact balance line was removed 2026-06-10 — the two
+                   coaching lines sit vertically centred on the column instead) -->
             </div>
           </div>
           <!-- RIGHT: the bucket itself (3D scene; SVG kept laid-out at opacity 0). -->
@@ -28532,14 +28532,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     tail.appendChild(btn);
     el.appendChild(tail);
   }
-  function _compactBalance(){
-    try {
-      const m = (typeof state !== 'undefined') ? (state.money || 0) : 0;
-      const bal = (m < 0 ? '-' : '') + '$' + _moneyDigits(m);
-      let delta = 0; try { delta = moneyChangeForScale('D').delta; } catch (_) {}
-      return bal + ' · Today ' + (delta >= 0 ? '+' : '−') + '$' + _moneyDigits(delta);
-    } catch (_) { return ''; }
-  }
   /* Shrink the direction font (the biggest line) until the whole coaching card fits
      within the column height — so the full message always shows (no ellipsis) and the
      section never grows (no layout jump). Resets to the responsive CSS size first. */
@@ -28555,8 +28547,8 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   }
   function _render(content){
     closeCoachPop();   // stale popover from a previous selection
-    const dE = $('bc-direction'), gE = $('bc-diagnostic'), bE = $('bc-balance');
-    if (!dE || !gE || !bE) return;
+    const dE = $('bc-direction'), gE = $('bc-diagnostic');
+    if (!dE || !gE) return;
     if (!_dirInfo)  _dirInfo  = _mkInfo(false, 'More on this suggestion');
     if (!_diagInfo) _diagInfo = _mkInfo(true,  'More on this reading');
     // ⓘ only when there is BOTH visible text and detail content behind it (a user
@@ -28571,7 +28563,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       _setLineWithInfo(gE, content.diagnostic, _diagInfo);
       _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail, content.expanded); };
     } else gE.textContent = hasDg ? content.diagnostic : '';
-    bE.textContent = _compactBalance();
     _curContent = content;
     _coachAriaHidden(false);   // state 2 content is now visible → expose to screen readers
     requestAnimationFrame(_fitCoachToHeight);
@@ -28594,11 +28585,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     _cur = { idx: -1, lvl: -1 };
     window.__bidoroBucketSel(c.idx, c.lvl);
   };
-  // Keep the compact balance current if money changes while a face is selected.
-  window.__bidoroBucketCoachRefreshMoney = function(){
-    const bE = $('bc-balance');
-    if (bE && _curContent && sec() && sec().classList.contains('b3d-sel')) bE.textContent = _compactBalance();
-  };
+  // No-op since the compact balance line was removed from state 2 (2026-06-10) —
+  // kept because renderMoneyCard still calls it on every money change.
+  window.__bidoroBucketCoachRefreshMoney = function(){};
 
   // ===== Reusable ⓘ popover =====
   const pop = () => $('coach-pop');
@@ -28691,6 +28680,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     p.classList.remove('expanded', 'no-anim', 'snapping', 'dragging');
     p.style.height = ''; p.style.transform = '';
     _sheetSt.expanded = false; _sheetSt.dragging = false; _sheetSt.collH = 0;
+    try { _unlockHomeScroll(); } catch (_) {}   // a close mid-drag must release the <main> hold
     _popDetail = null; _popExpanded = null;
     if (_popOpen && _popAnchor && _popAnchor.setAttribute) { _popAnchor.setAttribute('aria-expanded', 'false'); try { _popAnchor.focus(); } catch (_) {} }
     _popOpen = false; _popAnchor = null;
@@ -28763,20 +28753,40 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     p.style.transform = 'translateY(' + (p.offsetHeight + 40) + 'px)';
     setTimeout(() => { if (_popOpen) closeCoachPop(); }, 240);
   }
+  // Page-scroll lock while the sheet is being dragged — the home page behind must
+  // NOT scroll along with a downward sheet drag. iOS WKWebView ignores touch-action
+  // alone (same trap as the 3D face-adjust lock), so: <main> overflow:hidden +
+  // scroll snap-back + a non-passive touchmove preventDefault while held.
+  let _shLock = null;
+  function _shPreventTouch(e){ if (_sheetSt.dragging) e.preventDefault(); }
+  function _lockHomeScroll(){
+    if (_shLock) return; const m = document.querySelector('main'); if (!m) return;
+    const y0s = m.scrollTop; const snap = () => { if (m.scrollTop !== y0s) m.scrollTop = y0s; };
+    _shLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
+    m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
+    m.addEventListener('scroll', snap, { passive: true });
+    document.addEventListener('touchmove', _shPreventTouch, { passive: false });
+  }
+  function _unlockHomeScroll(){
+    if (!_shLock) return; const b = _shLock; _shLock = null;
+    b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+    document.removeEventListener('touchmove', _shPreventTouch);
+  }
   function _wireSheetDrag(){
-    const h = $('coach-pop-handle'); if (!h) return;
+    const p0 = pop(); if (!p0) return;
     let y0 = 0, baseH = 0, ty = 0, lastY = 0, lastT = 0, vel = 0;
-    h.addEventListener('pointerdown', (e) => {
-      const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
-      e.preventDefault();
-      _sheetSt.dragging = true; ty = 0; vel = 0;
-      y0 = lastY = e.clientY; lastT = performance.now();
-      p.classList.add('no-anim', 'dragging'); p.classList.remove('snapping');
-      if (!_sheetSt.collH && !_sheetSt.expanded) _sheetSt.collH = p.offsetHeight;
-      baseH = p.offsetHeight;
-      try { h.setPointerCapture(e.pointerId); } catch (_) {}
-    });
-    h.addEventListener('pointermove', (e) => {
+    /* Drag can start from the handle OR any of the sheet's WHITESPACE — the padding
+       around the content, the tabs-row gaps, and the bullet list's empty areas while
+       it isn't scrollable. NOT from the text itself (it scrolls when expanded) and
+       NOT from the ✕ / tab buttons. */
+    function _dragZone(t){
+      if (!t || !t.closest) return false;
+      if (t.closest('.coach-pop-x, .coach-pop-tab')) return false;
+      if (t.closest('#coach-pop-handle')) return true;
+      if (t.id === 'coach-pop-body') return t.scrollHeight <= t.clientHeight + 1;   // gaps drag only when nothing to scroll
+      return t.classList.contains('coach-pop') || t.id === 'coach-pop-tabs';
+    }
+    function _onDocMove(e){
       if (!_sheetSt.dragging) return;
       const p = pop(); if (!p) return;
       const now = performance.now();
@@ -28787,8 +28797,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       const want  = baseH - (e.clientY - y0);                       // height the finger asks for
       if (want >= collH) { ty = 0; p.style.height = Math.min(want, expH) + 'px'; p.style.transform = ''; }
       else { ty = collH - want; p.style.height = collH + 'px'; p.style.transform = 'translateY(' + ty.toFixed(1) + 'px)'; }
-    });
-    const end = () => {
+    }
+    function _onDocEnd(){
+      document.removeEventListener('pointermove', _onDocMove);
+      document.removeEventListener('pointerup', _onDocEnd);
+      document.removeEventListener('pointercancel', _onDocEnd);
+      _unlockHomeScroll();
       if (!_sheetSt.dragging) return;
       _sheetSt.dragging = false;
       const p = pop(); if (!p) return;
@@ -28805,9 +28819,25 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       else expand = p.offsetHeight > (collH + expH) / 2;
       if (!_popExpanded) expand = false;              // no deeper content → stay collapsed
       _snapSheet(expand);
-    };
-    h.addEventListener('pointerup', end);
-    h.addEventListener('pointercancel', end);
+    }
+    p0.addEventListener('pointerdown', (e) => {
+      const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
+      if (!_dragZone(e.target)) return;
+      e.preventDefault();
+      _sheetSt.dragging = true; ty = 0; vel = 0;
+      y0 = lastY = e.clientY; lastT = performance.now();
+      p.classList.add('no-anim', 'dragging'); p.classList.remove('snapping');
+      if (!_sheetSt.collH && !_sheetSt.expanded) _sheetSt.collH = p.offsetHeight;
+      baseH = p.offsetHeight;
+      _lockHomeScroll();
+      try { p.setPointerCapture(e.pointerId); } catch (_) {}
+      document.addEventListener('pointermove', _onDocMove);
+      document.addEventListener('pointerup', _onDocEnd);
+      document.addEventListener('pointercancel', _onDocEnd);
+    });
+    // Lifecycle safety: app backgrounded mid-drag → drop the drag + the home lock.
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { _sheetSt.dragging = false; _unlockHomeScroll(); const p = pop(); if (p) p.classList.remove('dragging'); } });
+    window.addEventListener('pagehide', () => { _sheetSt.dragging = false; _unlockHomeScroll(); });
   }
 
   function _wire(){
