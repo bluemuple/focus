@@ -4354,9 +4354,9 @@
     min-width: 2.5em; font-variant-numeric: tabular-nums; }
   .gtd-chip .gtd-for  { display: inline-flex; align-items: center; line-height: 1; font-size: .7rem; font-weight: 600; opacity: .8; }   /* center the word like .gtd-head so "left"/"over" lines up with h:mm */
   .gtd-chip.gtd-set:not(.gtd-over) .gtd-head,
-  .gtd-chip.gtd-set:not(.gtd-over) .gtd-for { color: #0EA5E9; opacity: 1; }   /* h:mm + "left" → sky-blue */
+  .gtd-chip.gtd-set:not(.gtd-over) .gtd-for,
   .gtd-chip.gtd-over .gtd-head,
-  .gtd-chip.gtd-over .gtd-for  { color: #EC4899; opacity: 1; }                /* h:mm + "over" → pink */
+  .gtd-chip.gtd-over .gtd-for  { color: var(--text-muted, #6b7280); opacity: 1; }   /* h:mm + "left"/"over" → grey, like the Edit chip */
   /* GTD picker modal — title + [time | Now] row + [+30m | +1h | OK] row (rows EQUAL width). */
   #gtd-modal .gtd-content { width: 300px; position: relative; }
   #gtd-modal .gtd-x {
@@ -12979,6 +12979,11 @@ function _deferTaskToTomorrow(q, i) {
 function deleteTaskAt(q, i) {
   const task = state.tasks[q] && state.tasks[q][i];
   if (!task) return;
+  // Deleting a task while Edit is on → auto-exit Edit so the +Add button reappears.
+  if (state.splitActionsVisible) {
+    state.splitActionsVisible = false;
+    try { if (typeof _syncEditClasses === 'function') _syncEditClasses(); } catch (_) {}
+  }
   // ---- Running-timer discard (this task's timer is voided) ----
   // Covers BOTH timer kinds: 'pomodoro' (q1–q3) and 'uptask' (the q4 stopwatch) —
   // the uptask type used to leak here, leaving the "Now focusing on" pomodoro
@@ -13790,6 +13795,11 @@ let _globalPomoTickHandle = null;
     if (!isAddInput(e.target)) return;
     setTimeout(() => {
       if (isAddInput(document.activeElement)) return;            // moved to another add field — keep lifted
+      // Add flow STILL open (picker present → _ttAddCancel is set): the blur is just the
+      // keyboard going down (carousel tap / outside tap) — keep the typed name + position,
+      // do NOT scroll back. Only a real commit / Cancel (which call _ttAddScrollRestore
+      // directly + clear _ttAddCancel) restores the scroll.
+      if (typeof window._ttAddCancel === 'function') return;
       restore(!!window._ttAddCommitted);
     }, 160);
   });
@@ -19991,20 +20001,36 @@ function _qCelebImg(q) {
   return 'images/focus/doro/' + q + (dk ? '-dark' : '') + '.png?v=qcel-1';
 }
 function _celebClearTimers() { _celebTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} }); _celebTimers = []; }
+/* Cross-fade the idle face image to a new src: the OLD image stays put while a fixed
+   overlay holding the NEW src fades in over it, then the base img adopts the new src
+   and the overlay is removed. (Image transition ≠ the text fade — per request.) */
+function _fcCrossfadeImg(imgEl, newSrc, dur) {
+  try {
+    const r = imgEl.getBoundingClientRect();
+    if (!r.width) { imgEl.setAttribute('src', newSrc); return; }
+    const ms = dur || 300;
+    const ov = document.createElement('img');
+    ov.src = newSrc; ov.setAttribute('aria-hidden', 'true');
+    ov.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;object-fit:contain;opacity:0;transition:opacity ' + ms + 'ms ease;z-index:6;pointer-events:none;';
+    document.body.appendChild(ov);
+    requestAnimationFrame(() => requestAnimationFrame(() => { ov.style.opacity = '1'; }));
+    setTimeout(() => { try { imgEl.setAttribute('src', newSrc); } catch (_) {} try { ov.remove(); } catch (_) {} }, ms + 40);
+  } catch (_) { try { imgEl.setAttribute('src', newSrc); } catch (__) {} }
+}
 function _fcRunCelebration(q, i, startFn) {
   if (!_qCelebImg(q)) { try { startFn(); } catch (_) {} return; }
-  // INTERRUPT — already mid‑beat + another task tapped: swap to its image, KEEP the
-  // phrase, re‑target the deferred start (no restart of the beat).
+  // INTERRUPT — already mid‑beat + another task tapped: cross‑fade to its image, KEEP
+  // the phrase, re‑target the deferred start (no restart of the beat).
   if (_celebActive) {
     _celebTask = { q: q, i: i }; _celebStartFn = startFn;
     const img2 = document.getElementById('fc-no-task'); const ns = _qCelebImg(q);
-    if (img2 && ns) img2.setAttribute('src', ns);
+    if (img2 && ns) _fcCrossfadeImg(img2, ns, 240);
     return;
   }
   const card = document.getElementById('focus-card'), cat = document.getElementById('fc-cat');
-  const img = document.getElementById('fc-no-task');
+  const img = document.getElementById('fc-no-task'), txt = document.getElementById('fc-idle-text');
   const l1 = document.getElementById('fit-l1'), l2 = document.getElementById('fit-l2');
-  if (!card || !cat || !img || !l1 || !l2) { try { startFn(); } catch (_) {} return; }
+  if (!card || !cat || !img || !txt || !l1 || !l2) { try { startFn(); } catch (_) {} return; }
   _celebActive = true; _celebStartFn = startFn; _celebTask = { q: q, i: i };
   _celebClearTimers();
   try { _fcStopClock(); } catch (_) {}   // freeze the startnow time pill during the beat
@@ -20013,25 +20039,25 @@ function _fcRunCelebration(q, i, startFn) {
   if (!pool.length) pool = _CELEB_PHRASES.slice();
   const phrase = pool[Math.floor(Math.random() * pool.length)];
   _celebLastPhrase = phrase;
-  // Phase 1 — fade idle art OUT, swap to qN.png + phrase, fade IN.
-  cat.style.transition = 'opacity .3s ease'; cat.style.opacity = '0';
+  // TEXT fades OUT → swaps → fades IN. IMAGE cross‑fades (old stays, qN fades in over it).
+  txt.style.transition = 'opacity .3s ease'; txt.style.opacity = '0';
+  const ns0 = _qCelebImg(q); if (ns0) _fcCrossfadeImg(img, ns0, 300);
   _celebTimers.push(setTimeout(() => {
-    const ti = _celebTask || { q: q, i: i };
-    const ns = _qCelebImg(ti.q); if (ns) img.setAttribute('src', ns);
     l1.textContent = phrase; l2.textContent = '';
     try { _fitElTo2Lines(l1, 14); } catch (_) {}
-    cat.style.opacity = '1';
+    txt.style.opacity = '1';
     // Phase 2 — after the fade‑in + a 2 s hold, hand off to the real start.
     _celebTimers.push(setTimeout(_fcFinishCelebration, 300 + 2000));
   }, 320));
 }
 function _fcFinishCelebration() {
   _celebClearTimers();
-  const fn = _celebStartFn, cat = document.getElementById('fc-cat');
+  const fn = _celebStartFn, cat = document.getElementById('fc-cat'), txt = document.getElementById('fc-idle-text');
   _celebActive = false; _celebStartFn = null;
   // Leave the qN.png + phrase showing — _fcPlayTaskEnter (fired by the start → active
   // edge) pins + fades it OUT while the "Now focusing on" header fades IN.
   if (cat) { cat.style.transition = ''; cat.style.opacity = ''; }
+  if (txt) { txt.style.transition = ''; txt.style.opacity = ''; }
   try { if (typeof fn === 'function') fn(); } catch (_) {}
 }
 /* Live "current time" clock for the startnow cat's red pill (#fc-cat-time). 12-hour h:mm,
@@ -20458,7 +20484,14 @@ function renderImDoing() {
     const _t = state.tasks[at.q] && state.tasks[at.q][at.idx];
     setName((_t && _t.text) || '(task)');                 // task name (no ☹ in the card now)
     const _lbl = card.querySelector('.fc-label');
-    if (_lbl) _lbl.textContent = _q4Message(_elapsed);    // duration-message replaces "Now focusing on"
+    if (_lbl) {                                            // duration-message replaces "Now focusing on"
+      const _msg = _q4Message(_elapsed);
+      // Break the message onto a 2nd line AT the period ("Nice job on X. Y's still there"
+      // → two lines). A <br> in the same element keeps the line-gap equal to a natural wrap.
+      const _m = String(_msg).match(/^(.*?\.)\s+(\S.*)$/);
+      if (_m) _lbl.innerHTML = escapeHTML(_m[1]) + '<br>' + escapeHTML(_m[2]);
+      else    _lbl.textContent = _msg;
+    }
     _renderQ4Ring(_elapsed);                               // ring + up-timer + STOP button
     const _se = document.getElementById('fc-session'); if (_se) _se.textContent = '';   // q4 has no session badge
   }
@@ -24722,14 +24755,16 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   cancelBtn.addEventListener('touchend', cancelTap, { passive: false });
   cancelBtn.addEventListener('click', cancelTap);
 
-  // Touch on empty space / anything outside the picker → cancel (drop the block).
+  // Touch on the carousel / empty space / anywhere outside the picker → just DISMISS
+  // the keyboard (blur), keeping the typed name + the picker open. Only [+Add] / [Cancel]
+  // end the add flow now (the keyboard-down keeps the page where it is — see focusout).
   function onOutside(e) {
     if (picker.contains(e.target)) return;
     // The Repeat (↻) toggle + its weekday buttons + the Note button live in the
     // header (outside the picker) but ARE part of this add flow — tapping them
-    // must NOT cancel the add (that was the bug: Repeat appeared to do nothing).
+    // must NOT do anything here.
     if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #note-toggle, #task-note-modal')) return;
-    finish(false);
+    try { if (input && document.activeElement === input) input.blur(); } catch (_) {}
   }
   setTimeout(() => {                              // defer so the OPENING tap doesn't trip it
     if (done) return;
@@ -24899,7 +24934,10 @@ function _commitDurationTask(q, name) {
     if (b.q === q && typeof b.taskIdx === 'number') b.taskIdx += 1;
     if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => { if (sg.q === q && typeof sg.taskIdx === 'number') sg.taskIdx += 1; });
   });
-  if (pb) {
+  // q4 (Not important · Not urgent): do NOT reserve a fixed block on the gauge — these
+  // low-priority tasks shouldn't claim a 30-min slot up front. Their block GROWS with the
+  // current-time line only when actually worked (the uptask tracker behaviour on start).
+  if (pb && q !== 'q4') {
     if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
     state.scheduledBlocks.push({
       id: pb.id, q, taskIdx: 0, taskName: name.slice(0, 200),
@@ -28866,11 +28904,16 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (_popMoreOpen) _resetMore();
       p.classList.add('sheet');
       if (bd) bd.classList.remove('hidden');
+      // LOCK the home scroll for the WHOLE time the sheet is open (not just during a
+      // drag) — otherwise dragging the full-screen sheet down (or over-scrolling its
+      // body) scrolled the homepage behind it. Released in closeCoachPop. Idempotent.
+      try { _lockHomeScroll(); } catch (_) {}
       if (_sheetSt.expanded) p.style.height = _expTargetH() + 'px';   // keep tall on resize/rotate
       else if (!_sheetSt.dragging && !p.classList.contains('snapping')) _sheetSt.collH = p.offsetHeight;
       return;
     }
     p.classList.remove('sheet');
+    try { _unlockHomeScroll(); } catch (_) {}   // anchored (wide) mode never locks the home
     // Leaving sheet mode (rotate/resize to wide) — drop any sheet drag state.
     if (_sheetSt.expanded || p.style.height || p.style.transform) {
       p.style.height = ''; p.style.transform = '';
@@ -29128,7 +29171,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       else { ty = collH - want; p.style.height = collH + 'px'; p.style.transform = 'translateY(' + ty.toFixed(1) + 'px)'; }
     }
     function _end(){
-      _unlockHomeScroll();
+      // NB: do NOT unlock the home here — the sheet is still open after a snap; the home
+      // stays locked until the sheet closes (closeCoachPop / dismiss). _shPreventTouch is
+      // gated on _sheetSt.dragging, so the body's native scroll resumes once the drag ends.
       if (!_sheetSt.dragging) return;
       _sheetSt.dragging = false; _touchId = null;
       const p = pop(); if (!p) return;
@@ -31475,7 +31520,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       ct:{s:6,x:10,y:0}, ci:{s:15,x:-10,y:0}, bs:{s:-4,x:15,y:0}, bm:{s:0,x:15,y:-3},
       bd:{s:0,x:15,y:0}, bb:{s:5,x:0,y:0},
     },
-    portrait: {},
+    portrait: {
+      di:{s:-1.3,x:-2,y:0},   // iPhone portrait: nudge the idle face slightly smaller + left
+    },
   };
   const vals = { landscape: {}, portrait: {} };
   IDS.forEach(id => {
