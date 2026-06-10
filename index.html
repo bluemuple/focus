@@ -28828,7 +28828,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   }
   function _wireSheetDrag(){
     const p0 = pop(); if (!p0) return;
-    let y0 = 0, baseH = 0, ty = 0, lastY = 0, lastT = 0, vel = 0;
+    let y0 = 0, baseH = 0, ty = 0, lastY = 0, lastT = 0, vel = 0, _touchId = null;
     /* Drag can start from the handle OR any of the sheet's WHITESPACE — the padding
        around the content, the tabs-row gaps, and the bullet list's empty areas while
        it isn't scrollable. NOT from the text itself (it scrolls when expanded) and
@@ -28837,28 +28837,38 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (!t || !t.closest) return false;
       if (t.closest('.coach-pop-x, .coach-pop-tab')) return false;
       if (t.closest('#coach-pop-handle')) return true;
-      if (t.id === 'coach-pop-body') return t.scrollHeight <= t.clientHeight + 1;   // gaps drag only when nothing to scroll
+      // A bullet's own text/<li> never drags; the <ul> itself (gaps + padding) drags
+      // ONLY when there's nothing to scroll (collapsed). When expanded + scrollable the
+      // body scrolls natively instead — collapse via the handle / tabs / padding.
+      const bodyEl = $('coach-pop-body');
+      if (bodyEl && (t === bodyEl)) return bodyEl.scrollHeight <= bodyEl.clientHeight + 1;
       return t.classList.contains('coach-pop') || t.id === 'coach-pop-tabs';
     }
-    function _onDocMove(e){
+    function _begin(clientY){
+      const p = pop(); if (!p) return;
+      _sheetSt.dragging = true; ty = 0; vel = 0;
+      y0 = lastY = clientY; lastT = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      p.classList.add('no-anim', 'dragging'); p.classList.remove('snapping');
+      if (!_sheetSt.collH && !_sheetSt.expanded) _sheetSt.collH = p.offsetHeight;
+      baseH = p.offsetHeight;
+      _lockHomeScroll();
+    }
+    function _move(clientY){
       if (!_sheetSt.dragging) return;
       const p = pop(); if (!p) return;
-      const now = performance.now();
-      if (now > lastT) vel = (e.clientY - lastY) / (now - lastT);   // px/ms, + = downward
-      lastY = e.clientY; lastT = now;
+      const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+      if (now > lastT) vel = (clientY - lastY) / (now - lastT);   // px/ms, + = downward
+      lastY = clientY; lastT = now;
       const collH = _sheetSt.collH || baseH;
       const expH  = _popExpanded ? _expTargetH() : collH;
-      const want  = baseH - (e.clientY - y0);                       // height the finger asks for
+      const want  = baseH - (clientY - y0);                       // height the finger asks for
       if (want >= collH) { ty = 0; p.style.height = Math.min(want, expH) + 'px'; p.style.transform = ''; }
       else { ty = collH - want; p.style.height = collH + 'px'; p.style.transform = 'translateY(' + ty.toFixed(1) + 'px)'; }
     }
-    function _onDocEnd(){
-      document.removeEventListener('pointermove', _onDocMove);
-      document.removeEventListener('pointerup', _onDocEnd);
-      document.removeEventListener('pointercancel', _onDocEnd);
+    function _end(){
       _unlockHomeScroll();
       if (!_sheetSt.dragging) return;
-      _sheetSt.dragging = false;
+      _sheetSt.dragging = false; _touchId = null;
       const p = pop(); if (!p) return;
       p.classList.remove('dragging');
       const collH = _sheetSt.collH || p.offsetHeight;
@@ -28874,24 +28884,47 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (!_popExpanded) expand = false;              // no deeper content → stay collapsed
       _snapSheet(expand);
     }
-    p0.addEventListener('pointerdown', (e) => {
+    // ===== TOUCH (iOS primary) — pointer events are unreliable here: the body's
+    // touch-action:pan-y lets WKWebView claim the gesture for scrolling before any
+    // pointermove reaches JS, so the sheet wouldn't move and the page scrolled
+    // instead. Touch events + a non-passive touchmove preventDefault is the app's
+    // proven no-scroll pattern (same as every other gauge/face/swipe lock).
+    const _find = (list) => { for (let i = 0; i < list.length; i++) if (list[i].identifier === _touchId) return list[i]; return null; };
+    p0.addEventListener('touchstart', (e) => {
       const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
+      if (_sheetSt.dragging) return;
+      if (!e.touches[0] || !_dragZone(e.target)) return;
+      _touchId = e.touches[0].identifier;
+      _begin(e.touches[0].clientY);
+    }, { passive: true });
+    p0.addEventListener('touchmove', (e) => {
+      if (!_sheetSt.dragging) return;
+      const t = _find(e.touches); if (!t) return;
+      e.preventDefault();                              // stop the page / body scroll
+      _move(t.clientY);
+    }, { passive: false });
+    function _touchEnd(e){
+      if (!_sheetSt.dragging) return;
+      if (e && e.changedTouches && !_find(e.changedTouches)) return;
+      _end();
+    }
+    p0.addEventListener('touchend', _touchEnd);
+    p0.addEventListener('touchcancel', _touchEnd);
+    // ===== MOUSE (desktop) =====
+    p0.addEventListener('mousedown', (e) => {
+      const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
+      if (e.button !== 0 || _sheetSt.dragging) return;
       if (!_dragZone(e.target)) return;
       e.preventDefault();
-      _sheetSt.dragging = true; ty = 0; vel = 0;
-      y0 = lastY = e.clientY; lastT = performance.now();
-      p.classList.add('no-anim', 'dragging'); p.classList.remove('snapping');
-      if (!_sheetSt.collH && !_sheetSt.expanded) _sheetSt.collH = p.offsetHeight;
-      baseH = p.offsetHeight;
-      _lockHomeScroll();
-      try { p.setPointerCapture(e.pointerId); } catch (_) {}
-      document.addEventListener('pointermove', _onDocMove);
-      document.addEventListener('pointerup', _onDocEnd);
-      document.addEventListener('pointercancel', _onDocEnd);
+      _begin(e.clientY);
+      const mm = (ev) => _move(ev.clientY);
+      const mu = () => { window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); _end(); };
+      window.addEventListener('mousemove', mm);
+      window.addEventListener('mouseup', mu);
     });
     // Lifecycle safety: app backgrounded mid-drag → drop the drag + the home lock.
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { _sheetSt.dragging = false; _unlockHomeScroll(); const p = pop(); if (p) p.classList.remove('dragging'); } });
-    window.addEventListener('pagehide', () => { _sheetSt.dragging = false; _unlockHomeScroll(); });
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { _sheetSt.dragging = false; _touchId = null; _unlockHomeScroll(); const p = pop(); if (p) p.classList.remove('dragging'); } });
+    window.addEventListener('pagehide', () => { _sheetSt.dragging = false; _touchId = null; _unlockHomeScroll(); });
   }
 
   function _wire(){
