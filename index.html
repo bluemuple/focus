@@ -3396,6 +3396,25 @@
     body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-btn { width: 34px; height: 34px; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-stage { flex: 0 0 104px; width: 104px; max-width: 104px; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section.b3d-active #b3d-scene { transform: scale(0.40); }
+    /* Box the 2×2 matrix in its own clearly-visible "Tasks" section card (per request).
+       In this wide iPad layout the gauge stays its own left column; the tasks-panel already
+       carries card chrome but its --card-bg matches the page so it reads as no section at
+       all. Lift it onto a slightly brighter surface + a visible border + soft shadow so the
+       "Tasks" header + 2×2 grid clearly sit INSIDE one boxed section. */
+    body:not(.fv-active) #focus-page #tasks-panel {
+      background: var(--surface-2, #0E4A57);
+      border: 1px solid var(--card-border, #164B56);
+      border-radius: 12px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .30);
+      padding: 12px;
+    }
+    /* Landscape is only ~375px tall — the "Now focusing" card + bucket alone fill it and shove
+       the 2×2 matrix below the fold. HIDE them in landscape so the gauge (left column) + the
+       boxed 2×2 matrix fill the screen (a matrix-focused planning view). They return in portrait.
+       The matrix's tasks-panel then takes the WHOLE right-column height (span both grid rows). */
+    body:not(.fv-active) #focus-page .focus-right > #focus-card,
+    body:not(.fv-active) #focus-page .focus-right > #bucket-section { display: none; }
+    body:not(.fv-active) #focus-page #tasks-panel { grid-row: 1 / -1; }
   }
 
   .scores { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
@@ -3564,6 +3583,18 @@
   .fc-money-change { font-size: .82rem; font-weight: 700; color: #6b7280; white-space: nowrap; }
   .fc-money-change.up   { color: #059669; }
   .fc-money-change.down { color: #dc2626; }
+  /* iPhone PORTRAIT: the left column left-aligns by default, so the balance + "Today" sat to
+     the left of the centred sprout button. Centre the whole stack (button · money · Today) so
+     the money + Today line up centred UNDER the button. transform-origin:center keeps the bm/bd
+     size-tuning scaling around the centre (the default `left center` would shove them sideways). */
+  @media (max-width: 700px) {
+    #bucket-section .bucket-left,
+    #bucket-section #bucket-money-row { align-items: center; text-align: center; }
+    /* 2-ID selector so it beats the base `#bucket-section .fc-money-big{transform-origin:left center}`
+       (defined later in the file) — without this the size-tuning would scale them off to the left. */
+    #bucket-section #bucket-money-row .fc-money-big,
+    #bucket-section #bucket-money-row .fc-money-change { transform-origin: center center; }
+  }
   /* "GTD before [time]" quick-setter row — sits where the money row used to be
      in the card. The native <input type=time> opens the OS time picker on tap;
      its onchange writes state.deadline and redraws the gauge (see the
@@ -3727,6 +3758,11 @@
   .focus-card.fc-swapping .fc-no-task {                 /* hold the small right-side size during the fade-out (no zoom) */
     flex: 0 0 auto; height: 80%; width: auto; max-width: 42%; object-fit: contain;
   }
+  /* During the idle→running swap, _layoutFocusCard lays out the 'run' family + clears the idle
+     image's inline size, so it reverted to the height:80% above and BALLOONED (~+40%) for the
+     0.2 s of the fade (the reported zoom). Cap it to the SAME 58% the engine gives it in the
+     idle state so it only fades — no zoom. Later + same specificity → wins over the 80% above. */
+  .focus-card.fc-swapping .fc-no-task { height: 58%; max-height: 58%; }
   /* No task → ONLY add.png (drop the old "Add a task." bubble + the clock pill). */
   .focus-card.fc-down .fc-cat-bubble,
   .focus-card.fc-swapping .fc-cat-bubble { display: none !important; }
@@ -3804,7 +3840,11 @@
   .topbar-now .tn-pomo {
     flex-shrink: 0;
     width: 16px; height: 16px; border-radius: 50%;
-    background: #ef4444; box-shadow: inset 0 0 0 1.2px rgba(0,0,0,.14);
+    /* Default matches the home card ring's default (#B23A5B) — NOT a generic red — so the
+       topbar mini-pomodoro and the home ring read as the SAME colour. At runtime renderImDoing's
+       setPomo paints BOTH from the SAME `segs` (focusQuadAccent per quadrant), so they always
+       track each other; this default just keeps any pre-paint frame consistent too. */
+    background: #B23A5B; box-shadow: inset 0 0 0 1.2px rgba(0,0,0,.14);
   }
   .topbar-now .tn-pomo.fc-pomo-hidden { display: none; }
   .topbar-now .tn-name {
@@ -6862,13 +6902,67 @@
   .cal-rings { display: inline-flex; gap: 1px; align-items: center; justify-content: center; height: 16px; }
   .cal-rings .cal-ring { width: 15px; height: 15px; display: block; }
   /* Category cards — 2-col, each a 5×5 activity dot grid in the side colour. */
-  .cal-cat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .cal-cat-card { background: var(--surface-2, var(--button-bg, #f3f4f6)); border-radius: 12px; padding: 11px 12px; }
-  .cal-cat-head { display: flex; align-items: baseline; gap: 6px; margin: 0 0 9px; }
+  /* Monthly "fixed grid" stats — 7 bucket sides stacked vertically; each row = name + a dot
+     grid (one square per day of the month, SOLID-filled in the side colour if active that day)
+     + a "active/days" counter. Empty cells are a faint theme-neutral gray so empty-vs-filled
+     reads at a glance in both light + dark themes. */
+  .cal-cat-cap { font-size: .9rem; color: var(--text-muted, #6b7280); margin: 2px 0 14px; }
+  .cal-cat-rows { display: flex; flex-direction: column; gap: 4px; }
+  .cal-cat-row { padding: 8px 8px 9px; border-radius: 10px; }
+  .cal-cat-row.cat-lowest { background: rgba(127,127,127,.10); }   /* lowest side = next-month priority */
+  .cal-cat-row-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 7px; }
   .cal-cat-name { font-weight: 800; font-size: .95rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cal-cat-cnt { font-size: .8rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; }
-  .cal-cat-dots { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
-  .cal-cat-dot { width: 100%; aspect-ratio: 1 / 1; border-radius: 50%; background: var(--card-border, #e5e7eb); }
+  .cat-low-tag { font-size: .7rem; font-weight: 700; color: var(--text-muted, #9ca3af); flex: 0 0 auto; }
+  .cal-cat-cnt { font-size: .82rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; flex: 0 0 auto; }
+  .cal-cat-dots { display: flex; flex-wrap: wrap; gap: 3px; }
+  .cal-cat-dot { width: 12px; height: 12px; border-radius: 3px; background: rgba(127,127,127,.14); box-shadow: inset 0 0 0 1px rgba(127,127,127,.22); }
+  .cal-cat-dot.on { box-shadow: none; }   /* filled: solid side colour via inline bg, no border */
+  /* ===== WIDE (iPad / web ≥701px) MONTH calendar — Google-Calendar-style cells: date pinned
+     TOP-LEFT; today = a small pink rounded square behind ONLY the number (not the whole cell);
+     each day's events (Ⓔ) + tasks (Ⓣ) listed by NAME with a "+N more" + Focused/Bucket footer.
+     Phones keep the square dot cells above (.cal-cell-items stays hidden there). ===== */
+  .cal-cell-items { display: none; }
+  @media (min-width: 701px) {
+    #calendar-page .cal-grid { gap: 0; border-radius: 0 0 10px 10px; }
+    #calendar-page .cal-dow { padding: 8px 0; }
+    #calendar-page .cal-cell {
+      aspect-ratio: auto; min-height: 104px; align-items: stretch; justify-content: flex-start;
+      border-top: 1px solid var(--card-border, #e5e7eb); border-left: 1px solid var(--card-border, #e5e7eb);
+      border-radius: 0; padding: 4px 5px 5px; gap: 2px; text-align: left; overflow: hidden;
+    }
+    /* close the right + bottom edges of the grid */
+    #calendar-page .cal-grid { border-right: 1px solid var(--card-border, #e5e7eb); border-bottom: 1px solid var(--card-border, #e5e7eb); overflow: hidden; }
+    #calendar-page .cal-cell .cal-day { align-self: flex-start; font-size: .82rem; font-weight: 700; padding: 2px 6px; border-radius: 7px; line-height: 1.15; }
+    #calendar-page .cal-cell.cal-today { background: transparent; }
+    #calendar-page .cal-cell.cal-today .cal-day { background: #EC4899; color: #fff; }
+    #calendar-page .cal-cell.cal-today:active { background: var(--button-bg, #f3f4f6); }
+    #calendar-page .cal-cell.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
+    #calendar-page .cal-cell.cal-today.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
+    #calendar-page .cal-dots { display: none; }
+    #calendar-page .cal-cell-items { display: flex; flex-direction: column; gap: 2px; width: 100%; min-width: 0; flex: 1 1 auto; }
+    /* fold the separate day lists below the grid INTO the cells on wide */
+    #calendar-page #cal-month-view .cal-day-head,
+    #calendar-page #cal-month-view .cal-sub,
+    #calendar-page #cal-month-view #cal-events-list,
+    #calendar-page #cal-month-view #cal-tasks-list,
+    #calendar-page #cal-month-view .cal-sprout { display: none; }
+    .cci { display: flex; align-items: center; gap: 4px; font-size: .72rem; line-height: 1.25; min-width: 0; }
+    .cci-ic { flex: 0 0 auto; width: 15px; height: 15px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 800; color: #fff; }
+    .cci-ic-e { background: var(--accent, #2563eb); }
+    .cci-ic-t { background: #3aa776; }
+    .cci-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .cci-more { align-self: flex-start; font-size: .68rem; font-weight: 700; color: var(--text-muted, #6b7280); background: var(--button-bg, #f3f4f6); border: none; border-radius: 6px; padding: 1px 7px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .cci-foot { margin-top: auto; display: flex; flex-direction: column; gap: 0; font-size: .66rem; color: var(--text-muted, #9ca3af); font-weight: 600; }
+  }
+  /* Day-detail popup (wide) */
+  .cal-daypop { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; }
+  .cal-daypop.hidden { display: none; }
+  .cal-daypop-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.42); }
+  .cal-daypop-card { position: relative; z-index: 1; background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e5e7eb); border-radius: 14px; width: min(420px, 92vw); max-height: 80vh; overflow-y: auto; padding: 18px 18px 16px; box-shadow: 0 18px 50px rgba(0,0,0,.3); }
+  .cal-daypop-x { position: absolute; top: 10px; right: 10px; width: 30px; height: 30px; border: none; background: transparent; color: var(--text-muted, #6b7280); font-size: 1rem; cursor: pointer; border-radius: 8px; }
+  .cal-daypop-x:hover { background: var(--button-bg, #f3f4f6); }
+  .cal-daypop-title { margin: 0 30px 10px 0; font-size: 1.05rem; }
+  .cal-daypop-foot { margin-top: 12px; font-size: .82rem; color: var(--text-muted, #6b7280); font-weight: 700; }
   /* Event editor — type icons + bucket-side picker. */
   .event-row-label { font-size: .8rem; font-weight: 700; color: var(--text-muted, #6b7280); margin: 12px 0 6px; }
   .event-icon-row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -7754,6 +7848,17 @@
       </div>
     </div>
   </section>
+  <!-- Day-detail popup (wide / iPad+web): opened by a "+N more" chip or tapping a day cell —
+       lists the full events + tasks + Focused/Bucket for that day (the per-day lists are folded
+       into the cells on wide, so this is how you see the overflow). -->
+  <div class="cal-daypop hidden" id="cal-daypop" aria-hidden="true">
+    <div class="cal-daypop-backdrop" id="cal-daypop-bd"></div>
+    <div class="cal-daypop-card">
+      <button class="cal-daypop-x" id="cal-daypop-x" type="button" aria-label="Close">✕</button>
+      <h3 class="cal-daypop-title" id="cal-daypop-title"></h3>
+      <div id="cal-daypop-body"></div>
+    </div>
+  </div>
   <!-- (Garden menu item opens the bucket's sprout watering / garden-field overlay,
        wired in wireTopbarMenu — no separate page.) -->
 </main>
@@ -10323,6 +10428,7 @@ function _calRenderMonth() {
   const startDow = new Date(y, m, 1).getDay();         // 0=Sun
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const todayKey = _calDateKey(new Date());
+  const fm = _calMonthFocusMap();                       // per-day focused + bucket-side minutes (wide cells)
   let html = '';
   ['S','M','T','W','T','F','S'].forEach(d => html += '<div class="cal-dow">' + d + '</div>');
   for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
@@ -10330,15 +10436,87 @@ function _calRenderMonth() {
     const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
     const evs = _eventsOnDate(key);
     const tCount = _tasksOnDate(key).length;
-    let dots = '';
+    let dots = '';                                      // NARROW (phone): small dots under the date
     evs.slice(0, 3).forEach(ev => dots += '<span class="cal-dot" style="background:' + _calEventColor(ev) + '"></span>');
     if (tCount) dots += '<span class="cal-dot cal-dot-task"></span>';
     const cls = 'cal-cell' + (key === todayKey ? ' cal-today' : '') + (key === _calState.selKey ? ' cal-sel' : '');
-    html += '<button type="button" class="' + cls + '" data-key="' + key + '"><span class="cal-day">' + day + '</span><span class="cal-dots">' + dots + '</span></button>';
+    html += '<button type="button" class="' + cls + '" data-key="' + key + '">' +
+            '<span class="cal-day">' + day + '</span>' +
+            '<span class="cal-dots">' + dots + '</span>' +
+            _calCellItems(key, fm) +                    // WIDE (iPad/web): event/task names + Focused/Bucket
+            '</button>';
   }
   grid.innerHTML = html;
   _calRenderDayLists();
 }
+/* Per-day focus rollup from the watch log: total focused minutes + bucket-side (pillar)
+   minutes, keyed by date. Used by the WIDE month cells (Focused Xm / Bucket X%). */
+function _calMonthFocusMap() {
+  const map = {};
+  (state.watchLog || []).forEach(e => {
+    if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;   // work phases only
+    const k = _calDateKey(e.startedAt);
+    if (!map[k]) map[k] = { focus: 0, pillar: 0 };
+    const mins = (e.durationMs || 0) / 60000;
+    map[k].focus += mins;
+    if (typeof e.pillar === 'number') map[k].pillar += mins;                       // focus that fed a bucket side
+  });
+  return map;
+}
+/* WIDE (iPad/web) day-cell body: each event (Ⓔ) + task (Ⓣ) by NAME, capped with a
+   "+N more" that opens the day popup, then a Focused Xm / Bucket X% footer. The Ⓔ/Ⓣ
+   are themed circles with a white letter. Hidden on phones via CSS (they use dots). */
+const _CAL_CELL_CAP = 3;
+function _calCellItems(key, fm) {
+  let rows = '';
+  const evs = _eventsOnDate(key), tks = _tasksOnDate(key);
+  const list = [];
+  evs.forEach(ev => list.push('<div class="cci"><span class="cci-ic cci-ic-e">E</span><span class="cci-tx">' + escapeHTML(ev.name || '') + '</span></div>'));
+  tks.forEach(o => list.push('<div class="cci"><span class="cci-ic cci-ic-t">T</span><span class="cci-tx">' + escapeHTML(o.task.text || '') + '</span></div>'));
+  rows += list.slice(0, _CAL_CELL_CAP).join('');
+  const extra = list.length - _CAL_CELL_CAP;
+  // NOTE: a <button> here would be ILLEGAL nested inside the cell's own <button> (the browser
+  // auto-closes the cell + reparents everything after). Use a role=button SPAN; the grid click
+  // delegation handles `.cci-more` either way.
+  if (extra > 0) rows += '<span class="cci-more" role="button" tabindex="0" data-more="' + key + '">+' + extra + ' more</span>';
+  const f = fm[key] || { focus: 0, pillar: 0 };
+  const fmin = Math.round(f.focus);
+  let foot = '';
+  if (fmin > 0) foot += '<span class="cci-foot-l">Focused ' + fmin + 'm</span>';
+  if (f.focus > 0 && f.pillar > 0) foot += '<span class="cci-foot-l">Bucket ' + Math.round(f.pillar / f.focus * 100) + '%</span>';
+  if (foot) rows += '<div class="cci-foot">' + foot + '</div>';
+  return '<div class="cal-cell-items">' + rows + '</div>';
+}
+/* WIDE day-detail popup — full events + tasks + Focused/Bucket for one day (opened by a
+   cell tap or a "+N more" chip, since the per-day lists are folded into the cells on wide). */
+function _calOpenDayPop(key) {
+  const pop = document.getElementById('cal-daypop'); if (!pop) return;
+  const title = document.getElementById('cal-daypop-title'), body = document.getElementById('cal-daypop-body');
+  const d = _calKeyToDate(key);
+  if (title) title.textContent = d ? d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) : key;
+  const evs = _eventsOnDate(key).sort((a, b) => a.startMs - b.startMs);
+  const tks = _tasksOnDate(key);
+  let html = '<div class="cal-sub"><h3>Events</h3></div>';
+  html += evs.length ? evs.map(ev => {
+    const t = new Date(ev.startMs), hh = t.getHours(), mm = t.getMinutes();
+    const tm = ((hh % 12) || 12) + ':' + String(mm).padStart(2, '0') + (hh < 12 ? ' AM' : ' PM');
+    return '<div class="cal-ev-row" style="border-left-color:' + _calEventColor(ev) + '"><span class="cal-ev-time">' + tm + '</span><span class="cal-ev-name">' + escapeHTML(ev.name || '') + '</span></div>';
+  }).join('') : '<div class="cal-empty-note">No events</div>';
+  html += '<div class="cal-sub"><h3>Tasks</h3></div>';
+  html += tks.length ? tks.map(o => {
+    const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
+    return '<div class="cal-task-row" style="background:' + col + '">' + escapeHTML(o.task.text || '') + '</div>';
+  }).join('') : '<div class="cal-empty-note">No tasks</div>';
+  const f = (_calMonthFocusMap()[key]) || { focus: 0, pillar: 0 };
+  const fmin = Math.round(f.focus);
+  let foot = '';
+  if (fmin > 0) foot += 'Focused ' + fmin + 'm';
+  if (f.focus > 0 && f.pillar > 0) foot += (foot ? ' · ' : '') + 'Bucket ' + Math.round(f.pillar / f.focus * 100) + '%';
+  if (foot) html += '<div class="cal-daypop-foot">' + foot + '</div>';
+  if (body) body.innerHTML = html;
+  pop.classList.remove('hidden'); pop.setAttribute('aria-hidden', 'false');
+}
+function _calCloseDayPop() { const p = document.getElementById('cal-daypop'); if (p) { p.classList.add('hidden'); p.setAttribute('aria-hidden', 'true'); } }
 function _calRenderDayLists() {
   const key = _calState.selKey;
   const lbl = document.getElementById('cal-sel-label');
@@ -10446,12 +10624,18 @@ function _calRingSVG(halves) {
 }
 function _calRenderRoutine() {
   _calInit();
-  const sub = _calState.routineSub || 'routine';
-  const seg = document.getElementById('cal-rt-seg');
-  if (seg) seg.querySelectorAll('.cal-rt-btn').forEach(b => b.classList.toggle('active', b.dataset.sub === sub));
-  const rings = document.getElementById('cal-rt-rings'), cat = document.getElementById('cal-rt-category');
-  if (sub === 'category') { if (rings) rings.style.display = 'none'; if (cat) { cat.style.display = ''; _calRenderCategory(); } }
-  else { if (cat) cat.style.display = 'none'; if (rings) { rings.style.display = ''; _calRenderRings(); } }
+  // Routine view = the monthly Category dot-grid ONLY. The rings CALENDAR view + the
+  // [Routine | Category] sub-tabs are removed per user; keep just the month-nav header
+  // (prev / month / next) above the grid.
+  const seg = document.getElementById('cal-rt-seg'); if (seg) seg.style.display = 'none';
+  const rings = document.getElementById('cal-rt-rings');
+  if (rings) {
+    rings.style.display = '';
+    const gridClip = document.getElementById('cal-rt-grid-clip'); if (gridClip) gridClip.style.display = 'none';   // drop the rings calendar
+    const hint = rings.querySelector('.cal-rt-hint'); if (hint) hint.style.display = 'none';
+  }
+  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _CAL_MONTHS[_calState.m] + ' ' + _calState.y;
+  const cat = document.getElementById('cal-rt-category'); if (cat) { cat.style.display = ''; _calRenderCategory(); }
 }
 function _calRenderRings() {
   const y = _calState.y, m = _calState.m;
@@ -10471,25 +10655,44 @@ function _calRenderRings() {
   }
   grid.innerHTML = html;
 }
+/* Monthly "fixed grid" per bucket SIDE: one dot per day of the (selected) month, filled SOLID
+   in the side's bucket-face colour if ANY activity touched that side that day (2-state — no
+   density), else a faint empty cell. 7 sides stacked vertically (bucket-face order) so their
+   filled-vs-empty lengths are directly comparable; the side with the FEWEST active days is
+   flagged ("↓ lowest") = the lowest bucket face = next month's priority. (Water metaphor:
+   empty cells = water not yet poured, filled = poured.) */
 function _calRenderCategory() {
   const wrap = document.getElementById('cal-rt-category'); if (!wrap) return;
-  const totals = {}, dayMap = {};
+  const y = _calState.y, m = _calState.m;
+  const dim = new Date(y, m + 1, 0).getDate();         // days in THIS month (28/29/30/31)
+  const N = _calSideCount();
+  // which sides were active on each day of this month
+  const dayActive = {};                                // 'YYYY-MM-DD' -> Set(side)
   (state.watchLog || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
+    const d = new Date(e.startedAt);
+    if (d.getFullYear() !== y || d.getMonth() !== m) return;
     const side = _calEntrySide(e);
     if (side == null || side < 0) return;
-    totals[side] = (totals[side] || 0) + 1;
-    const k = _calDateKey(e.startedAt); (dayMap[k] = dayMap[k] || new Set()).add(side);
+    (dayActive[_calDateKey(e.startedAt)] = dayActive[_calDateKey(e.startedAt)] || new Set()).add(side);
   });
-  const days = []; const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-  for (let i = 24; i >= 0; i--) days.push(_calDateKey(new Date(t0.getTime() - i * 86400000)));
-  const N = _calSideCount();
-  let html = '<div class="cal-cat-grid">';
+  const dayKey = (day) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  const counts = new Array(N).fill(0);
+  for (let day = 1; day <= dim; day++) { const set = dayActive[dayKey(day)]; if (set) set.forEach(s => { if (s < N) counts[s]++; }); }
+  let lowest = 0; for (let s = 1; s < N; s++) if (counts[s] < counts[lowest]) lowest = s;   // fewest active days
+  let html = '<p class="cal-cat-cap">This month — where you poured your water.</p><div class="cal-cat-rows">';
   for (let s = 0; s < N; s++) {
-    const col = _calSideColor(s), nm = _calSideName(s), cnt = totals[s] || 0;
+    const col = _calSideColor(s), nm = _calSideName(s);
     let dots = '';
-    days.forEach(k => { const on = dayMap[k] && dayMap[k].has(s); dots += '<span class="cal-cat-dot"' + (on ? ' style="background:' + col + '"' : '') + '></span>'; });
-    html += '<div class="cal-cat-card"><div class="cal-cat-head"><span class="cal-cat-name" style="color:' + col + '">' + escapeHTML(nm) + '</span><span class="cal-cat-cnt">/ ' + cnt + '</span></div><div class="cal-cat-dots">' + dots + '</div></div>';
+    for (let day = 1; day <= dim; day++) {
+      const on = dayActive[dayKey(day)] && dayActive[dayKey(day)].has(s);
+      dots += on ? ('<span class="cal-cat-dot on" style="background:' + col + '"></span>') : '<span class="cal-cat-dot"></span>';
+    }
+    html += '<div class="cal-cat-row' + (s === lowest ? ' cat-lowest' : '') + '">' +
+      '<div class="cal-cat-row-head"><span class="cal-cat-name" style="color:' + col + '">' + escapeHTML(nm) + '</span>' +
+      (s === lowest ? '<span class="cat-low-tag">↓ lowest</span>' : '') +
+      '<span class="cal-cat-cnt">' + counts[s] + '/' + dim + '</span></div>' +
+      '<div class="cal-cat-dots">' + dots + '</div></div>';
   }
   html += '</div>';
   wrap.innerHTML = html;
@@ -10535,11 +10738,18 @@ function _calEditEvent(id) {
   const grid = document.getElementById('cal-grid');
   if (grid) grid.addEventListener('click', (e) => {
     if (grid._calSwiped) return;                       // a swipe just fired — ignore the tap
+    const more = e.target.closest('.cci-more');        // "+N more" chip → open the day popup
+    if (more) { const mk = more.dataset.more; if (mk) { _calInit(); _calState.selKey = mk; _calRenderMonth(); _calOpenDayPop(mk); } return; }
     const cell = e.target.closest('.cal-cell');
     if (!cell || cell.classList.contains('cal-empty')) return;
     const key = cell.dataset.key; if (!key) return;
     _calInit(); _calState.selKey = key; _calRenderMonth();   // re-render month (updates .cal-sel + lists)
+    // WIDE (iPad/web): the per-day lists are folded into the cells, so a tap opens the day popup.
+    try { if (window.matchMedia('(min-width: 701px)').matches) _calOpenDayPop(key); } catch (_) {}
   });
+  // Day popup close (✕ / backdrop)
+  const _dpX = document.getElementById('cal-daypop-x'); if (_dpX) _dpX.addEventListener('click', _calCloseDayPop);
+  const _dpBd = document.getElementById('cal-daypop-bd'); if (_dpBd) _dpBd.addEventListener('click', _calCloseDayPop);
   const clip = document.getElementById('cal-grid-clip');
   if (clip) {
     let sx = 0, sy = 0, tracking = false;
@@ -12036,12 +12246,17 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
     row.insertBefore(greyFill, row.firstChild);
   } catch (_) {}
 
-  // ---- Beat 1 (EXIT): the pink bar slides further LEFT and fades away. The grey backing
-  //      + blue/red buttons DO NOT fade — they remain, so a grey/blue/red bar is left behind. ----
-  vanishEl.style.transition = `transform ${EXIT_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${EXIT_MS}ms ease`;
+  // ---- Beat 1 (EXIT): the pink bar slides further LEFT and is CLIPPED by the row's
+  //      overflow:hidden, so it vanishes "into" its own left edge by SLIDING — NOT by fading.
+  //      (An opacity fade reads as "dissolving in place"; that's fine in the wide flat-list
+  //      row where the long slide dominates, but in the NARROW 2×2-matrix cell the slide is
+  //      short so the fade took over and the bar looked like it just faded out. Sliding +
+  //      clipping reads identically at any row width.) The grey backing + blue/red buttons
+  //      DO NOT move, so a grey/blue/red bar is left behind. Opacity is dropped to 0 only
+  //      AFTER it's clipped out of view (in the MORPH beat) so it can crossfade back in. ----
+  vanishEl.style.transition = `transform ${EXIT_MS}ms cubic-bezier(.4,0,.7,.2)`;
   requestAnimationFrame(() => {
     vanishEl.style.transform = `translateX(${-rowW}px)`;
-    vanishEl.style.opacity   = '0';
   });
 
   // ---- Beat 2 (HOLD) + Beat 3 (MORPH): after a brief hold showing the grey/blue/red bar,
@@ -12049,6 +12264,7 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
   //      while the grey backing + buttons fade out beneath it. ----
   setTimeout(() => {
     vanishEl.style.transition = 'none';
+    vanishEl.style.opacity    = '0';               // hide it (it's already slid off-screen + clipped, so no visible change) so the crossfade can bring it back IN at home
     vanishEl.style.transform  = 'translateX(0)';   // snap home while still invisible (no jump)
     requestAnimationFrame(() => {
       vanishEl.style.transition = `opacity ${MORPH_MS}ms ease`;
@@ -13729,7 +13945,12 @@ function layoutFocusHomeWide() {
   if (!main) return;
   const cs = getComputedStyle(main);
   const padY = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
-  layout.style.minHeight = Math.max(360, Math.round(main.clientHeight - padY)) + 'px';
+  // Use the SMALLER of main.clientHeight and window.innerHeight. During a rotate these two
+  // settle at different times; on portrait→landscape that briefly left main.clientHeight at the
+  // tall portrait value and stretched the matrix cells tall. min() picks the short landscape
+  // height as soon as EITHER measure updates → no tall-cell flash.
+  const vh = window.innerHeight || main.clientHeight;
+  layout.style.minHeight = Math.max(360, Math.round(Math.min(main.clientHeight, vh) - padY)) + 'px';
 }
 function scrollGaugeToCurrentTime() {
   const col = document.getElementById('gauge-col');
@@ -20030,6 +20251,13 @@ function _fcPlayTaskEnter() {
     cat.style.width = _catRect.width + 'px'; cat.style.height = _catRect.height + 'px';
     cat.style.right = 'auto'; cat.style.bottom = 'auto'; cat.style.margin = '0';
   }
+  // Lay out the card SYNCHRONOUSLY on the first swap frame: the engine clears the idle face
+  // image's inline size so the `.fc-swapping #fc-no-task { max-height:58% }` CSS cap (below)
+  // takes effect immediately — without this the image balloons (≈+40%) for the ~0.2 s of the
+  // fade because, with the timer now active, the engine lays out the 'run' family and the idle
+  // image briefly reverted to its bigger raw-CSS size (the reported zoom). Also lays the
+  // fading-IN header at its 6% inset right away (no snap).
+  try { if (typeof _layoutFocusCard === 'function') { _fcLayKey = ''; _layoutFocusCard(); } } catch (_) {}
   // The "Now focusing on" header + the "mm:ss left" row FADE IN together (no slide).
   const fadeEls = [header, leftRow].filter(Boolean);
   if (cat) { cat.style.transition = 'none'; cat.style.opacity = '1'; }
@@ -20481,7 +20709,11 @@ function _renderPayLine(l2, lead, name) {
   const leadEl = document.createElement('span'); leadEl.className = 'fdm-lead'; leadEl.textContent = lead;
   const nameEl = document.createElement('span'); nameEl.className = 'fdm-name'; nameEl.textContent = name;
   l2.appendChild(leadEl); l2.appendChild(nameEl);
-  _fitNameOneLine(nameEl, 11);
+  // Shrink the name until the WHOLE thing fits on ONE line within the available width
+  // (which already excludes the right-hand comment image + gap), so a long name is never
+  // clipped — per the user's spec it goes small rather than cut off. Low floor (6px) so
+  // even long names show in full; short names never shrink (they fit at the CSS size).
+  _fitNameOneLine(nameEl, 6);
 }
 /* ADHD redirect reward — when the user switches FROM a q4 distraction up-timer
    TO a real focus task, a short praise briefly replaces "Now focusing on" in the
@@ -23553,6 +23785,13 @@ window.addEventListener('resize', () => { try { if (document.body.classList.cont
 function _onResizeFocusHome() {
   try {
     if (state.currentPage === 'focus' && !document.body.classList.contains('fv-active')) {
+      // Re-render the matrix for the NEW width/orientation FIRST. Critical on phones whose
+      // LANDSCAPE width is >700px (e.g. iPhone 12 mini = 812px): the phone-landscape boundary
+      // listener (`_plMq`, max-width:700) never fires for them, so rotating used to leave the
+      // matrix at its STALE portrait render — it showed the flat task-list (or wrong/too-tall
+      // cells) until some other action (e.g. pressing play) forced a re-render. Re-rendering
+      // here makes the 2×2 grid (with task bars inside the cells) appear immediately on rotate.
+      if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
       if (typeof layoutFocusHomeWide === 'function') layoutFocusHomeWide();
       if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime();
       try { if (typeof _fitIdleText === 'function') _fitIdleText(); } catch (_) {}   // re-fit idle text to the new column width
@@ -23565,7 +23804,15 @@ function _onResizeFocusHome() {
   } catch (_) {}
 }
 window.addEventListener('resize', _onResizeFocusHome);
-window.addEventListener('orientationchange', () => setTimeout(_onResizeFocusHome, 300));
+window.addEventListener('orientationchange', () => {
+  // Clear the wide focus-layout min-height IMMEDIATELY: otherwise, for the ~0.2 s before the new
+  // viewport dimensions settle, layoutFocusHomeWide() runs off the STALE (pre-rotation, tall)
+  // main.clientHeight and stretches the 2×2 matrix cells very tall — then they snap short. With
+  // the min-height cleared first the cells fall to content height (short) and never flash tall;
+  // the converging re-runs below then set the correct height for the new orientation.
+  try { const lay = document.querySelector('#focus-page .focus-layout'); if (lay) lay.style.minHeight = ''; } catch (_) {}
+  [0, 60, 180, 320, 500].forEach(d => setTimeout(_onResizeFocusHome, d));
+});
 // iPad / WKWebView: after the screen is locked + unlocked in landscape the webview can
 // resume with a STALE portrait-width layout (the page renders in a narrow left column).
 // The native layer forces a viewport recompute; here, whenever the page becomes visible
@@ -28086,6 +28333,13 @@ setInterval(() => {
   document.addEventListener('touchstart', (e) => {
     try {
       if (e.touches && e.touches.length > 1) return;   // a held finger may own a LIVE lock
+      // EXCEPTION: some locks are PERSISTENT, not touch-scoped — they're legitimately held
+      // across many gestures for as long as a modal/sheet is open (the bucket ⓘ bottom-sheet
+      // locks <main> the whole time it's up). Clearing those on every touchstart re-enabled the
+      // page scroll behind the open panel, so dragging the sheet down dragged the home + its
+      // loading layer with it. Skip the watchdog while such a modal is open (self-correcting:
+      // once it closes, the next touch clears any genuine leak).
+      if (document.querySelector('#coach-pop.sheet:not(.hidden)')) return;
       [document.querySelector('main'), document.getElementById('time-area')].forEach(el => {
         if (!el) return;
         if (el.style.overflow === 'hidden') el.style.overflow = '';
@@ -29430,36 +29684,64 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   // alone (same trap as the 3D face-adjust lock), so: <main> overflow:hidden +
   // scroll snap-back + a non-passive touchmove preventDefault while held.
   let _shLock = null;
-  function _shPreventTouch(e){ if (_sheetSt.dragging) e.preventDefault(); }
+  /* Block the homepage (behind the sheet) from scrolling on touch while the sheet is open.
+     preventDefault on a non-passive document touchmove stops ANY scroll that touch would
+     cause — regardless of which element is the page scroller — so it's bulletproof on iOS.
+     Rules: ALWAYS block while dragging the sheet; for touches INSIDE the body allow its own
+     scroll BUT block over-scroll at the top/bottom edges (that over-scroll is exactly what
+     leaked to the homepage and dragged it down); block everything else (handle, padding,
+     backdrop). */
+  let _shLastY = 0;
+  function _shTouchStart(e){ if (e.touches && e.touches[0]) _shLastY = e.touches[0].clientY; }
+  function _shPreventTouch(e){
+    if (!_popOpen) return;
+    if (_sheetSt.dragging) { e.preventDefault(); return; }
+    const b = $('coach-pop-body');
+    const tch = e.touches && e.touches[0];
+    const y = tch ? tch.clientY : _shLastY;
+    const dy = y - _shLastY; _shLastY = y;                  // + = finger moving DOWN
+    if (b && e.target && b.contains(e.target)) {
+      const atTop = b.scrollTop <= 0;
+      const atBot = (b.scrollTop + b.clientHeight) >= (b.scrollHeight - 1);
+      // Pulling DOWN at the top, or UP at the bottom = over-scroll → block (else it chains
+      // to the page). Any in-range scroll is allowed through.
+      if ((atTop && dy > 0) || (atBot && dy < 0)) { e.preventDefault(); return; }
+      return;
+    }
+    e.preventDefault();                                     // outside the body → never scroll the page
+  }
   function _lockHomeScroll(){
     if (_shLock) return; const m = document.querySelector('main'); if (!m) return;
     const y0s = m.scrollTop; const snap = () => { if (m.scrollTop !== y0s) m.scrollTop = y0s; };
     _shLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
     m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
     m.addEventListener('scroll', snap, { passive: true });
+    document.addEventListener('touchstart', _shTouchStart, { passive: true });
     document.addEventListener('touchmove', _shPreventTouch, { passive: false });
   }
   function _unlockHomeScroll(){
     if (!_shLock) return; const b = _shLock; _shLock = null;
+    document.removeEventListener('touchstart', _shTouchStart);
     b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
     document.removeEventListener('touchmove', _shPreventTouch);
   }
   function _wireSheetDrag(){
     const p0 = pop(); if (!p0) return;
     let y0 = 0, baseH = 0, ty = 0, lastY = 0, lastT = 0, vel = 0, _touchId = null;
-    /* Drag can start from the handle OR any of the sheet's WHITESPACE — the padding
-       around the content, the tabs-row gaps, and the bullet list's empty areas while
-       it isn't scrollable. NOT from the text itself (it scrolls when expanded) and
-       NOT from the ✕ / tab buttons. */
+    /* Where a drag may START:
+       - COLLAPSED (small) panel → the WHOLE panel is a drag surface: the handle, the bullet
+         rows, AND every bit of white space around them. Drag up = expand, down = dismiss. There's
+         nothing to scroll in the small panel, so grabbing the text is fine (per user request).
+       - EXPANDED panel → the body text scrolls natively; only the handle / its own container
+         whitespace / tabs-row / padding drag (pull-to-collapse from the body TOP is handled in
+         the touchmove). The ✕ + tab buttons never drag. */
     function _dragZone(t){
       if (!t || !t.closest) return false;
       if (t.closest('.coach-pop-x, .coach-pop-tab')) return false;
       if (t.closest('#coach-pop-handle')) return true;
-      // A bullet's own text/<li> never drags; the <ul> itself (gaps + padding) drags
-      // ONLY when there's nothing to scroll (collapsed). When expanded + scrollable the
-      // body scrolls natively instead — collapse via the handle / tabs / padding.
+      if (!_sheetSt.expanded) return true;                 // small panel: drag from anywhere
       const bodyEl = $('coach-pop-body');
-      if (bodyEl && (t === bodyEl)) return bodyEl.scrollHeight <= bodyEl.clientHeight + 1;
+      if (bodyEl && (t === bodyEl)) return true;           // expanded: the body's own whitespace
       return t.classList.contains('coach-pop') || t.id === 'coach-pop-tabs';
     }
     function _begin(clientY){
@@ -29510,20 +29792,41 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     // instead. Touch events + a non-passive touchmove preventDefault is the app's
     // proven no-scroll pattern (same as every other gauge/face/swipe lock).
     const _find = (list) => { for (let i = 0; i < list.length; i++) if (list[i].identifier === _touchId) return list[i]; return null; };
+    const _inBody = (t) => { const b = $('coach-pop-body'); return !!(b && t && b.contains(t)); };
+    // A touch that STARTED on the scrollable body text: it scrolls the body natively UNLESS the
+    // user pulls DOWN while the body is already at its top — then it becomes a sheet drag
+    // (pull-to-collapse). This is why grabbing the content + dragging down used to scroll the
+    // page behind: no drag started, so the home lock never kicked in.
+    let _pending = false, _pendY = 0;
     p0.addEventListener('touchstart', (e) => {
       const p = pop(); if (!p || !_popOpen || !p.classList.contains('sheet')) return;
       if (_sheetSt.dragging) return;
-      if (!e.touches[0] || !_dragZone(e.target)) return;
-      _touchId = e.touches[0].identifier;
-      _begin(e.touches[0].clientY);
+      _pending = false;
+      const tch = e.touches[0]; if (!tch) return;
+      if (_dragZone(e.target)) {                        // handle / whitespace / collapsed body → drag now
+        _touchId = tch.identifier;
+        _begin(tch.clientY);
+      } else if (_inBody(e.target)) {                   // expanded scrollable body → maybe pull-to-collapse
+        _touchId = tch.identifier; _pending = true; _pendY = tch.clientY;
+      }
     }, { passive: true });
     p0.addEventListener('touchmove', (e) => {
-      if (!_sheetSt.dragging) return;
       const t = _find(e.touches); if (!t) return;
-      e.preventDefault();                              // stop the page / body scroll
-      _move(t.clientY);
+      if (_sheetSt.dragging) { e.preventDefault(); _move(t.clientY); return; }   // stop the page / body scroll
+      if (!_pending) return;
+      const body = $('coach-pop-body');
+      const dy = t.clientY - _pendY;
+      if (dy > 4 && (!body || body.scrollTop <= 0)) {   // pulling DOWN from the top → take over as a sheet drag
+        _pending = false;
+        _begin(_pendY);
+        e.preventDefault();
+        _move(t.clientY);
+      } else if (dy < -4 || (body && body.scrollTop > 0)) {
+        _pending = false;                               // scrolling up / body already scrolled → let it scroll
+      }
     }, { passive: false });
     function _touchEnd(e){
+      _pending = false;
       if (!_sheetSt.dragging) return;
       if (e && e.changedTouches && !_find(e.changedTouches)) return;
       _end();
@@ -31697,10 +32000,17 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       return !!(t && t.closest && t.closest('.bucket-svg, input, textarea, select, [contenteditable="true"], .time-resize-handle, #time-area, #time-panel'));
     }
 
+    // A modal/sheet that LOCKED the home scroll (the bucket ⓘ bottom-sheet, the GTD wheel,
+    // …) sets main's INLINE overflow:hidden. While that's set, pull-to-sync must stay OFF —
+    // otherwise dragging the open sheet DOWN drags the home (+ its loading layer) down with
+    // it (the home rode down ~PULL_MAX px revealing the sync image behind the panel).
+    function homeLocked() { return main.style.overflow === 'hidden'; }
+
     document.addEventListener('touchstart', (e) => {
       if (syncing || e.touches.length !== 1) { candidate = false; return; }
       // A gauge handle drag / pinch is in progress → never treat it as a pull.
       if (window._gaugeBusy || window._timeGaugePinching) { candidate = false; return; }
+      if (homeLocked()) { candidate = false; return; }
       const t = e.touches[0];
       candidate = (scroller.scrollTop <= 0) && !blocked(e.target);
       pulling = false; startY = t.clientY; startX = t.clientX;
@@ -31709,6 +32019,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     document.addEventListener('touchmove', (e) => {
       if (syncing || !candidate || e.touches.length !== 1) return;
       if (window._gaugeBusy || window._timeGaugePinching) { candidate = false; pulling = false; setMainY(0); hideInd(); return; }
+      if (homeLocked()) { candidate = false; pulling = false; setMainY(0); hideInd(); return; }
       const t = e.touches[0];
       const dy = t.clientY - startY, dx = t.clientX - startX;
       if (!pulling) {
@@ -31835,6 +32146,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       bs:{s:-4,x:15,y:0}, bm:{s:0,x:15,y:-3}, bd:{s:0,x:15,y:0}, bb:{s:5,x:0,y:0},
     },
     portrait: {
+      // iPhone PORTRAIT bucket sizing (user-tuned 2026-06-11): sprout buttons a touch smaller,
+      // the money number smaller, the "Today" line a touch bigger. (s → scale = 1 + s*0.05)
+      bs:{s:-2,x:0,y:0}, bm:{s:-4,x:0,y:0}, bd:{s:2,x:0,y:0},
     },
     // iPad PORTRAIT (≥701px, portrait) — distinct from iPhone portrait; selected by _setKey().
     portraitTablet: {
@@ -31974,14 +32288,10 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     setTitle();
     if (!panel.classList.contains('tune-collapsed')) clampIntoView();   // keep the opened panel on-screen
   });
-  setTitle();
-  selectTab(editOri);   // highlight the current-orientation tab + load its values
-  applyActive();        // apply the active set on boot
-  panel.appendChild(head); panel.appendChild(tabs); panel.appendChild(body);
-  if (document.body) document.body.appendChild(panel);
-  // Only show while the home / Focus page is visible.
-  function sync(){ const fp = document.getElementById('focus-page'); if (panel.parentNode) panel.style.display = (fp && fp.offsetParent !== null) ? 'flex' : 'none'; }
-  sync(); setInterval(sync, 800);
+  applyActive();        // apply the active (baked) --tu-* set on boot — the bucket tuning the
+                        // live layout depends on. The onOri() listener above re-applies it on
+                        // rotate. The visible drag-panel UI is REMOVED per user request; only the
+                        // value application remains (panel/head/tabs/body are built but never mounted).
 })();
 </script>
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
