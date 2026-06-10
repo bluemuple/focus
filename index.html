@@ -3378,12 +3378,17 @@
      + face together on the narrow phone column. The idle text also auto-shrinks (_fitIdleText). */
   @media (orientation: landscape) and (min-width: 701px) and (max-width: 940px) {
     body:not(.fv-active) #focus-page .focus-right > #focus-card { padding-left: 14px; padding-right: 14px; }
+    /* The idle cat is position:absolute (ignores the card padding), so it hugged the card
+       edge. Inset the cat-inner ~20px L/R to match the portrait margin. */
+    body:not(.fv-active) #focus-page .focus-card.fc-idle .fc-cat-inner,
+    body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-cat-inner,
+    body:not(.fv-active) #focus-page .focus-card.fc-down .fc-cat-inner { padding-left: 20px; padding-right: 20px; }
     body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-idle-text,
     body:not(.fv-active) #focus-page .focus-card.fc-down .fc-idle-text,
     body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-no-task,
     body:not(.fv-active) #focus-page .focus-card.fc-down .fc-no-task { transform: none !important; }
     body:not(.fv-active) #focus-page .focus-card.fc-startnow .fc-no-task,
-    body:not(.fv-active) #focus-page .focus-card.fc-idle .fc-no-task { max-width: 38%; height: 74%; }
+    body:not(.fv-active) #focus-page .focus-card.fc-idle .fc-no-task { max-width: 36%; height: 72%; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section { padding: 10px 14px; gap: 14px; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section .bucket-left { min-width: 0; }
     body:not(.fv-active) #focus-page .focus-right > #bucket-section .fc-money-big { font-size: 1.35rem; }
@@ -4602,6 +4607,12 @@
     .ftt-chips { display: inline-flex; margin-left: 0; }
     .ftt-chips .matrix-view-toggle,
     .ftt-chips .matrix-collapse-toggle { display: none; }
+  }
+  /* Phone LANDSCAPE forces the 2×2 matrix, so the flip-back ("T & T") control would be
+     a no-op — hide it (and the split-view Matrix toggle, though its header is hidden too). */
+  @media (max-width: 700px) and (orientation: landscape) {
+    .ftt-chips .matrix-view-toggle,
+    #split-view-toggle { display: none !important; }
   }
   /* GTD capsule on the matrix "Tasks" header — pinned to the far right. On narrow
      the .ftt-chips group (margin-left:auto) shoves the right cluster over and the
@@ -11676,8 +11687,17 @@ const _QORDER = ['q1', 'q2', 'q3', 'q4'];
    (the tt-split flat-column CSS lives inside @media max-width:700px). On
    iPad/desktop (>700px), split mode keeps the 2×2 matrix grid — so there we do
    NOT flatten and reorder stays same-quadrant. */
+/* Phone LANDSCAPE always uses the 2×2 matrix (tt-flip) — a single flat column is
+   unusable in the short landscape height, and the user wants the matrix there. This
+   is detected on the fly so applyTtState / _isFlatListMode / renderFocusMatrix can
+   force the matrix WITHOUT mutating the saved state.ttFlipped portrait preference. */
+function _isPhoneLandscape() {
+  try { return window.matchMedia('(max-width: 700px) and (orientation: landscape)').matches; } catch (_) { return false; }
+}
 function _isFlatListMode() {
-  return window.matchMedia('(max-width: 700px)').matches && document.body.classList.contains('tt-split');
+  return window.matchMedia('(max-width: 700px)').matches
+    && !_isPhoneLandscape()
+    && document.body.classList.contains('tt-split');
 }
 function _ensureTaskOrds() {
   // Assign `ord` to any task missing it, in current display order (q1→q4, array
@@ -14701,7 +14721,7 @@ function renderFocusMatrix() {
   const isPhone = window.matchMedia('(max-width: 700px)').matches;
   // Phone-only layout: either "all-grid" (2×2 showing every quadrant) or
   // "list-only" (1-column, hiding cells with no tasks). Default = all-grid.
-  if (isPhone && state.focusMatrixListOnly) {
+  if (isPhone && state.focusMatrixListOnly && !_isPhoneLandscape()) {
     root.classList.add('list-only');
     document.body.classList.add('fm-list-only');
   } else {
@@ -23272,7 +23292,7 @@ function placeManaSlider() { /* no-op — sliders no longer surfaced */ }
    flip can't leave tt-edit stuck on in matrix mode. */
 function _syncEditClasses() {
   const on = !!state.splitActionsVisible;
-  const back = !!state.ttFlipped;
+  const back = !!state.ttFlipped || _isPhoneLandscape();   // landscape = matrix face → never the tt-edit (Time & Tasks) on-gauge widget
   // On WIDE (web / iPad) the gauge is its own left-hand column, so the on-gauge edit
   // widget (tt-edit, the move/undo pad that replaces the mobile gauge) doesn't apply —
   // Edit there simply reveals the per-bar pencil + grip (tt-show-actions).
@@ -23281,11 +23301,14 @@ function _syncEditClasses() {
   document.body.classList.toggle('tt-edit', on && !back && !wide);
 }
 function applyTtState() {
-  const back = !!state.ttFlipped;
+  const real = !!state.ttFlipped;
+  // Phone landscape forces the 2×2 matrix face regardless of the saved preference;
+  // state.ttFlipped is left untouched so rotating back to portrait restores the choice.
+  const back = real || _isPhoneLandscape();
   document.body.classList.toggle('tt-flip', back);
   document.body.classList.toggle('tt-split', !back);
   state.focusSplitView = !back;          // front is the split view
-  if (back) state.focusMatrixListOnly = false;   // 2×2 grid on the back
+  if (real) state.focusMatrixListOnly = false;   // 2×2 grid on a REAL flip — don't clobber the portrait list-only pref from a transient landscape
   _syncEditClasses();                    // keep edit classes correct across a flip
   // The Time + Tasks panels are wired as collapsible elsewhere; in the flip
   // design they must always show their content (a collapsed #tasks-panel would
@@ -23479,6 +23502,20 @@ if (_matrixCollapseBtn) {
 // _syncEditClasses inside it computes the edit classes off, not from a stale save.
 state.splitActionsVisible = false;
 applyTtState();
+/* Re-apply the layout when crossing the phone-landscape boundary so rotating a phone
+   swaps between the tt-split front (portrait) and the forced 2×2 matrix (landscape)
+   without changing the saved preference. */
+try {
+  const _plMq = window.matchMedia('(max-width: 700px) and (orientation: landscape)');
+  const _onPlChange = () => {
+    try { applyTtState(); } catch (_) {}
+    try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+    try { if (state.timeArea) state.timeArea._needsScroll = true; } catch (_) {}
+    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+  };
+  if (_plMq.addEventListener) _plMq.addEventListener('change', _onPlChange);
+  else if (_plMq.addListener) _plMq.addListener(_onPlChange);
+} catch (_) {}
 
 /* ===== Edit chip → task-edit mode. For now it toggles the per-bar action
    buttons (✎ rename / delete) via body.tt-show-actions. Piece 3 extends this
@@ -31597,7 +31634,8 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   // Per-orientation value sets (raw slider numbers). The set matching the CURRENT
   // device orientation is the one applied live by applyActive() (also on boot), so these
   // baked LANDSCAPE values are the live "now focusing on" + bucket layout on PC / iPad
-  // landscape. Portrait stays identity (0). (Tuned 2026-06-10 via the temp panel.)
+  // landscape. PORTRAIT is split by device via _setKey()/_isTablet(): `portrait` =
+  // iPhone (≤700px), `portraitTablet` = iPad (≥701px). (Tuned 2026-06-10 via the temp panel.)
   const _BAKED = {
     landscape: {
       dt:{s:4,x:35,y:0}, di:{s:0,x:-35,y:0}, st:{s:4,x:35,y:0}, si:{s:0,x:-35,y:0},
@@ -31607,26 +31645,39 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     },
     portrait: {
       di:{s:-1.3,x:-2,y:0},   // iPhone portrait: nudge the idle face slightly smaller + left
+      ci:{s:12,x:-3,y:0},     // iPhone portrait: enlarge the earned/done image + nudge it left
+    },
+    // iPad PORTRAIT (≥701px, portrait) — distinct from iPhone portrait; selected by _setKey().
+    portraitTablet: {
+      dt:{s:0,x:10,y:0},  di:{s:-1.3,x:-5,y:0}, st:{s:-3,x:10,y:0}, si:{s:0,x:-2,y:0},
+      ct:{s:0,x:-23,y:0}, ci:{s:16,x:23,y:0},
+      bs:{s:-2,x:0,y:0},  bm:{s:-2,x:0,y:0},    bd:{s:-2,x:0,y:0},  bb:{s:4,x:0,y:0},
     },
   };
-  const vals = { landscape: {}, portrait: {} };
+  const vals = { landscape: {}, portrait: {}, portraitTablet: {} };
   IDS.forEach(id => {
-    vals.landscape[id] = Object.assign({ s:0, x:0, y:0 }, _BAKED.landscape[id] || {});
-    vals.portrait[id]  = Object.assign({ s:0, x:0, y:0 }, _BAKED.portrait[id]  || {});
+    vals.landscape[id]      = Object.assign({ s:0, x:0, y:0 }, _BAKED.landscape[id]      || {});
+    vals.portrait[id]       = Object.assign({ s:0, x:0, y:0 }, _BAKED.portrait[id]       || {});
+    vals.portraitTablet[id] = Object.assign({ s:0, x:0, y:0 }, _BAKED.portraitTablet[id] || {});
   });
+  // Device-aware set key: iPad portrait (≥701px) uses its own `portraitTablet` set; iPhone
+  // portrait (≤700px) uses `portrait`. Landscape is shared (iPhone landscape is neutralised
+  // by the CSS landscape band). ORI() stays the orientation; _setKey() folds in the device.
+  const _isTablet = () => { try { return window.matchMedia('(min-width: 701px)').matches; } catch (_) { return false; } };
+  const _setKey = (ori) => { ori = ori || ORI(); return (ori === 'portrait' && _isTablet()) ? 'portraitTablet' : ori; };
   let editOri = ORI();
   const root = document.documentElement.style;
   // 3D bucket: INLINE transform only when non-identity (an always-on transform on
   // the 3D-rendered .bucket-stage garbles its compositing/capture).
   function applyBucketTransform(){
-    const v = vals[ORI()].bb || { s:0, x:0, y:0 };
+    const v = vals[_setKey()].bb || { s:0, x:0, y:0 };
     const el = document.querySelector('#bucket-section .bucket-stage'); if (!el) return;
     const s = 1 + (v.s||0)*0.05, x = v.x||0, y = v.y||0;
     el.style.transform = (s===1 && x===0 && y===0) ? '' : ('translate('+x+'px,'+y+'px) scale('+s+')');
   }
   // Apply the CURRENT-orientation set to the live --tu-* vars.
   function applyActive(){
-    const set = vals[ORI()];
+    const set = vals[_setKey()];
     IDS.forEach(id => {
       if (id === 'bb') return;
       const v = set[id] || { s:0, x:0, y:0 };
@@ -31659,7 +31710,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     function mk(suffix){
       const inp = document.createElement('input'); inp.type = 'number'; inp.step = '1'; inp.value = '0';
       inp.addEventListener('input', () => {
-        vals[editOri][id][suffix] = parseFloat(inp.value) || 0;
+        vals[_setKey(editOri)][id][suffix] = parseFloat(inp.value) || 0;
         if (editOri === ORI()) applyActive();   // live only while editing the active orientation
       });
       r.appendChild(inp); return inp;
@@ -31669,7 +31720,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     fields.push({ id, s, x, y }); body.appendChild(r);
   });
   function refreshInputs(){
-    const set = vals[editOri];
+    const set = vals[_setKey(editOri)];
     fields.forEach(f => {
       const v = set[f.id] || { s:0, x:0, y:0 };
       f.s.value = String(v.s||0);
@@ -31691,8 +31742,10 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   if (window.matchMedia) { const mq = window.matchMedia('(orientation: portrait)'); const h = () => onOri(); if (mq.addEventListener) mq.addEventListener('change', h); else if (mq.addListener) mq.addListener(h); }
   copyBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const dump = (ori) => ori + ':\n' + IDS.map(id => { const v = vals[ori][id]; return '  ' + id + ': size=' + v.s + ' x=' + v.x + ' y=' + v.y; }).join('\n');
-    const txt = dump('landscape') + '\n' + dump('portrait');
+    const dump = (label, key) => label + ':\n' + IDS.map(id => { const v = vals[key][id]; return '  ' + id + ': size=' + v.s + ' x=' + v.x + ' y=' + v.y; }).join('\n');
+    // Dump the sets ACTIVE on this device: iPad reports its `portraitTablet` under the
+    // familiar "portrait" label so the copied numbers match what's on screen.
+    const txt = dump('landscape', _setKey('landscape')) + '\n' + dump('portrait', _setKey('portrait'));
     try { navigator.clipboard.writeText(txt); } catch (_) {}
     copyBtn.textContent = 'Copied'; setTimeout(() => copyBtn.textContent = 'Copy', 1200);
     try { console.log('[tune]\n' + txt); } catch (_) {}
