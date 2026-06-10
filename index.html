@@ -772,6 +772,10 @@
   #pillars-panel .pillar-edit-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(0,0,0,.18); padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #pillars-panel .pillar-edit-dot.sel { border-color: var(--text-main, #111827); box-shadow: 0 0 0 2px var(--card-bg, #fff), 0 0 0 4px var(--accent, #2563eb); }
   #pillars-panel .pillar-edit-title { width: 100%; box-sizing: border-box; font: inherit; font-weight: 700; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface-2, #fff); color: var(--text-main); }
+  /* Description / Direction / Diagnostic tabs (per face). */
+  #pillars-panel .pe-tabs { display: flex; gap: 6px; margin: 0 0 7px; flex-wrap: wrap; }
+  #pillars-panel .pe-tab { flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb); background: transparent; color: var(--text-muted); font-size: .8rem; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #pillars-panel .pe-tab.active { background: var(--text-main); color: var(--card-bg); border-color: var(--text-main); }
   #pillars-panel .pillar-edit-row { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; font-size: .8rem; font-weight: 700; color: var(--text-muted); }
   #pillars-panel .pillar-edit-row textarea { width: 100%; box-sizing: border-box; font: inherit; font-weight: 400; resize: none; padding: 7px 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface-2, #fff); color: var(--text-main); line-height: 1.3; }
   /* Sides row (in Bucket Sides) — label · ◀ · slider · ▶ · value. Flex (not the
@@ -7527,16 +7531,24 @@
       </div>
       <p class="help" id="sound-mode-hint" style="margin-top:8px;"></p>
     </div>
-    <!-- Bucket Sides — edit each bucket-face name + its low/mid/high band text. -->
+    <!-- Bucket Sides — edit each bucket-face name + per-tier Description (painted on
+         the bucket) / Direction / Diagnostic (the left coaching card; both optional —
+         blank BOTH to keep the money view when that side is tapped). -->
     <div class="panel" id="pillars-panel">
       <h2>Bucket Sides</h2>
-      <p class="help">Set how many sides, then name each one and say what low / mid / high looks like — these show painted on the bucket.</p>
+      <p class="help">Set how many sides and name each one. Description is painted on the bucket; Direction and Diagnostic are the coaching lines shown when you tap that side.</p>
       <div class="bv-row"><label for="bv-faces">Sides</label><button type="button" class="bv-step" id="bv-faces-dec" aria-label="면 하나 줄이기">◀</button><input type="range" id="bv-faces" min="3" max="8" step="1"><button type="button" class="bv-step" id="bv-faces-inc" aria-label="면 하나 늘리기">▶</button><span class="bv-val" id="bv-faces-val"></span></div>
       <div class="pillar-edit-swatches" id="pillar-edit-swatches"></div>
       <input class="pillar-edit-title" id="pillar-edit-title" type="text" maxlength="16" placeholder="Side name" autocomplete="off">
-      <label class="pillar-edit-row"><span>Low (1–3)</span><textarea id="pillar-edit-d1" maxlength="60" rows="2" placeholder="What 1–3 looks like"></textarea></label>
-      <label class="pillar-edit-row"><span>Mid (4–7)</span><textarea id="pillar-edit-d2" maxlength="60" rows="2" placeholder="What 4–7 looks like"></textarea></label>
-      <label class="pillar-edit-row"><span>High (8–10)</span><textarea id="pillar-edit-d3" maxlength="60" rows="2" placeholder="What 8–10 looks like"></textarea></label>
+      <div class="pe-tabs" id="pillar-edit-tabs" role="tablist">
+        <button type="button" class="pe-tab active" data-tab="desc" role="tab" aria-selected="true">Description</button>
+        <button type="button" class="pe-tab" data-tab="dir" role="tab" aria-selected="false">Direction</button>
+        <button type="button" class="pe-tab" data-tab="diag" role="tab" aria-selected="false">Diagnostic</button>
+      </div>
+      <p class="help" id="pillar-edit-hint" style="margin:0 0 8px;"></p>
+      <label class="pillar-edit-row"><span>Low (1–3)</span><textarea id="pillar-edit-d1" maxlength="90" rows="2"></textarea></label>
+      <label class="pillar-edit-row"><span>Mid (4–7)</span><textarea id="pillar-edit-d2" maxlength="90" rows="2"></textarea></label>
+      <label class="pillar-edit-row"><span>High (8–10)</span><textarea id="pillar-edit-d3" maxlength="90" rows="2"></textarea></label>
     </div>
     <!-- (Bucket view shape/camera sliders panel removed per request — the 3D bucket
          still uses its saved geometry; wireBucketView/_bucketViewLoad guard the now-
@@ -14353,20 +14365,66 @@ function _coachGet(faceIdx, level) {
   const k = _coachAreaKey(faceIdx); if (!k || !BUCKET_COACH[k]) return null;
   return BUCKET_COACH[k][_coachTier(level)] || null;
 }
-/* state.bucket.faceText = [{title,d1,d2,d3}×7] — the editable pillar names + band
-   text. Seeded from the defaults on first access; the bucket module preserves it
-   across its render mirror / Export so it survives sync + every redraw. */
-const _FT_VERSION = 2;   // bump to force a one-time rebuild of faceText (e.g. the 2026-06-05 colour↔title remap)
+/* Effective coaching for a face — BUCKET_COACH defaults overlaid with the user's
+   Settings → Bucket Sides overrides (faceText dir1–3 / dg1–3; missing = default,
+   '' = explicitly blank). BOTH lines blank → null → selecting the face keeps the
+   money view (state 1). Custom sides (idx ≥ 7) have no defaults, but user-written
+   Direction/Diagnostic lines still produce a coaching card for them. */
+function _coachEffective(faceIdx, level) {
+  const base = _coachGet(faceIdx, level);
+  let f = null;
+  try { const ft = (typeof _ensureFaceText === 'function') ? _ensureFaceText() : null; f = ft && ft[faceIdx]; } catch (_) {}
+  const L = +level || 1, sfx = L <= 3 ? 1 : (L <= 7 ? 2 : 3);
+  const dOv = f ? f['dir' + sfx] : undefined;
+  const gOv = f ? f['dg' + sfx] : undefined;
+  const direction  = (dOv != null) ? dOv : (base ? base.direction  : '');
+  const diagnostic = (gOv != null) ? gOv : (base ? base.diagnostic : '');
+  if (!String(direction || '').trim() && !String(diagnostic || '').trim()) return null;
+  return {
+    stateWord: base ? base.stateWord : '',
+    direction, diagnostic,
+    directionDetail:  base ? base.directionDetail  : null,
+    diagnosticDetail: base ? base.diagnosticDetail : null,
+    expanded:         base ? base.expanded         : null,
+  };
+}
+/* state.bucket.faceText = [{title, d1,d2,d3, dir1..3?, dg1..3?}×N] — the editable side
+   names + per-tier text. d1–d3 = the Description painted on the bucket (since v3 the
+   short coaching stateWord, not the long band sentences). dir1–3 / dg1–3 = OPTIONAL
+   per-tier Direction / Diagnostic overrides for the left coaching card: missing
+   (undefined) → BUCKET_COACH default, '' → explicitly blank. Seeded on first access;
+   the bucket module preserves the array across its render mirror / Export. */
+const _FT_VERSION = 3;   // v3 (2026-06-10): d1–d3 became the painted Description (short stateWord) + dir/dg overrides
+function _ftSeedFace(i) {
+  const nm = _PILLAR_NAMES[i] || ('Side ' + (i + 1));
+  const c = BUCKET_COACH[_COACH_AREA_KEYS[i]];
+  if (c) return { title: nm, d1: c.low.stateWord, d2: c.mid.stateWord, d3: c.high.stateWord };
+  const d = _PILLAR_DESC[nm] || ['', '', ''];
+  return { title: nm, d1: d[0], d2: d[1], d3: d[2] };
+}
 function _ensureFaceText() {
   if (typeof state === 'undefined' || !state.bucket) return null;
   const ft = state.bucket.faceText;
-  // Rebuild on: missing array, FEWER than the base pillars, OR an older version flag
+  // Rebuild on: missing array, FEWER than the base pillars, OR a pre-v2 version flag
   // (the colour↔title order changed, so existing titles/descs reset to the new defaults).
   // IMPORTANT: do NOT rebuild merely because the array is LONGER — the side count (N) is
   // user-adjustable (3–8), and an 8th+ face stores its own edited text (length > 7).
   // Rebuilding on length growth wiped those edits (the trap noted in the pending-batch memo).
-  if (!Array.isArray(ft) || ft.length < _PILLAR_NAMES.length || state.bucket._ftV !== _FT_VERSION) {
-    state.bucket.faceText = _PILLAR_NAMES.map((nm) => { const d = _PILLAR_DESC[nm] || ['', '', '']; return { title: nm, d1: d[0], d2: d[1], d3: d[2] }; });
+  if (!Array.isArray(ft) || ft.length < _PILLAR_NAMES.length || (state.bucket._ftV || 0) < 2) {
+    state.bucket.faceText = _PILLAR_NAMES.map((nm, i) => _ftSeedFace(i));
+    state.bucket._ftV = _FT_VERSION;
+  } else if (state.bucket._ftV !== _FT_VERSION) {
+    // v2 → v3 migration: the painted band switched from the long _PILLAR_DESC sentences
+    // to the short coaching stateWord. Swap d1–d3 to the new defaults ONLY where they
+    // still equal the OLD defaults — user-edited text (and 8th+ faces) is preserved.
+    for (let i = 0; i < Math.min(ft.length, _PILLAR_NAMES.length); i++) {
+      const f = ft[i]; const c = BUCKET_COACH[_COACH_AREA_KEYS[i]];
+      if (!f || !c) continue;
+      const old = _PILLAR_DESC[_PILLAR_NAMES[i]] || ['', '', ''];
+      if (f.d1 === old[0]) f.d1 = c.low.stateWord;
+      if (f.d2 === old[1]) f.d2 = c.mid.stateWord;
+      if (f.d3 === old[2]) f.d3 = c.high.stateWord;
+    }
     state.bucket._ftV = _FT_VERSION;
   }
   return state.bucket.faceText;
@@ -14411,6 +14469,30 @@ function _syncSidesStepperBtns(){
   if (dec) dec.disabled = N <= 3;
   if (inc) inc.disabled = N >= 8;
 }
+/* Active editor tab: 'desc' (painted word, d1–d3) | 'dir' (Direction overrides,
+   dir1–3) | 'diag' (Diagnostic overrides, dg1–3). The same three Low/Mid/High
+   textareas are reused — load/save switch which faceText fields they bind to. */
+let _pillarEditTab = 'desc';
+function _pillarTabKeys(){
+  return _pillarEditTab === 'dir'  ? ['dir1', 'dir2', 'dir3']
+       : _pillarEditTab === 'diag' ? ['dg1',  'dg2',  'dg3']
+       :                             ['d1',   'd2',   'd3'];
+}
+/* Default text per tier for face i on the active tab — what an UNEDITED field shows
+   (the same copy the home bucket coaching uses). Custom 8th+ sides have no defaults. */
+function _pillarTabDefaults(i){
+  const k = (typeof _coachAreaKey === 'function') ? _coachAreaKey(i) : null;
+  const c = k && BUCKET_COACH[k];
+  if (!c) return ['', '', ''];
+  if (_pillarEditTab === 'dir')  return [c.low.direction,  c.mid.direction,  c.high.direction];
+  if (_pillarEditTab === 'diag') return [c.low.diagnostic, c.mid.diagnostic, c.high.diagnostic];
+  return [c.low.stateWord, c.mid.stateWord, c.high.stateWord];
+}
+const _PILLAR_TAB_HINT = {
+  desc: 'The short word painted on this side of the bucket.',
+  dir:  'The bold suggestion shown beside the bucket when this side is tapped. Optional.',
+  diag: 'The small reading under the suggestion. Optional — leave Direction and Diagnostic both blank to keep the money view.',
+};
 function _pillarEditorLoad() {
   const swatches = document.getElementById('pillar-edit-swatches');
   const titleEl  = document.getElementById('pillar-edit-title');
@@ -14420,7 +14502,16 @@ function _pillarEditorLoad() {
   if (swatches.querySelectorAll('.pillar-edit-dot').length !== _pillarFaceCount()) _renderPillarSwatches();
   const ft = _ensureFaceText();
   const p = (ft && ft[_pillarEditSel]) || { title: _PILLAR_NAMES[_pillarEditSel] || '', d1: '', d2: '', d3: '' };
-  titleEl.value = p.title || ''; d1.value = p.d1 || ''; d2.value = p.d2 || ''; d3.value = p.d3 || '';
+  titleEl.value = p.title || '';
+  const keys = _pillarTabKeys(), defs = _pillarTabDefaults(_pillarEditSel);
+  // Missing (undefined) = never edited → show the default; '' = explicitly blanked.
+  d1.value = (p[keys[0]] != null) ? p[keys[0]] : defs[0];
+  d2.value = (p[keys[1]] != null) ? p[keys[1]] : defs[1];
+  d3.value = (p[keys[2]] != null) ? p[keys[2]] : defs[2];
+  const tabs = document.getElementById('pillar-edit-tabs');
+  if (tabs) tabs.querySelectorAll('.pe-tab').forEach(b => { const on = b.dataset.tab === _pillarEditTab; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+  const hint = document.getElementById('pillar-edit-hint');
+  if (hint) hint.textContent = _PILLAR_TAB_HINT[_pillarEditTab] || '';
   swatches.querySelectorAll('.pillar-edit-dot').forEach((x, xi) => x.classList.toggle('sel', xi === _pillarEditSel));
   _syncSidesStepperBtns();
 }
@@ -14431,12 +14522,21 @@ function _pillarEditorLoad() {
   if (!swatches || !titleEl) return;
   function save(){
     const ft = _ensureFaceText(); if (!ft) return;
-    ft[_pillarEditSel] = { title: titleEl.value, d1: d1.value, d2: d2.value, d3: d3.value };
+    // Mutate only the active tab's fields (a wholesale rewrite would wipe the other
+    // tabs' overrides on every keystroke).
+    const f = ft[_pillarEditSel] || (ft[_pillarEditSel] = { title: '', d1: '', d2: '', d3: '' });
+    f.title = titleEl.value;
+    const keys = _pillarTabKeys();
+    f[keys[0]] = d1.value; f[keys[1]] = d2.value; f[keys[2]] = d3.value;
     try { state.bucket.faceText = ft; saveState(); } catch (_) {}
     try { markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
     try { if (window.bidoroBucket3DRender) window.bidoroBucket3DRender(); } catch (_) {}
+    // A face selected on the home bucket re-reads its coaching (text change / blank→money).
+    try { if (window.__bidoroBucketCoachInvalidate) window.__bidoroBucketCoachInvalidate(); } catch (_) {}
   }
   [titleEl, d1, d2, d3].forEach(el => el.addEventListener('input', save));
+  const tabs = document.getElementById('pillar-edit-tabs');
+  if (tabs) tabs.querySelectorAll('.pe-tab').forEach(b => b.addEventListener('click', () => { _pillarEditTab = b.dataset.tab || 'desc'; _pillarEditorLoad(); }));
   // Live swatch count: moving the Sides slider rebuilds the swatches (sides appear /
   // disappear from the right) and reloads the editor for the now-visible selection.
   const faces = document.getElementById('bv-faces');
@@ -27913,7 +28013,16 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   let heights = Array.from({ length: N }, () => 1), waterLvl = 0.42, heightSel = -1;
   const WATER = {};
   let sloshMs = 0, sloshExtra = 0, _lastTs = 0, _lastSig = '';
-  const faceText = NAMES.map(n => { const d = PILLAR_DESC[n] || ['','','']; return { title: n, d1: d[0], d2: d[1], d3: d[2] }; });
+  // Pre-state seed (overwritten from state.bucket.faceText on every build). The 7 base
+  // faces seed from the coaching stateWord (the v3 Description default), matching what
+  // _ensureFaceText would produce — avoids a long-sentence flash before state loads.
+  const faceText = NAMES.map((n, i) => {
+    const k = (typeof _COACH_AREA_KEYS !== 'undefined') ? _COACH_AREA_KEYS[i] : null;
+    const c = (k && typeof BUCKET_COACH !== 'undefined') ? BUCKET_COACH[k] : null;
+    if (c) return { title: n, d1: c.low.stateWord, d2: c.mid.stateWord, d3: c.high.stateWord };
+    const d = PILLAR_DESC[n] || ['','',''];
+    return { title: n, d1: d[0], d2: d[1], d3: d[2] };
+  });
 
   function shade(hex, k){ const c = i => Math.max(0, Math.min(255, Math.round(parseInt(hex.slice(i, i + 2), 16) * k))); return '#' + [c(1), c(3), c(5)].map(x => x.toString(16).padStart(2, '0')).join(''); }
   function isDark(){ try { return document.documentElement.getAttribute('data-theme') === 'solarized'; } catch (_) { return false; } }
@@ -28003,10 +28112,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         pill.style.color = '#fff';
         el.appendChild(pill);
       }
-      // Face descriptor = the short stateWord (no long sentences). Falls back to the old
-      // editable band text only for faces beyond the 7 coaching areas (custom 8th side).
+      // Face descriptor = the editable Description (Settings → Bucket Sides d1–d3, the
+      // short painted word). Blank/unedited → the coaching stateWord default; custom
+      // 8th+ sides only have their own text (no coaching fallback).
       const coach = (typeof _coachGet === 'function') ? _coachGet(i, lvl) : null;
-      const band = coach ? coach.stateWord : (lvl <= 3 ? ft.d1 : (lvl <= 7 ? ft.d2 : ft.d3));
+      const customBand = lvl <= 3 ? ft.d1 : (lvl <= 7 ? ft.d2 : ft.d3);
+      const band = (customBand != null && String(customBand).trim()) ? customBand : (coach ? coach.stateWord : '');
       if (band){ const df = Math.max(5, Math.min(10.5, sTop * 0.125)); const d = document.createElement('div'); d.className = 'b3d-face-desc'; const descTop = top0 + tf + 3; d.textContent = band; d.style.fontSize = df.toFixed(1) + 'px'; d.style.top = descTop + 'px'; d.style.fontWeight = '700'; d.style.color = dk ? '#111827' : shade(COLORS[i % COLORS.length], sel ? 0.30 : 0.44); el.appendChild(d); fitFont(d, df, 4.5); pendingDescs.push({ el: d, panelH: panelH, descTop: descTop }); }
     }
 
@@ -28376,13 +28487,21 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     if (!dE || !gE || !bE) return;
     if (!_dirInfo)  _dirInfo  = _mkInfo(false, 'More on this suggestion');
     if (!_diagInfo) _diagInfo = _mkInfo(true,  'More on this reading');
-    _setLineWithInfo(dE, content.direction, _dirInfo);
-    _setLineWithInfo(gE, content.diagnostic, _diagInfo);
+    // ⓘ only when there is BOTH visible text and detail content behind it (a user
+    // override can blank a line, and custom 8th+ sides have no default details).
+    const hasDir = !!String(content.direction || '').trim();
+    const hasDg  = !!String(content.diagnostic || '').trim();
+    if (hasDir && content.directionDetail) {
+      _setLineWithInfo(dE, content.direction, _dirInfo);
+      _dirInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_dirInfo, 'Suggestions', content.directionDetail, content.expanded); };
+    } else dE.textContent = hasDir ? content.direction : '';
+    if (hasDg && content.diagnosticDetail) {
+      _setLineWithInfo(gE, content.diagnostic, _diagInfo);
+      _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail, content.expanded); };
+    } else gE.textContent = hasDg ? content.diagnostic : '';
     bE.textContent = _compactBalance();
     _curContent = content;
     _coachAriaHidden(false);   // state 2 content is now visible → expose to screen readers
-    _dirInfo.onclick  = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_dirInfo,  'Suggestions',    content.directionDetail, content.expanded); };
-    _diagInfo.onclick = (e) => { e.preventDefault(); e.stopPropagation(); openCoachPop(_diagInfo, 'What this means', content.diagnosticDetail, content.expanded); };
     requestAnimationFrame(_fitCoachToHeight);
   }
   function _coachAriaHidden(v){ const c = $('bucket-coach'); if (c) c.setAttribute('aria-hidden', v ? 'true' : 'false'); }
@@ -28392,9 +28511,16 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     _cur = { idx, lvl };
     const s = sec();
     if (idx < 0) { closeCoachPop(); _curContent = null; if (s) s.classList.remove('bc-active'); _coachAriaHidden(true); return; }   // deselected → state 1
-    const content = (typeof _coachGet === 'function') ? _coachGet(idx, lvl) : null;
+    const content = (typeof _coachEffective === 'function') ? _coachEffective(idx, lvl) : null;
     if (content) { if (s) s.classList.add('bc-active'); _render(content); }
-    else { _curContent = null; if (s) s.classList.remove('bc-active'); _coachAriaHidden(true); }   // selected but no coaching (8th side) → keep money
+    else { _curContent = null; if (s) s.classList.remove('bc-active'); _coachAriaHidden(true); }   // selected but no coaching (8th side / both lines blanked) → keep money
+  };
+  // Re-evaluate the current selection after Settings → Bucket Sides edits (an override
+  // can change the coaching text or blank both lines back to the money view).
+  window.__bidoroBucketCoachInvalidate = function(){
+    const c = _cur; if (c.idx < 0) return;
+    _cur = { idx: -1, lvl: -1 };
+    window.__bidoroBucketSel(c.idx, c.lvl);
   };
   // Keep the compact balance current if money changes while a face is selected.
   window.__bidoroBucketCoachRefreshMoney = function(){
