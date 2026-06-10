@@ -12005,7 +12005,13 @@ function _animateSwipeToGauge(row, q, i, newIds, isRunning) {
   // row, so briefly hiding the row never interrupts the timer.) Previously a
   // running row was reset to its origin immediately + a ghost vanished instead —
   // which read as "the bar slides left a bit then instantly snaps back".
-  const vanishEl = row;
+  // Slide the BAR FOREGROUND (.tr-fg) left — it may already be swipe-revealed, so this
+  // continues smoothly from the open position. The revealed action buttons (blue add /
+  // red delete) FADE OUT in lock-step. Falls back to the whole row if there's no .tr-fg.
+  const fg = row.querySelector(':scope > .tr-fg');
+  const vanishEl = fg || row;
+  const acts = row.querySelectorAll(':scope > .tr-actions, :scope > .tr-actions-left, :scope > .tr-actions-right');
+  acts.forEach(a => { a.style.transition = `opacity ${PHASE1_MS}ms ease`; a.style.opacity = '0'; });
   vanishEl.style.transition =
     `transform ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), clip-path ${PHASE1_MS}ms cubic-bezier(.4,0,.7,.2), opacity ${PHASE1_MS}ms ease`;
   requestAnimationFrame(() => {
@@ -14931,14 +14937,10 @@ function renderFocusMatrix() {
       const _actTmrw  = row.querySelector('.tr-act-tmrw');
       if (_actGauge) _actGauge.onclick = (e) => {
         e.stopPropagation();
-        // Fade the bar + the blue (add) / red (delete) buttons out together (leave the
-        // reveal open so the buttons fade too), then add the gauge block.
-        row.style.transition = 'opacity .25s ease';
-        row.style.opacity = '0';
-        setTimeout(() => {
-          try { window._openSwipeRow = null; } catch (_) {}
-          try { _commitTaskSwipeToGauge(row, q, i, { skipAnim: true }); } catch (_) {}
-        }, 270);
+        try { window._openSwipeRow = null; } catch (_) {}
+        // Run the portal animation: the bar slides LEFT (the blue/red buttons fade out),
+        // then the new block emerges from the gauge's right edge and settles. (No skipAnim.)
+        try { _commitTaskSwipeToGauge(row, q, i); } catch (_) {}
       };
       if (_actDel) _actDel.onclick = (e) => {
         e.stopPropagation();
@@ -27301,6 +27303,26 @@ setInterval(() => {
     }
 
     let _td = null; // { q, idx, durMs, rowGhost, ... } while touch drag is live
+    // LONG-PRESS (1 s) on a task bar → enter reorder (ghost + drop line), no Edit/grip
+    // needed. Works in BOTH the 2×2 matrix and the Time & Tasks split list. Reuses the
+    // grip-reorder path (fromGrip) so the move/commit logic is shared.
+    function _enterReorderHold() {
+      if (!_td || _td.dragging || _td.mode) return;
+      _td._holdTimer = null;
+      _td.fromGrip = true;                 // route through the reorder (not swipe) path
+      _td.dragging = true;
+      _td.mode = 'drag';
+      if (_td._lockScroll) _td._lockScroll();
+      try {
+        _td.rowGhost = makeRowGhost(_td.srcRow, _td.q, _td.taskName);
+        _td.rowGhost.style.left = _td.startX + 'px';
+        _td.rowGhost.style.top  = _td.startY + 'px';
+      } catch (_) {}
+      // Swallow the trailing click so releasing the long-press (without dragging) doesn't
+      // also start/pause the task.
+      try { if (_td.srcRow) { _td.srcRow._swallowClick = true; setTimeout(() => { try { _td.srcRow._swallowClick = false; } catch (_) {} }, 400); } } catch (_) {}
+      try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('medium'); } catch (_) {}
+    }
 
     /* ===== (#19) Reveal-swipe state =====
        Only ONE task row is revealed (open) at a time. `_setSwipeRowState` snaps
@@ -27504,6 +27526,9 @@ setInterval(() => {
           };
         } catch (_) {}
       };
+      // Long-press: hold the bar still for 1 s → reorder ghost appears. Any >8px move
+      // before then cancels it (that's a swipe / scroll), as does release / cancel.
+      _td._holdTimer = setTimeout(_enterReorderHold, 1000);
     }, { passive: false });
 
     document.addEventListener('pointermove', ev => {
@@ -27516,6 +27541,7 @@ setInterval(() => {
       if (!_td.dragging) {
         const dx0 = t.clientX - _td.startX, dy0 = t.clientY - _td.startY;
         if (dx0 * dx0 + dy0 * dy0 < 64) return;   // < 8 px — not a drag yet
+        if (_td._holdTimer) { clearTimeout(_td._holdTimer); _td._holdTimer = null; }   // moved → not a long-press
         _td.dragging = true;
         // Decide which gesture this is:
         //   swipe-RIGHT (predominantly rightward) → swipe-to-delete
@@ -27678,6 +27704,7 @@ setInterval(() => {
 
     document.addEventListener('pointerup', ev => {
       if (!_td) return;
+      if (_td._holdTimer) { clearTimeout(_td._holdTimer); _td._holdTimer = null; }   // released before the long-press fired
       // Release the page-scroll hold set at touchstart.
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       // Tear down the row-shaped ghost.
@@ -27778,6 +27805,7 @@ setInterval(() => {
 
     function _cancelRowDrag() {
       if (!_td) return;
+      if (_td._holdTimer) { clearTimeout(_td._holdTimer); _td._holdTimer = null; }
       if (_td._unlockScroll) { try { _td._unlockScroll(); } catch (_) {} _td._unlockScroll = null; }
       if (_td.rowGhost) { try { _td.rowGhost.remove(); } catch (_) {} _td.rowGhost = null; }
       // (#19) If a reveal-swipe was in progress, snap the row's sliding
