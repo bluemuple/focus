@@ -22789,18 +22789,26 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   // we added so split-view can swap their layout side-by-side). Without
   // this, those two panels lose their collapsibility entirely.
   const panels = focusRight.querySelectorAll(':scope > .panel, :scope > .time-tasks-wrap > .panel');
+  // On wide (PC / iPad web, ≥701px) the Tasks panel must NOT collapse when its title
+  // is clicked — the matrix should always stay visible there (user request). Phone
+  // keeps the tap-to-collapse. Gated live so a resize across the breakpoint is honoured.
+  const _isWide = () => { try { return window.matchMedia('(min-width: 701px)').matches; } catch (_) { return false; } };
   panels.forEach((panel) => {
     // Find the FIRST top-level h2/h3 inside the panel — that's the title row.
     const title = panel.querySelector(':scope > h2, :scope > h3');
     if (!title) return;          // no title → not collapsible (Money+Mana row)
     panel.classList.add('collapsible');
     const id = panel.id || title.textContent.trim().toLowerCase().replace(/\s+/g, '-');
-    const startCollapsed = (id in saved) ? !!saved[id] : !!defaults[id];
+    const _isTasks = (panel.id === 'tasks-panel');
+    // The Tasks matrix never starts collapsed on wide — even if a previous phone
+    // session saved it collapsed (otherwise it'd be stuck closed with no toggle).
+    const startCollapsed = (_isTasks && _isWide()) ? false : ((id in saved) ? !!saved[id] : !!defaults[id]);
     if (startCollapsed) panel.classList.add('collapsed');
     title.setAttribute('role', 'button');
     title.setAttribute('tabindex', '0');
     title.setAttribute('aria-expanded', startCollapsed ? 'false' : 'true');
     function toggle() {
+      if (_isTasks && _isWide()) return;   // wide: Tasks title never collapses the matrix
       panel.classList.toggle('collapsed');
       const collapsed = panel.classList.contains('collapsed');
       title.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
@@ -22817,6 +22825,17 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     title.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
     });
+  });
+  // If the viewport is resized to wide while the Tasks panel was collapsed (e.g.
+  // collapsed on phone, then rotated / window-widened), force it open so it can't
+  // get stuck closed with no working toggle.
+  window.addEventListener('resize', () => {
+    if (!_isWide()) return;
+    const tp = document.getElementById('tasks-panel');
+    if (tp && tp.classList.contains('collapsed')) {
+      tp.classList.remove('collapsed');
+      const t = tp.querySelector(':scope > h2, :scope > h3'); if (t) t.setAttribute('aria-expanded', 'true');
+    }
   });
 })();
 
