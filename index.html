@@ -4458,13 +4458,14 @@
   #focus-matrix .mca .qp-side-item.sel { z-index: 3; opacity: 1; transform: scaleY(1.32); font-size: .74rem; font-weight: 900; color: rgba(0,0,0,.92); box-shadow: inset 0 0 0 1px rgba(0,0,0,.42), 0 1px 7px rgba(0,0,0,.2); }
   /* Wide (iPad/PC/landscape) bucket picker = a tidy 2×4 GRID of colour dots with the SELECTED
      area's NAME shown below (like the touch wheel), selected dot ringed in its own colour. */
-  #focus-matrix .mca .qp-sides-dots { min-width:0; height:100%; box-sizing:border-box; border:1px solid var(--card-border,#e5e7eb); border-radius:8px; background:var(--surface-2,#f3f4f6); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; padding:8px 6px; position:relative; overflow:visible; }
-  #focus-matrix .mca .qp-dots { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:9px 11px; align-items:center; justify-items:center; width:100%; max-width:176px; }
+  #focus-matrix .mca .qp-sides-dots { min-width:0; height:100%; box-sizing:border-box; border:1px solid var(--card-border,#e5e7eb); border-radius:8px; background:var(--surface-2,#f3f4f6); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:7px 6px; position:relative; overflow:visible; }
+  #focus-matrix .mca .qp-dots { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:7px 11px; align-items:center; justify-items:center; width:100%; max-width:176px; }
   #focus-matrix .mca .qp-dot { position:relative; width:20px; height:20px; border-radius:50%; padding:0; flex:0 0 auto; cursor:pointer; border:2px solid rgba(0,0,0,.14); background:var(--dot-col,#cbd5e1); -webkit-tap-highlight-color:transparent; }
-  #focus-matrix .mca .qp-dot.is-none { background:#d7dbe0; }   /* grid handles spacing → no extra margin (the diagonal slash marks "None") */
+  #focus-matrix .mca .qp-dot.is-none { background:#d7dbe0; margin:0; }   /* grid handles spacing — reset the body.tt-split `margin-left:14px` that pushed None right (iPad / iPhone-landscape) */
+  #focus-matrix .mca .qp-dot::after { content:none !important; display:none !important; }   /* no black hover tooltip — the bottom label shows the (hovered/selected) area name instead */
   #focus-matrix .mca .qp-dot.is-none::before { content:''; position:absolute; left:2px; right:2px; top:50%; height:2px; background:rgba(0,0,0,.34); transform:translateY(-50%) rotate(-45deg); }
   #focus-matrix .mca .qp-dot.sel { border-color: var(--text-main,#111827); box-shadow: 0 0 0 2px var(--card-bg,#fff), 0 0 0 4px var(--dot-col, var(--accent,#2563eb)); }
-  #focus-matrix .mca .qp-side-name { font-size:.8rem; font-weight:800; color:var(--text-main,#111827); text-align:center; line-height:1.05; min-height:1em; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #focus-matrix .mca .qp-side-name { font-size:.8rem; font-weight:800; color:var(--text-main,#111827); text-align:center; line-height:1.3; min-height:1.3em; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-bottom:1px; }
   #focus-matrix .mca-actcol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
   #focus-matrix .mca-add, #focus-matrix .mca-add-inline { display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: none; border-radius: 8px; font-weight: 800; font-size: .82rem; cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
   #focus-matrix .mca-actcol .mca-add { flex: 1 1 0; }
@@ -25821,26 +25822,31 @@ function _buildPillarPicker() {
     const dots = document.createElement('div'); dots.className = 'qp-dots';
     const nameLbl = document.createElement('div'); nameLbl.className = 'qp-side-name';   // shows the SELECTED area's name (like the touch wheel)
     const _setName = (txt) => { nameLbl.textContent = txt || ''; };
-    let _selDot = null;
+    let _selDot = null, _selName = '';
     base.forEach(d => {
       const b = document.createElement('button'); b.type = 'button';
       b.className = 'qp-dot' + (d.idx === '' ? ' is-none' : '');
-      b.dataset.idx = d.idx; b.dataset.tip = d.name; b.title = d.name;
-      b.setAttribute('aria-label', d.name);
+      b.dataset.idx = d.idx;
+      b.setAttribute('aria-label', d.name);   // a11y only — NO title / data-tip so there's no black hover tooltip
       if (d.col) b.style.setProperty('--dot-col', d.col);
       b.addEventListener('click', () => {
         if (_selDot) _selDot.classList.remove('sel');
-        b.classList.add('sel'); _selDot = b; _setName(d.name);
+        b.classList.add('sel'); _selDot = b; _selName = d.name; _setName(d.name);
         _pickedPillar = (d.idx === '') ? null : +d.idx;
         if (d.idx !== '') { try { if (window.bidoroBucket3DFacePillar) window.bidoroBucket3DFacePillar(Math.max(0, Math.min(_nSides - 1, +d.idx))); } catch (_) {} }
       });
+      // Hover → preview that area's name in the bottom label (replaces the old black tooltip);
+      // leaving a dot restores the SELECTED area's name.
+      b.addEventListener('mouseenter', () => _setName(d.name));
+      b.addEventListener('mouseleave', () => _setName(_selName));
       dots.appendChild(b);
     });
     // Default = the last-used area dot (NOT None), and rotate the bucket to it.
     const defDot = dots.querySelector('.qp-dot[data-idx="' + _defaultIdx + '"]');
     if (defDot) {
       defDot.classList.add('sel'); _selDot = defDot; _pickedPillar = _defaultIdx;
-      _setName((base[_defaultIdx] && base[_defaultIdx].name) || '');
+      _selName = (base[_defaultIdx] && base[_defaultIdx].name) || '';
+      _setName(_selName);
       try { if (window.bidoroBucket3DFacePillar) window.bidoroBucket3DFacePillar(_defaultIdx); } catch (_) {}
     }
     wrap.appendChild(dots);
