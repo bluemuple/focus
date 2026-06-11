@@ -26169,9 +26169,24 @@ function showMatrixCellAdd(cell, addBtn, q){
   const input  = mca.querySelector('.mca-name');
   const slider = mca.querySelector('.qp-slider');
   mca.querySelector('.mca-carcol').appendChild(_buildPillarPicker());   // carousel → sets _pickedPillar + rotates bucket
-  // iPad/PC web: leave a gap below the picker (Cancel bottom → the task bar below) equal to the
-  // (+Add top → task-name input bottom) distance, so the shrunk picker doesn't touch the next bar.
-  if (_wideMca) { try { const _nm = mca.querySelector('.mca-name'), _ab = mca.querySelector('.mca-add'); if (_nm && _ab) mca.style.marginBottom = Math.max(0, Math.round(_ab.getBoundingClientRect().top - _nm.getBoundingClientRect().bottom)) + 'px'; } catch(_){} }
+  const _landscapeFloat = _wideMca && window.innerHeight < 520;
+  // iPad/PC web (tall enough): gap below the inline picker so it doesn't touch the next task bar.
+  if (_wideMca && !_landscapeFloat) { try { const _nm = mca.querySelector('.mca-name'), _ab = mca.querySelector('.mca-add'); if (_nm && _ab) mca.style.marginBottom = Math.max(0, Math.round(_ab.getBoundingClientRect().top - _nm.getBoundingClientRect().bottom)) + 'px'; } catch(_){} }
+  // iPhone LANDSCAPE: the strip above the keyboard is tiny, and scrolling the inline picker into it
+  // fights WKWebView's native keyboard scroll (the jitter). Instead FLOAT the picker as a FIXED panel
+  // just below the top bar — always visible above the keyboard, NO scrolling — over a dim backdrop. A
+  // fixed input isn't in the scroll flow, so the native scroll-into-view has nothing to do (no jitter).
+  let _floatBackdrop = null;
+  if (_landscapeFloat) {
+    const _nav = document.querySelector('nav.tabs');
+    const _navB = _nav ? Math.round(_nav.getBoundingClientRect().bottom) : 46;
+    _floatBackdrop = document.createElement('div');
+    _floatBackdrop.className = 'mca-float-backdrop';
+    _floatBackdrop.addEventListener('pointerdown', function(e){ e.preventDefault(); finish(false); });
+    document.body.appendChild(_floatBackdrop);
+    mca.classList.add('mca-float');
+    mca.style.cssText += ';position:fixed;top:' + (_navB + 8) + 'px;left:50%;transform:translateX(-50%);width:min(94vw,760px);z-index:96;margin:0;';
+  }
   try { input.focus({ preventScroll: true }); } catch(_){ try { input.focus(); } catch(__){} }
   _createDurationPreviewBlock(q, true);   // matrix add → NO page auto-scroll; the keyboard handler scrolls only when the soft keyboard rises
   _wireDurationSlider(slider);
@@ -26184,6 +26199,8 @@ function showMatrixCellAdd(cell, addBtn, q){
     try { if (typeof _resetAddRepeat === 'function') _resetAddRepeat(); } catch(_){}   // clears tt-repeat-days/weekday/due/memo
     _mcaRestoreChips();
     document.body.classList.remove('tt-adding');
+    try { if (_floatBackdrop && _floatBackdrop.parentNode) _floatBackdrop.remove(); } catch(_){}   // drop the landscape float backdrop
+    try { document.querySelectorAll('.mca-float-backdrop').forEach(function(b){ try { b.remove(); } catch(_){} }); } catch(_){}   // belt-and-suspenders
     try { if (mca.parentNode) mca.remove(); } catch(_){}   // drop the picker so renderFocusMatrix's guard passes
   }
   function finish(commitIt){
@@ -26276,10 +26293,12 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
    extra room it needs via a temporary spacer — then UNDO it (remove spacer + scroll back) on close
    or keyboard-hide. PHYSICAL keyboards never fire `keyboardWillShow` / shrink the visualViewport,
    so they get no scroll (per request). Clamp: never scroll so far that the task-name input rises
-   above the top bar — the top bar's bottom edge stays ≥3px above the input's top (matters on the
-   short iPhone-landscape height). q1/top cells already clear the keyboard → delta ≤ 0 → no scroll;
-   q3/q4 bottom cells scroll up. Driven by `window.bidoroKbScroll(heightPx)` (ios-shim's Capacitor
-   keyboard events) + a visualViewport listener (web / iOS Safari). */
+   above the top bar — the top bar's bottom edge stays ≥3px above the input's top. q1/top cells
+   already clear the keyboard → delta ≤ 0 → no scroll; q3/q4 bottom cells scroll up.
+   SPECIAL CASE — iPhone LANDSCAPE (wide but innerHeight < 520): the screen is too short to fit the
+   picker above the keyboard, so instead scroll the EDITING CELL's top to ~3px below the top bar
+   bottom (maximises the picker's room). Driven by `window.bidoroKbScroll(heightPx)` (ios-shim's
+   Capacitor keyboard events) + a visualViewport listener (web / iOS Safari). */
 (function(){
   let _spacer = null, _savedTop = null, _scroller = null;
   function _mca(){ return document.querySelector('#focus-matrix .mca'); }
@@ -26290,8 +26309,12 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
   }
   function reset(){
     try {
+      const sc = _scroller || document.querySelector('main');
+      if (sc && _savedTop != null) sc.scrollTop = _savedTop;                 // back to the original spot
+      // Remove the spacer ROBUSTLY by ATTRIBUTE (not just the tracked ref) so a lost reference or an
+      // odd close path can never leave white space below the matrix.
+      try { document.querySelectorAll('[data-mca-spacer]').forEach(function(s){ try { s.remove(); } catch(_){} }); } catch(_){}
       if (_spacer && _spacer.parentNode) _spacer.remove();
-      if (_scroller && _savedTop != null) _scroller.scrollTo({ top: _savedTop, behavior: 'smooth' });
     } catch(_){}
     _spacer = null; _scroller = null; _savedTop = null;
   }
@@ -26299,18 +26322,25 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
     try {
       const mca = _mca(); if (!mca) return;                 // only for the matrix +Add picker
       const main = document.querySelector('main'); if (!main) return;
-      let kbTop;
-      if (kbHeight && kbHeight > 0) kbTop = window.innerHeight - kbHeight;   // Capacitor (resize:none → kb overlays the bottom)
-      else { const t = _kbTopFromVV(); if (t == null) return; kbTop = t; }   // web / Safari
-      let delta = (mca.getBoundingClientRect().bottom + 5) - kbTop;          // lift so picker bottom = kbTop − 5
-      if (delta <= 1) return;                                                // already above the keyboard
-      // CLAMP — keep the task-name input top ≥ (top bar bottom + 3) (iPhone-landscape short height).
-      const input = mca.querySelector('.mca-name'), nav = document.querySelector('nav.tabs');
-      if (input && nav) {
-        const maxDelta = input.getBoundingClientRect().top - nav.getBoundingClientRect().bottom - 3;
-        delta = Math.min(delta, Math.max(0, maxDelta));
+      const nav = document.querySelector('nav.tabs');
+      const _wide = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
+      // iPhone LANDSCAPE no longer scrolls at all — its +Add picker is a FIXED floating panel above the
+      // keyboard (see showMatrixCellAdd `.mca-float`), so there's nothing to scroll / nothing to fight.
+      if (_wide && window.innerHeight < 520) return;
+      let delta;
+      {
+        let kbTop;
+        if (kbHeight && kbHeight > 0) kbTop = window.innerHeight - kbHeight;   // Capacitor (resize:none → kb overlays the bottom)
+        else { const t = _kbTopFromVV(); if (t == null) return; kbTop = t; }   // web / Safari
+        delta = (mca.getBoundingClientRect().bottom + 5) - kbTop;              // lift so picker bottom = kbTop − 5
+        // CLAMP — keep the task-name input top ≥ (top bar bottom + 3).
+        const input = mca.querySelector('.mca-name');
+        if (input && nav) {
+          const maxDelta = input.getBoundingClientRect().top - nav.getBoundingClientRect().bottom - 3;
+          delta = Math.min(delta, Math.max(0, maxDelta));
+        }
       }
-      if (delta <= 1) return;
+      if (delta <= 1) return;                                                // already at/above the target
       if (_savedTop == null) { _scroller = main; _savedTop = main.scrollTop; }   // first apply wins; remember return point
       const desired = _scroller.scrollTop + delta;
       const extra = Math.max(0, Math.ceil(desired - (_scroller.scrollHeight - _scroller.clientHeight)));
@@ -26318,23 +26348,29 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
         if (!_spacer) {
           _spacer = document.createElement('div');
           _spacer.setAttribute('aria-hidden','true');
+          _spacer.setAttribute('data-mca-spacer','1');   // so reset() can find + remove it by attribute
           _spacer.style.cssText = 'flex:0 0 auto;width:1px;pointer-events:none;';
           _scroller.appendChild(_spacer);
         }
         _spacer.style.height = extra + 'px';
+        void _scroller.scrollHeight;   // force reflow so the new scroll-range is live before we set scrollTop
       }
-      _scroller.scrollTo({ top: desired, behavior: 'smooth' });
+      _scroller.scrollTop = desired;   // direct (smooth scrollTo is flaky on a nested overflow:auto scroller / WKWebView)
     } catch(_){}
   }
-  window.bidoroKbScroll = function(h){ if (h && h > 0) apply(h); else reset(); };
+  // Keyboard SHOW → apply. Keyboard HIDE → reset ONLY if the add is already closed: while the
+  // picker is still open, a transient iOS keyboardWillHide (autocorrect-bar toggle, etc.) must NOT
+  // reset — that caused the scroll to jump back DOWN and then UP again. The real reset is `_mcaKbReset`,
+  // called by the .mca teardown (cancel / confirm / outside-tap).
+  window.bidoroKbScroll = function(h){ if (h && h > 0) apply(h); else if (!_mca()) reset(); };
   window._mcaKbReset = reset;
   if (window.visualViewport) {
     let _t = null;
     window.visualViewport.addEventListener('resize', function(){
       clearTimeout(_t);
       _t = setTimeout(function(){
-        if (!_mca()) { reset(); return; }
-        if (_kbTopFromVV() == null) reset(); else apply(0);
+        if (!_mca()) { reset(); return; }            // add closed → clean up
+        if (_kbTopFromVV() != null) apply(0);         // add open + keyboard → (re)apply; no keyboard → keep the scroll (no reset → no jitter)
       }, 60);
     });
   }
