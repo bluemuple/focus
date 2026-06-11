@@ -110,10 +110,14 @@
           ? info.keyboardHeight : 300;
         document.documentElement.style.setProperty('--kb-height', h + 'px');
         document.body.classList.add('ios-kb-open');
+        // Matrix +Add: lift the picker above the (virtual) keyboard. Physical keyboards
+        // don't fire this event, so they correctly get no scroll.
+        try { if (window.bidoroKbScroll) window.bidoroKbScroll(h); } catch (_) {}
       });
       P.Keyboard.addListener('keyboardWillHide', () => {
         document.body.classList.remove('ios-kb-open');
         document.documentElement.style.setProperty('--kb-height', '0px');
+        try { if (window.bidoroKbScroll) window.bidoroKbScroll(0); } catch (_) {}
       });
     } catch (_) {}
   }

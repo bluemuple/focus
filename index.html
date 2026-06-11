@@ -20761,7 +20761,7 @@ let _celebActive = false, _celebLastPhrase = null, _celebStartFn = null, _celebT
 function _qCelebImg(q) {
   if (q !== 'q1' && q !== 'q2' && q !== 'q3') return null;   // q4 (no image) → no beat
   const dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
-  return 'images/focus/doro/' + q + (dk ? '-dark' : '') + '.png?v=qcel-1';
+  return 'images/focus/doro/' + q + (dk ? '-dark' : '') + '.png?v=qcel-2';
 }
 function _celebClearTimers() { _celebTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} }); _celebTimers = []; }
 /* Cross-fade the idle face image to a new src: the OLD image stays put while a fixed
@@ -20779,6 +20779,35 @@ function _fcCrossfadeImg(imgEl, newSrc, dur) {
     requestAnimationFrame(() => requestAnimationFrame(() => { ov.style.opacity = '1'; }));
     setTimeout(() => { try { imgEl.setAttribute('src', newSrc); } catch (_) {} try { ov.remove(); } catch (_) {} }, ms + 40);
   } catch (_) { try { imgEl.setAttribute('src', newSrc); } catch (__) {} }
+}
+/* Cross‑fade the phrase in #fc-idle-text: snapshot the CURRENT text into a fixed overlay that
+   fades OUT while the real element adopts the new phrase + fades IN — both at once (the
+   simultaneous cross‑fade the user wants). The snapshot is a SEPARATE layer, so WKWebView can't
+   composite the old text bitmap as a stale "ghost" over the new content (the iPad overlap +
+   white box on this transformed, GPU‑layered element). `setNew()` writes the new content. */
+function _fcCrossfadeText(textEl, setNew, dur) {
+  if (!textEl) { try { if (setNew) setNew(); } catch (_) {} return; }
+  const ms = dur || 300;
+  let ghost = null;
+  try {
+    const r = textEl.getBoundingClientRect();
+    if (r.width && r.height) {
+      ghost = textEl.cloneNode(true);
+      ghost.removeAttribute('id'); ghost.setAttribute('aria-hidden', 'true');
+      ghost.style.cssText = 'position:fixed;left:' + r.left + 'px;top:' + r.top + 'px;width:' +
+        r.width + 'px;height:' + r.height + 'px;margin:0;transform:none;z-index:7;' +
+        'pointer-events:none;opacity:1;transition:opacity ' + ms + 'ms ease;';
+      document.body.appendChild(ghost);
+    }
+  } catch (_) {}
+  textEl.style.transition = 'none'; textEl.style.opacity = '0';   // real element: new content, hidden
+  try { if (setNew) setNew(); } catch (_) {}
+  // commit the hidden start frame, then fade the real IN + the ghost OUT together
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    textEl.style.transition = 'opacity ' + ms + 'ms ease'; textEl.style.opacity = '1';
+    if (ghost) ghost.style.opacity = '0';
+  }));
+  setTimeout(() => { try { if (ghost && ghost.parentNode) ghost.remove(); } catch (_) {} }, ms + 80);
 }
 function _fcRunCelebration(q, i, startFn) {
   if (!_qCelebImg(q)) { try { startFn(); } catch (_) {} return; }
@@ -20802,16 +20831,14 @@ function _fcRunCelebration(q, i, startFn) {
   if (!pool.length) pool = _CELEB_PHRASES.slice();
   const phrase = pool[Math.floor(Math.random() * pool.length)];
   _celebLastPhrase = phrase;
-  // TEXT fades OUT → swaps → fades IN. IMAGE cross‑fades (old stays, qN fades in over it).
-  txt.style.transition = 'opacity .3s ease'; txt.style.opacity = '0';
+  // TEXT cross‑fades: the OLD phrase fades OUT (as a separate snapshot layer) AT THE SAME TIME
+  // as the new phrase fades IN — a true cross‑fade (per request). The snapshot is also what
+  // avoids the WKWebView "ghost" (old text bitmap lingering over the new on this transformed/
+  // GPU‑layered element → the iPad overlap + white box). IMAGE cross‑fades the same way.
   const ns0 = _qCelebImg(q); if (ns0) _fcCrossfadeImg(img, ns0, 300);
-  _celebTimers.push(setTimeout(() => {
-    l1.textContent = phrase; l2.textContent = '';
-    try { _fitElTo2Lines(l1, 14); } catch (_) {}
-    txt.style.opacity = '1';
-    // Phase 2 — after the fade‑in + a 2 s hold, hand off to the real start.
-    _celebTimers.push(setTimeout(_fcFinishCelebration, 300 + 2000));
-  }, 320));
+  _fcCrossfadeText(txt, () => { l1.textContent = phrase; l2.textContent = ''; try { _fitElTo2Lines(l1, 14); } catch (_) {} }, 300);
+  // Phase 2 — after the cross‑fade + a 2 s hold, hand off to the real start.
+  _celebTimers.push(setTimeout(_fcFinishCelebration, 300 + 2000));
 }
 function _fcFinishCelebration() {
   _celebClearTimers();
@@ -25613,6 +25640,9 @@ function openMasterQuadrantPicker(masterBtn) {
     b.className = 'qp ' + q;
     b.dataset.q = q;
     b.innerHTML = labels[q];
+    // Colour each quadrant bar like ITS task bar (bidoroTaskBg/Text — theme-aware) instead of the
+    // old hardcoded pastel, so the picker mirrors the real bars. !important beats the solarized rule.
+    try { b.style.setProperty('background', bidoroTaskBg(q), 'important'); b.style.setProperty('color', bidoroTaskText(q), 'important'); } catch (_) {}
     picker.appendChild(b);
   });
   const cancel = document.createElement('button');
@@ -26005,6 +26035,8 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   addBtn.type = 'button';
   addBtn.className = 'qp-addtask ' + q;
   addBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span>Add</span>';
+  // Match the +Add button to ITS quadrant's task bar (bg + text), theme-aware (overrides the CSS).
+  try { addBtn.style.setProperty('background', bidoroTaskBg(q), 'important'); addBtn.style.setProperty('color', bidoroTaskText(q), 'important'); } catch (_) {}
   const cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.className = 'qp-cancel2';
@@ -26108,7 +26140,9 @@ function showMatrixCellAdd(cell, addBtn, q){
   if (!cell || !addBtn || !addBtn.parentNode) return;
   const barEl = cell.querySelector('.task-row');
   const barH  = barEl ? Math.round(barEl.getBoundingClientRect().height) : Math.round(addBtn.getBoundingClientRect().height || 48);
-  const rectH = Math.max(108, 2 * barH + 6);                  // 2 task bars + the gap
+  const _wideMca = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
+  const _rectFull = Math.max(108, 2 * barH + 6);             // 2 task bars + the gap
+  const rectH = _wideMca ? Math.round(_rectFull * 0.8) : _rectFull;   // iPad/PC web: shrink the 3-col picker to 80% height (portrait keeps full)
   try { if (typeof _resetAddRepeat === 'function') _resetAddRepeat(); } catch(_){}   // fresh add state
   document.body.classList.add('tt-adding');
   _mcaRelocateChips(document.querySelector('#focus-tasks-title .ftt-chips'));   // Repeat/Due/Memo → matrix header
@@ -26120,7 +26154,7 @@ function showMatrixCellAdd(cell, addBtn, q){
       '<input type="text" class="add-task-input mca-name" placeholder="Task name" maxlength="200" autocomplete="off" autocorrect="off">' +
       '<button type="button" class="mca-add-inline">' + addSvg + '<span>Add</span></button>' +
     '</div>' +
-    '<div class="mca-rect" style="height:' + rectH + 'px">' +
+    '<div class="mca-rect" style="height:' + rectH + 'px;min-height:' + rectH + 'px">' +
       '<div class="mca-col mca-slidercol"><div class="qp-slider ' + q + '"><img class="qp-sl-img" src="slider-grip.webp" alt="" draggable="false"><span class="qp-sl-label" aria-hidden="true"></span></div></div>' +
       '<div class="mca-col mca-carcol"></div>' +
       '<div class="mca-col mca-actcol"><button type="button" class="mca-add">' + addSvg + '<span>Add</span></button><button type="button" class="mca-cancel">Cancel</button></div>' +
@@ -26129,14 +26163,18 @@ function showMatrixCellAdd(cell, addBtn, q){
   const input  = mca.querySelector('.mca-name');
   const slider = mca.querySelector('.qp-slider');
   mca.querySelector('.mca-carcol').appendChild(_buildPillarPicker());   // carousel → sets _pickedPillar + rotates bucket
+  // iPad/PC web: leave a gap below the picker (Cancel bottom → the task bar below) equal to the
+  // (+Add top → task-name input bottom) distance, so the shrunk picker doesn't touch the next bar.
+  if (_wideMca) { try { const _nm = mca.querySelector('.mca-name'), _ab = mca.querySelector('.mca-add'); if (_nm && _ab) mca.style.marginBottom = Math.max(0, Math.round(_ab.getBoundingClientRect().top - _nm.getBoundingClientRect().bottom)) + 'px'; } catch(_){} }
   try { input.focus({ preventScroll: true }); } catch(_){ try { input.focus(); } catch(__){} }
-  _createDurationPreviewBlock(q);
+  _createDurationPreviewBlock(q, true);   // matrix add → NO page auto-scroll; the keyboard handler scrolls only when the soft keyboard rises
   _wireDurationSlider(slider);
   let done = false;
   function teardown(){
     done = true;
     window._ttAddCancel = null;
     document.removeEventListener('pointerdown', onOutside, true);
+    try { if (window._mcaKbReset) window._mcaKbReset(); } catch(_){}   // remove the keyboard spacer + scroll back down
     try { if (typeof _resetAddRepeat === 'function') _resetAddRepeat(); } catch(_){}   // clears tt-repeat-days/weekday/due/memo
     _mcaRestoreChips();
     document.body.classList.remove('tt-adding');
@@ -26162,6 +26200,7 @@ function showMatrixCellAdd(cell, addBtn, q){
   });
   const cancelBtn = mca.querySelector('.mca-cancel');
   if (cancelBtn) {
+    try { cancelBtn.style.borderColor = bidoroTaskText(q); } catch(_){}   // dashed outline = this quadrant's task-bar TEXT colour (iPad/PC web)
     cancelBtn.addEventListener('touchend', (e)=>{ e.preventDefault(); e.stopPropagation(); finish(false); }, { passive:false });
     cancelBtn.addEventListener('click',    (e)=>{ e.preventDefault(); e.stopPropagation(); finish(false); });
   }
@@ -26181,7 +26220,7 @@ function showMatrixCellAdd(cell, addBtn, q){
      • no block below the line / a gap      → start at the line (rules 1 & 3)
    Default duration 25 min (the slider adjusts it). Held in window._previewBlock
    ONLY (never state.scheduledBlocks), so it can't persist / sync. */
-function _createDurationPreviewBlock(q) {
+function _createDurationPreviewBlock(q, skipPageScroll) {
   const now = Date.now();
   const DEF = 30 * 60 * 1000;   // default = one 25-min work + 5-min break block (single-block "combine" model)
   // Append AFTER every block still ahead of the now-line (the "tail"), so each
@@ -26211,7 +26250,10 @@ function _createDurationPreviewBlock(q) {
     const _gTarget = (_ta && _gtdMap && typeof _gtdMap.msToPx === 'function') ? Math.max(0, _gtdMap.msToPx(now - 30 * 60000)) : null;
     requestAnimationFrame(() => {
       try {
-        if (_main && _wrap) {
+        // skipPageScroll = the MATRIX +Add: don't page-scroll the Time & Tasks section to the top
+        // (that left a big persistent white gap below the matrix). The keyboard-aware handler
+        // (_mcaKb / bidoroKbScroll) does the only scroll there is — and only when the keyboard rises.
+        if (!skipPageScroll && _main && _wrap) {
           const _t = _main.scrollTop + _wrap.getBoundingClientRect().top - _main.getBoundingClientRect().top - 3;   // leave a 3px gap above the Time & Tasks section
           _main.scrollTo({ top: Math.max(0, _t), behavior: 'smooth' });
         }
@@ -26222,6 +26264,75 @@ function _createDurationPreviewBlock(q) {
   } catch (_) {}
 }
 
+/* ===== Matrix +Add — keyboard-aware scroll-up =====
+   When the VIRTUAL soft keyboard rises while a matrix +Add picker (.mca) is open, scroll the page
+   UP just enough that the picker's bottom sits 5px above the keyboard's top — adding only the
+   extra room it needs via a temporary spacer — then UNDO it (remove spacer + scroll back) on close
+   or keyboard-hide. PHYSICAL keyboards never fire `keyboardWillShow` / shrink the visualViewport,
+   so they get no scroll (per request). Clamp: never scroll so far that the task-name input rises
+   above the top bar — the top bar's bottom edge stays ≥3px above the input's top (matters on the
+   short iPhone-landscape height). q1/top cells already clear the keyboard → delta ≤ 0 → no scroll;
+   q3/q4 bottom cells scroll up. Driven by `window.bidoroKbScroll(heightPx)` (ios-shim's Capacitor
+   keyboard events) + a visualViewport listener (web / iOS Safari). */
+(function(){
+  let _spacer = null, _savedTop = null, _scroller = null;
+  function _mca(){ return document.querySelector('#focus-matrix .mca'); }
+  function _kbTopFromVV(){
+    const vv = window.visualViewport; if (!vv) return null;
+    const hidden = window.innerHeight - (vv.height + vv.offsetTop);   // px of layout viewport the keyboard covers
+    return hidden > 90 ? (vv.offsetTop + vv.height) : null;           // <90px ≈ no keyboard (toolbars / rounding)
+  }
+  function reset(){
+    try {
+      if (_spacer && _spacer.parentNode) _spacer.remove();
+      if (_scroller && _savedTop != null) _scroller.scrollTo({ top: _savedTop, behavior: 'smooth' });
+    } catch(_){}
+    _spacer = null; _scroller = null; _savedTop = null;
+  }
+  function apply(kbHeight){
+    try {
+      const mca = _mca(); if (!mca) return;                 // only for the matrix +Add picker
+      const main = document.querySelector('main'); if (!main) return;
+      let kbTop;
+      if (kbHeight && kbHeight > 0) kbTop = window.innerHeight - kbHeight;   // Capacitor (resize:none → kb overlays the bottom)
+      else { const t = _kbTopFromVV(); if (t == null) return; kbTop = t; }   // web / Safari
+      let delta = (mca.getBoundingClientRect().bottom + 5) - kbTop;          // lift so picker bottom = kbTop − 5
+      if (delta <= 1) return;                                                // already above the keyboard
+      // CLAMP — keep the task-name input top ≥ (top bar bottom + 3) (iPhone-landscape short height).
+      const input = mca.querySelector('.mca-name'), nav = document.querySelector('nav.tabs');
+      if (input && nav) {
+        const maxDelta = input.getBoundingClientRect().top - nav.getBoundingClientRect().bottom - 3;
+        delta = Math.min(delta, Math.max(0, maxDelta));
+      }
+      if (delta <= 1) return;
+      if (_savedTop == null) { _scroller = main; _savedTop = main.scrollTop; }   // first apply wins; remember return point
+      const desired = _scroller.scrollTop + delta;
+      const extra = Math.max(0, Math.ceil(desired - (_scroller.scrollHeight - _scroller.clientHeight)));
+      if (extra > 0) {
+        if (!_spacer) {
+          _spacer = document.createElement('div');
+          _spacer.setAttribute('aria-hidden','true');
+          _spacer.style.cssText = 'flex:0 0 auto;width:1px;pointer-events:none;';
+          _scroller.appendChild(_spacer);
+        }
+        _spacer.style.height = extra + 'px';
+      }
+      _scroller.scrollTo({ top: desired, behavior: 'smooth' });
+    } catch(_){}
+  }
+  window.bidoroKbScroll = function(h){ if (h && h > 0) apply(h); else reset(); };
+  window._mcaKbReset = reset;
+  if (window.visualViewport) {
+    let _t = null;
+    window.visualViewport.addEventListener('resize', function(){
+      clearTimeout(_t);
+      _t = setTimeout(function(){
+        if (!_mca()) { reset(); return; }
+        if (_kbTopFromVV() == null) reset(); else apply(0);
+      }, 60);
+    });
+  }
+})();
 /* Drag anywhere on the slider box (down = grow, up = shrink) → resize the
    preview block's BOTTOM edge in 5-min snaps (1 px ≈ 1 min, gauge scale). Light
    haptic per 5-min step. Min 5 min, max 24 h. */
