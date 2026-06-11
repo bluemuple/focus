@@ -20697,6 +20697,16 @@ function _fcPlayTaskEnter() {
   // cat down ~12px before it faded (the reported "drops then fades").
   let _catRect = null;
   if (cat) { try { _catRect = cat.getBoundingClientRect(); } catch (_) {} }
+  // Snapshot the inner content's CURRENT (startnow) inline layout so we can FREEZE it through
+  // the swap — _layoutFocusCard() below re-lays the cat-inner / phrase / image for the active
+  // card width, which slid the celebration image + left text SIDEWAYS as they faded. We restore
+  // these right after, so the image + phrase hold their exact place + size and only fade.
+  const catInner = card.querySelector('.fc-cat-inner');
+  const fcImg = document.getElementById('fc-no-task');
+  const fcTxt = document.getElementById('fc-idle-text');
+  const _innerCss = catInner ? catInner.style.cssText : '';
+  const _imgCss   = fcImg ? fcImg.style.cssText : '';
+  const _txtCss   = fcTxt ? fcTxt.style.cssText : '';
   card.classList.add('fc-swapping');   // clip the card + overlay the cat
   void card.offsetHeight;              // lay out (the .fc-swapping rule shows the header)
   if (cat && _catRect && _catRect.width) {
@@ -20705,13 +20715,17 @@ function _fcPlayTaskEnter() {
     cat.style.width = _catRect.width + 'px'; cat.style.height = _catRect.height + 'px';
     cat.style.right = 'auto'; cat.style.bottom = 'auto'; cat.style.margin = '0';
   }
-  // Lay out the card SYNCHRONOUSLY on the first swap frame: the engine clears the idle face
-  // image's inline size so the `.fc-swapping #fc-no-task { max-height:58% }` CSS cap (below)
-  // takes effect immediately — without this the image balloons (≈+40%) for the ~0.2 s of the
-  // fade because, with the timer now active, the engine lays out the 'run' family and the idle
-  // image briefly reverted to its bigger raw-CSS size (the reported zoom). Also lays the
-  // fading-IN header at its 6% inset right away (no snap).
+  // Lay out the card SYNCHRONOUSLY on the first swap frame: lays the fading-IN header at its 6%
+  // inset right away (no snap). (It also re-lays the cat-inner/phrase/image, which we undo just
+  // below so the celebration art stays put + at size — only fades.)
   try { if (typeof _layoutFocusCard === 'function') { _fcLayKey = ''; _layoutFocusCard(); } } catch (_) {}
+  // Restore the pre-swap inline layout of the cat-inner + phrase + image → they hold EXACTLY
+  // where/what they were in the startnow layout and just fade with the pinned cat (no sideways
+  // drift, no zoom). The startnow inline size the engine gave the image was already the capped
+  // size, so this also keeps the image from ballooning.
+  if (catInner) catInner.style.cssText = _innerCss;
+  if (fcImg)    fcImg.style.cssText    = _imgCss;
+  if (fcTxt)    fcTxt.style.cssText    = _txtCss;
   // The "Now focusing on" header + the "mm:ss left" row FADE IN together (no slide).
   const fadeEls = [header, leftRow].filter(Boolean);
   if (cat) { cat.style.transition = 'none'; cat.style.opacity = '1'; }
@@ -21066,14 +21080,25 @@ function _layoutFocusCard() {
     // fights the CSS that hides it (the running header bled into the idle card). We set NO
     // display/flex/justify/align inline (the per-family CSS already supplies flex + centre +
     // space-between), so visibility stays purely CSS-controlled.
+    // During the idle→running SWAP, _fcPlayTaskEnter pins the idle face (cat-inner / phrase /
+    // image) and fades it out IN PLACE. This relayout runs the 'run' family (header) — but the
+    // reset below would WIPE the pinned idle face's inline geometry, so it reverts to the CSS
+    // space-between layout and slides sideways mid-fade. A later pass (renderImDoing's double-rAF)
+    // re-wipes it even after _fcPlayTaskEnter restored it. So while fc-swapping, leave the idle
+    // face's geometry + phrase font frozen — only the header (run family) is (re)laid out.
+    const _freezeSwap = card.classList.contains('fc-swapping');
     ['.fc-cat-inner','.fc-idle-text','#fc-no-task','.fc-header','.fc-head-left','.fc-ring-wrap',
      '.fc-done-row','.fc-done-msg','#fc-done-img'].forEach(s => {
+      if (_freezeSwap && (s === '.fc-cat-inner' || s === '.fc-idle-text' || s === '#fc-no-task')) return;
       const el = card.querySelector(s);
       if (!el) return;
       ['width','height','maxWidth','minWidth','paddingLeft','paddingRight','gap','transform',
        'flex','alignSelf','objectFit','maxHeight','boxSizing','display'].forEach(p => { el.style[p] = ''; });
     });
-    ['fit-l1','fit-l2','fdm-l1','fdm-l2','fc-name'].forEach(id => { const e = document.getElementById(id); if (e) e.style.fontSize = ''; });
+    ['fit-l1','fit-l2','fdm-l1','fdm-l2','fc-name'].forEach(id => {
+      if (_freezeSwap && (id === 'fit-l1' || id === 'fit-l2')) return;   // keep the frozen phrase size through the fade
+      const e = document.getElementById(id); if (e) e.style.fontSize = '';
+    });
 
     // Section's L/R inset = 6% of width. Zero the card's responsive padding and carry the
     // inset on the row (idle/swap put the cat full-bleed, so it must live on the row anyway).
