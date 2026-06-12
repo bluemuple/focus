@@ -531,6 +531,14 @@
     position: fixed; top: calc(max(16px, env(safe-area-inset-top)) + 50px); right: 18px;
     z-index: 9300;
   }
+  /* Garden full-screen menu = a DIFFERENT item set from the normal pages: a top "Home"
+     item appears, and "Focus View" (+ its submenu) and "My Garden" are hidden — you're
+     already in the garden, so those would be redundant/odd here. */
+  #tmd-fs-home { display: none; }
+  .topbar-menu-dropdown.over-fullscreen #tmd-fs-home { display: flex; }
+  .topbar-menu-dropdown.over-fullscreen #tmd-focusview,
+  .topbar-menu-dropdown.over-fullscreen #tmd-fv-sub,
+  .topbar-menu-dropdown.over-fullscreen #tmd-garden { display: none !important; }
   .topbar-menu-dropdown .tmd-item {
     display: flex; align-items: center; gap: 13px;
     width: 100%; padding: 11px 12px; border-radius: 11px;
@@ -4541,6 +4549,16 @@
   #focus-matrix .mca.mca-v2 .mcav-due-acts { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
   #focus-matrix .mca.mca-v2 .mcav-due-acts > button { height: 32px; min-width: 96px; padding: 0 12px; border-radius: 8px; font-size: .8rem; font-weight: 800; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; }
   #focus-matrix .mca.mca-v2 .mcav-due-clear { border: 1px dashed var(--card-border,#e5e7eb); background: transparent; color: var(--text-muted,#6b7280); }
+  /* Narrow (iPhone-portrait 2×2) panel: the 3-column Due layout (calendar | quick | actions) is too
+     wide and overlaps → stack the calendar on top (full width) with the quick + action buttons in
+     rows beneath it. (Memo already fits as an editor + side column.) */
+  @media (max-width: 700px) {
+    #focus-matrix .mca.mca-v2 .mcav-due { flex-direction: column; gap: 8px; }
+    #focus-matrix .mca.mca-v2 .mcav-due-quick,
+    #focus-matrix .mca.mca-v2 .mcav-due-acts { flex-direction: row; }
+    #focus-matrix .mca.mca-v2 .mcav-due-q,
+    #focus-matrix .mca.mca-v2 .mcav-due-acts > button { flex: 1 1 0; min-width: 0; }
+  }
   #focus-matrix .mca-top { display: flex; align-items: stretch; gap: 6px; }
   #focus-matrix .mca-name { flex: 1 1 auto; min-width: 0; }
   #focus-matrix .mca-rect { display: grid; gap: 6px; grid-template-columns: minmax(0,1fr) minmax(0,1.05fr) minmax(0,0.92fr); grid-template-rows: minmax(0, 1fr); min-height: 116px; overflow: hidden; }
@@ -7419,6 +7437,9 @@
     <button class="topbar-icon-btn topbar-menu-btn" id="topbar-menu-btn" type="button" aria-label="Menu" aria-haspopup="true" aria-expanded="false"><svg viewBox="0 0 24 24" width="19" height="19" aria-hidden="true"><path d="M4 7 H20 M4 12 H20 M4 17 H20" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg></button>
     <!-- Dropdown menu — opens under the hamburger. -->
     <div class="topbar-menu-dropdown hidden" id="topbar-menu-dropdown" role="menu" aria-hidden="true">
+      <!-- Home — shown ONLY in the garden full-screen menu (.over-fullscreen); closes the
+           garden + returns to the home page. Hidden in the normal menu (CSS). -->
+      <button class="tmd-item" id="tmd-fs-home" type="button" role="menuitem"><span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 3 L3 11 H6 V20 H10 V14 H14 V20 H18 V11 H21 Z" fill="currentColor"/></svg></span><span class="tmd-lbl">Home</span></button>
       <!-- Focus View — collapsible submenu (Pomodoro / Time & Tasks / Decision Matrix). -->
       <button class="tmd-item tmd-parent" id="tmd-focusview" type="button" role="menuitem" aria-expanded="false" aria-controls="tmd-fv-sub">
         <span class="tmd-ico"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><circle cx="12" cy="12" r="2.4"/></svg></span>
@@ -10882,6 +10903,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   wire('tmd-fv-tt',     () => { try { if (typeof enterFocusView === 'function') enterFocusView('tt'); } catch (_) {} });
   wire('tmd-fv-matrix', () => { try { if (typeof enterFocusView === 'function') enterFocusView('matrix'); } catch (_) {} });
   wire('tmd-fv-home',   () => { try { if (typeof exitFocusView === 'function') exitFocusView(); } catch (_) {} });
+  // Garden full-screen "Home" → closeMenu() (drops over-fullscreen + relocates the menu back),
+  // then showPage('focus') which closes the garden overlay (window._closeWaterOverlay) + goes home.
+  wire('tmd-fs-home',   () => { try { if (typeof exitFocusView === 'function') exitFocusView(); } catch (_) {} showPage('focus'); scrollMainTop(); });
   // (tmd-calendar removed — Calendar opens from the top-bar calendar button.)
   // My Garden = the bucket section's sprout "tile page" (the watering / garden-field
   // overlay). Show the focus page so the bucket is laid out, then open that overlay.
@@ -24641,12 +24665,15 @@ if (_matrixCollapseBtn) {
 function _teardownAddOnViewportChange() {
   try {
     if (!window._ttAddCancel) return;
-    const wide = window.matchMedia('(min-width: 701px)').matches;
     const floatOpen = !!document.querySelector('#focus-matrix .mca.mca-float');
     if (floatOpen) {
-      if (!(wide && window.innerHeight < 520)) window._ttAddCancel();   // left the landscape-float geometry → close
-    } else if (wide) {
-      window._ttAddCancel();
+      // The float panel's geometry is computed once at open. A WIDTH change (rotation OR a real
+      // window resize) strands it / flips which layout it should use → close it (re-opens fresh on
+      // the next +Add). A height-only change (soft keyboard show/hide) must NOT close it, so we
+      // gate on innerWidth (the keyboard never changes it).
+      if (window._mcaOpenW != null && window.innerWidth !== window._mcaOpenW) window._ttAddCancel();
+    } else if (window.matchMedia('(min-width: 701px)').matches) {
+      window._ttAddCancel();   // the narrow master +Add flow widened to web/iPad — not used there
     }
   } catch (_) {}
 }
@@ -26339,89 +26366,73 @@ function showMatrixCellAdd(cell, addBtn, q){
   const barEl = cell.querySelector('.task-row');
   const barH  = barEl ? Math.round(barEl.getBoundingClientRect().height) : Math.round(addBtn.getBoundingClientRect().height || 48);
   const _wideMca = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
-  const _landscapeFloat = _wideMca && window.innerHeight < 520;   // iPhone landscape → floating panel (short screen)
-  const _rectFull = Math.max(108, 2 * barH + 6);             // 2 task bars + the gap
-  const rectH = _landscapeFloat ? Math.max(58, Math.round(_rectFull * 0.56))   // landscape: short rect so the whole panel fits above the keyboard
-              : _wideMca ? Math.round(_rectFull * 0.8) : _rectFull;            // iPad/PC web: shrink the 3-col picker to 80% (portrait keeps full)
+  // UNIFIED (per user): EVERY matrix +Add now uses the floating V2 panel — iPad, iPhone landscape,
+  // iPhone-portrait 2×2, and PC web. The old in-cell layout (slider column + carousel) is gone.
+  // `_shortLandscape` only selects the special "pin high, inset into the matrix" geometry for the
+  // short iPhone-landscape strip; every other size gets a centred modal-style panel (positioned below).
+  const _shortLandscape = _wideMca && window.innerHeight < 520;
   try { if (typeof _resetAddRepeat === 'function') _resetAddRepeat(); } catch(_){}   // fresh add state
   document.body.classList.add('tt-adding');
-  // Non-float relocates Repeat/Due/Memo into the matrix HEADER; the landscape float covers that
-  // header, so it relocates them INTO the panel instead (done after the panel is built, below).
-  if (!_landscapeFloat) _mcaRelocateChips(document.querySelector('#focus-tasks-title .ftt-chips'));
+  // The V2 panel carries its own Sides/Repeat/Memo/Due mode buttons → NO matrix-header chip relocation.
   const addSvg = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
   const mca = document.createElement('div');
-  mca.className = 'mca' + (_landscapeFloat ? ' mca-float mca-v2' : '');
-  const _sliderColHtml = '<div class="mca-col mca-slidercol"><div class="qp-slider ' + q + '"><img class="qp-sl-img" src="slider-grip.webp" alt="" draggable="false"><span class="qp-sl-label" aria-hidden="true"></span></div></div>';
-  if (_landscapeFloat) {
-    // V2 landscape layout (per the user's mockup): 3 columns —
-    //   [ content: task-name (top) + a swappable section | button stack | thin vertical slider ].
-    // The button stack = [Add | Cancel] / [Sides | Repeat] / [Memo | Due date]; the mode buttons
-    // swap the section (Sides=bucket · Repeat=weekdays · Memo=textarea · Due=calendar). Default Sides.
-    mca.dataset.mode = 'sides';
-    mca.innerHTML =
-      '<div class="mcav-content">' +
-        '<input type="text" class="add-task-input mca-name" placeholder="Task name" maxlength="200" autocomplete="off" autocorrect="off">' +
-        '<div class="mcav-section" id="mcav-section"></div>' +
+  mca.className = 'mca mca-float mca-v2';
+  // V2 panel (per the user's mockup, now used on ALL devices): 3 columns —
+  //   [ content: task-name (top) + a swappable section | button stack | thin vertical slider ].
+  // The button stack = [Add | Cancel] / [Sides | Repeat] / [Memo | Due date]; the mode buttons
+  // swap the section (Sides=bucket · Repeat=weekdays · Memo=textarea · Due=calendar). Default Sides.
+  mca.dataset.mode = 'sides';
+  mca.innerHTML =
+    '<div class="mcav-content">' +
+      '<input type="text" class="add-task-input mca-name" placeholder="Task name" maxlength="200" autocomplete="off" autocorrect="off">' +
+      '<div class="mcav-section" id="mcav-section"></div>' +
+    '</div>' +
+    '<div class="mcav-btns">' +
+      '<div class="mcav-brow">' +
+        '<button type="button" class="mca-add mcav-act">' + addSvg + '<span>Add</span></button>' +
+        '<button type="button" class="mca-cancel mcav-act">Cancel</button>' +
       '</div>' +
-      '<div class="mcav-btns">' +
-        '<div class="mcav-brow">' +
-          '<button type="button" class="mca-add mcav-act">' + addSvg + '<span>Add</span></button>' +
-          '<button type="button" class="mca-cancel mcav-act">Cancel</button>' +
-        '</div>' +
-        '<div class="mcav-brow">' +
-          '<button type="button" class="mcav-mode" data-mode="sides">Sides</button>' +
-          '<button type="button" class="mcav-mode" data-mode="repeat">Repeat</button>' +
-        '</div>' +
-        '<div class="mcav-brow">' +
-          '<button type="button" class="mcav-mode" data-mode="memo">Memo</button>' +
-          '<button type="button" class="mcav-mode" data-mode="due">Due date</button>' +
-        '</div>' +
+      '<div class="mcav-brow">' +
+        '<button type="button" class="mcav-mode" data-mode="sides">Sides</button>' +
+        '<button type="button" class="mcav-mode" data-mode="repeat">Repeat</button>' +
       '</div>' +
-      '<div class="mcav-slidercol"><div class="qp-slider qp-slider-v2 ' + q + '">' +
-        '<img class="qp-sl-img" src="slider-grip.webp" alt="" draggable="false">' +
-        '<div class="qp-sl-marks"><button type="button" class="qp-sl-zero" title="No time block">0m</button><span class="qp-sl-label" aria-hidden="true"></span></div>' +
-      '</div></div>';
-  } else {
-    mca.innerHTML =
-      '<div class="mca-top">' +
-        '<input type="text" class="add-task-input mca-name" placeholder="Task name" maxlength="200" autocomplete="off" autocorrect="off">' +
-        '<button type="button" class="mca-add-inline">' + addSvg + '<span>Add</span></button>' +
+      '<div class="mcav-brow">' +
+        '<button type="button" class="mcav-mode" data-mode="memo">Memo</button>' +
+        '<button type="button" class="mcav-mode" data-mode="due">Due date</button>' +
       '</div>' +
-      '<div class="mca-rect" style="height:' + rectH + 'px;min-height:' + rectH + 'px">' +
-        _sliderColHtml +
-        '<div class="mca-col mca-carcol"></div>' +
-        '<div class="mca-col mca-actcol"><button type="button" class="mca-add">' + addSvg + '<span>Add</span></button><button type="button" class="mca-cancel">Cancel</button></div>' +
-      '</div>';
-  }
+    '</div>' +
+    '<div class="mcav-slidercol"><div class="qp-slider qp-slider-v2 ' + q + '">' +
+      '<img class="qp-sl-img" src="slider-grip.webp" alt="" draggable="false">' +
+      '<div class="qp-sl-marks"><button type="button" class="qp-sl-zero" title="No time block">0m</button><span class="qp-sl-label" aria-hidden="true"></span></div>' +
+    '</div></div>';
   addBtn.parentNode.replaceChild(mca, addBtn);
   const input  = mca.querySelector('.mca-name');
   const slider = mca.querySelector('.qp-slider');
-  if (!_landscapeFloat) mca.querySelector('.mca-carcol').appendChild(_buildPillarPicker());   // non-V2: carousel → sets _pickedPillar + rotates bucket
-  // (V2 landscape builds the Sides section + wires the Sides/Repeat/Memo/Due mode buttons below,
-  //  AFTER finish() is defined — those modes need it. No header-chip relocation in V2.)
-  // iPad/PC web (tall enough): gap below the inline picker so it doesn't touch the next task bar.
-  if (_wideMca && !_landscapeFloat) { try { const _nm = mca.querySelector('.mca-name'), _ab = mca.querySelector('.mca-add'); if (_nm && _ab) mca.style.marginBottom = Math.max(0, Math.round(_ab.getBoundingClientRect().top - _nm.getBoundingClientRect().bottom)) + 'px'; } catch(_){} }
-  // iPhone LANDSCAPE: the strip above the keyboard is tiny, and scrolling the inline picker into it
-  // fights WKWebView's native keyboard scroll (the jitter). Instead FLOAT the picker as a FIXED panel
-  // just below the top bar — always visible above the keyboard, NO scrolling. A fixed input isn't in
-  // the scroll flow, so the native scroll-into-view has nothing to do (no jitter).
-  let _floatBackdrop = null;   // kept for the teardown null-checks; the float no longer uses a backdrop
-  if (_landscapeFloat) {
-    // NO dim backdrop: the user wants the left gauge fully visible while typing, AND a body-level
-    // backdrop (z-index above <main>) paints OVER this panel — the panel is trapped in <main>'s
-    // stacking context (position:relative; z-index:2), below the topbar (sticky z90) — so every
-    // touch on the slider/dots hit the backdrop and closed the panel on the first tap. Drop the
-    // backdrop entirely; the document `onOutside` listener (below) handles tap-outside-to-close.
+  // (The V2 panel builds the Sides section + wires the Sides/Repeat/Memo/Due mode buttons below,
+  //  AFTER finish() is defined — those modes need it.)
+  // The panel is position:FIXED (out of document flow) → adding/removing it never reflows the matrix
+  // (no whitespace gap below it) and needs NO page scroll. NO dim backdrop — the document `onOutside`
+  // listener (below) handles tap-outside-to-close. Geometry is computed ONCE here.
+  let _floatBackdrop = null;   // kept for the teardown null-checks; the float uses no backdrop
+  // Remember the open-time width so a WIDTH change (rotation / real resize) tears the panel down,
+  // while a height-only change (soft keyboard show/hide) leaves it put — see _teardownAddOnViewportChange.
+  window._mcaOpenW = window.innerWidth;
+  {
     const _nav = document.querySelector('nav.tabs');
     const _navB = _nav ? Math.round(_nav.getBoundingClientRect().bottom) : 46;
-    // Pin both side edges symmetrically INSIDE the matrix (tasks) columns so the left gauge stays
-    // clear and the panel reads as inset on both sides (the right edge keeps ~its current spot).
+    // Centre the panel within the MATRIX column (so it sits over the section it belongs to, not the
+    // raw viewport — the matrix is a narrower centred column on iPad/web). iPhone LANDSCAPE keeps the
+    // FULL matrix span (its tuned 3-col fits the wide short strip); every other size caps at 560 so it
+    // doesn't sprawl. Pinned just under the top bar → ABOVE any bottom soft-keyboard.
     const _mEl = document.getElementById('focus-matrix');
     const _mr  = _mEl ? _mEl.getBoundingClientRect() : null;
     const _INSET = 8;
-    const _L = _mr ? Math.round(_mr.left + _INSET) : 26;
-    const _W = _mr ? Math.round(_mr.width - 2 * _INSET) : Math.round(window.innerWidth * 0.9);
-    mca.style.cssText += ';position:fixed;top:' + (_navB + 6) + 'px;left:' + _L + 'px;width:' + _W + 'px;transform:none;z-index:96;margin:0;';
+    const _availW = _mr ? (_mr.width - 2 * _INSET) : Math.round(window.innerWidth * 0.9);
+    const _W = _shortLandscape ? _availW : Math.min(_availW, 560);
+    const _cx = _mr ? (_mr.left + _mr.width / 2) : (window.innerWidth / 2);
+    const _L = Math.round(_cx - _W / 2);
+    const _top = _navB + (_shortLandscape ? 6 : 10);
+    mca.style.cssText += ';position:fixed;top:' + _top + 'px;left:' + _L + 'px;width:' + _W + 'px;transform:none;z-index:96;margin:0;';
   }
   try { input.focus({ preventScroll: true }); } catch(_){ try { input.focus(); } catch(__){} }
   _createDurationPreviewBlock(q, true);   // matrix add → NO page auto-scroll; the keyboard handler scrolls only when the soft keyboard rises
@@ -26465,9 +26476,9 @@ function showMatrixCellAdd(cell, addBtn, q){
     }
     try { renderFocusMatrix(); } catch(_){}   // restore the +Add button + render the new bar
   }
-  // V2 landscape (mockup redesign): Sides/Repeat/Memo/Due mode buttons swap the .mcav-section.
-  // Stage 1 = layout + switching (Sides shows the bucket picker; Repeat/Memo/Due land next).
-  if (_landscapeFloat) {
+  // V2 panel: Sides/Repeat/Memo/Due mode buttons swap the .mcav-section. Always runs now (the
+  // panel is the only matrix-add layout). Bare block so its helper consts stay locally scoped.
+  {
     const _sec = mca.querySelector('#mcav-section');
     // The bucket sets the picked area when a face is tapped (see the b3d drag handler).
     // idx < 0 (or null) = the face was DESELECTED → this task gets no area (None). A real
@@ -26503,7 +26514,7 @@ function showMatrixCellAdd(cell, addBtn, q){
       const tb = (cmd, inner, t) => '<button type="button" class="tn-tb" data-cmd="' + cmd + '" title="' + t + '" aria-label="' + t + '">' + inner + '</button>';
       sec.innerHTML =
         '<div class="mcav-memo">' +
-          '<div class="tn-editor mcav-memo-ed" contenteditable="true" data-placeholder="메모" role="textbox" aria-multiline="true"></div>' +
+          '<div class="tn-editor mcav-memo-ed" contenteditable="true" data-placeholder="Add memo" role="textbox" aria-multiline="true"></div>' +
           '<div class="mcav-memo-side">' +
             '<div class="mcav-memo-acts">' +
               '<button type="button" class="mca-add mcav-memo-done">Done</button>' +
@@ -26667,13 +26678,11 @@ function showMatrixCellAdd(cell, addBtn, q){
 function _createDurationPreviewBlock(q, skipPageScroll) {
   const now = Date.now();
   const DEF = 30 * 60 * 1000;   // default = one 25-min work + 5-min break block (single-block "combine" model)
-  // Append AFTER every block still ahead of the now-line (the "tail"), so each
-  // new task stacks below the most recent one — not just after the block that
-  // happens to contain the now-line (which made the 3rd+ task overlap the 2nd).
-  let start = now;
-  (state.scheduledBlocks || []).forEach(b => {
-    if (b.endMs > now && b.endMs > start) start = b.endMs;
-  });
+  // Anchor the new block right AT the CURRENT-TIME line (per the user's spec) so it's
+  // visible the instant +Add is pressed — on every device + mode. We no longer stack it
+  // past existing scheduled blocks (that pushed the preview far below the fold, off-screen,
+  // whenever anything was scheduled ahead). It sits at the now-line as a 30-min (25+5) block.
+  const start = now;
   const id = 'preview_' + now + '_' + Math.random().toString(36).slice(2);
   window._previewBlock = {
     id, q, taskIdx: -1, taskName: '',
@@ -26742,12 +26751,12 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
   function apply(kbHeight){
     try {
       const mca = _mca(); if (!mca) return;                 // only for the matrix +Add picker
+      // The matrix +Add is ALWAYS a FIXED floating panel now (`.mca-float`), pinned above the
+      // keyboard — there's nothing to scroll and no spacer to add (the spacer was what left the
+      // whitespace gap below the matrix + caused the scroll-up/down). So this handler is a no-op.
+      if (mca.classList.contains('mca-float')) return;
       const main = document.querySelector('main'); if (!main) return;
       const nav = document.querySelector('nav.tabs');
-      const _wide = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
-      // iPhone LANDSCAPE no longer scrolls at all — its +Add picker is a FIXED floating panel above the
-      // keyboard (see showMatrixCellAdd `.mca-float`), so there's nothing to scroll / nothing to fight.
-      if (_wide && window.innerHeight < 520) return;
       let delta;
       {
         let kbTop;
