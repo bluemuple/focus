@@ -7392,8 +7392,10 @@
   .cal-cat-name { font-weight: 800; font-size: .95rem; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cat-low-tag { font-size: .7rem; font-weight: 700; color: var(--text-muted, #9ca3af); flex: 0 0 auto; }
   .cal-cat-cnt { font-size: .82rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; flex: 0 0 auto; }
-  .cal-cat-dots { display: flex; flex-wrap: wrap; gap: 3px; }
-  .cal-cat-dot { width: 12px; height: 12px; border-radius: 3px; background: rgba(127,127,127,.14); box-shadow: inset 0 0 0 1px rgba(127,127,127,.22); }
+  /* squares fill the row width exactly (last one flush right), scaling with the section width: one
+     equal 1fr column per day-of-month (--cat-cols, set in _calRenderCategory) + square aspect-ratio. */
+  .cal-cat-dots { display: grid; grid-template-columns: repeat(var(--cat-cols, 30), minmax(0, 1fr)); gap: 3px; }
+  .cal-cat-dot { width: auto; height: auto; aspect-ratio: 1; border-radius: 3px; background: rgba(127,127,127,.14); box-shadow: inset 0 0 0 1px rgba(127,127,127,.22); }
   .cal-cat-dot.on { box-shadow: none; cursor: pointer; transition: transform .12s ease; -webkit-tap-highlight-color: transparent; }   /* filled: solid VIVID side colour via inline bg */
   .cal-cat-dot.on:hover, .cal-cat-dot.on:focus-visible { transform: scale(1.3); outline: none; }
   /* Balance filled-square → speech bubble listing the tasks you completed that day to fill it. */
@@ -7407,16 +7409,18 @@
   .cal-cat-tip .cct-list li { margin: 1px 0; }
   .cal-cat-tip .cct-empty { opacity: .82; }
   /* ===== Routine tab (habit-tracker grid): repeat tasks × this month's days ===== */
-  .cal-hb-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
-  .cal-hb-scroll { min-width: max-content; }
+  .cal-hb-grid { padding-bottom: 4px; }
   .cal-hb-head-row, .cal-hb-row { display: flex; align-items: center; gap: 8px; }
   .cal-hb-row { padding: 3px 0; }
   .cal-hb-head-row { margin-bottom: 4px; }
   .cal-hb-name, .cal-hb-name-sp { flex: 0 0 108px; width: 108px; }
   .cal-hb-name { font-weight: 800; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cal-hb-cells, .cal-hb-days { display: flex; gap: 3px; }
-  .cal-hb-day { flex: 0 0 16px; width: 16px; text-align: center; font-size: .58rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
-  .cal-hb-cell { flex: 0 0 16px; width: 16px; height: 16px; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.14); }
+  /* the day cells fill the row's remaining width (last square flush right), scaling with the
+     section width: equal 1fr column per day-of-month (--hb-cols, set in _calRenderHabit). */
+  .cal-hb-cells, .cal-hb-days { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(var(--hb-cols, 30), minmax(0, 1fr)); gap: 3px; }
+  .cal-hb-day { min-width: 0; text-align: center; font-size: .56rem; font-weight: 700; color: var(--text-muted, #9ca3af); overflow: hidden; }
+  .cal-hb-day.cal-hb-today { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; background: #EC4899; color: #fff; font-weight: 800; border-radius: 4px; }   /* today = pink square (Month-tab style) */
+  .cal-hb-cell { width: auto; height: auto; aspect-ratio: 1; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.14); }
   .cal-hb-cell.rep  { background: rgba(127,127,127,.34); box-shadow: none; }   /* repeat-SET day → grey square */
   .cal-hb-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
   .cal-hb-empty { padding: 30px 12px; text-align: center; color: var(--text-muted, #9ca3af); font-size: .92rem; line-height: 1.6; }
@@ -11438,7 +11442,7 @@ function _calRenderCategory() {
   const counts = new Array(N).fill(0);
   for (let day = 1; day <= dim; day++) { const set = dayActive[dayKey(day)]; if (set) set.forEach(s => { if (s < N) counts[s]++; }); }
   let lowest = 0; for (let s = 1; s < N; s++) if (counts[s] < counts[lowest]) lowest = s;   // fewest active days
-  let html = '<p class="cal-cat-cap">This month — where you poured your water.</p><div class="cal-cat-rows">';
+  let html = '<p class="cal-cat-cap">This month — where you poured your water.</p><div class="cal-cat-rows" style="--cat-cols:' + dim + '">';
   for (let s = 0; s < N; s++) {
     const col = _calSideColorVivid(s), nm = _calSideName(s);   // VIVID so the filled squares + name pop
     let dots = '';
@@ -11514,9 +11518,11 @@ function _calRenderHabit() {
     const nm = ((e.name || '') + '').trim();
     (workedByName[nm] = workedByName[nm] || new Set()).add(d.getDate());
   });
-  // day-number header
+  // day-number header — today gets a pink square (mirrors the Month tab's today highlight)
+  const _tdy = new Date();
+  const _todayDate = (_tdy.getFullYear() === y && _tdy.getMonth() === m) ? _tdy.getDate() : -1;
   let head = '';
-  for (let day = 1; day <= dim; day++) head += '<span class="cal-hb-day">' + day + '</span>';
+  for (let day = 1; day <= dim; day++) head += '<span class="cal-hb-day' + (day === _todayDate ? ' cal-hb-today' : '') + '">' + day + '</span>';
   let rows = '';
   if (!tasks.length) {
     rows = '<div class="cal-hb-empty">No routine tasks yet.<br>Tap <b>Repeat</b> when you add a task and it shows up here.</div>';
@@ -11539,6 +11545,7 @@ function _calRenderHabit() {
       rows += '<div class="cal-hb-row"><span class="cal-hb-name" style="color:' + col + '">' + escapeHTML(t.text || '') + '</span><div class="cal-hb-cells">' + cells + '</div></div>';
     });
   }
+  grid.style.setProperty('--hb-cols', dim);   // one equal column per day → squares fill the width
   grid.innerHTML = '<div class="cal-hb-scroll"><div class="cal-hb-head-row"><span class="cal-hb-name cal-hb-name-sp"></span><div class="cal-hb-cells cal-hb-days">' + head + '</div></div>' + rows + '</div>';
 }
 async function _calAddTask() {
