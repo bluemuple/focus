@@ -7394,7 +7394,18 @@
   .cal-cat-cnt { font-size: .82rem; font-weight: 700; color: var(--text-muted, #9ca3af); margin-left: auto; flex: 0 0 auto; }
   .cal-cat-dots { display: flex; flex-wrap: wrap; gap: 3px; }
   .cal-cat-dot { width: 12px; height: 12px; border-radius: 3px; background: rgba(127,127,127,.14); box-shadow: inset 0 0 0 1px rgba(127,127,127,.22); }
-  .cal-cat-dot.on { box-shadow: none; }   /* filled: solid side colour via inline bg, no border */
+  .cal-cat-dot.on { box-shadow: none; cursor: pointer; transition: transform .12s ease; -webkit-tap-highlight-color: transparent; }   /* filled: solid VIVID side colour via inline bg */
+  .cal-cat-dot.on:hover, .cal-cat-dot.on:focus-visible { transform: scale(1.3); outline: none; }
+  /* Balance filled-square → speech bubble listing the tasks you completed that day to fill it. */
+  .cal-cat-tip {
+    position: fixed; z-index: 9500; display: none; max-width: 240px; box-sizing: border-box;
+    background: rgba(17,24,39,.97); color: #fff; border-radius: 10px; padding: 8px 11px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.3); pointer-events: none; font-size: .8rem; line-height: 1.4;
+  }
+  .cal-cat-tip .cct-head { font-weight: 800; font-size: .82rem; margin-bottom: 4px; opacity: .92; }
+  .cal-cat-tip .cct-list { margin: 0; padding-left: 16px; }
+  .cal-cat-tip .cct-list li { margin: 1px 0; }
+  .cal-cat-tip .cct-empty { opacity: .82; }
   /* ===== WIDE (iPad / web ≥701px) MONTH calendar — Google-Calendar-style cells: date pinned
      TOP-LEFT; today = a small pink rounded square behind ONLY the number (not the whole cell);
      each day's events (Ⓔ) + tasks (Ⓣ) listed by NAME with a "+N more" + Focused/Bucket footer.
@@ -7410,6 +7421,9 @@
     }
     /* close the right + bottom edges of the grid */
     #calendar-page .cal-grid { border-right: 1px solid var(--card-border, #e5e7eb); border-bottom: 1px solid var(--card-border, #e5e7eb); overflow: hidden; }
+    /* _calLayoutMonth fit mode: release the per-cell min-height so the 1fr week rows shrink to the
+       grid's computed (viewport-fitted) height — the item cap then adapts to the cell height. */
+    #calendar-page .cal-grid-fit .cal-cell { min-height: 0; }
     #calendar-page .cal-cell .cal-day { align-self: flex-start; font-size: .82rem; font-weight: 700; padding: 2px 6px; border-radius: 7px; line-height: 1.15; }
     #calendar-page .cal-cell.cal-today { background: transparent; }
     #calendar-page .cal-cell.cal-today .cal-day { background: #EC4899; color: #fff; }
@@ -8338,7 +8352,7 @@
       <div class="cal-seg" id="cal-seg">
         <button class="cal-seg-btn active" data-view="month" type="button">Month</button>
         <button class="cal-seg-btn" data-view="agenda" type="button">Agenda</button>
-        <button class="cal-seg-btn" data-view="routine" type="button">Routine</button>
+        <button class="cal-seg-btn" data-view="routine" type="button">Balance</button>
       </div>
       <div id="cal-month-view">
         <div class="cal-month-head">
@@ -11058,8 +11072,15 @@ function renderCalendar() {
   [month, agenda, routine].forEach(el => { if (el) el.style.display = 'none'; });
   if (_calState.view === 'agenda') { if (agenda) agenda.style.display = ''; _calRenderAgenda(); }
   else if (_calState.view === 'routine') { if (routine) routine.style.display = ''; _calRenderRoutine(); }
-  else { if (month) month.style.display = ''; _calRenderMonth(); }
+  else { if (month) month.style.display = ''; _calRenderMonth(); _calLayoutMonth(); setTimeout(_calLayoutMonth, 40); }
 }
+/* Re-fit the wide month grid (+ recompute the dynamic item cap) on viewport resize / rotation. */
+(function(){
+  let _t = null;
+  function _onResize(){ clearTimeout(_t); _t = setTimeout(function(){ try { if (_calState && _calState.view === 'month') _calLayoutMonth(); } catch (_) {} }, 90); }
+  window.addEventListener('resize', _onResize);
+  window.addEventListener('orientationchange', _onResize);
+})();
 const _CAL_MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 function _calRenderMonth() {
   const y = _calState.y, m = _calState.m;
@@ -11113,7 +11134,7 @@ function _calMonthFocusMap() {
 /* WIDE (iPad/web) day-cell body: each event (Ⓔ) + task (Ⓣ) by NAME, capped with a
    "+N more" that opens the day popup, then a Focused Xm / Bucket X% footer. The Ⓔ/Ⓣ
    are themed circles with a white letter. Hidden on phones via CSS (they use dots). */
-const _CAL_CELL_CAP = 3;
+let _calCellCap = 3;   // how many items per wide day-cell before "+N more" — set DYNAMICALLY by _calLayoutMonth (cell height ÷ row height)
 function _calCellItems(key, fm) {
   let rows = '';
   const evs = _eventsOnDate(key), tks = _tasksOnDate(key);
@@ -11122,8 +11143,8 @@ function _calCellItems(key, fm) {
   tks.filter(o => o._due).forEach(o => list.push('<div class="cci"><span class="cci-ic cci-ic-d">D</span><span class="cci-tx">' + escapeHTML(o.task.text || '') + '</span></div>'));
   evs.forEach(ev => list.push('<div class="cci"><span class="cci-ic cci-ic-e">E</span><span class="cci-tx">' + escapeHTML(ev.name || '') + '</span></div>'));
   tks.filter(o => !o._due).forEach(o => list.push('<div class="cci"><span class="cci-ic cci-ic-t">T</span><span class="cci-tx">' + escapeHTML(o.task.text || '') + '</span></div>'));
-  rows += list.slice(0, _CAL_CELL_CAP).join('');
-  const extra = list.length - _CAL_CELL_CAP;
+  rows += list.slice(0, _calCellCap).join('');
+  const extra = list.length - _calCellCap;
   // NOTE: a <button> here would be ILLEGAL nested inside the cell's own <button> (the browser
   // auto-closes the cell + reparents everything after). Use a role=button SPAN; the grid click
   // delegation handles `.cci-more` either way.
@@ -11135,6 +11156,49 @@ function _calCellItems(key, fm) {
   if (f.focus > 0 && f.pillar > 0) foot += '<span class="cci-foot-l">Bucket ' + Math.round(f.pillar / f.focus * 100) + '%</span>';
   if (foot) rows += '<div class="cci-foot">' + foot + '</div>';
   return '<div class="cal-cell-items">' + rows + '</div>';
+}
+/* WIDE month view (≥701px): size the grid so the panel's BOTTOM outer margin (panel→viewport
+   bottom) EQUALS its TOP margin (top-bar bottom → panel top), with the day cells flexing to fill
+   that height. Then derive how many item rows fit per cell (cellHeight ÷ row height) → _calCellCap,
+   so a shorter screen shows fewer names + a bigger "+N more" and a taller screen shows more. The
+   grid's WIDTH is left untouched. Phone (<701) uses the dot cells → fixed cap, no sizing. */
+let _calLayoutBusy = false;
+function _calLayoutMonth() {
+  try {
+    const grid = document.getElementById('cal-grid');
+    const wide = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
+    if (!wide) { _calCellCap = 3; if (grid) { grid.style.height = ''; grid.style.gridTemplateRows = ''; grid.classList.remove('cal-grid-fit'); } return; }
+    const page = document.getElementById('calendar-page');
+    const mv = document.getElementById('cal-month-view');
+    if (!page || getComputedStyle(page).display === 'none' || !grid || !mv) return;
+    if (getComputedStyle(mv).display === 'none') return;            // not on the Month sub-view
+    const panel = grid.closest('.panel') || page.querySelector('.panel'); if (!panel) return;
+    const nav = document.querySelector('nav.tabs') || document.querySelector('header.topbar');
+    const topbarBottom = nav ? Math.round(nav.getBoundingClientRect().bottom) : 56;
+    const pr = panel.getBoundingClientRect();
+    const topGap = Math.max(8, Math.round(pr.top - topbarBottom));   // symmetric margin target
+    const y = _calState.y, m = _calState.m;
+    const startDow = new Date(y, m, 1).getDay();
+    const dim = new Date(y, m + 1, 0).getDate();
+    const trail = (7 - ((startDow + dim) % 7)) % 7;
+    const weeks = (startDow + dim + trail) / 7;
+    grid.style.gridTemplateRows = 'auto repeat(' + weeks + ', 1fr)';   // dow row auto + equal week rows
+    grid.classList.add('cal-grid-fit');                                // release the cells' min-height so the 1fr rows can shrink
+    const gr = grid.getBoundingClientRect();
+    const panelBottomPad = Math.max(0, Math.round(pr.bottom - gr.bottom));
+    const targetGridH = Math.max(260, Math.round((window.innerHeight - topGap) - gr.top - panelBottomPad));
+    grid.style.height = targetGridH + 'px';
+    const cell = grid.querySelector('.cal-cell:not(.cal-empty)');
+    const cellH = cell ? cell.getBoundingClientRect().height : (targetGridH / (weeks + 0.7));
+    const ROW = 16, RESERVE = 50;                                    // ~16px per name row; ~50px for date + footer + padding
+    const cap = Math.max(1, Math.floor((cellH - RESERVE) / ROW));
+    if (cap !== _calCellCap && !_calLayoutBusy) {                    // re-render with the new cap, then re-measure (cap is height-derived → converges in 1 step)
+      _calLayoutBusy = true; _calCellCap = cap;
+      try { _calRenderMonth(); } catch (_) {}
+      _calLayoutBusy = false;
+      _calLayoutMonth();
+    }
+  } catch (_) {}
 }
 /* WIDE day-detail popup — full events + tasks + Focused/Bucket for one day (opened by a
    cell tap or a "+N more" chip, since the per-day lists are folded into the cells on wide). */
@@ -11233,6 +11297,8 @@ function _calRenderAgenda() {
 /* ── Routine view: rings (per-day per-side work time) + Category dot grids ── */
 function _calSideCount() { return (typeof _pillarFaceCount === 'function') ? _pillarFaceCount() : (typeof _PILLAR_NAMES !== 'undefined' ? _PILLAR_NAMES.length : 7); }
 function _calSideColor(side) { return (typeof _pillarSwatchColor === 'function') ? _pillarSwatchColor(side) : (typeof _PILLAR_COLORS !== 'undefined' ? _PILLAR_COLORS[side % _PILLAR_COLORS.length] : '#888'); }
+/* Vivid (saturated) side colour for the Balance "Category" filled squares + names. */
+function _calSideColorVivid(side) { return (typeof _PILLAR_COLORS_VIVID !== 'undefined') ? _PILLAR_COLORS_VIVID[side % _PILLAR_COLORS_VIVID.length] : _calSideColor(side); }
 function _calSideName(side) { try { const ft = state.bucket && state.bucket.faceText && state.bucket.faceText[side]; if (ft && ft.title) return ft.title; } catch (_) {} return (typeof _PILLAR_NAMES !== 'undefined' && _PILLAR_NAMES[side]) || ('Side ' + (side + 1)); }
 function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
   if (!e || e.type !== 'pomodoro') return null;
@@ -11317,27 +11383,35 @@ function _calRenderCategory() {
   const y = _calState.y, m = _calState.m;
   const dim = new Date(y, m + 1, 0).getDate();         // days in THIS month (28/29/30/31)
   const N = _calSideCount();
-  // which sides were active on each day of this month
+  // which sides were active on each day + WHICH tasks fed them (for the hover/tap tooltip)
   const dayActive = {};                                // 'YYYY-MM-DD' -> Set(side)
+  const dayTasks  = {};                                // 'YYYY-MM-DD' -> { side -> Set(taskName) }
   (state.watchLog || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
     const d = new Date(e.startedAt);
     if (d.getFullYear() !== y || d.getMonth() !== m) return;
     const side = _calEntrySide(e);
     if (side == null || side < 0) return;
-    (dayActive[_calDateKey(e.startedAt)] = dayActive[_calDateKey(e.startedAt)] || new Set()).add(side);
+    const k = _calDateKey(e.startedAt);
+    (dayActive[k] = dayActive[k] || new Set()).add(side);
+    const dt = (dayTasks[k] = dayTasks[k] || {});
+    (dt[side] = dt[side] || new Set()).add(((e.name || '') + '').trim() || '(task)');
   });
+  window._calCatTasks = dayTasks;                      // looked up by _wireCatTooltip
   const dayKey = (day) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
   const counts = new Array(N).fill(0);
   for (let day = 1; day <= dim; day++) { const set = dayActive[dayKey(day)]; if (set) set.forEach(s => { if (s < N) counts[s]++; }); }
   let lowest = 0; for (let s = 1; s < N; s++) if (counts[s] < counts[lowest]) lowest = s;   // fewest active days
   let html = '<p class="cal-cat-cap">This month — where you poured your water.</p><div class="cal-cat-rows">';
   for (let s = 0; s < N; s++) {
-    const col = _calSideColor(s), nm = _calSideName(s);
+    const col = _calSideColorVivid(s), nm = _calSideName(s);   // VIVID so the filled squares + name pop
     let dots = '';
     for (let day = 1; day <= dim; day++) {
-      const on = dayActive[dayKey(day)] && dayActive[dayKey(day)].has(s);
-      dots += on ? ('<span class="cal-cat-dot on" style="background:' + col + '"></span>') : '<span class="cal-cat-dot"></span>';
+      const k = dayKey(day);
+      const on = dayActive[k] && dayActive[k].has(s);
+      dots += on
+        ? ('<span class="cal-cat-dot on" style="background:' + col + '" data-cat="' + k + '|' + s + '" tabindex="0" role="button" aria-label="' + escapeHTML(nm) + ' day ' + day + '"></span>')
+        : '<span class="cal-cat-dot"></span>';
     }
     html += '<div class="cal-cat-row' + (s === lowest ? ' cat-lowest' : '') + '">' +
       '<div class="cal-cat-row-head"><span class="cal-cat-name" style="color:' + col + '">' + escapeHTML(nm) + '</span>' +
@@ -11347,6 +11421,38 @@ function _calRenderCategory() {
   }
   html += '</div>';
   wrap.innerHTML = html;
+  _wireCatTooltip(wrap);
+}
+/* Hover (desktop) / tap (mobile) a filled Balance square → a speech bubble above it lists the
+   tasks you completed that day to fill it (from window._calCatTasks, built in _calRenderCategory). */
+function _wireCatTooltip(wrap) {
+  if (!wrap || wrap._catTipWired) return; wrap._catTipWired = true;   // delegated → survives innerHTML swaps
+  let tip = null;
+  const ensure = () => { if (!tip) { tip = document.createElement('div'); tip.className = 'cal-cat-tip'; document.body.appendChild(tip); } return tip; };
+  const hide = () => { if (tip) tip.style.display = 'none'; };
+  function show(dot) {
+    const cat = dot.getAttribute('data-cat'); if (!cat) return;
+    const bar = cat.indexOf('|'), key = cat.slice(0, bar), side = +cat.slice(bar + 1);
+    const set = window._calCatTasks && window._calCatTasks[key] && window._calCatTasks[key][side];
+    const tasks = set ? Array.from(set) : [];
+    const d = (typeof _calKeyToDate === 'function') ? _calKeyToDate(key) : null;
+    const dl = d ? (_CAL_MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate()) : key;
+    const t = ensure();
+    t.innerHTML = '<div class="cct-head">' + escapeHTML(dl) + ' · ' + escapeHTML(_calSideName(side)) + '</div>' +
+      (tasks.length ? '<ul class="cct-list">' + tasks.map(n => '<li>' + escapeHTML(n) + '</li>').join('') + '</ul>' : '<div class="cct-empty">Focused time</div>');
+    t.style.display = 'block'; t.style.left = '0px'; t.style.top = '0px';   // measure first
+    const r = dot.getBoundingClientRect(), tw = t.offsetWidth, th = t.offsetHeight;
+    let left = Math.max(8, Math.min(Math.round(r.left + r.width / 2 - tw / 2), window.innerWidth - tw - 8));
+    let top = Math.round(r.top - th - 8); if (top < 8) top = Math.round(r.bottom + 8);   // flip below if no room above
+    t.style.left = left + 'px'; t.style.top = top + 'px';
+  }
+  const at = (e) => (e.target.closest && e.target.closest('.cal-cat-dot.on'));
+  wrap.addEventListener('mouseover', e => { const d = at(e); if (d) show(d); });
+  wrap.addEventListener('mouseout',  e => { const d = at(e); if (d) hide(); });
+  wrap.addEventListener('focusin',   e => { const d = at(e); if (d) show(d); });
+  wrap.addEventListener('focusout',  hide);
+  wrap.addEventListener('click',     e => { const d = at(e); if (d) show(d); });
+  document.addEventListener('click', e => { if (!(e.target.closest && e.target.closest('.cal-cat-dot.on'))) hide(); }, true);
 }
 async function _calAddTask() {
   if (typeof openNoteEditor !== 'function') return;
@@ -14848,6 +14954,9 @@ function _flipRenderMatrixByTask(mutate) {
 // Green·Money, Blue·Growth, Dark-blue·Study/Work, Purple·People.
 const _PILLAR_NAMES  = ['Mind', 'Body', 'Joy', 'Money', 'Growth', 'Study / Work', 'People'];
 const _PILLAR_COLORS = ['#F4B5C7', '#F7C5A1', '#F6E1A0', '#B9E2B8', '#A8DCE0', '#B3CBED', '#D2B8E8'];
+// Vivid (high-saturation) variants — same hue as the pastel bucket faces, but punchy so the
+// Balance "Category" filled squares + side names read clearly. Used by _calSideColorVivid.
+const _PILLAR_COLORS_VIVID = ['#E85A8A', '#F0863D', '#EAB81E', '#43B96B', '#27AFC1', '#4585D6', '#9A5BD8'];
 // Default low/mid/high band descriptions per pillar (editable in Settings → Pillars).
 const _PILLAR_DESC = {
   'Mind':         ['Strong mood swings, frequent anxiety', 'Flat, numbed emotions',                            'Aware of and able to manage emotions'],
@@ -26352,6 +26461,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
       if (!v) { try { input.focus(); } catch (_) {} return; }   // need a name → stay open
       _commitDurationTask(q, v);
     } else {
+      try { _restorePreviewPush(window._previewBlock); } catch(_){}   // un-push the live-shifted blocks
       window._previewBlock = null;                              // discard the preview rectangle
     }
     done = true;
@@ -26379,7 +26489,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
     // The Repeat (↻) toggle + its weekday buttons + the Note button live in the
     // header (outside the picker) but ARE part of this add flow — tapping them
     // must NOT do anything here.
-    if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #note-toggle, #due-toggle, #task-note-modal, .rep-range-chip, #repdate-modal, #duedate-modal')) return;
+    if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #note-toggle, #due-toggle, #task-note-modal, .rep-range-chip, #repdate-modal, #duedate-modal, .gap-ovl-backdrop')) return;
     try { if (input && document.activeElement === input) input.blur(); } catch (_) {}
   }
   setTimeout(() => {                              // defer so the OPENING tap doesn't trip it
@@ -26393,6 +26503,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   window._ttAddCancel = function () {
     if (done) return;
     done = true;
+    try { _restorePreviewPush(window._previewBlock); } catch(_){}   // un-push the live-shifted blocks
     window._previewBlock = null;
     document.removeEventListener('touchstart', onOutside, true);
     document.removeEventListener('mousedown', onOutside, true);
@@ -26546,7 +26657,7 @@ function showMatrixCellAdd(cell, addBtn, q){
       _commitDurationTask(q, v);     // reads _previewBlock (duration) + _pickedPillar + repeat/due/memo globals
       teardown();
     } else {
-      window._previewBlock = null; teardown();
+      try { _restorePreviewPush(window._previewBlock); } catch(_){}   window._previewBlock = null; teardown();
       try { if (typeof drawGauge === 'function') drawGauge(); } catch(_){}
       try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch(_){}
     }
@@ -26739,11 +26850,11 @@ function showMatrixCellAdd(cell, addBtn, q){
   // Tap outside the picker + relocated chips + popups = CANCEL (the iPhone-portrait spec).
   function onOutside(e){
     if (mca.contains(e.target)) return;
-    if (e.target && e.target.closest && e.target.closest('#focus-tasks-title, #weekday-row, #repeat-toggle, #due-toggle, #note-toggle, .rep-range-chip, #repdate-modal, #duedate-modal, #task-note-modal')) return;
+    if (e.target && e.target.closest && e.target.closest('#focus-tasks-title, #weekday-row, #repeat-toggle, #due-toggle, #note-toggle, .rep-range-chip, #repdate-modal, #duedate-modal, #task-note-modal, .gap-ovl-backdrop')) return;
     finish(false);
   }
   setTimeout(()=>{ if (done) return; document.addEventListener('pointerdown', onOutside, true); }, 90);
-  window._ttAddCancel = function(){ if (done) return; window._previewBlock = null; teardown(); };   // external flip/nav teardown
+  window._ttAddCancel = function(){ if (done) return; try { _restorePreviewPush(window._previewBlock); } catch(_){}   window._previewBlock = null; teardown(); };   // external flip/nav teardown
 }
 /* Place the transient preview rectangle on the gauge for the task being added.
    Position rules:
@@ -26774,14 +26885,48 @@ function _previewPlacement(now) {
   const blocks = _scheduledAhead(now);
   const B0 = blocks.find(b => b.startMs <= now && b.endMs > now);   // block the now-line passes through
   if (!B0) return Object.assign({ start: now }, _capAfter(now, blocks));   // free space → on the now-line
-  let cursor = B0;
-  for (let g = 0; g <= blocks.length; g++) {
-    const next = blocks.find(b => b !== cursor && b.startMs >= cursor.endMs - 1000);
-    if (!next) return { start: cursor.endMs, capMs: null, blockId: null };                       // tail
-    if (next.startMs - cursor.endMs >= FIT) return { start: cursor.endMs, capMs: next.startMs - cursor.endMs, blockId: next.id };   // usable gap
-    cursor = next;                                                                                // contiguous / <25-min gap → skip toward the tail
+  // now-line inside B0 → extend over the merged BUSY run (overlapping + contiguous + sub-25-min gaps
+  // ALL count as busy), THEN place in the first usable (≥25-min) gap, else at the tail. Merging the
+  // OVERLAPPING blocks is what stops the new block from landing on top of a block that starts inside
+  // B0 but ends after it (the "preview overlaps another block" bug when existing blocks overlap).
+  let busyEnd = B0.endMs;
+  for (let guard = 0; guard <= blocks.length + 1; guard++) {
+    let extended = false;
+    blocks.forEach(b => { if (b.startMs <= busyEnd + 1000 && b.endMs > busyEnd) { busyEnd = b.endMs; extended = true; } });
+    if (extended) continue;                                          // pulled a block into the run → re-extend
+    const next = blocks.find(b => b.startMs > busyEnd + 1000);       // first block clear of the run
+    if (!next) return { start: busyEnd, capMs: null, blockId: null };                                  // tail
+    if (next.startMs - busyEnd >= FIT) return { start: busyEnd, capMs: next.startMs - busyEnd, blockId: next.id };   // usable gap
+    busyEnd = next.endMs;                                            // sub-25-min gap → swallow it, keep going
   }
-  return { start: cursor.endMs, capMs: null, blockId: null };
+  return { start: busyEnd, capMs: null, blockId: null };
+}
+/* ===== Live "push the next blocks down" ===== while the slider grows a push-mode preview, the
+   snapshotted downstream blocks ride DOWN in lock-step so they never overlap (restored on cancel,
+   kept on commit). _pushFrom = the start of the first pushed block; _pushSnap = original positions. */
+function _snapshotPushBlocks(fromMs) {
+  return (state.scheduledBlocks || [])
+    .filter(x => x && x.kind !== 'tracker' && x.activeAt == null && x.startMs >= fromMs - 1000)
+    .map(x => ({ blk: x, s0: x.startMs, e0: x.endMs,
+      segs: [].concat(Array.isArray(x.taskSegs) ? x.taskSegs : [], Array.isArray(x.breakSegments) ? x.breakSegments : [])
+              .map(sg => ({ seg: sg, s0: sg.startMs, e0: sg.endMs })) }));
+}
+function _applyPreviewPush(b) {
+  if (!b || !b._pushMode || !b._pushSnap) return;
+  const shift = Math.max(0, b.endMs - b._pushFrom);            // how far the growing block reaches past them
+  b._pushSnap.forEach(s => {
+    s.blk.startMs = s.s0 + shift; s.blk.endMs = s.e0 + shift;
+    s.segs.forEach(sg => { sg.seg.startMs = sg.s0 + shift; sg.seg.endMs = sg.e0 + shift; });
+  });
+}
+function _restorePreviewPush(b) {
+  b = b || window._previewBlock;
+  if (!b || !b._pushSnap) return;
+  b._pushSnap.forEach(s => {
+    s.blk.startMs = s.s0; s.blk.endMs = s.e0;
+    s.segs.forEach(sg => { sg.seg.startMs = sg.s0; sg.seg.endMs = sg.e0; });
+  });
+  b._pushSnap = null; b._pushMode = false;
 }
 /* The slider hit the gap cap → ask how to keep growing (once per cap, unless dismissed). */
 function _maybeShowGapDialog(b) {
@@ -26791,18 +26936,27 @@ function _maybeShowGapDialog(b) {
     b._gapDialogOpen = false;
     if (window._previewBlock !== b) return;   // add cancelled / replaced meanwhile
     if (choice === 'push') {
-      // Grow freely from here; the next block(s) cascade DOWN to make room (applied on commit).
+      // Grow freely from here; the next block(s) ride DOWN live as the slider grows past them.
+      const nb = (state.scheduledBlocks || []).find(x => x.id === b._capBlockId);
+      b._pushFrom = nb ? nb.startMs : b.endMs;
+      b._pushSnap = _snapshotPushBlocks(b._pushFrom);
       b._capMs = null; b._pushMode = true;
+      _applyPreviewPush(b);
+      try { _redrawGauge(); } catch (_) {}
     } else if (choice === 'after') {
-      // Continue in the free time AFTER the blocking block: relocate the start to its end, KEEP
-      // the current duration, and re-cap to the next gap (so the dialog can fire again later).
+      // Continue in the free time AFTER the blocking block: relocate the start to its end, keep the
+      // duration (trimmed to the NEW gap), and re-cap. Sliding further then grows it there; when it
+      // reaches the NEXT block this same dialog pops again (_gapDialogShown reset).
       const nb = (state.scheduledBlocks || []).find(x => x.id === b._capBlockId);
       if (nb) {
         const _d = b.endMs - b.startMs;
-        b.startMs = nb.endMs; b.endMs = b.startMs + _d;
         const c2 = _capAfter(nb.endMs);
+        b.startMs = nb.endMs;
         b._capMs = c2.capMs; b._capBlockId = c2.blockId; b._gapDialogShown = false;
-        try { _redrawGauge(); } catch (_) {}
+        const _newDur = (c2.capMs != null) ? Math.min(_d, c2.capMs) : _d;
+        // Drive it through the active slider's setter so the label + gauge both refresh.
+        const _sl = Array.prototype.find.call(document.querySelectorAll('.qp-slider'), s => typeof s._mcavSetDur === 'function');
+        if (_sl) _sl._mcavSetDur(_newDur); else { b.endMs = b.startMs + _newDur; try { _redrawGauge(); } catch (_) {} }
       }
     } else {
       b._gapDialogShown = false;   // dismissed → can prompt again
@@ -27023,6 +27177,7 @@ function _wireDurationSlider(slider) {
     ms = Math.max(MIN, Math.min(MAX, Math.round(ms / STEP) * STEP));
     if (b._capMs != null && ms > b._capMs) ms = b._capMs;   // gap cap (No-time-block 0m tap is unaffected)
     b.endMs = b.startMs + ms;
+    if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks
     setLabel(ms);
     try { _redrawGauge(); } catch (_) {}
   };
@@ -27048,6 +27203,7 @@ function _wireDurationSlider(slider) {
     setLabel(dur);
     if (b.endMs - b.startMs !== dur) {
       b.endMs = b.startMs + dur;
+      if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks down as we grow
       const step = Math.round(dur / STEP);
       if (step !== lastStep) { lastStep = step; try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} }
       _redrawGauge();
@@ -27157,23 +27313,10 @@ function _commitDurationTask(q, name) {
   // current-time line only when actually worked (the uptask tracker behaviour on start).
   if (pb && q !== 'q4' && !checkOnly) {                       // check-only tasks reserve NO gauge time
     if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
-    // "Push the next blocks down" (overflow dialog) → the new block grew past the block that was
-    // capping it; shove that block + everything after it DOWN by the overlap so they all keep
-    // their order/gaps and the new block fits cleanly above them.
-    if (pb._pushMode && pb._capBlockId) {
-      const nb = state.scheduledBlocks.find(x => x && x.id === pb._capBlockId);
-      if (nb && pb.endMs > nb.startMs) {
-        const shift = pb.endMs - nb.startMs, from = nb.startMs - 1000;
-        state.scheduledBlocks.forEach(x => {
-          if (!x || x.kind === 'tracker' || x.activeAt != null) return;
-          if (x.startMs >= from) {
-            x.startMs += shift; x.endMs += shift;
-            if (Array.isArray(x.taskSegs))      x.taskSegs.forEach(s => { s.startMs += shift; s.endMs += shift; });
-            if (Array.isArray(x.breakSegments)) x.breakSegments.forEach(s => { s.startMs += shift; s.endMs += shift; });
-          }
-        });
-      }
-    }
+    // "Push the next blocks down" was already applied LIVE to state.scheduledBlocks while the
+    // slider grew (_applyPreviewPush) — the downstream blocks are already in their pushed spots, so
+    // commit just persists the new block above them (no extra cascade here; _pushSnap is dropped).
+    pb._pushSnap = null;
     state.scheduledBlocks.push({
       id: pb.id, q, taskIdx: 0, taskName: name.slice(0, 200),
       startMs: pb.startMs, endMs: pb.endMs, activeAt: null, activeEndMs: null, _combine: true
