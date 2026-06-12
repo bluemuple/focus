@@ -7406,6 +7406,29 @@
   .cal-cat-tip .cct-list { margin: 0; padding-left: 16px; }
   .cal-cat-tip .cct-list li { margin: 1px 0; }
   .cal-cat-tip .cct-empty { opacity: .82; }
+  /* ===== Routine tab (habit-tracker grid): repeat tasks × this month's days ===== */
+  .cal-hb-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+  .cal-hb-scroll { min-width: max-content; }
+  .cal-hb-head-row, .cal-hb-row { display: flex; align-items: center; gap: 8px; }
+  .cal-hb-row { padding: 3px 0; }
+  .cal-hb-head-row { margin-bottom: 4px; }
+  .cal-hb-name, .cal-hb-name-sp { flex: 0 0 108px; width: 108px; }
+  .cal-hb-name { font-weight: 800; font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-hb-cells, .cal-hb-days { display: flex; gap: 3px; }
+  .cal-hb-day { flex: 0 0 16px; width: 16px; text-align: center; font-size: .58rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
+  .cal-hb-cell { flex: 0 0 16px; width: 16px; height: 16px; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.14); }
+  .cal-hb-cell.rep  { background: rgba(127,127,127,.34); box-shadow: none; }   /* repeat-SET day → grey square */
+  .cal-hb-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
+  .cal-hb-empty { padding: 30px 12px; text-align: center; color: var(--text-muted, #9ca3af); font-size: .92rem; line-height: 1.6; }
+  /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
+  .routine-toast {
+    position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
+    max-width: 280px; background: rgba(17,24,39,.96); color: #fff; border-radius: 10px;
+    padding: 10px 14px; font-size: .84rem; font-weight: 600; line-height: 1.4;
+    box-shadow: 0 8px 26px rgba(0,0,0,.32); pointer-events: none;
+    opacity: 0; transform: translateY(8px); transition: opacity .25s ease, transform .25s ease;
+  }
+  .routine-toast.show { opacity: 1; transform: none; }
   /* ===== WIDE (iPad / web ≥701px) MONTH calendar — Google-Calendar-style cells: date pinned
      TOP-LEFT; today = a small pink rounded square behind ONLY the number (not the whole cell);
      each day's events (Ⓔ) + tasks (Ⓣ) listed by NAME with a "+N more" + Focused/Bucket footer.
@@ -8353,6 +8376,7 @@
         <button class="cal-seg-btn active" data-view="month" type="button">Month</button>
         <button class="cal-seg-btn" data-view="agenda" type="button">Agenda</button>
         <button class="cal-seg-btn" data-view="routine" type="button">Balance</button>
+        <button class="cal-seg-btn" data-view="habit" type="button">Routine</button>
       </div>
       <div id="cal-month-view">
         <div class="cal-month-head">
@@ -8396,6 +8420,16 @@
           <p class="cal-rt-hint">Each 30 min on a bucket side fills a half-ring (clockwise from 12).</p>
         </div>
         <div id="cal-rt-category" style="display:none;"></div>
+      </div>
+      <!-- Routine (habit-tracker grid): repeat tasks × this month's days. Repeat days = grey square,
+           days the task was worked = that task's colour. Built by _calRenderHabit. -->
+      <div id="cal-habit-view" style="display:none;">
+        <div class="cal-month-head">
+          <button class="cal-nav" id="cal-hb-prev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+          <h2 id="cal-hb-title">Month</h2>
+          <button class="cal-nav" id="cal-hb-next" type="button" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+        </div>
+        <div id="cal-hb-grid" class="cal-hb-grid"></div>
       </div>
     </div>
   </section>
@@ -11069,9 +11103,11 @@ function renderCalendar() {
   const month = document.getElementById('cal-month-view');
   const agenda = document.getElementById('cal-agenda-view');
   const routine = document.getElementById('cal-routine-view');
-  [month, agenda, routine].forEach(el => { if (el) el.style.display = 'none'; });
+  const habit = document.getElementById('cal-habit-view');
+  [month, agenda, routine, habit].forEach(el => { if (el) el.style.display = 'none'; });
   if (_calState.view === 'agenda') { if (agenda) agenda.style.display = ''; _calRenderAgenda(); }
   else if (_calState.view === 'routine') { if (routine) routine.style.display = ''; _calRenderRoutine(); }
+  else if (_calState.view === 'habit') { if (habit) habit.style.display = ''; _calRenderHabit(); }
   else { if (month) month.style.display = ''; _calRenderMonth(); _calLayoutMonth(); setTimeout(_calLayoutMonth, 40); }
 }
 /* Re-fit the wide month grid (+ recompute the dynamic item cap) on viewport resize / rotation. */
@@ -11454,6 +11490,57 @@ function _wireCatTooltip(wrap) {
   wrap.addEventListener('click',     e => { const d = at(e); if (d) show(d); });
   document.addEventListener('click', e => { if (!(e.target.closest && e.target.closest('.cal-cat-dot.on'))) hide(); }, true);
 }
+/* ROUTINE tab (habit-tracker grid): every task created with a Repeat weekday set gets a row of
+   per-day squares for the current month. Top row = day numbers. A day the task is SET to repeat
+   (its weekday, inside the repeat window) = grey square; a day it was actually worked (a watchLog
+   pomodoro matched by name) = that task's colour. The day-number header + each task's cells share
+   the same square width so the columns line up; the grid scrolls horizontally on a narrow screen. */
+function _calRenderHabit() {
+  const grid = document.getElementById('cal-hb-grid'); if (!grid) return;
+  const y = _calState.y, m = _calState.m;
+  const title = document.getElementById('cal-hb-title'); if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  const dim = new Date(y, m + 1, 0).getDate();
+  // repeat tasks (any quadrant) — those with a weekday set
+  const tasks = [];
+  ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach((t, idx) => {
+    if (t && Array.isArray(t.repeat) && t.repeat.length) tasks.push({ q, idx, t });
+  }));
+  // worked days this month per task name (watchLog pomodoro)
+  const workedByName = {};
+  (state.watchLog || []).forEach(e => {
+    if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
+    const d = new Date(e.startedAt);
+    if (d.getFullYear() !== y || d.getMonth() !== m) return;
+    const nm = ((e.name || '') + '').trim();
+    (workedByName[nm] = workedByName[nm] || new Set()).add(d.getDate());
+  });
+  // day-number header
+  let head = '';
+  for (let day = 1; day <= dim; day++) head += '<span class="cal-hb-day">' + day + '</span>';
+  let rows = '';
+  if (!tasks.length) {
+    rows = '<div class="cal-hb-empty">No routine tasks yet.<br>Tap <b>Repeat</b> when you add a task and it shows up here.</div>';
+  } else {
+    tasks.forEach(({ q, idx, t }) => {
+      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
+      const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+      const repStart = t.repeatStart || createdKey;
+      const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
+      const worked = workedByName[(t.text || '').trim()] || new Set();
+      let cells = '';
+      for (let day = 1; day <= dim; day++) {
+        const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+        const dow = new Date(y, m, day).getDay();
+        const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
+        if (worked.has(day))   cells += '<span class="cal-hb-cell done" style="background:' + col + '"></span>';
+        else if (isRepeat)     cells += '<span class="cal-hb-cell rep"></span>';
+        else                   cells += '<span class="cal-hb-cell"></span>';
+      }
+      rows += '<div class="cal-hb-row"><span class="cal-hb-name" style="color:' + col + '">' + escapeHTML(t.text || '') + '</span><div class="cal-hb-cells">' + cells + '</div></div>';
+    });
+  }
+  grid.innerHTML = '<div class="cal-hb-scroll"><div class="cal-hb-head-row"><span class="cal-hb-name cal-hb-name-sp"></span><div class="cal-hb-cells cal-hb-days">' + head + '</div></div>' + rows + '</div>';
+}
 async function _calAddTask() {
   if (typeof openNoteEditor !== 'function') return;
   const v = await openNoteEditor('', { title: 'New task', singleLine: true, maxLength: 200 });
@@ -11538,6 +11625,9 @@ function _calEditEvent(id) {
   const rtPrev = document.getElementById('cal-rt-prev'), rtNext = document.getElementById('cal-rt-next');
   if (rtPrev) rtPrev.addEventListener('click', () => _calMonthShift(-1));
   if (rtNext) rtNext.addEventListener('click', () => _calMonthShift(1));
+  const hbPrev = document.getElementById('cal-hb-prev'), hbNext = document.getElementById('cal-hb-next');
+  if (hbPrev) hbPrev.addEventListener('click', () => _calMonthShift(-1));
+  if (hbNext) hbNext.addEventListener('click', () => _calMonthShift(1));
   const rtClip = document.getElementById('cal-rt-grid-clip');
   if (rtClip) {
     let sx = 0, sy = 0, tracking = false;
@@ -25546,6 +25636,17 @@ function _buildWeekdayButtons(container, selSet, onToggle) {
     container.appendChild(b);
   });
 }
+/* Black bottom-right toast shown when a task's Repeat is turned on while adding it — tells the user
+   the task will live in Calendar → Routine. Fades in, then out after ~2.6s. */
+let _routineToastEl = null, _routineToastT = null;
+function _showRoutineToast(){
+  if (!_routineToastEl) { _routineToastEl = document.createElement('div'); _routineToastEl.className = 'routine-toast'; document.body.appendChild(_routineToastEl); }
+  _routineToastEl.textContent = 'This task is recorded in Calendar → Routine.';
+  void _routineToastEl.offsetWidth;                 // restart the transition if shown again
+  _routineToastEl.classList.add('show');
+  clearTimeout(_routineToastT);
+  _routineToastT = setTimeout(() => { if (_routineToastEl) _routineToastEl.classList.remove('show'); }, 2600);
+}
 /* The Repeat header chip doubles as a "done" button while the weekday row is open: it stays black
    but reads "OK" (↻ icon hidden); closed → reverts to the ↻ + "Repeat". */
 function _setRepeatChipLabel(open){
@@ -25591,7 +25692,7 @@ function _syncAddSetChips() {
     document.body.classList.toggle('tt-repeat-days', on);
     rt.classList.toggle('active', on);
     _setRepeatChipLabel(on);   // open → the black chip reads "OK" (a done button); closed → "Repeat"
-    if (on) _renderRepRangeChip();   // ensure the capsule shows the current window when revealed
+    if (on) { _renderRepRangeChip(); _showRoutineToast(); }   // ensure the capsule shows + tell the user it lands in Routine
   });
   // "Cancel" (gray) next to Repeat → clear the weekday/date repeat + exit repeat mode, but
   // KEEP the add open so the user keeps building the (now non-repeating) task.
@@ -26831,7 +26932,7 @@ function showMatrixCellAdd(cell, addBtn, q){
       }
     };
     mca.querySelectorAll('.mcav-mode').forEach(b => {
-      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _mcavSetMode(b.dataset.mode); });
+      b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _mcavSetMode(b.dataset.mode); if (b.dataset.mode === 'repeat') { try { _showRoutineToast(); } catch (_) {} } });
     });
     _mcavSetMode('sides');             // default mode = Sides (bucket), so _pickedPillar is seeded
     window._mcavSetMode = _mcavSetMode;   // preview test hook
