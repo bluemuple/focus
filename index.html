@@ -987,6 +987,8 @@
     -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
   }
   #gauge-hotkey-help.on { display: block; }
+  /* iPad float pad is up → no keyboard, so hide the keyboard-shortcut help (the pad's buttons replace it). */
+  body.tt-padfloat #gauge-hotkey-help { display: none !important; }
   #gauge-hotkey-help .ghk-list { display: none; }
   #gauge-hotkey-help.ghk-sel .ghk-list { display: block; }
   #gauge-hotkey-help .ghk-row { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
@@ -1026,6 +1028,12 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
   }
+  /* Edit-task popup (#note-modal): anchor to the TOP and STAY there — when the soft keyboard
+     dismisses it must NOT jump back to vertical centre (user request). So it ignores both the
+     default centre AND the keyboard's flex-end lift; it sits near the top in every state. */
+  #note-modal { align-items: flex-start !important; padding-top: max(60px, calc(env(safe-area-inset-top, 0px) + 36px)); }
+  body.ios-kb-open #note-modal { padding-bottom: 16px; }
+  body.ios-kb-open #note-modal .modal-content { max-height: calc(100dvh - var(--kb-height, 300px) - 84px); }
   /* Same lift for the dynamically-built "Leave a kind word" comment popup, which
      isn't a .modal — otherwise the iPhone keyboard covers it. */
   body.ios-kb-open .memo-cmt-back {
@@ -2549,14 +2557,10 @@
   }
   #focus-matrix .task-row .task-grip svg { display: block; }
   #focus-matrix .task-row .task-grip:active { cursor: grabbing; }
-  /* 2×2 matrix (tt-flip) Edit: right-align the repeat + memo set-indicators next to the pen (they
-     used to sit just after the name). Move the cluster-splitting auto-margin off the pen onto the
-     FIRST indicator so [repeat][memo][pen][grip] ride the right edge together. */
-  body.tt-flip.tt-show-actions #focus-matrix .task-row .task-edit-pen { margin-left: 6px; }
-  body.tt-flip.tt-show-actions #focus-matrix .task-row .task-repeat-dot,
-  body.tt-flip.tt-show-actions #focus-matrix .task-row .task-note-dot { margin-left: auto; }
-  body.tt-flip.tt-show-actions #focus-matrix .task-row .task-repeat-dot ~ .task-note-dot { margin-left: 4px; }
-  body.tt-flip.tt-show-actions #focus-matrix .task-row .task-bid-wrap:empty { display: none; }
+  /* (The tt-flip-specific repeat/memo/pen auto-margins were REMOVED — the unified right-align
+     block below now governs every mode with a SINGLE auto, so they no longer double-up.) An
+     empty bid slot would still add a stray gap → hide it. */
+  #focus-matrix .task-row .task-bid-wrap:empty { display: none; }
   /* A task bar that just sprang back into the list after a swipe-to-gauge. */
   @keyframes tgReappear {
     from { transform: translateX(120%); opacity: 0; }
@@ -2682,6 +2686,45 @@
   /* In Edit mode the bar reveals pen+grip on the right; hide the Due badge so they have room. */
   body.tt-show-actions #focus-matrix .task-row .task-due,
   .focus-cell.show-actions .task-row .task-due { display: none; }
+  /* ===== RIGHT-ALIGN the task-bar trailing cluster =====
+     The FIRST present trailing element grabs the free space (margin-left:auto); every later one
+     gets a fixed 4px gap. (margin-left:auto on a trailing item is wrap-SAFE; margin-right:auto on
+     the NAME wrapped the bar in the flex-wrap row, so it's NOT used.) The pen sits just LEFT of the
+     memo because the pen ELEMENT is ordered before the memo in the DOM. The !important resets beat
+     the scattered older per-mode auto rules (esp. the Edit pen's) so only ONE auto exists →
+     the memo no longer drifts to the centre in Edit. */
+  #focus-matrix .task-row .task-repeat-dot,
+  #focus-matrix .task-row .task-edit-pen,
+  #focus-matrix .task-row .task-note-dot,
+  #focus-matrix .task-row .task-due,
+  #focus-matrix .task-row .task-play,
+  #focus-matrix .task-row .task-play-ph { margin-left: auto; }
+  /* once an earlier trailing sibling is present, every later one is just a fixed gap */
+  #focus-matrix .task-row .task-repeat-dot ~ .task-edit-pen,
+  #focus-matrix .task-row .task-repeat-dot ~ .task-note-dot,
+  #focus-matrix .task-row .task-repeat-dot ~ .task-due,
+  #focus-matrix .task-row .task-repeat-dot ~ .task-play,
+  #focus-matrix .task-row .task-repeat-dot ~ .task-play-ph,
+  #focus-matrix .task-row .task-note-dot ~ .task-due,
+  #focus-matrix .task-row .task-note-dot ~ .task-play,
+  #focus-matrix .task-row .task-note-dot ~ .task-play-ph,
+  #focus-matrix .task-row .task-due ~ .task-play,
+  #focus-matrix .task-row .task-due ~ .task-play-ph,
+  #focus-matrix .task-row .task-bid-wrap,
+  #focus-matrix .task-row .task-grip,
+  /* pen precedes the memo in the DOM — but it's display:none outside Edit, so its sibling resets
+     are gated to Edit (else they'd wrongly fix the memo/due in non-edit via a hidden pen). */
+  body.tt-show-actions #focus-matrix .task-row .task-edit-pen ~ .task-note-dot,
+  body.tt-show-actions #focus-matrix .task-row .task-edit-pen ~ .task-due { margin-left: 4px !important; }
+  /* iPhone PORTRAIT (≤700px): Repeat + Due appear ONLY in Edit; everything right-aligned.
+     (iPad / web / landscape keep repeat+due always visible.) */
+  @media (max-width: 700px) {
+    body:not(.tt-show-actions) #focus-matrix .task-row .task-repeat-dot { display: none; }
+    body.tt-show-actions #focus-matrix .task-row .task-due {
+      display: inline-flex; flex-direction: column; align-items: flex-end; justify-content: center;
+      flex: 0 0 auto; text-align: right; gap: 1px;
+    }
+  }
   /* Pillar tag dot (set via the +Add pillar picker) — small colour circle = the bucket face. */
   .task-row .task-pillar-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,.22); margin: 0 1px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
   /* Edit-task pillar picker — a row of face-coloured numbered circles. */
@@ -4804,6 +4847,10 @@
   #repdate-modal .rd-ok { width: 100%; }
   /* ===== Due-date picker — quick chips (Today/Tomorrow/Next week) over a mini month
      calendar. Used by the +Add "Due date" chip AND the Edit-task modal. ===== */
+  /* Sit ABOVE the other .modal layer (z-index:100): the Edit-task note modal is later in the
+     DOM, so without this the picker opened BEHIND it (looked like "nothing happened" until the
+     Edit modal closed). Same for the repeat-date picker. */
+  #duedate-modal, #repdate-modal { z-index: 120; }
   #duedate-modal .dd-content { width: 320px; max-width: 92vw; position: relative; }
   #duedate-modal .dd-x { position: absolute; top: 8px; right: 8px; width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--text-muted, #6b7280); border-radius: 8px; cursor: pointer; }
   #duedate-modal .dd-x:active { background: var(--button-bg, #f3f4f6); }
@@ -4905,9 +4952,10 @@
   .rep-range-chip .rr-sep { color: var(--text-muted, #9ca3af); font-weight: 800; font-size: .76rem; padding: 0 1px; }
   /* Tiny per-task note dot inside the bar — only on tasks that HAVE a note, plus
      in Edit mode so you can add one. Kept small so it barely uses bar space. */
+  /* Memo icon shows ONLY when the task HAS a note (all devices / modes) — it's an indicator,
+     not an "add" affordance (you add/edit a note via the Edit-task pencil). Green when present. */
   .task-note-dot { flex: 0 0 auto; display: none; align-items: center; justify-content: center; background: transparent; border: none; padding: 0 1px; color: var(--text-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .task-note-dot.has-note { display: inline-flex; color: #3aa776; }
-  body.tt-show-actions #focus-matrix .task-row .task-note-dot { display: inline-flex; }
   /* Task-note rich-text editor (read-only view + Edit; B/I/U/lists/link) */
   .tn-modal { width: min(96vw, 480px); max-height: 82vh; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
   .tn-head { position: relative; display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--card-border); }
@@ -4947,7 +4995,8 @@
     cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
   .nm-weekday-row .wd-btn:active { transform: scale(0.92); }
-  .nm-weekday-row .wd-btn.on { background: #3aa776; border-color: #3aa776; color: #fff; }
+  /* selected weekday = BLACK (theme-aware: inverts in dark), not green */
+  .nm-weekday-row .wd-btn.on { background: var(--text-main, #111827); border-color: var(--text-main, #111827); color: var(--card-bg, #fff); }
   /* Edit-task modal Due-date row — a tappable pill that opens the due picker. */
   .nm-due-btn { display: flex; align-items: center; gap: 9px; width: 100%; box-sizing: border-box; padding: 9px 12px; border: 1px solid var(--card-border, #e5e7eb); border-radius: 10px; background: var(--button-bg, #f3f4f6); cursor: pointer; font: inherit; -webkit-tap-highlight-color: transparent; }
   .nm-due-btn:active { transform: scale(.99); }
@@ -5025,6 +5074,31 @@
   /* Dark (solarized) — brighten the destructive red + theme the resize wash. */
   :root[data-theme="solarized"] .gauge-edit-tool .get-del { color: #f87171; }
   :root[data-theme="solarized"] .gauge-edit-tool .get-mode.is-resize { background: rgba(133, 171, 87, .16); }
+  /* ===== iPad FLOAT: the same block-edit pad as a draggable floating panel =====
+     iPad (touch, wide, no keyboard) can't nudge gauge blocks with arrow keys, so on Edit the pad
+     floats — vertically centred, 12px from the right edge — ABOVE the task bars. Drag the top
+     handle (centred vertical-line grip) to move it anywhere; the ✕ exits Edit. Moved to <body> by
+     JS so position:fixed resolves to the viewport (the .time-tasks-wrap flip card is a fixed
+     containing block). The handle + ✕ show ONLY here. */
+  .gauge-edit-tool .get-handle, .gauge-edit-tool .get-close { display: none; }
+  .gauge-edit-tool.get-float {
+    display: flex; position: fixed; z-index: 9500;
+    right: 12px; top: 50%; transform: translateY(-50%);
+    margin: 0; padding-top: 26px; width: 224px; max-width: calc(100vw - 24px);
+    box-shadow: 0 12px 40px rgba(0,0,0,.28); cursor: default;
+  }
+  .gauge-edit-tool.get-float .get-handle {
+    display: flex; position: absolute; top: 0; left: 0; right: 0; height: 24px;
+    align-items: center; justify-content: center; cursor: grab; touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  .gauge-edit-tool.get-float .get-handle span { width: 30px; height: 4px; border-radius: 2px; background: var(--text-muted, #9ca3af); }   /* centred HORIZONTAL grip bar (reads as "drag me") */
+  .gauge-edit-tool.get-float .get-handle:active { cursor: grabbing; }
+  .gauge-edit-tool.get-float .get-close {
+    display: inline-flex; position: absolute; top: 2px; right: 4px; width: 26px; height: 26px;
+    align-items: center; justify-content: center; border: none; background: transparent;
+    color: var(--text-muted, #6b7280); border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; padding: 0;
+  }
+  .gauge-edit-tool.get-float .get-close:active { background: var(--button-bg, #e5e7eb); }
   /* Master add-task — only visible in split mode. */
   .master-add-task { display: none; }
   /* The master +Add flow (quadrant chooser + task-name input) belongs ONLY to the
@@ -5622,7 +5696,7 @@
        side the slider drags). The normal centred name + bottom-right duration are
        hidden in favour of a big centred live duration + a small top name. */
     .time-block.preview { pointer-events: none; border-bottom: 3px solid #7CB342; }   /* 연두 bottom edge */
-    .time-block.preview .time-block-name { display: none; }   /* name only AFTER Add task */
+    .time-block.preview .time-block-name:empty { display: none; }   /* shown LIVE as you type the name; hidden only while empty */
     .time-block-bigdur {
       position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center;
@@ -6696,6 +6770,15 @@
   body.tt-show-actions .tg-block.short10 { right: 30px; overflow: visible; }
   .tg-block.short10.selected .tg-block-x,
   body.tt-show-actions .tg-block.short10 .tg-block-x { top: 50%; right: -26px; transform: translateY(-50%); }
+  /* iPad (touch + wide, NOT web PC): a finger on a gauge block does NOTHING — no select, no
+     move/resize drag. All block editing is via the floating edit pad. The ONLY touchable part is
+     the × delete button (its click still fires; the block's own touchstart used to preventDefault
+     and swallow it → the × wouldn't delete). pointer-events:none on the block kills its touch
+     handlers entirely; the × is re-enabled. */
+  @media (pointer: coarse) and (min-width: 701px) {
+    #gauge-col .tg-block { pointer-events: none; }
+    #gauge-col .tg-block .tg-block-x { pointer-events: auto; }
+  }
   /* Draggable tail — the portion of a block below the current-time line */
   .tg-block-tail {
     position: absolute; left: 0; right: 0; bottom: 8px;
@@ -7325,8 +7408,9 @@
   .cal-seg { display: flex; gap: 6px; background: var(--button-bg, #f3f4f6); border-radius: 999px; padding: 4px; margin: 0 0 14px; }
   .cal-seg-btn { flex: 1 1 0; border: none; background: transparent; color: var(--text-muted, #6b7280); font-weight: 700; font-size: .9rem; padding: 8px 4px; border-radius: 999px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .cal-seg-btn.active { background: var(--card-bg, #fff); color: var(--text-main, #111827); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
-  .cal-month-head { display: flex; align-items: center; justify-content: space-between; margin: 0 0 10px; }
-  .cal-month-head h2 { margin: 0; font-size: 1.25rem; }
+  /* arrows hug the title (◀ June 2026 ▶), centred — not pushed to the far edges. */
+  .cal-month-head { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 0 0 10px; }
+  .cal-month-head h2 { margin: 0; font-size: 1.25rem; text-align: center; }
   .cal-nav { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #374151); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .cal-nav:active { transform: scale(.92); }
   /* Month grid — 7 columns; weekday header + day cells. Swipe-animatable wrapper. */
@@ -7418,12 +7502,29 @@
   /* the day cells fill the row's remaining width (last square flush right), scaling with the
      section width: equal 1fr column per day-of-month (--hb-cols, set in _calRenderHabit). */
   .cal-hb-cells, .cal-hb-days { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(var(--hb-cols, 30), minmax(0, 1fr)); gap: 3px; }
-  .cal-hb-day { min-width: 0; text-align: center; font-size: .56rem; font-weight: 700; color: var(--text-muted, #9ca3af); overflow: hidden; }
-  .cal-hb-day.cal-hb-today { aspect-ratio: 1; display: flex; align-items: center; justify-content: center; background: #EC4899; color: #fff; font-weight: 800; border-radius: 4px; }   /* today = pink square (Month-tab style) */
+  /* day numbers centred IN their column so today's pink square (taller, aspect-ratio:1) and the
+     plain numbers all share the same vertical centre line (otherwise plain numbers top-align and
+     today's looks pushed down). */
+  .cal-hb-day { min-width: 0; display: flex; align-items: center; justify-content: center; font-size: .56rem; font-weight: 700; color: var(--text-muted, #9ca3af); overflow: hidden; }
+  .cal-hb-day.cal-hb-today { aspect-ratio: 1; background: #EC4899; color: #fff; font-weight: 800; border-radius: 4px; }   /* today = pink square (Month-tab style) */
   .cal-hb-cell { width: auto; height: auto; aspect-ratio: 1; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.14); }
   .cal-hb-cell.rep  { background: rgba(127,127,127,.34); box-shadow: none; }   /* repeat-SET day → grey square */
   .cal-hb-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
   .cal-hb-empty { padding: 30px 12px; text-align: center; color: var(--text-muted, #9ca3af); font-size: .92rem; line-height: 1.6; }
+  /* iPhone-portrait ONLY: Routine shows ONE week (7 big squares) instead of the cramped
+     30-day month grid. Applied via the .cal-hb-weekly class set in _calRenderHabitWeek
+     (gated on window.innerWidth<=700) — wider devices keep the monthly grid above. */
+  .cal-hb-weekly .cal-hbw-head { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 2px 0 12px; }
+  .cal-hbw-daycol { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .cal-hbw-dow { font-size: .66rem; font-weight: 700; letter-spacing: .03em; color: var(--text-muted, #9ca3af); }
+  .cal-hbw-num { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: .9rem; font-weight: 700; color: var(--text-main, #374151); border-radius: 8px; }
+  .cal-hbw-num.cal-hbw-today { background: #EC4899; color: #fff; font-weight: 800; }   /* today = pink square (Month-tab style) */
+  .cal-hbw-task { margin: 0 0 15px; }
+  .cal-hbw-name { font-weight: 800; font-size: .92rem; margin-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cal-hbw-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .cal-hbw-cell { aspect-ratio: 1; border-radius: 8px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.16); }
+  .cal-hbw-cell.rep  { background: rgba(127,127,127,.30); box-shadow: none; }   /* repeat-SET day → grey square */
+  .cal-hbw-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
   /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
   .routine-toast {
     position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
@@ -8058,6 +8159,10 @@
                the task bars). 3×2 pad [undo|redo · up|move · down|del] + a tall vertical
                drag slider. Buttons light up GREEN in order (nav → mode → slider) to teach use. -->
           <div class="gauge-edit-tool" id="gauge-edit-tool" aria-hidden="true">
+            <!-- iPad float chrome (shown only when .get-float): a centred top drag handle + a
+                 close ✕ that exits Edit. Hidden on phone (the pad is inline there). -->
+            <div class="get-handle" id="get-handle" aria-label="Drag to move" title="Drag to move"><span></span></div>
+            <button class="get-close" id="get-close" type="button" aria-label="Close editing" title="Done"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
             <div class="get-pad">
               <button class="get-btn get-undo" id="get-undo" type="button" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 14 4 9 9 4"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></button>
               <button class="get-btn get-redo" id="get-redo" type="button" aria-label="Redo" title="Redo"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 14 20 9 15 4"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></svg></button>
@@ -11117,7 +11222,10 @@ function renderCalendar() {
 /* Re-fit the wide month grid (+ recompute the dynamic item cap) on viewport resize / rotation. */
 (function(){
   let _t = null;
-  function _onResize(){ clearTimeout(_t); _t = setTimeout(function(){ try { if (_calState && _calState.view === 'month') _calLayoutMonth(); } catch (_) {} }, 90); }
+  function _onResize(){ clearTimeout(_t); _t = setTimeout(function(){ try {
+    if (_calState && _calState.view === 'month') _calLayoutMonth();
+    else if (_calState && _calState.view === 'habit') _calRenderHabit();   // re-fit weekly↔monthly on rotate
+  } catch (_) {} }, 90); }
   window.addEventListener('resize', _onResize);
   window.addEventListener('orientationchange', _onResize);
 })();
@@ -11499,16 +11607,34 @@ function _wireCatTooltip(wrap) {
    (its weekday, inside the repeat window) = grey square; a day it was actually worked (a watchLog
    pomodoro matched by name) = that task's colour. The day-number header + each task's cells share
    the same square width so the columns line up; the grid scrolls horizontally on a narrow screen. */
+// iPhone-portrait Routine weekly view: anchored to the Sunday of the displayed week.
+let _habitWeekStart = null;
+function _startOfWeek(d) {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() - x.getDay());   // back up to Sunday
+  return x;
+}
+function _calHabitWeekly() { return window.innerWidth <= 700; }   // phone portrait → weekly (other devices keep monthly)
+function _calHabitWeekShift(delta) {
+  if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+  _habitWeekStart = new Date(_habitWeekStart.getFullYear(), _habitWeekStart.getMonth(), _habitWeekStart.getDate() + delta * 7);
+  _calRenderHabit();
+}
+function _calHabitNav(delta) { if (_calHabitWeekly()) _calHabitWeekShift(delta); else _calMonthShift(delta); }
 function _calRenderHabit() {
   const grid = document.getElementById('cal-hb-grid'); if (!grid) return;
-  const y = _calState.y, m = _calState.m;
-  const title = document.getElementById('cal-hb-title'); if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
-  const dim = new Date(y, m + 1, 0).getDate();
+  const title = document.getElementById('cal-hb-title');
   // repeat tasks (any quadrant) — those with a weekday set
   const tasks = [];
   ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach((t, idx) => {
     if (t && Array.isArray(t.repeat) && t.repeat.length) tasks.push({ q, idx, t });
   }));
+  // iPhone portrait → weekly grid (7 big squares); wider devices keep the full-month grid.
+  if (_calHabitWeekly()) { _calRenderHabitWeek(grid, title, tasks); return; }
+  grid.classList.remove('cal-hb-weekly');
+  const y = _calState.y, m = _calState.m;
+  if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  const dim = new Date(y, m + 1, 0).getDate();
   // worked days this month per task name (watchLog pomodoro)
   const workedByName = {};
   (state.watchLog || []).forEach(e => {
@@ -11547,6 +11673,61 @@ function _calRenderHabit() {
   }
   grid.style.setProperty('--hb-cols', dim);   // one equal column per day → squares fill the width
   grid.innerHTML = '<div class="cal-hb-scroll"><div class="cal-hb-head-row"><span class="cal-hb-name cal-hb-name-sp"></span><div class="cal-hb-cells cal-hb-days">' + head + '</div></div>' + rows + '</div>';
+}
+/* iPhone-portrait Routine: ONE week of 7 big squares per repeat task (the 30-col month grid
+   is too cramped on a narrow phone). Week-anchored to _habitWeekStart (Sunday); the ◀ ▶
+   buttons move a week at a time (via _calHabitNav). Task name sits above its row of squares
+   so they get the full width; the weekday/date header spans the same 7 columns. */
+function _calRenderHabitWeek(grid, title, tasks) {
+  grid.classList.add('cal-hb-weekly');
+  if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+  const ws = _habitWeekStart;
+  const days = [];
+  for (let i = 0; i < 7; i++) days.push(new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i));
+  const a = days[0], b = days[6];
+  if (title) {
+    const ma = _CAL_MONTHS[a.getMonth()].slice(0, 3), mb = _CAL_MONTHS[b.getMonth()].slice(0, 3);
+    title.textContent = (a.getMonth() === b.getMonth())
+      ? ma + ' ' + a.getDate() + ' – ' + b.getDate()
+      : ma + ' ' + a.getDate() + ' – ' + mb + ' ' + b.getDate();
+  }
+  // worked days per task name → set of full date-keys (the week can straddle two months).
+  const workedByName = {};
+  (state.watchLog || []).forEach(e => {
+    if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
+    const nm = ((e.name || '') + '').trim();
+    (workedByName[nm] = workedByName[nm] || new Set()).add(_calDateKey(e.startedAt));
+  });
+  const _tdyKey = _calDateKey(Date.now());
+  const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  let head = '';
+  days.forEach(d => {
+    const isToday = _calDateKey(d) === _tdyKey;
+    head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow">' + DOW[d.getDay()] + '</span>'
+          + '<span class="cal-hbw-num' + (isToday ? ' cal-hbw-today' : '') + '">' + d.getDate() + '</span></div>';
+  });
+  let rows = '';
+  if (!tasks.length) {
+    rows = '<div class="cal-hb-empty">No routine tasks yet.<br>Tap <b>Repeat</b> when you add a task and it shows up here.</div>';
+  } else {
+    tasks.forEach(({ q, idx, t }) => {
+      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
+      const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+      const repStart = t.repeatStart || createdKey;
+      const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
+      const worked = workedByName[(t.text || '').trim()] || new Set();
+      let cells = '';
+      days.forEach(d => {
+        const key = _calDateKey(d), dow = d.getDay();
+        const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
+        if (worked.has(key))  cells += '<span class="cal-hbw-cell done" style="background:' + col + '"></span>';
+        else if (isRepeat)    cells += '<span class="cal-hbw-cell rep"></span>';
+        else                  cells += '<span class="cal-hbw-cell"></span>';
+      });
+      rows += '<div class="cal-hbw-task"><div class="cal-hbw-name" style="color:' + col + '">' + escapeHTML(t.text || '') + '</div><div class="cal-hbw-cells">' + cells + '</div></div>';
+    });
+  }
+  grid.innerHTML = '<div class="cal-hbw-head">' + head + '</div>' + rows;
 }
 async function _calAddTask() {
   if (typeof openNoteEditor !== 'function') return;
@@ -11633,8 +11814,8 @@ function _calEditEvent(id) {
   if (rtPrev) rtPrev.addEventListener('click', () => _calMonthShift(-1));
   if (rtNext) rtNext.addEventListener('click', () => _calMonthShift(1));
   const hbPrev = document.getElementById('cal-hb-prev'), hbNext = document.getElementById('cal-hb-next');
-  if (hbPrev) hbPrev.addEventListener('click', () => _calMonthShift(-1));
-  if (hbNext) hbNext.addEventListener('click', () => _calMonthShift(1));
+  if (hbPrev) hbPrev.addEventListener('click', () => _calHabitNav(-1));   // phone portrait → week step, else month
+  if (hbNext) hbNext.addEventListener('click', () => _calHabitNav(1));
   const rtClip = document.getElementById('cal-rt-grid-clip');
   if (rtClip) {
     let sx = 0, sy = 0, tracking = false;
@@ -13641,9 +13822,9 @@ document.querySelectorAll('#money-factors-panel .mcf-val').forEach(el => {
    (pomodoroAuto, timerTransition): Full Auto = pomodoroAuto; otherwise
    gentleAuto (default) or manual. */
 const _TT_HINTS = {
-  gentleAuto: 'Notify me, then continue automatically.',
-  manual:     'Wait for my confirmation.',
-  fullAuto:   'Keep the flow going.'
+  gentleAuto: 'Check in at each change; auto-continues after 30s.',
+  manual:     'Check in at each change and wait for me.',
+  fullAuto:   'Auto-pilot — sessions and breaks flow on their own.'
 };
 function _currentTimerTransition() {
   return state.pomodoroAuto ? 'fullAuto' : (state.timerTransition === 'manual' ? 'manual' : 'gentleAuto');
@@ -14840,7 +15021,7 @@ function layoutFocusHomeWide() {
   const vh = window.innerHeight || main.clientHeight;
   layout.style.minHeight = Math.max(360, Math.round(Math.min(main.clientHeight, vh) - padY)) + 'px';
 }
-function scrollGaugeToCurrentTime() {
+function scrollGaugeToCurrentTime(smooth) {
   const col = document.getElementById('gauge-col');
   const inner = document.getElementById('gauge-inner');
   const line = document.getElementById('gauge-line');
@@ -14848,12 +15029,13 @@ function scrollGaugeToCurrentTime() {
   const lineTopPct = parseFloat(line.style.top) || 0; // "%"
   const innerHeight = inner.offsetHeight;
   const linePixel = (lineTopPct / 100) * innerHeight;
-  const colHeight = col.offsetHeight;
-  // Wide home: now-line sits ~22% down so a little past context shows above and
-  // the upcoming blocks fill the rest below. (Mobile hides this gauge entirely,
-  // so the 0.5 branch is academic.)
-  const frac = window.matchMedia('(min-width: 701px)').matches ? 0.22 : 0.5;
-  col.scrollTop = Math.max(0, linePixel - colHeight * frac);
+  // now-line sits exactly 30 min (TIME_HEAD_OFFSET_MS) below the gauge's top edge —
+  // SAME target as the phone Time & Tasks gauge (was a 22%/50% column fraction). The
+  // inner spans 24 h, so 30 min = innerHeight × (30min / 24h).
+  const headPx = innerHeight * (TIME_HEAD_OFFSET_MS / (24 * 3600000));
+  const target = Math.max(0, linePixel - headPx);
+  if (smooth && typeof col.scrollTo === 'function') col.scrollTo({ top: target, behavior: 'smooth' });
+  else col.scrollTop = target;
 }
 function startFocusTicker() {
   if (focusTickHandle) clearInterval(focusTickHandle);
@@ -15863,21 +16045,11 @@ function renderFocusMatrix() {
     // The add-task button sits BETWEEN the title and the task list so the
     // creation entry point is always at the top of the cell.
     cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>`;
-    // Per-quadrant action-buttons toggle. The cell carries .show-actions when
-    // the user has tapped this cell's title — that class reveals ✎ × ≡ on
-    // every task row inside this cell.
-    if (state.focusActionsShown && state.focusActionsShown[q]) {
-      cell.classList.add('show-actions');
-    }
-    const _h4 = cell.querySelector('h4');
-    if (_h4) {
-      _h4.addEventListener('click', () => {
-        if (!state.focusActionsShown) state.focusActionsShown = { q1:false, q2:false, q3:false, q4:false };
-        state.focusActionsShown[q] = !state.focusActionsShown[q];
-        cell.classList.toggle('show-actions', state.focusActionsShown[q]);
-        saveState();
-      });
-    }
+    // (REMOVED: the per-quadrant title-tap "show actions" toggle. Tapping a cell's
+    // title used to reveal ✎ × ≡ on JUST that quadrant — which left one cell (e.g. q1)
+    // showing edit controls + no play button while the others stayed normal, so the
+    // matrix looked inconsistent. Edit mode is now driven ONLY by the global Tasks
+    // "Edit" button (body.tt-show-actions), so every cell stays in the same state.)
     const tasksDiv = cell.querySelector('.tasks');
     // Render order: incomplete tasks first (keeping their order), then COMPLETED
     // tasks pushed to the bottom, most-recently-completed at the TOP of that
@@ -16054,9 +16226,9 @@ function renderFocusMatrix() {
         ${_cbHtml}
         <span class="task-text ${t.done?'done':''} ${(isPomo||isUp)?'running':''}">${_nameHtml}</span>
         ${_repeatHtml}
+        <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         ${_noteDotHtml}
         <span class="task-bid-wrap"></span>
-        <button class="task-edit-pen" title="Edit task"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" style="vertical-align:middle"><path d="M4 20 L4 15 L15 4 L20 9 L9 20 Z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/><line x1="13" y1="6" x2="18" y2="11" stroke="currentColor" stroke-width="1.8"/></svg></button>
         <button class="task-grip" aria-label="Drag to reorder" title="Drag to reorder"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><line x1="4" y1="8" x2="20" y2="8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="4" y1="16" x2="20" y2="16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
         ${_dueHtml}
         ${_playHtml}
@@ -17361,6 +17533,7 @@ function tickPomodoro() {
   if (!at || at.type !== 'pomodoro') return;
   if (at.paused) return;                        // ignore while paused
   if (at.pendingPhaseConfirm) return;           // already asking the user
+  if (at.pendingKgConflict) return;             // keep-going "make room?" dialog is open — freeze the phase clock too
   // 45-min continuous-focus check-in (gentle). The streak resets after a real
   // break but PERSISTS across a skipped break, so it fires only when the user
   // has truly powered through ~45 min; re-checks every 45 min thereafter.
@@ -18414,9 +18587,7 @@ function drawTimeArea() {
   // It lives OUTSIDE state.scheduledBlocks (so it never persists / syncs) and is
   // merged in only here at render time. It's purely visual (pointer-events:none
   // via .preview) — the duration slider mutates its endMs and redraws.
-  const _renderBlocks = window._previewBlock
-    ? (state.scheduledBlocks || []).concat([window._previewBlock])
-    : (state.scheduledBlocks || []);
+  const _renderBlocks = (state.scheduledBlocks || []).concat(_previewRenderBlocks());   // flow mode → multiple segments
   // The FIRST block at/after the now-line (the active or next-up one, whichever has
   // the earliest start among blocks not yet finished). Its name is kept CENTRED — never
   // the side-by-side .short layout — so it doesn't flicker left↔centre as the now-line
@@ -20842,14 +21013,37 @@ function _ringDarken(hex, count) {
 function _growKeepGoing() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro' || at.phase !== 'work' || at.paused || at.pendingPhaseConfirm) return;
+  if (at.pendingKgConflict) return;             // the "make room?" dialog is open — freeze growth + cascade
   if (!Array.isArray(state.scheduledBlocks)) return;
   const now = Date.now();
   const b = state.scheduledBlocks.find(x => x._extending && x.q === at.q && x.taskIdx === at.idx && !x.activeEndMs);
   if (!b) return;
   if (now > (+b.endMs)) b.endMs = now;          // bottom of the block tracks the now-line
+  // Blocks to make room for = any non-finalized planned block that OVERLAPS or sits below the
+  // extending block (its end is after the extending block's start). Using `endMs > b.startMs`
+  // (not `startMs > b.startMs`) is what catches a pre-existing block that started at/just before
+  // the now-line — otherwise the growing block paints right over it instead of pushing it down.
   const below = state.scheduledBlocks
-    .filter(x => x.id !== b.id && !x.activeEndMs && !x._extending && (+x.startMs) > (+b.startMs))
-    .sort((p, q2) => (+p.startMs) - (+q2.startMs));
+    .filter(x => x.id !== b.id && x.kind !== 'tracker' && !x.activeEndMs && !x._extending && (+x.endMs) > (+b.startMs))
+    .sort((p, q2) => (+(p._pushOrigStartMs != null ? p._pushOrigStartMs : p.startMs)) - (+(q2._pushOrigStartMs != null ? q2._pushOrigStartMs : q2.startMs)));
+  const next = below[0];
+  // GAP-AWARE keep-going (option 2 = Gentle Auto / Manual): the extension grows ONLY up to
+  // the next block (filling the gap — e.g. a 10-min gap → a 10-min block), then asks ONCE how
+  // to keep growing: push everything down, or switch to the next task. Full Auto (pomodoroAuto)
+  // skips the question and just cascades, as before. After "push" (at._kgPushed) it cascades freely.
+  if (next && !at._kgPushed && !state.pomodoroAuto) {
+    const nextStart = +(next._pushOrigStartMs != null ? next._pushOrigStartMs : next.startMs);
+    if ((+b.endMs) >= nextStart - 1000) {       // reached the next block → ask once
+      if (nextStart > (+b.endMs)) b.endMs = nextStart;   // genuine gap below the current bottom → fill it exactly (never shrink when it overlaps from above)
+      if (!b._kgAsked) {
+        b._kgAsked = true;
+        at.pendingKgConflict = true;
+        try { _showKeepGoingConflict(b, next); } catch (_) {}
+      }
+    }
+    return;                                       // DON'T cascade until the user chooses "push"
+  }
+  // pushed (or Full Auto / no next block) → cascade the blocks below down, as before
   let floor = +b.endMs;
   below.forEach(x => {
     if (x._pushOrigStartMs == null) x._pushOrigStartMs = +x.startMs;   // anchor (re-derivable)
@@ -20859,12 +21053,48 @@ function _growKeepGoing() {
     floor = +x.endMs;                                                 // cascade to the next block
   });
 }
+/* Keep-going collision dialog (option 2). The growing block has filled the gap and reached
+   {next}. ONE question, max 2 choices, gentle voice: keep going (push the rest down) or switch
+   to the next task. Gentle Auto → auto-picks "push" after 30s; Manual → waits. Push reuses the
+   tested cascade (sets at._kgPushed); switch hands off via startPomodoro. */
+async function _showKeepGoingConflict(b, next) {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro') return;
+  const nextName = (next && (next.taskName
+                   || (state.tasks[next.q] && state.tasks[next.q][next.taskIdx] && state.tasks[next.q][next.taskIdx].text)))
+                   || 'the next task';
+  const title = 'Still going?';
+  const msg   = 'Make room and keep going, or switch?';
+  try { notify(title, msg, { noToast: true }); } catch (_) {}
+  const gentle = (state.timerTransition !== 'manual');     // Gentle Auto auto-continues; Manual waits
+  const ans = await customConfirm(title, msg, {
+    yesLabel: 'Keep going',
+    noLabel:  'Switch to ' + nextName,
+    countdownMs: gentle ? 30000 : 0                        // 30s default = Keep going (push)
+  });
+  if (ans === 'remote') return;                            // answered on another device
+  const at2 = state.activeTimer;
+  if (!at2 || at2.type !== 'pomodoro') return;
+  at2.pendingKgConflict = false;
+  if (ans === false && next && typeof next.q === 'string' && typeof next.taskIdx === 'number') {
+    // SWITCH → start the next task's pomodoro (stops + settles the current keep-going run).
+    startPomodoro(next.q, next.taskIdx);
+    return;
+  }
+  // KEEP GOING (yes / 30s default / dismiss) → push the rest down + resume the cascade.
+  at2._kgPushed = true;
+  try { saveState(); markSettingsChanged(); if (typeof pushSettingsToCloud === 'function') pushSettingsToCloud(); } catch (_) {}
+  try { if (typeof bidoroToast === 'function') bidoroToast('Moved your later blocks down.'); } catch (_) {}
+  try { drawGauge(); } catch (_) {}
+}
+if (typeof window !== 'undefined') window.__kgShowConflict = _showKeepGoingConflict;   // headless test hook
 /* End/settle the keep-going state: stop the block extending and let any pushed
    blocks keep their current (shoved-down) positions. Called on break / stop /
    finish / new-pomodoro. */
 function _settleKeepGoing() {
   if (!Array.isArray(state.scheduledBlocks)) return;
-  state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; });
+  state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; delete b._kgAsked; });
+  const at = state.activeTimer; if (at) { delete at._kgPushed; delete at.pendingKgConflict; }   // end the keep-going run cleanly
 }
 /* #22 — keep an un-started plan glued to the now-line. When NOTHING is running and the
    current-time line has reached the earliest un-started (never-worked) block, slide that
@@ -24690,6 +24920,8 @@ function _syncEditClasses() {
   const wide = window.matchMedia('(min-width: 701px)').matches;
   document.body.classList.toggle('tt-show-actions', on);
   document.body.classList.toggle('tt-edit', on && !back && !wide);
+  // iPad (wide + touch): no inline tt-edit pad — float the block-edit pad instead.
+  try { if (typeof window._setPadFloat === 'function') window._setPadFloat(on); } catch (_) {}
 }
 function applyTtState() {
   const real = !!state.ttFlipped;
@@ -25147,10 +25379,26 @@ if (_editToggle) {
     const STEP = 5 * 60 * 1000, MIN = 5 * 60 * 1000;
     let drag = null;
     const _mpp = () => (_gtdMap && _gtdMap.msPerPx) ? _gtdMap.msPerPx : 60000;   // ms per px (≈1px/min)
+    // Lock the page (main) scroll while the slider is dragged — iOS WKWebView arms the page
+    // scroll at touch-DOWN even with touch-action:none, so a slider drag scrolled the page
+    // behind the floating pad. overflow:hidden + a snap-back backstop holds it put.
+    let _slLock = null;
+    function _slLockOn(){
+      if (_slLock) return; const m = document.querySelector('main'); if (!m) return;
+      const y0 = m.scrollTop; const snap = () => { if (m.scrollTop !== y0) m.scrollTop = y0; };
+      _slLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
+      m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
+      m.addEventListener('scroll', snap, { passive: true });
+    }
+    function _slLockOff(){
+      if (!_slLock) return; const b = _slLock; _slLock = null;
+      b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+    }
     function start(clientY){
       if (_guideStage) _setGuide(null);   // touched the slider → guide complete, all borders back to gray
       const s = _ensureSel(); if (!s) return false;
       drag = { y: clientY, startMs: s.startMs, endMs: s.endMs, id: s.id, last: 0 };
+      _slLockOn();
       return true;
     }
     function move(clientY){
@@ -25173,6 +25421,7 @@ if (_editToggle) {
       _redraw();
     }
     function end(){
+      _slLockOff();
       if (!drag) return;
       drag = null;
       try { saveState(); } catch (_) {}
@@ -25189,6 +25438,71 @@ if (_editToggle) {
     slider.addEventListener('touchcancel',() => { if (drag) end(); });
   }
   window._geOnEnterEdit = function(){ try { _ensureSel(); } catch (_) {} _setGuide('nav'); };   // every Edit entry restarts the green-border hint
+
+  /* ===== iPad FLOAT — show this same pad as a draggable floating panel =====
+     iPad (touch, wide, no keyboard) can't nudge gauge blocks with arrow keys, so on Edit the pad
+     floats above the task bars. Eligible = coarse pointer + wide (so desktop web, which has a
+     keyboard + fine pointer, is excluded per the request). Moved to <body> so position:fixed is
+     viewport-relative (the .time-tasks-wrap flip card is otherwise a fixed containing block). */
+  function _padFloatEligible(){
+    try { return window.matchMedia('(pointer: coarse)').matches && window.matchMedia('(min-width: 701px)').matches; }
+    catch (_) { return false; }
+  }
+  let _padHomeParent = null, _padHomeNext = null;
+  window._setPadFloat = function(on){
+    const float = !!(on && _padFloatEligible());
+    if (float){
+      if (!tool.classList.contains('get-float')){
+        _padHomeParent = tool.parentNode; _padHomeNext = tool.nextSibling;
+        document.body.appendChild(tool);
+        tool.classList.add('get-float'); tool.removeAttribute('aria-hidden');
+        tool.style.left = ''; tool.style.top = ''; tool.style.right = ''; tool.style.transform = '';   // CSS default: right:12px, vertically centred
+        window._padFloating = true; document.body.classList.add('tt-padfloat');
+        try { _ensureSel(); _setGuide('nav'); } catch (_) {}
+        try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}   // paint the selected-block highlight
+      }
+    } else if (tool.classList.contains('get-float')){
+      tool.classList.remove('get-float');
+      tool.style.left = ''; tool.style.top = ''; tool.style.right = ''; tool.style.transform = '';
+      tool.setAttribute('aria-hidden', 'true');
+      window._padFloating = false; document.body.classList.remove('tt-padfloat');
+      if (_padHomeParent){
+        if (_padHomeNext && _padHomeNext.parentNode === _padHomeParent) _padHomeParent.insertBefore(tool, _padHomeNext);
+        else _padHomeParent.appendChild(tool);
+      }
+      _padHomeParent = _padHomeNext = null;
+    }
+  };
+  // Drag the floating pad by its top handle (anywhere in the viewport, clamped on-screen).
+  const handle = document.getElementById('get-handle');
+  if (handle){
+    let dr = null;
+    const _down = (cx, cy) => { const r = tool.getBoundingClientRect(); dr = { dx: cx - r.left, dy: cy - r.top, w: r.width, h: r.height }; tool.style.transform = 'none'; };
+    const _moveTo = (cx, cy) => {
+      if (!dr) return;
+      const left = Math.max(6, Math.min(window.innerWidth  - dr.w - 6, cx - dr.dx));
+      const top  = Math.max(6, Math.min(window.innerHeight - dr.h - 6, cy - dr.dy));
+      tool.style.left = left + 'px'; tool.style.top = top + 'px'; tool.style.right = 'auto';
+    };
+    handle.addEventListener('mousedown', (e) => { e.preventDefault(); _down(e.clientX, e.clientY);
+      const mm = (ev) => _moveTo(ev.clientX, ev.clientY), mu = () => { dr = null; window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); };
+      window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu);
+    });
+    handle.addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t){ e.preventDefault(); _down(t.clientX, t.clientY); } }, { passive: false });
+    handle.addEventListener('touchmove',  (e) => { const t = e.touches[0]; if (t && dr){ e.preventDefault(); _moveTo(t.clientX, t.clientY); } }, { passive: false });
+    handle.addEventListener('touchend',   () => { dr = null; });
+    handle.addEventListener('touchcancel',() => { dr = null; });
+  }
+  // ✕ → exit Edit (same effect as un-pressing the Edit chip).
+  const closeBtn = document.getElementById('get-close');
+  if (closeBtn) closeBtn.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    state.splitActionsVisible = false;
+    try { saveState(); } catch (_) {}
+    try { _syncEditClasses(); } catch (_) {}
+    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+  });
 })();
 
 /* ===== Gauge auto return-to-now =====
@@ -25213,6 +25527,29 @@ if (_editToggle) {
   }
   area.addEventListener('touchmove', _schedule, { passive: true });
   area.addEventListener('wheel',     _schedule, { passive: true });
+})();
+
+/* ===== Wide gauge (#gauge-col, iPad / web) auto return-to-now =====
+   Same behaviour as the phone gauge above, but for the WIDE gauge's own scroller:
+   7 s after the user scrolls it (touch / wheel), glide it back so the current-time
+   line sits 30 min from the top (scrollGaugeToCurrentTime). The phone gauge feature
+   was never wired here, so the wide / iPad gauge used to stay where the user left it. */
+(function wireWideGaugeAutoReturnToNow(){
+  const col = document.getElementById('gauge-col');
+  if (!col) return;
+  let timer = null;
+  const _blocked = () => document.body.classList.contains('tt-edit') || window._gaugeBusy || window._timeGaugePinching || window._padFloating;   // don't snap the gauge away while the iPad edit pad is up
+  function _schedule(){
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (_blocked()) return;
+    timer = setTimeout(() => {
+      timer = null;
+      if (_blocked() || !col || col.offsetParent === null) return;
+      try { if (typeof scrollGaugeToCurrentTime === 'function') scrollGaugeToCurrentTime(true); } catch (_) {}
+    }, 7000);
+  }
+  col.addEventListener('touchmove', _schedule, { passive: true });
+  col.addEventListener('wheel',     _schedule, { passive: true });
 })();
 
 /* ===== #15 — "Did you actually do it?" on reopen ============================
@@ -26548,6 +26885,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
   // +Add task commits, via the normal block name render.)
   _createDurationPreviewBlock(q);
   _wireDurationSlider(slider);
+  _wirePreviewLiveName(input);   // type the name → it shows on the gauge block in real time
   // "0m" tap-target at the top of the slider = No time block: one tap → duration 0 → check-only
   // (no timer, no gauge block — just a tick-off task). It drives the SAME single state the slider's
   // top reaches by drag (slider._mcavSetDur(0)); the marker only makes that endpoint discoverable
@@ -26732,6 +27070,7 @@ function showMatrixCellAdd(cell, addBtn, q){
   try { input.focus({ preventScroll: true }); } catch(_){ try { input.focus(); } catch(__){} }
   _createDurationPreviewBlock(q, true);   // matrix add → NO page auto-scroll; the keyboard handler scrolls only when the soft keyboard rises
   _wireDurationSlider(slider);
+  _wirePreviewLiveName(input);   // type the name → it shows on the gauge block in real time
   // V2 vertical slider "0m" = No time block: tap the top marker → duration 0 → check-only → no
   // gauge block on commit (the task still lands in the list). One-tap shortcut; dragging overrides.
   const _zeroBtn = mca.querySelector('.qp-sl-zero');
@@ -27036,6 +27375,39 @@ function _restorePreviewPush(b) {
   });
   b._pushSnap = null; b._pushMode = false;
 }
+/* ===== "Continue after it" = FLOW around obstacles ===== the task's work (total = b._flowTotal)
+   is laid into the FREE gaps starting at b.startMs, FLOWING AROUND every existing block: fill a
+   gap, skip the block, fill the next gap, … until the whole duration is placed. Returns the list of
+   {startMs,endMs} segments (read-only — never mutates state; segments become real blocks on commit). */
+function _flowSegments(b) {
+  if (!b) return [];
+  const total = (b._flowTotal != null) ? b._flowTotal : (b.endMs - b.startMs);
+  if (total <= 0) return [];
+  const blocks = (state.scheduledBlocks || [])
+    .filter(x => x && x.kind !== 'tracker' && x !== b && x.endMs > b.startMs)
+    .slice().sort((a, c) => a.startMs - c.startMs);
+  const segs = [];
+  let cursor = b.startMs, remaining = total, guard = 0;
+  while (remaining > 0 && guard++ < 400) {
+    let moved = true;                                              // skip past any block covering/touching the cursor
+    while (moved) { moved = false; for (const x of blocks) if (x.startMs <= cursor + 1000 && x.endMs > cursor) { cursor = x.endMs; moved = true; } }
+    const obs = blocks.find(x => x.startMs > cursor + 1000);       // next block after the free spot
+    const gap = obs ? (obs.startMs - cursor) : Infinity;
+    const take = Math.min(remaining, gap);
+    if (take > 0) segs.push({ startMs: cursor, endMs: cursor + take });
+    remaining -= take; cursor += take;
+  }
+  return segs;
+}
+/* The blocks to PAINT for the current preview: the flow segments in flow mode, else the single block. */
+function _previewRenderBlocks() {
+  const b = window._previewBlock;
+  if (!b) return [];
+  if (b._flowMode) return _flowSegments(b).map((s, i) => ({
+    id: b.id + '_f' + i, q: b.q, taskIdx: -1, taskName: b.taskName || '', startMs: s.startMs, endMs: s.endMs, _preview: true, _combine: true, activeAt: null, activeEndMs: null
+  }));
+  return [b];
+}
 /* The slider hit the gap cap → ask how to keep growing (once per cap, unless dismissed). */
 function _maybeShowGapDialog(b) {
   if (!b || b._capMs == null || b._gapDialogOpen || b._gapDialogShown) return;
@@ -27052,20 +27424,10 @@ function _maybeShowGapDialog(b) {
       _applyPreviewPush(b);
       try { _redrawGauge(); } catch (_) {}
     } else if (choice === 'after') {
-      // Continue in the free time AFTER the blocking block: relocate the start to its end, keep the
-      // duration (trimmed to the NEW gap), and re-cap. Sliding further then grows it there; when it
-      // reaches the NEXT block this same dialog pops again (_gapDialogShown reset).
-      const nb = (state.scheduledBlocks || []).find(x => x.id === b._capBlockId);
-      if (nb) {
-        const _d = b.endMs - b.startMs;
-        const c2 = _capAfter(nb.endMs);
-        b.startMs = nb.endMs;
-        b._capMs = c2.capMs; b._capBlockId = c2.blockId; b._gapDialogShown = false;
-        const _newDur = (c2.capMs != null) ? Math.min(_d, c2.capMs) : _d;
-        // Drive it through the active slider's setter so the label + gauge both refresh.
-        const _sl = Array.prototype.find.call(document.querySelectorAll('.qp-slider'), s => typeof s._mcavSetDur === 'function');
-        if (_sl) _sl._mcavSetDur(_newDur); else { b.endMs = b.startMs + _newDur; try { _redrawGauge(); } catch (_) {} }
-      }
+      // FLOW mode: KEEP the gap-filling part and add the rest in the free time AFTER each block —
+      // sliding further keeps creating segments that flow around every obstacle (no cap, no re-dialog).
+      b._flowMode = true; b._flowTotal = b.endMs - b.startMs; b._capMs = null;
+      try { _redrawGauge(); } catch (_) {}
     } else {
       b._gapDialogShown = false;   // dismissed → can prompt again
     }
@@ -27077,11 +27439,24 @@ function _showGapOverflowDialog(cb) {
   const back = document.createElement('div');
   back.className = 'gap-ovl-backdrop';
   back.style.cssText = 'position:fixed;inset:0;z-index:9400;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;-webkit-tap-highlight-color:transparent;';
+  // Keyboard-safe centring: the +Add keyboard is already up when this opens. Confine the
+  // flex-centring region to the VISIBLE area above the keyboard by padding out the covered
+  // top/bottom — computed BEFORE first paint so the dialog appears above the keyboard in ONE
+  // shot (no bottom-then-up jump). A visualViewport listener keeps it right if the kb changes.
+  const _fitKb = () => {
+    const vv = window.visualViewport;
+    const topCover = vv ? Math.max(0, vv.offsetTop) : 0;
+    const botCover = vv ? Math.max(0, window.innerHeight - (vv.offsetTop + vv.height)) : 0;
+    back.style.paddingTop = (20 + topCover) + 'px';
+    back.style.paddingBottom = (20 + botCover) + 'px';
+  };
+  _fitKb();
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', _fitKb);
   back.innerHTML =
-    '<div role="dialog" aria-modal="true" style="background:var(--card-bg,#fff);color:var(--text-main,#111827);border-radius:16px;max-width:340px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:18px 18px 12px;box-sizing:border-box;">' +
+    '<div role="dialog" aria-modal="true" style="background:var(--card-bg,#fff);color:var(--text-main,#111827);border-radius:16px;max-width:340px;width:100%;max-height:100%;overflow-y:auto;box-shadow:0 18px 50px rgba(0,0,0,.35);padding:18px 18px 12px;box-sizing:border-box;">' +
       '<div style="font-size:1.02rem;font-weight:800;margin-bottom:6px;">Out of room here</div>' +
       '<div style="font-size:.88rem;line-height:1.45;color:var(--text-muted,#6b7280);margin-bottom:14px;">This block has reached the next one on your timeline. How should it keep growing?</div>' +
-      '<button type="button" class="gap-ovl-push" style="display:block;width:100%;text-align:left;border:none;border-radius:11px;background:var(--accent,#2563eb);color:#fff;padding:11px 13px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
+      '<button type="button" class="gap-ovl-push" style="display:block;width:100%;text-align:left;border:none;border-radius:11px;background:var(--text-main,#111827);color:var(--card-bg,#fff);padding:11px 13px;margin-bottom:8px;cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
         '<span style="font-weight:800;font-size:.92rem;">Push the next blocks down</span>' +
         '<span style="display:block;font-size:.76rem;opacity:.88;margin-top:2px;">Move everything after it later to make room.</span></button>' +
       '<button type="button" class="gap-ovl-after" style="display:block;width:100%;text-align:left;border:1px solid var(--card-border,#e5e7eb);border-radius:11px;background:var(--surface-2,#f3f4f6);color:var(--text-main,#111827);padding:11px 13px;margin-bottom:6px;cursor:pointer;-webkit-tap-highlight-color:transparent;">' +
@@ -27091,7 +27466,9 @@ function _showGapOverflowDialog(cb) {
     '</div>';
   document.body.appendChild(back);
   let done = false;
-  const close = (choice) => { if (done) return; done = true; try { back.remove(); } catch (_) {} try { cb(choice); } catch (_) {} };
+  const close = (choice) => { if (done) return; done = true;
+    try { if (window.visualViewport) window.visualViewport.removeEventListener('resize', _fitKb); } catch (_) {}
+    try { back.remove(); } catch (_) {} try { cb(choice); } catch (_) {} };
   back.querySelector('.gap-ovl-push').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close('push'); });
   back.querySelector('.gap-ovl-after').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close('after'); });
   back.querySelector('.gap-ovl-cancel').addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close(null); });
@@ -27137,6 +27514,23 @@ function _createDurationPreviewBlock(q, skipPageScroll) {
       } catch (_) {}
       try { if (_ta && _gTarget != null) _ta.scrollTo({ top: _gTarget, behavior: 'smooth' }); }
       catch (_) { try { if (_ta && _gTarget != null) _ta.scrollTop = _gTarget; } catch (__) {} }
+      // WIDE gauge (#gauge-col, iPad / web): the phone scroll above targets #time-area
+      // which is hidden on wide. Scroll the wide gauge so the new block's TOP also sits
+      // 30 min below the gauge top — read the rendered preview block's pixel position
+      // (robust across gauge modes / the 24h-anchored layout).
+      try {
+        const _gcol = document.getElementById('gauge-col');
+        const _ginner = document.getElementById('gauge-inner');
+        if (_gcol && _ginner && _gcol.offsetParent !== null) {                 // visible = wide layout
+          const _pvEl = _ginner.querySelector('.tg-block.preview');            // the new block (first segment)
+          if (_pvEl) {
+            const _headPx = _ginner.offsetHeight * (30 * 60000 / (24 * 3600000));   // 30 min in px
+            const _tgt = Math.max(0, _pvEl.offsetTop - _headPx);
+            if (typeof _gcol.scrollTo === 'function') _gcol.scrollTo({ top: _tgt, behavior: 'smooth' });
+            else _gcol.scrollTop = _tgt;
+          }
+        }
+      } catch (_) {}
     });
   } catch (_) {}
 }
@@ -27285,7 +27679,11 @@ function _wireDurationSlider(slider) {
     ms = Math.max(MIN, Math.min(MAX, Math.round(ms / STEP) * STEP));
     if (b._capMs != null && ms > b._capMs) ms = b._capMs;   // gap cap (No-time-block 0m tap is unaffected)
     b.endMs = b.startMs + ms;
-    if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks
+    if (b._flowMode) {   // flow around obstacles: ms = total work, endMs tracks the LAST segment so auto-scroll/commit see the tail
+      b._flowTotal = ms;
+      const _sf = _flowSegments(b);
+      if (_sf.length) b.endMs = _sf[_sf.length - 1].endMs;
+    } else if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks
     setLabel(ms);
     try { _redrawGauge(); } catch (_) {}
   };
@@ -27293,7 +27691,7 @@ function _wireDurationSlider(slider) {
   function down(clientY) {
     const b = window._previewBlock; if (!b) return;
     dragging = true; startY = clientY;
-    startDur = b.endMs - b.startMs;
+    startDur = (b._flowMode && b._flowTotal != null) ? b._flowTotal : (b.endMs - b.startMs);
     lastStep = Math.round(startDur / STEP);
     slider.classList.add('grabbing');
   }
@@ -27309,9 +27707,16 @@ function _wireDurationSlider(slider) {
     let _hitCap = false;
     if (b._capMs != null && dur > b._capMs) { dur = b._capMs; _hitCap = true; }
     setLabel(dur);
-    if (b.endMs - b.startMs !== dur) {
-      b.endMs = b.startMs + dur;
-      if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks down as we grow
+    const _changed = b._flowMode ? (b._flowTotal !== dur) : (b.endMs - b.startMs !== dur);
+    if (_changed) {
+      if (b._flowMode) {   // flow around obstacles: dur = total work, endMs = tail of the last segment (drives scroll)
+        b._flowTotal = dur;
+        const _sf = _flowSegments(b);
+        b.endMs = _sf.length ? _sf[_sf.length - 1].endMs : b.startMs + dur;
+      } else {
+        b.endMs = b.startMs + dur;
+        if (b._pushMode) _applyPreviewPush(b);   // live push the downstream blocks down as we grow
+      }
       const step = Math.round(dur / STEP);
       if (step !== lastStep) { lastStep = step; try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} }
       _redrawGauge();
@@ -27378,7 +27783,9 @@ function _wireDurationSlider(slider) {
    scheduled block referencing it (duration = the slider value). */
 function _commitDurationTask(q, name) {
   const pb  = window._previewBlock;
-  const dur = pb ? (pb.endMs - pb.startMs) : 30 * 60 * 1000;          // total span (work + breaks)
+  // Flow mode ("Continue after it"): endMs is the tail of the LAST segment (spans the gaps),
+  // so the WORK total is the slider value kept in _flowTotal, not the raw span.
+  const dur = pb ? ((pb._flowMode && pb._flowTotal != null) ? pb._flowTotal : (pb.endMs - pb.startMs)) : 30 * 60 * 1000;          // total work + breaks
   // dur === 0 (slider dragged to the very top) → a CHECK-ONLY task: no timer/duration, no gauge
   // block, just done/not-done. durationMs:0 + checkOnly flag drive the no-play render + flat reward.
   const checkOnly = dur <= 0;
@@ -27425,15 +27832,31 @@ function _commitDurationTask(q, name) {
     // slider grew (_applyPreviewPush) — the downstream blocks are already in their pushed spots, so
     // commit just persists the new block above them (no extra cascade here; _pushSnap is dropped).
     pb._pushSnap = null;
-    state.scheduledBlocks.push({
-      id: pb.id, q, taskIdx: 0, taskName: name.slice(0, 200),
-      startMs: pb.startMs, endMs: pb.endMs, activeAt: null, activeEndMs: null, _combine: true
-    });
+    if (pb._flowMode) {
+      // FLOW ("Continue after it"): persist one block per free-space segment — the duration
+      // flowed around every existing block, keeping the gap-fill part AND filling later gaps.
+      const segs = _flowSegments(pb);
+      segs.forEach((s, i) => {
+        state.scheduledBlocks.push({
+          id: pb.id + (i ? '_f' + i : ''), q, taskIdx: 0, taskName: name.slice(0, 200),
+          startMs: s.startMs, endMs: s.endMs, activeAt: null, activeEndMs: null, _combine: true
+        });
+      });
+    } else {
+      state.scheduledBlocks.push({
+        id: pb.id, q, taskIdx: 0, taskName: name.slice(0, 200),
+        startMs: pb.startMs, endMs: pb.endMs, activeAt: null, activeEndMs: null, _combine: true
+      });
+    }
   }
+  const _wasFlow = !!(pb && pb._flowMode);
   window._previewBlock = null;
   // Adjacent-task 25/5 re-chunk: if 2+ future task boxes now sit back-to-back,
   // merge their work into continuous 25-min pomodoros (cross-task = 2-colour block).
-  if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks();
+  // SKIP it for a FLOW commit ("Continue after it"): re-chunking re-packs every future
+  // task contiguously from the now-line (one box per task), which would collapse the
+  // flow segments and move the existing blocks the user asked to keep in place.
+  if (!_wasFlow && typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks();
   saveState();
   if (typeof markSettingsChanged === 'function') markSettingsChanged();
   if (typeof pushSettingsToCloud === 'function') pushSettingsToCloud();
@@ -27491,6 +27914,19 @@ function _closeDurationPicker(picker, masterBtn, committed) {
 
 function _redrawGauge() {
   try { if (typeof drawGauge === 'function') drawGauge(); else if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+}
+/* Live task name on the +Add preview block: as the user types into the task-name input,
+   write it onto window._previewBlock + redraw so the gauge block shows the name in real time
+   (every mode / device — both the phone #time-area and the wide #gauge-col read b.taskName). */
+function _wirePreviewLiveName(input) {
+  if (!input || input._liveNameWired) return;
+  input._liveNameWired = true;
+  input.addEventListener('input', () => {
+    const b = window._previewBlock;
+    if (!b) return;
+    b.taskName = (input.value || '').slice(0, 200);
+    try { _redrawGauge(); } catch (_) {}
+  });
 }
 
 /* Duration → "1h 30m" / "2h" / "25m". */
@@ -29151,9 +29587,7 @@ setInterval(() => {
     // Merge in the transient +Add duration-preview rectangle (window._previewBlock) so the WIDE
     // gauge shows the auto-created 30-min block the moment +Add is pressed — same as the phone
     // gauge (drawTimeArea). It lives OUTSIDE state.scheduledBlocks (never persists / syncs).
-    const blocks = window._previewBlock
-      ? (state.scheduledBlocks || []).concat([window._previewBlock])
-      : state.scheduledBlocks;
+    const blocks = (state.scheduledBlocks || []).concat(_previewRenderBlocks());   // flow mode → multiple segments
     if (!blocks || !blocks.length) return;
 
     const now = Date.now();
@@ -29162,6 +29596,11 @@ setInterval(() => {
     const side = blocks.map(() => 'full');  // 'full' | 'half-l' | 'half-r'
     for (let i = 0; i < blocks.length; i++) {
       for (let j = i + 1; j < blocks.length; j++) {
+        // The transient +Add preview ALWAYS renders full-width (1 row) — never split into
+        // a half-column. While +Add is open the 1-s now-line glue can slide an existing block
+        // a few minutes into the preview's span; without this skip that tiny overlap would
+        // suddenly halve the preview into 2 side-by-side pieces ~0.2-1 s after it appears.
+        if (blocks[i]._preview || blocks[j]._preview) continue;
         if (blocks[i].endMs > blocks[j].startMs && blocks[j].endMs > blocks[i].startMs) {
           if (side[i] === 'full') side[i] = 'half-l';
           side[j] = 'half-r';
@@ -31036,6 +31475,11 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     }
 
     WATER.floorEl = ngon(R_BOT, topY(BOT), '#D2D7E0', 0.66, false, bucketG);                   // bottom face (kept as the floor target for droplets)
+    // A 1px marker at the floor's LOCAL centre (50%,50% = the heptagon centre, x AND z centred).
+    // Its projected screen position is the TRUE bottom-face centre — unlike the floor element's
+    // getBoundingClientRect, whose axis-aligned bbox skews toward the front-bottom edge under the
+    // 3D tilt. The droplet target (bidoroBucket3DFloorPoint) reads this marker.
+    { const _fc = document.createElement('div'); _fc.className = 'b3d-floor-center'; _fc.style.cssText = 'position:absolute;left:50%;top:50%;width:1px;height:1px;pointer-events:none;'; WATER.floorEl.appendChild(_fc); WATER.floorCenterEl = _fc; }
     const Rw = Math.max(8, R_BOT - wallT / cN), botY = ((1 - BOT) * 100).toFixed(2);
     WATER.walls = []; WATER.surfInner = null; WATER.surfEl = null; WATER.base = waterLvl; WATER.wr = Rw; WATER.apo = apo(Rw); WATER.cN = cN; WATER.botY = botY;
     const waterG = document.createElement('div'); waterG.style.cssText = 'position:absolute;left:0;top:0;width:0;height:0;transform-style:preserve-3d;'; bucketG.appendChild(waterG); WATER.g = waterG;
@@ -31408,6 +31852,10 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
      point low in the scene. */
   window.bidoroBucket3DFloorPoint = function () {
     if (!scene || scene.offsetParent === null) return null;
+    // Prefer the centre MARKER (the heptagon's true x/z centre, projected) over the floor
+    // element's bbox centre (which skews to the front edge under the 3D tilt).
+    const ce = WATER.floorCenterEl ? WATER.floorCenterEl.getBoundingClientRect() : null;
+    if (ce && (ce.left || ce.top)) return { x: ce.left + ce.width / 2, y: ce.top + ce.height / 2 };
     const r = WATER.floorEl ? WATER.floorEl.getBoundingClientRect() : null;
     if (r && r.width > 2) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     const sc = scene.getBoundingClientRect();
