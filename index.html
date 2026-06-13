@@ -7866,19 +7866,8 @@
       </div>
 
       <div class="panel" id="money-factors-panel">
-        <h2>Timer &amp; rewards</h2>
-        <!-- Timer transition: how focus/break boundaries are handled.
-             Gentle Auto = popup then auto-continue; Manual = wait; Full Auto
-             = keep the flow going. "Plans are guides. Progress is real." -->
-        <div class="setting-row" id="timer-transition-row">
-          <span class="setting-label">Timer transition</span>
-          <div class="seg-control" id="timer-transition-seg" role="group" aria-label="Timer transition">
-            <button type="button" class="seg-btn" data-tt="gentleAuto">Gentle Auto</button>
-            <button type="button" class="seg-btn" data-tt="manual">Manual</button>
-            <button type="button" class="seg-btn" data-tt="fullAuto">Full Auto</button>
-          </div>
-          <span class="setting-hint" id="timer-transition-hint"></span>
-        </div>
+        <h2>Rewards</h2>
+        <!-- Timer transition moved into the "Timer & Theme" panel (above the theme tiles). -->
         <!-- Task Duration sits at the TOP — neutral grey tone (it's not a
              money rule, just a default block length). The 4 money factors
              below tile in a 2×2 grid. -->
@@ -8340,7 +8329,19 @@
   <section id="stats-page" style="display:none;">
     <!-- ===== Theme picker ===== -->
     <div class="panel" id="theme-panel">
-      <h2>Theme</h2>
+      <h2>Timer &amp; Theme</h2>
+      <!-- Timer transition (moved above the theme tiles): how focus/break boundaries are
+           handled. Gentle Auto = popup then auto-continue; Manual = wait; Full Auto = keep
+           the flow going. "Plans are guides. Progress is real." -->
+      <div class="setting-row" id="timer-transition-row">
+        <span class="setting-label">Timer transition</span>
+        <div class="seg-control" id="timer-transition-seg" role="group" aria-label="Timer transition">
+          <button type="button" class="seg-btn" data-tt="gentleAuto">Gentle Auto</button>
+          <button type="button" class="seg-btn" data-tt="manual">Manual</button>
+          <button type="button" class="seg-btn" data-tt="fullAuto">Full Auto</button>
+        </div>
+        <span class="setting-hint" id="timer-transition-hint"></span>
+      </div>
       <div class="theme-grid" id="theme-grid">
         <button class="theme-tile" type="button" data-theme-key="default">
           <span class="theme-check" aria-hidden="true">✓</span>
@@ -24709,8 +24710,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     ttbydPanel.style.display = 'none';
     ttbydPanel.setAttribute('aria-hidden', 'true');
   }
-  // Settings page order (user spec 2026-06-05):
-  //   Sound · Theme · Pillars · Timer & rewards · Bucket view · Account.
+  // Settings page order (user spec 2026-06-14):
+  //   Timer & Theme (theme-panel, now incl. Timer transition) · Sound · Bucket Sides (pillars)
+  //   · Rewards (money-factors) · Bucket view · Account.
   // Append in that exact order — appendChild re-homes each panel to the end, so the
   // final array order IS the on-page order (static + relocated panels alike).
   const themePanel = document.getElementById('theme-panel');
@@ -24719,7 +24721,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   const bucketPanel = document.getElementById('bucket-view-panel');
   const authIn = document.getElementById('auth-logged-in');
   const acctPanel = authIn ? authIn.closest('.panel') : null;
-  [soundPanel, themePanel, pillarsPanel, moneyPanel, bucketPanel, acctPanel].forEach(function (p) {
+  [themePanel, soundPanel, pillarsPanel, moneyPanel, bucketPanel, acctPanel].forEach(function (p) {
     if (p && p.parentNode) { p.style.margin = '0 0 14px'; settingsPage.appendChild(p); }   // gap between sections
   });
   if (setupPage) setupPage.style.display = 'none';
@@ -34146,11 +34148,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const FACE_ORDER = ['Mind','Body','Joy','Money','Growth','Study / Work','People'];
     function shopDef(id){ return (id && SHOP_ITEMS[id]) || null; }
     function itemStages(id){ const d = shopDef(id); return d ? d.files.length : MAX_STAGE; }
+    // folder slug = lower-case, non-alnum → '-' (matches the on-disk items/<slug> folders).
+    // NO spaces / %20 in the path — iOS WKWebView 404s on encoded spaces.
+    function itemSlug(id){ return String(id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
     function itemImg(id, stage){
       const d = shopDef(id);
       if (!d) return 'clover/' + Math.max(1, Math.min(MAX_STAGE, stage)) + '.png';   // legacy clover fallback
       const i = Math.max(1, Math.min(d.files.length, stage)) - 1;
-      return 'items/' + encodeURIComponent(id) + '/' + d.files[i];
+      return 'items/' + itemSlug(id) + '/' + d.files[i];
     }
     function itemSeedImg(id){ return itemImg(id, 1); }
     function itemPrice(id){ const d = shopDef(id); return d ? d.price : SEED_COST; }
@@ -34875,7 +34880,11 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     // drag is a finger-DOWN motion that otherwise reads as a pull-to-sync) —
     // exclude them so resizing the gauge never reveals the sync pill.
     function blocked(t) {
-      return !!(t && t.closest && t.closest('.bucket-svg, input, textarea, select, [contenteditable="true"], .time-resize-handle, #time-area, #time-panel'));
+      // #gauge-col = the WIDE (iPad / web) timeline gauge — it scrolls itself (overflow-y:auto).
+      // Without it here, a finger-DOWN on the gauge while the page is at the top was captured as
+      // pull-to-sync (preventDefault'd), so the gauge wouldn't scroll down until you'd scrolled
+      // away from the top first. Excluding it lets the gauge own its vertical drag everywhere.
+      return !!(t && t.closest && t.closest('.bucket-svg, input, textarea, select, [contenteditable="true"], .time-resize-handle, #time-area, #time-panel, #gauge-col'));
     }
 
     // A modal/sheet that LOCKED the home scroll (the bucket ⓘ bottom-sheet, the GTD wheel,
