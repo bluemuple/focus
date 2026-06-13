@@ -25401,6 +25401,38 @@ if (_editToggle) {
       _slLockOn();
       return true;
     }
+    // Obstacle list for the dragged block (exclude self, its own flow-children, trackers, preview).
+    function _obs(excludeId) {
+      return (state.scheduledBlocks || []).filter(x => x && x.kind !== 'tracker' && !x._preview && x.id !== excludeId && x._flowParent !== excludeId);
+    }
+    // MOVE: if [start,start+dur] overlaps a block, JUMP past it in the drag direction (down→below,
+    // up→above) and keep going — the block leap-frogs obstacles instead of overlapping. A final
+    // down-pass guarantees no residual overlap (e.g. an up-move clamped at the now-line).
+    function _skipFreeStart(start, dur, down, floor, excludeId) {
+      const obs = _obs(excludeId);
+      let guard = 0, moved = true;
+      while (moved && guard++ < 80) { moved = false; for (const o of obs) if (start < o.endMs && o.startMs < start + dur) { start = down ? o.endMs : (o.startMs - dur); moved = true; } }
+      if (start < floor) start = floor;
+      guard = 0; moved = true;
+      while (moved && guard++ < 80) { moved = false; for (const o of obs) if (start < o.endMs && o.startMs < start + dur) { start = o.endMs; moved = true; } }
+      return start;
+    }
+    // RESIZE: lay `total` ms from `start` into the FREE gaps, flowing AROUND every other block →
+    // segment 0 = this block (capped at the next block), segments 1+ = new SAME-task blocks after
+    // each obstacle, so the bottom edge keeps descending PAST blocks instead of stopping at them.
+    function _flowLayout(start, total, excludeId) {
+      const obs = _obs(excludeId).filter(x => x.endMs > start).slice().sort((a, b) => a.startMs - b.startMs);
+      const segs = []; let cursor = start, rem = total, guard = 0;
+      while (rem > 0 && guard++ < 200) {
+        let moved = true; while (moved) { moved = false; for (const o of obs) if (o.startMs <= cursor + 1000 && o.endMs > cursor) { cursor = o.endMs; moved = true; } }
+        const next = obs.find(o => o.startMs > cursor + 1000);
+        const gap = next ? (next.startMs - cursor) : Infinity;
+        const take = Math.min(rem, gap);
+        if (take > 0) segs.push({ start: cursor, end: cursor + take });
+        rem -= take; cursor += take;
+      }
+      return segs;
+    }
     function move(clientY){
       if (!drag) return;
       const s = _sel(); if (!s || s.id !== drag.id) return;
@@ -25410,11 +25442,18 @@ if (_editToggle) {
         const dur = drag.endMs - drag.startMs;
         let ns = Math.round((drag.startMs + dms) / STEP) * STEP;
         if (ns < floor) ns = floor;
+        ns = _skipFreeStart(ns, dur, dms >= 0, floor, s.id);   // skip over blocks, never overlap
         s.startMs = ns; s.endMs = ns + dur;
       } else {
         let ne = Math.round((drag.endMs + dms) / STEP) * STEP;
         if (ne < s.startMs + MIN) ne = s.startMs + MIN;
-        s.endMs = ne;
+        // FLOW the desired span around obstacles. Rebuild this block's flow-children every tick.
+        state.scheduledBlocks = (state.scheduledBlocks || []).filter(x => x._flowParent !== s.id);
+        const segs = _flowLayout(s.startMs, ne - s.startMs, s.id);
+        s.endMs = segs.length ? segs[0].end : (s.startMs + MIN);
+        for (let i = 1; i < segs.length; i++) {
+          state.scheduledBlocks.push({ id: s.id + '_fr' + i, q: s.q, taskIdx: s.taskIdx, taskName: s.taskName, startMs: segs[i].start, endMs: segs[i].end, activeAt: null, activeEndMs: null, _combine: !!s._combine, _flowParent: s.id });
+        }
       }
       const stepN = Math.round(dms / STEP);
       if (stepN !== drag.last) { drag.last = stepN; try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} }
@@ -25424,6 +25463,8 @@ if (_editToggle) {
       _slLockOff();
       if (!drag) return;
       drag = null;
+      // Resize flow-children become permanent, independent SAME-task blocks (drop the live marker).
+      (state.scheduledBlocks || []).forEach(x => { if (x._flowParent) delete x._flowParent; });
       try { saveState(); } catch (_) {}
       try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
       try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
@@ -25477,7 +25518,29 @@ if (_editToggle) {
   const handle = document.getElementById('get-handle');
   if (handle){
     let dr = null;
-    const _down = (cx, cy) => { const r = tool.getBoundingClientRect(); dr = { dx: cx - r.left, dy: cy - r.top, w: r.width, h: r.height }; tool.style.transform = 'none'; };
+    // Lock the PAGE (main) scroll while dragging the panel — iOS WKWebView arms the page scroll at
+    // touch-DOWN even with touchmove preventDefault, so moving the panel scrolled the page behind.
+    let _hLock = null;
+    function _hLockOn(){
+      if (_hLock) return; const m = document.querySelector('main'); if (!m) return;
+      const y0 = m.scrollTop; const snap = () => { if (m.scrollTop !== y0) m.scrollTop = y0; };
+      _hLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
+      m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
+      m.addEventListener('scroll', snap, { passive: true });
+    }
+    function _hLockOff(){
+      if (!_hLock) return; const b = _hLock; _hLock = null;
+      b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+    }
+    const _down = (cx, cy) => {
+      const r = tool.getBoundingClientRect();
+      dr = { dx: cx - r.left, dy: cy - r.top, w: r.width, h: r.height };
+      // Pin the panel to its CURRENT visual rect BEFORE clearing the centring transform — else
+      // dropping `transform:translateY(-50%)` while top:50% stays makes it jump down ~½ its height.
+      tool.style.left = r.left + 'px'; tool.style.top = r.top + 'px';
+      tool.style.right = 'auto'; tool.style.transform = 'none';
+      _hLockOn();
+    };
     const _moveTo = (cx, cy) => {
       if (!dr) return;
       const left = Math.max(6, Math.min(window.innerWidth  - dr.w - 6, cx - dr.dx));
@@ -25485,13 +25548,13 @@ if (_editToggle) {
       tool.style.left = left + 'px'; tool.style.top = top + 'px'; tool.style.right = 'auto';
     };
     handle.addEventListener('mousedown', (e) => { e.preventDefault(); _down(e.clientX, e.clientY);
-      const mm = (ev) => _moveTo(ev.clientX, ev.clientY), mu = () => { dr = null; window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); };
+      const mm = (ev) => _moveTo(ev.clientX, ev.clientY), mu = () => { dr = null; _hLockOff(); window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); };
       window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu);
     });
     handle.addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t){ e.preventDefault(); _down(t.clientX, t.clientY); } }, { passive: false });
     handle.addEventListener('touchmove',  (e) => { const t = e.touches[0]; if (t && dr){ e.preventDefault(); _moveTo(t.clientX, t.clientY); } }, { passive: false });
-    handle.addEventListener('touchend',   () => { dr = null; });
-    handle.addEventListener('touchcancel',() => { dr = null; });
+    handle.addEventListener('touchend',   () => { dr = null; _hLockOff(); });
+    handle.addEventListener('touchcancel',() => { dr = null; _hLockOff(); });
   }
   // ✕ → exit Edit (same effect as un-pressing the Edit chip).
   const closeBtn = document.getElementById('get-close');
@@ -29279,11 +29342,26 @@ setInterval(() => {
   // Show the panel when a block is selected (wide only) OR an undo/redo msg is up.
   function _syncHotkeyHelp() {
     const wide = !(window.matchMedia && window.matchMedia('(max-width: 700px)').matches);
-    const sel  = wide && !!_arrowBlock;
+    // The shortcut LIST only makes sense with a real keyboard: ALWAYS on web (a computer), but on
+    // the native app ONLY once a hardware keyboard is detected (a touch-only device never fires the
+    // hardware keys below, so _hwkb stays false → no panel). The undo/redo msg can still show.
+    const isWeb = !document.documentElement.classList.contains('platform-ios');
+    const kb = isWeb || !!window._hwkb;
+    const sel = wide && !!_arrowBlock && kb;
     _hkHelp.classList.toggle('ghk-sel', sel);
     _hkHelp.classList.toggle('on', sel || _hkHelp.classList.contains('ghk-has-msg'));
   }
   window.__syncHotkeyHelp = _syncHotkeyHelp;
+  // Detect a physical keyboard on the native app: a touch-only device never fires these hardware
+  // keys; a Bluetooth/Smart keyboard does. Once seen, reveal the shortcut help (and remember it).
+  document.addEventListener('keydown', (e) => {
+    if (window._hwkb) return;
+    const k = e.key || '';
+    if (/^(Arrow(Up|Down|Left|Right)|Shift|Control|Meta|Alt|Escape|Tab|Backspace|F\d+)$/.test(k) || ((e.ctrlKey || e.metaKey || e.altKey) && k.length === 1)) {
+      window._hwkb = true;
+      try { _syncHotkeyHelp(); } catch (_) {}
+    }
+  }, true);
 
   /* ---- Overlap-limit helper ----
      Returns the max number of EXISTING blocks active at any instant within
@@ -29592,21 +29670,10 @@ setInterval(() => {
 
     const now = Date.now();
 
-    /* -- Pairwise overlap → first gets left half, second gets right half -- */
-    const side = blocks.map(() => 'full');  // 'full' | 'half-l' | 'half-r'
-    for (let i = 0; i < blocks.length; i++) {
-      for (let j = i + 1; j < blocks.length; j++) {
-        // The transient +Add preview ALWAYS renders full-width (1 row) — never split into
-        // a half-column. While +Add is open the 1-s now-line glue can slide an existing block
-        // a few minutes into the preview's span; without this skip that tiny overlap would
-        // suddenly halve the preview into 2 side-by-side pieces ~0.2-1 s after it appears.
-        if (blocks[i]._preview || blocks[j]._preview) continue;
-        if (blocks[i].endMs > blocks[j].startMs && blocks[j].endMs > blocks[i].startMs) {
-          if (side[i] === 'full') side[i] = 'half-l';
-          side[j] = 'half-r';
-        }
-      }
-    }
+    /* -- NO left/right (half-column) placement, ever (user request). Every block is full-width;
+       overlaps are PREVENTED at the source (moves/resizes clamp at neighbours) rather than shown
+       as side-by-side halves. -- */
+    const side = blocks.map(() => 'full');
 
     /* -- Helper: percentage from a raw timestamp during this render pass -- */
     function livePct(ms) {
@@ -31195,18 +31262,16 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const startX = srcRect.left + srcRect.width / 2;
     const startY = srcRect.top + srcRect.height / 2;
 
-    // Target = the dead-centre of the bucket's BOTTOM face (per user request):
-    // the droplet falls all the way down through the interior — behind the
-    // semi-transparent front glass, so it reads as dimmed in there (see the
-    // task-droplet-fall keyframe) — and the water rises to meet it, instead of
-    // splashing on the surface. Prefer the rendered floor point; fall back to
-    // the surface point, then a low point in the bucket stage.
+    // Target (per user request): HAS water → the water SURFACE centre (the droplet lands ON the
+    // water's top, x/z centred); EMPTY → the BOTTOM-face centre (falls all the way down through
+    // the interior). Prefer the 3D points (true heptagon centres via the centre markers); fall
+    // back to the legacy SVG surface point, then a low point in the stage.
     let endX, endY;
-    let tgt = (typeof window.bidoroBucket3DFloorPoint === 'function')
-      ? window.bidoroBucket3DFloorPoint() : null;
-    if (!tgt && typeof window.bidoroBucketSurfacePoint === 'function') {
-      tgt = window.bidoroBucketSurfacePoint();
-    }
+    const _hasWater = (typeof window.bidoroBucketHasWater === 'function') ? window.bidoroBucketHasWater() : false;
+    let tgt = null;
+    if (_hasWater && typeof window.bidoroBucket3DSurfacePoint === 'function') tgt = window.bidoroBucket3DSurfacePoint();
+    if (!tgt && typeof window.bidoroBucket3DFloorPoint === 'function') tgt = window.bidoroBucket3DFloorPoint();
+    if (!tgt && typeof window.bidoroBucketSurfacePoint === 'function') tgt = window.bidoroBucketSurfacePoint();
     if (tgt) {
       endX = tgt.x;
       endY = tgt.y;
@@ -31275,21 +31340,20 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     // burst so the splashing reads as continuous while the stream pours.
     function splashAt(x, y) {
       try {
-        // Expanding ring
+        // Expanding ring — small (≈9px radius) per request.
         const sp = document.createElement('div');
         sp.className = 'task-water-splash';
         sp.style.left   = x + 'px';
         sp.style.top    = y + 'px';
-        sp.style.width  = '26px';
-        sp.style.height = '26px';
+        sp.style.width  = '18px';
+        sp.style.height = '18px';
         document.body.appendChild(sp);
         setTimeout(() => { try { sp.remove(); } catch (_) {} }, 650);
-        // Burst droplets — 5 little blobs flung up/out with random spread,
-        // arcing back down (CSS keyframe task-splash-fly uses --sx/--sy).
-        const N = 5;
+        // Burst droplets — just a FEW little blobs flung only 7–10px out (small splash).
+        const N = 3;
         for (let k = 0; k < N; k++) {
           const ang = (-Math.PI * 0.5) + (Math.random() - 0.5) * 2.0; // mostly upward
-          const speed = 14 + Math.random() * 16;
+          const speed = 7 + Math.random() * 3;   // 7–10px radius
           const sxv = Math.cos(ang) * speed;
           const syv = Math.sin(ang) * speed;          // negative = up
           const b = document.createElement('div');
@@ -31303,11 +31367,13 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         }
       } catch (_) {}
     }
-    // Splash on the first landing, then a couple more as the stream keeps
-    // arriving (lighter follow-up bursts).
+    // Splash on the first landing. Extra follow-up bursts ONLY for a real STREAM (the +Add
+    // 12-droplet pour) — a single focus drip (count:1) makes just ONE small splash.
     setTimeout(() => splashAt(endX, endY), SPLASH_DELAY);
-    setTimeout(() => splashAt(endX + (Math.random()-0.5)*10, endY), SPLASH_DELAY + 180);
-    setTimeout(() => splashAt(endX + (Math.random()-0.5)*10, endY), SPLASH_DELAY + 360);
+    if (_dropN > 3) {
+      setTimeout(() => splashAt(endX + (Math.random()-0.5)*8, endY), SPLASH_DELAY + 180);
+      setTimeout(() => splashAt(endX + (Math.random()-0.5)*8, endY), SPLASH_DELAY + 360);
+    }
 
     // Bucket auto-fill 7% — starts the moment the first droplet lands at the
     // heptagon centre (per spec "떨어진 순간부터 물이 차오름"). The fill
@@ -31493,7 +31559,10 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // pastel faces IN FRONT keep the glassy look, just tinting the solid blue beneath.
       for (let i = 0; i < N; i++){ const el = wall(i, Rw, Rw, 1, '#79CCF1', 1, false, waterG); el.style.willChange = 'clip-path'; el.style.border = 'none'; el.style.boxShadow = 'none'; el.style.clipPath = 'polygon(0% ' + y0 + '%, 100% ' + y0 + '%, 100% ' + botY + '%, 0% ' + botY + '%)'; WATER.walls.push({ el: el, phiL: (i - 0.5) * 2 * PI / N, phiR: (i + 0.5) * 2 * PI / N }); }
       const surf = ngon(Rw, topY(waterLvl), '#9BDAF5', 1, true, waterG); WATER.surfEl = surf; WATER.surfInner = surf.querySelector('.b3d-wsurf'); if (WATER.surfInner) WATER.surfInner.style.animation = 'none';   // OPAQUE lighter top (catches light) — no additive darkening at the meniscus
-    }
+      // 1px marker at the surface's LOCAL centre (heptagon x/z centre) → its projected screen
+      // position is the TRUE water-surface centre (the rotateX(90) bbox skews to the front edge).
+      { const _sc = document.createElement('div'); _sc.className = 'b3d-surf-center'; _sc.style.cssText = 'position:absolute;left:50%;top:50%;width:1px;height:1px;pointer-events:none;'; surf.appendChild(_sc); WATER.surfCenterEl = _sc; }
+    } else { WATER.surfCenterEl = null; }
     const faceOp = isDark() ? 0.46 : 0.30;   // dark theme: more opaque so pastel faces read on the dark bg
     // Panel (+Add Sides) mode: the SELECTED face goes fully OPAQUE (vs 0.85 on the home bucket),
     // the rest stay translucent — "select a face → the translucent face turns solid".
@@ -31834,6 +31903,8 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
      is the live bucket, so the droplet hits the VISIBLE water (not the hidden SVG). */
   window.bidoroBucket3DSurfacePoint = function () {
     if (!scene || scene.offsetParent === null) return null;
+    const ce = WATER.surfCenterEl ? WATER.surfCenterEl.getBoundingClientRect() : null;   // true x/z centre
+    if (ce && (ce.left || ce.top)) return { x: ce.left + ce.width / 2, y: ce.top + ce.height / 2 };
     const r = WATER.surfEl ? WATER.surfEl.getBoundingClientRect() : null;
     if (r && r.width > 2 && r.height > 2) return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     const sc = scene.getBoundingClientRect();
@@ -33857,8 +33928,13 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       }, DROP_DELAY + DROP_FALL_MS);
       setTimeout(() => {
         let elapsed = 0;
+        // Spill droplets until the bucket's water SURFACE is actually GONE (drained), not for a
+        // fixed window — the drain takes ~4s, so a fixed EMIT_MS stopped the droplets while water
+        // was still visibly draining. Keep going while hasWater() is true; a generous cap is just
+        // a safety backstop so it can never loop forever.
+        const MAX_EMIT = SETTLE_MS + 800;
         const iv = setInterval(() => {
-          if (!pouring || elapsed >= EMIT_MS) { clearInterval(iv); return; }
+          if (!pouring || (elapsed > 200 && !hasWater()) || elapsed >= MAX_EMIT) { clearInterval(iv); return; }
           elapsed += 55;
           const hr = host.getBoundingClientRect();
           const vp = vpEl.getBoundingClientRect();
