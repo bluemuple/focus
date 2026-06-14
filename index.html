@@ -978,6 +978,33 @@
   .undo-toast .undo-toast-msg {
     overflow: hidden; text-overflow: ellipsis;
   }
+  /* Non-blocking ACTION toast — the gentle bottom toast but with up to two tappable
+     buttons (the "finished early" offer and the "won't fit today" prompt). It needs
+     pointer-events (the plain toast doesn't), wraps its label, and the button row
+     sits to the right. Ignoring it = the default (do nothing) after it auto-hides. */
+  .undo-toast.action-toast {
+    pointer-events: auto;
+    white-space: normal;
+    max-width: min(92vw, 460px);
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .undo-toast.action-toast .action-toast-btns {
+    display: inline-flex; gap: 8px; flex-shrink: 0; margin-left: auto;
+  }
+  .undo-toast.action-toast .action-toast-btn {
+    appearance: none; -webkit-appearance: none;
+    border: 1px solid rgba(255,255,255,.28);
+    background: rgba(255,255,255,.12); color: #fff;
+    font: inherit; font-size: .82rem; font-weight: 700;
+    padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    white-space: nowrap; line-height: 1.2;
+  }
+  .undo-toast.action-toast .action-toast-btn:hover { background: rgba(255,255,255,.22); }
+  .undo-toast.action-toast .action-toast-btn.is-primary {
+    background: #fff; color: #111827; border-color: #fff;
+  }
+  .undo-toast.action-toast .action-toast-btn.is-primary:hover { background: #e5e7eb; }
 
   /* (#A1/#A3) Floating bottom-right panel: gauge-block shortcut help (when a block
      is selected, wide only) + the undo/redo message. Black translucent, white text,
@@ -1892,13 +1919,38 @@
     -webkit-mask-repeat:no-repeat; mask-repeat:no-repeat; -webkit-mask-position:center; mask-position:center;
     -webkit-mask-size:contain; mask-size:contain; opacity:.92;
   }
-  .gb-pop-item .gb-lock { position:absolute; right:4px; bottom:3px; color:#fff; display:flex; filter:drop-shadow(0 1px 1.5px rgba(0,0,0,.5)); }
+  /* Lock badge on a locked (silhouette) tile — TOP-right corner, in a muted slate that blends
+     with the silhouette/tile instead of a stark white. */
+  .gb-pop-item .gb-lock { position:absolute; right:4px; top:4px; color:#64748b; display:flex; }
+  :root[data-theme="solarized"] .gb-pop-item .gb-lock { color:#8aa0a3; }
   .gb-pop-arr {
     flex: 0 0 auto; display: none; width: 26px; height: 26px; border-radius: 999px; border: none;
     background: rgba(255,255,255,.96); color: #334155; box-shadow: 0 2px 8px rgba(0,0,0,.18);
     font-size: 17px; line-height: 1; cursor: pointer; align-items: center; justify-content: center;
   }
   @media (hover: hover) and (pointer: fine) { .gb-pop-arr { display: flex; } }
+  /* ===== Wide screens (iPad / PC): show EVERY item tile at once ===== */
+  /* Instead of the phone's one-category-at-a-time scroll popup, render a single panel
+     with all faces (+ tiles) grouped under labels, wrapping into rows. There's ample
+     space on a wide garden, so the whole catalogue is visible without tapping through. */
+  .gb-pop.gb-pop-wide { align-items: flex-end; }
+  .gb-pop-panel {
+    pointer-events: auto;
+    max-width: min(94vw, 760px); max-height: 70vh; overflow-y: auto;
+    background: rgba(255,255,255,.97); border-radius: 16px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.24);
+    padding: 13px 15px; display: flex; flex-direction: column; gap: 11px;
+    scrollbar-width: thin;
+  }
+  .gb-pop-sec { display: flex; flex-direction: column; gap: 6px; }
+  .gb-pop-sec-h {
+    font-size: .66rem; font-weight: 800; letter-spacing: .02em;
+    color: var(--sec-color, #475569); display: flex; align-items: center; gap: 6px;
+  }
+  .gb-pop-sec-h::before { content:''; width:8px; height:8px; border-radius:50%; background: var(--sec-color, #94a3b8); }
+  .gb-pop-sec-row { display: flex; flex-wrap: wrap; gap: 8px; }
+  :root[data-theme="solarized"] .gb-pop-panel { background:#0E4A57; }
+  :root[data-theme="solarized"] .gb-pop-sec-h { color: var(--sec-color, #93A1A1); }
   .gb-now {
     position: absolute; left: 0; top: 0;
     background: rgba(17,24,39,.86); color: #fff; font-size: .64rem; font-weight: 700;
@@ -2116,6 +2168,15 @@
     82%  { transform: translate(calc(var(--arc-x, 0px) * 0.98),
                                  calc(var(--fall-px) * 0.82)) scale(0.95); opacity: 0.42; }
     100% { transform: translate(var(--arc-x, 0px), var(--fall-px)) scale(0.8); opacity: 0; }
+  }
+  /* Pure VERTICAL fall (no horizontal arc) — used by the WIDE layout (iPad / web PC) two-phase
+     task drop: phase 1 falls straight down off the bottom edge; phase 2 falls straight down from
+     just above the bucket into it. Opacity stays full so it reads as a clean gravity drop. */
+  @keyframes task-droplet-vfall {
+    0%   { transform: translateY(0) scale(0.85); opacity: 0; }
+    10%  { transform: translateY(calc(var(--fall-px) * 0.08)) scale(1); opacity: 1; }
+    90%  { transform: translateY(calc(var(--fall-px) * 0.92)) scale(1); opacity: 1; }
+    100% { transform: translateY(var(--fall-px)) scale(0.92); opacity: 0.92; }
   }
   /* Splash — small expanding ring at the bucket landing point. Fires once
      per task tick (not per droplet, to keep visual noise down). */
@@ -4729,6 +4790,11 @@
     font-size: .8rem; cursor: pointer; width: 100%;
   }
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
+  /* When the cell HAS tasks the +Add moves below the list (DOM-reordered). Stop .tasks from
+     flex-growing so the button hugs the last row instead of being pushed to the cell's bottom
+     edge; give the button a small top margin (its bottom margin is now the cell padding). */
+  .focus-cell.tasks-first .tasks { flex: 0 0 auto; }
+  .focus-cell.tasks-first .add-task { margin: 4px 0 0; }
   /* The button morphs into this input while typing — same dashed pill so
      the visual transition is in place, not jumpy. */
   .focus-cell .add-task-input {
@@ -10900,6 +10966,7 @@ function _buildSettingsPayload(ts, versionsForPush) {
       moneyChartScale:         state.moneyChartScale || 'D',
       gender:                  state.gender === 'woman' ? 'woman' : 'man',
       gaugeMode:               state.gaugeMode || 'set',
+      gaugeZoom:               (+state.gaugeZoom >= 1) ? Math.min(4, +state.gaugeZoom) : 1,
       soundMode:               state.soundMode || 'on',
       locale:                  state.locale || 'auto',
       timerTransition:         (state.timerTransition === 'manual') ? 'manual' : 'gentleAuto',
@@ -11247,6 +11314,7 @@ function applyRemoteSettings(remote) {
     if (['W','D','H'].includes(ss.moneyChartScale))    state.moneyChartScale = ss.moneyChartScale;
     if (ss.gender === 'man' || ss.gender === 'woman')  state.gender = ss.gender;
     if (['set','2','4'].includes(ss.gaugeMode))        state.gaugeMode = ss.gaugeMode;
+    if (+ss.gaugeZoom >= 1) state.gaugeZoom = Math.min(4, +ss.gaugeZoom);
     if (['on','off'].includes(ss.soundMode)) state.soundMode = ss.soundMode;
     else if (ss.soundMode === 'none') state.soundMode = 'off';
     else if (['loud','soft'].includes(ss.soundMode)) state.soundMode = 'on';
@@ -14252,6 +14320,36 @@ function bidoroToast(msg, tag) {
   if (_bidoroToastTimer) clearTimeout(_bidoroToastTimer);
   _bidoroToastTimer = setTimeout(() => { el.classList.remove('show'); }, 4000);
 }
+/* Non-blocking ACTION toast: a bottom-centred toast with up to two tappable
+   buttons. Used by the "finished early" offer (A) and the "won't fit today"
+   prompt (D). Unlike bidoroToast it has pointer-events and persists ~9s; letting
+   it auto-hide = the default (do nothing). opts = { tag, actions:[{label,onClick,
+   primary}], timeoutMs, onTimeout }. */
+let _actionToastTimer = null;
+function bidoroActionToast(msg, opts) {
+  opts = opts || {};
+  let el = document.getElementById('bidoro-action-toast');
+  if (!el) { el = document.createElement('div'); el.id = 'bidoro-action-toast'; el.className = 'undo-toast action-toast'; document.body.appendChild(el); }
+  if (_actionToastTimer) { clearTimeout(_actionToastTimer); _actionToastTimer = null; }
+  el.innerHTML = '';
+  if (opts.tag) { const t = document.createElement('span'); t.className = 'undo-toast-tag'; t.textContent = opts.tag; el.appendChild(t); }
+  const m = document.createElement('span'); m.className = 'undo-toast-msg'; m.textContent = msg || ''; el.appendChild(m);
+  const _close = () => { el.classList.remove('show'); if (_actionToastTimer) { clearTimeout(_actionToastTimer); _actionToastTimer = null; } };
+  const row = document.createElement('span'); row.className = 'action-toast-btns';
+  (opts.actions || []).forEach(a => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'action-toast-btn' + (a.primary ? ' is-primary' : '');
+    btn.textContent = a.label || '';
+    btn.onclick = (e) => { try { e.stopPropagation(); } catch (_) {} _close(); try { a.onClick && a.onClick(); } catch (_) {} };
+    row.appendChild(btn);
+  });
+  el.appendChild(row);
+  requestAnimationFrame(() => el.classList.add('show'));
+  const ms = (opts.timeoutMs != null) ? opts.timeoutMs : 9000;
+  if (ms > 0) _actionToastTimer = setTimeout(() => { _close(); try { opts.onTimeout && opts.onTimeout(); } catch (_) {} }, ms);
+  return el;
+}
 /* Gentle transition notification: in-app toast + haptic, plus a best-effort
    system notification ONLY if the user already granted permission and the app
    is backgrounded (we never nag for permission; there's no native plugin yet). */
@@ -16584,10 +16682,17 @@ function renderFocusMatrix() {
     // cell on mobile so the matrix isn't dominated by blank space.
     const taskCount = (state.tasks[q] || []).length;
     if (taskCount === 0) cell.classList.add('is-empty');
-    // Cell layout: <h4>Title</h4>  <button>+ add task</button>  <div.tasks/>
-    // The add-task button sits BETWEEN the title and the task list so the
-    // creation entry point is always at the top of the cell.
-    cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>`;
+    // Cell layout: per user request the +Add button moves BELOW the task list once the cell HAS
+    // tasks (task list takes the top slot the +Add used to occupy; +Add hugs the bottom of the
+    // list). Empty cells keep +Add right under the title (nothing to sit below). `.tasks-first`
+    // stops .tasks from flex-growing so the +Add hugs the last row instead of floating at the
+    // cell's bottom edge.
+    if (taskCount > 0) {
+      cell.classList.add('tasks-first');
+      cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div><button class="add-task" data-q="${q}">+ Add</button>`;
+    } else {
+      cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>`;
+    }
     // Paint the title's strikethrough (the struck "not" word) in THIS quadrant's SATURATED
     // accent (focusQuadAccent = rose/amber/violet/blue ring, theme-aware) — far more visible
     // than the pale bar wash, esp. over dense CJK glyphs (zh/ja). Thick so it clearly reads
@@ -16884,9 +16989,15 @@ function renderFocusMatrix() {
         // finish bid is awarded. The finish bid stacks on top of the time
         // money. (Logging happens inside stopActiveTimer / logPomodoroPhase.)
         let _wasRunning = false;   // was THIS task the one running when completed? → pull-up vs re-chunk
+        let _earlyMark = false;    // (A) was the task's block being passed by the now-line (finished mid-block)?
         if (cb.checked) {
           const _at = state.activeTimer;
           _wasRunning = !!(_at && (_at.type === 'pomodoro' || _at.type === 'uptask') && _at.q === q && _at.idx === i);
+          { const _n = Date.now();
+            (state.scheduledBlocks || []).forEach(b => { if (b && b.q === q && b.taskIdx === i && b.kind !== 'tracker' && !b.activeEndMs && b.startMs <= _n && b.endMs > _n) _earlyMark = true; }); }
+          // (C) Completing during a keep-going EXTENSION → give back the room borrowed
+          // from later tasks BEFORE stopActiveTimer settles/clears the push markers.
+          if (_wasRunning && typeof _restorePushedBlocks === 'function') _restorePushedBlocks(q, i);
           if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) {
             stopActiveTimer('finish');
           }
@@ -16907,11 +17018,21 @@ function renderFocusMatrix() {
         //    _pullUpFutureBlocks() is a no-op there unless only one task survives (which
         //    _rechunkFutureTasks skips) — then it pulls that lone task up.
         //  • un-complete → re-chunk as before.
-        if (cb.checked && _wasRunning) {
-          if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
-        } else {
-          if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks();
-          if (cb.checked && typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
+        // (A) Finished early mid-block with a LATER block waiting → DON'T auto-pull;
+        // leave the freed gap and offer the choice via a non-blocking toast. If there's
+        // no later block (or no real gap) _offerFinishedEarly returns false → fall back
+        // to the normal reflow below.
+        let _aOffered = false;
+        if (cb.checked && _earlyMark && typeof _offerFinishedEarly === 'function') {
+          _aOffered = _offerFinishedEarly(q, i);
+        }
+        if (!_aOffered) {
+          if (cb.checked && _wasRunning) {
+            if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
+          } else {
+            if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks();
+            if (cb.checked && typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
+          }
         }
         if (cb.checked) {
           // Gentle-coach reward (SAME formula as the other task view): planned
@@ -18833,6 +18954,8 @@ function drawGauge() {
   if (typeof window.renderScheduledBlocks === 'function') {
     window.renderScheduledBlocks(topMs, bottomMs, pct);
   }
+  // Apply the wide-gauge pinch-zoom (stretches #gauge-inner; % children scale with it).
+  if (typeof _applyGaugeZoom === 'function') _applyGaugeZoom();
   // Mobile mini-gauge runs in parallel from the same data source.
   if (typeof drawTimeArea === 'function') drawTimeArea();
 }
@@ -18869,6 +18992,34 @@ function _timeZoom() {
    of truth so drawTimeArea, the scroll clamp, and the drag-to-gauge ms↔px
    helpers all agree. */
 function _timeContentPxH() { return TIME_CONTENT_HEIGHT_PX * _timeZoom(); }
+/* ===== Wide gauge (#gauge-col, iPad / PC) vertical pinch-zoom =====
+   The wide gauge is a fixed 24 h column (70px/h ≈ 1680px) inside a scrollable
+   #gauge-col. Every child is positioned by PERCENT of #gauge-inner, so zooming
+   is just scaling #gauge-inner's px height — all blocks + gridlines scale with
+   it for free. Persisted in state.gaugeZoom (1× = the default fit). */
+const GAUGE_ZOOM_MIN = 1, GAUGE_ZOOM_MAX = 4;
+function _gaugeBaseHourPx() { return (window.innerWidth <= 700) ? 56 : 70; }   // mirrors the .gauge-inner CSS
+function _gaugeZoom() {
+  const z = (typeof state !== 'undefined' && state && +state.gaugeZoom) || 1;
+  if (!isFinite(z) || z <= 0) return 1;
+  return Math.max(GAUGE_ZOOM_MIN, Math.min(GAUGE_ZOOM_MAX, z));
+}
+function _gaugeContentPxH() { return _gaugeBaseHourPx() * 24 * _gaugeZoom(); }
+/* Apply the current zoom by stretching #gauge-inner — but ONLY when #gauge-col is
+   the scroll container (the wide iPad/PC home layout). In fv-active / phone-page
+   modes the page scrolls a fixed-height inner, so leave the CSS height in charge. */
+function _applyGaugeZoom() {
+  const col = document.getElementById('gauge-col');
+  const inner = document.getElementById('gauge-inner');
+  if (!col || !inner) return;
+  let scrolls = false;
+  try { scrolls = getComputedStyle(col).overflowY === 'auto'; } catch (_) {}
+  if (scrolls && !document.body.classList.contains('fv-active')) {
+    inner.style.height = Math.round(_gaugeContentPxH()) + 'px';
+  } else if (inner.style.height) {
+    inner.style.height = '';
+  }
+}
 const TIME_HEAD_OFFSET_MS = 30 * 60 * 1000;        // 30 min above current
 
 /* ===== GTD (Go-home) capsule controller — tap-to-arm, then slide-anywhere =====
@@ -20126,6 +20277,78 @@ function trimFutureBlocksForTask(q, i, atMs) {
   }
 }
 
+/* (Spec A) FINISHED EARLY. The just-completed task's block was chopped to NOW
+   (trimFutureBlocksForTask), so there's a gap before the next planned block.
+   Rather than silently pulling later blocks up, leave the gap and offer the
+   choice via a non-blocking toast: [Pull next task up] | [Keep it as a break].
+   Returns true if the offer was shown (caller then SKIPS the auto reflow so the
+   gap stays — the default). Returns false when there's no later block or no
+   meaningful gap (caller falls back to the normal reflow). */
+function _offerFinishedEarly(q, i) {
+  if (state.shuffled) return false;                 // Shuffle owns the gauge
+  if (!Array.isArray(state.scheduledBlocks)) return false;
+  const at = state.activeTimer;
+  if (at && (at.pendingKgConflict || at.pendingPhaseConfirm)) return false;  // A & B never at once
+  const now = Date.now();
+  // Earliest PLANNED block of any task after the now-line (skip trackers, breaks, finalized).
+  let next = null;
+  state.scheduledBlocks.forEach(b => {
+    if (!b || b.kind === 'tracker' || b.isBreak) return;
+    if (b.activeEndMs != null) return;              // finalized / past
+    if (b.startMs <= now) return;                   // not in the future
+    if (next == null || b.startMs < next.startMs) next = b;
+  });
+  if (!next) return false;                          // nothing after it → no prompt (spec A.3)
+  const gapMs = next.startMs - now;
+  if (gapMs < 60000) return false;                  // <1 min freed → not worth a prompt
+  const mins = Math.max(1, Math.round(gapMs / 60000));
+  const msg = tr('Finished early —') + ' ' + mins + tr('m freed');
+  bidoroActionToast(msg, {
+    tag: tr('Early'),
+    actions: [
+      { label: tr('Pull next task up'), primary: true, onClick: () => {
+          // Pull all later blocks earlier by the gap, in time order (reuses the tested pull-up).
+          if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
+          try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+          try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+          try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+      } },
+      { label: tr('Keep it as a break'), onClick: () => {} }   // dismiss = keep the gap (default)
+    ]
+  });
+  return true;
+}
+
+/* (Spec C) COMPLETE DURING AN EXTENSION. The completing task is the keep-going
+   extender; the blocks of OTHER tasks it pushed down should return to their
+   remembered slots (_pushOrigStartMs) — you finished, so you don't need the room
+   you borrowed. Restore in time order; if an original slot is now in the past
+   (would overlap NOW), place at the earliest free slot from NOW. Stacked
+   extensions are covered: every block carrying a push anchor is restored. Must run
+   BEFORE _settleKeepGoing (stopActiveTimer) deletes the anchors. */
+function _restorePushedBlocks(completedQ, completedIdx) {
+  if (!Array.isArray(state.scheduledBlocks)) return;
+  const ext = state.scheduledBlocks.find(b => b && b._extending && b.q === completedQ && b.taskIdx === completedIdx && !b.activeEndMs);
+  if (!ext) return;                                 // not in a keep-going extension → nothing to restore
+  const now = Date.now();
+  if (ext.endMs > now) ext.endMs = now;             // shrink the extension to the tick time
+  const pushed = state.scheduledBlocks
+    .filter(b => b && b._pushOrigStartMs != null && b.id !== ext.id && b.kind !== 'tracker' && !b.activeEndMs)
+    .sort((a, b) => a._pushOrigStartMs - b._pushOrigStartMs);
+  let floor = now;
+  pushed.forEach(b => {
+    let ns = b._pushOrigStartMs;
+    if (ns < floor) ns = floor;                     // can't go back in time → earliest free slot, in order
+    const delta = ns - b.startMs;
+    if (delta) {
+      b.startMs += delta; b.endMs += delta;
+      if (Array.isArray(b.taskSegs))      b.taskSegs.forEach(s => { s.startMs += delta; s.endMs += delta; });
+      if (Array.isArray(b.breakSegments)) b.breakSegments.forEach(s => { s.startMs += delta; s.endMs += delta; });
+    }
+    floor = b.endMs;
+  });
+}
+
 /* While a tracker timer is running, grow its block's endMs to NOW so the
    gauge rectangle visually extends downward each tick. Caller (drawGauge,
    drawTimeArea) invokes this before reading b.endMs for layout. */
@@ -21264,6 +21487,69 @@ function openEventModal(existing, opts) {
   }
 })();
 
+/* ===== Pinch-to-zoom on the WIDE gauge (#gauge-col — iPad / PC) =====
+   Mirrors the phone Time gauge: a two-finger vertical pinch stretches the
+   timeline (state.gaugeZoom scales #gauge-inner's height; the % children scale
+   with it), keeping the content under the pinch midpoint anchored. Only active
+   when #gauge-col is the scroll container (the wide home layout). */
+(function wireGaugeColPinch() {
+  function _dist(t) {
+    const dx = t[0].clientX - t[1].clientX;
+    const dy = t[0].clientY - t[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+  function attach() {
+    const col = document.getElementById('gauge-col');
+    if (!col || col._pinchWired) return;
+    col._pinchWired = true;
+    let pinch = null;
+    col.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 2) return;
+      // Only when the column itself scrolls (wide iPad/PC); otherwise let the page pinch.
+      let scrolls = false; try { scrolls = getComputedStyle(col).overflowY === 'auto'; } catch (_) {}
+      if (!scrolls || document.body.classList.contains('fv-active')) return;
+      window._gaugeColPinching = true;
+      const r = col.getBoundingClientRect();
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      const midOffset = midY - r.top;                  // px below the column's top
+      const contentH = _gaugeContentPxH();
+      const contentY = col.scrollTop + midOffset;      // content px under the fingers
+      pinch = {
+        startDist: _dist(e.touches) || 1,
+        startZoom: _gaugeZoom(),
+        anchorFrac: contentH > 0 ? (contentY / contentH) : 0,
+        midOffset: midOffset
+      };
+      e.preventDefault();
+    }, { passive: false, capture: true });
+    col.addEventListener('touchmove', (e) => {
+      if (!pinch || e.touches.length !== 2) return;
+      e.preventDefault();
+      let z = pinch.startZoom * (_dist(e.touches) / pinch.startDist);
+      z = Math.max(GAUGE_ZOOM_MIN, Math.min(GAUGE_ZOOM_MAX, z));
+      state.gaugeZoom = z;
+      _applyGaugeZoom();
+      const newH = _gaugeContentPxH();
+      col.scrollTop = Math.max(0, pinch.anchorFrac * newH - pinch.midOffset);
+    }, { passive: false, capture: true });
+    function endPinch(e) {
+      if (!pinch) return;
+      if (!e.touches || e.touches.length < 2) {
+        pinch = null;
+        setTimeout(() => { window._gaugeColPinching = false; }, 0);
+        try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+      }
+    }
+    col.addEventListener('touchend', endPinch);
+    col.addEventListener('touchcancel', endPinch);
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attach);
+  } else {
+    attach();
+  }
+})();
+
 /* ===== Theme picker (Statistics page) =====
    The saved theme is applied to <html data-theme="…"> by the inline <head>
    script before first paint (no flash). This wires the picker tiles: tap →
@@ -21835,14 +22121,24 @@ function _growKeepGoing() {
     return;                                       // DON'T cascade until the user chooses "push"
   }
   // pushed (or Full Auto / no next block) → cascade the blocks below down, as before
+  const limit = (typeof _pushBoundaryMs === 'function') ? _pushBoundaryMs() : 0;   // (D) midnight / goal
   let floor = +b.endMs;
-  below.forEach(x => {
+  let _dShown = false;
+  for (let k = 0; k < below.length; k++) {
+    const x = below[k];
     if (x._pushOrigStartMs == null) x._pushOrigStartMs = +x.startMs;   // anchor (re-derivable)
     const dur = (+x.endMs) - (+x.startMs);
     const newStart = Math.max(x._pushOrigStartMs, floor);             // can't precede its slot OR the floor
+    // (Spec D) Pushing this block down would run it past today's boundary (midnight or
+    // the goal time) → it won't fit. Leave it at its slot, ask ONCE how to handle it, and
+    // stop cascading the rest (the prompt resolves it). Positive framing only.
+    if (limit && newStart + dur > limit) {
+      if (!_dShown && !x._dLimitAsked) { x._dLimitAsked = true; _dShown = true; try { _showWontFitToday(x); } catch (_) {} }
+      break;
+    }
     if (newStart !== +x.startMs) { x.startMs = newStart; x.endMs = newStart + dur; }
     floor = +x.endMs;                                                 // cascade to the next block
-  });
+  }
 }
 /* Keep-going collision dialog (option 2). The growing block has filled the gap and reached
    {next}. ONE question, max 2 choices, gentle voice: keep going (push the rest down) or switch
@@ -21884,8 +22180,71 @@ if (typeof window !== 'undefined') window.__kgShowConflict = _showKeepGoingConfl
    finish / new-pomodoro. */
 function _settleKeepGoing() {
   if (!Array.isArray(state.scheduledBlocks)) return;
-  state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; delete b._kgAsked; });
+  state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; delete b._kgAsked; delete b._dLimitAsked; });
   const at = state.activeTimer; if (at) { delete at._kgPushed; delete at.pendingKgConflict; }   // end the keep-going run cleanly
+}
+/* (Spec D) Today's push boundary: midnight tonight, OR the goal time (state.deadline)
+   if it's set and lands earlier. Blocks can't be cascaded past this. Returns ms. */
+function _pushBoundaryMs() {
+  const now = Date.now();
+  const mid = new Date(now); mid.setHours(24, 0, 0, 0);                 // next local midnight
+  let limit = mid.getTime();
+  if (state.deadline) {
+    const g = combineDateTime(state.deadlineDate || '', state.deadline, { anchor: now, rolling: true });
+    if (g && g > now && g < limit) limit = g;                          // goal earlier than midnight → it wins
+  }
+  return limit;
+}
+/* (Spec D) The block won't fit before today's boundary. Non-blocking prompt, 2 choices,
+   positive voice ("today's slots are full", never "you failed"). */
+function _showWontFitToday(blk) {
+  if (!blk) return;
+  const name = (blk.taskName || (state.tasks[blk.q] && state.tasks[blk.q][blk.taskIdx] && state.tasks[blk.q][blk.taskIdx].text)) || tr('This task');
+  bidoroActionToast(name + ' ' + tr("won't fit today."), {
+    tag: tr('Full'),
+    actions: [
+      { label: tr('Send to tomorrow'), primary: true, onClick: () => _sendBlockToTomorrow(blk) },
+      { label: tr('Leave it'),         onClick: () => _leaveBlockAtBoundary(blk) }
+    ]
+  });
+}
+/* Send-to-tomorrow: there's no multi-day scheduledBlocks model yet, so drop the block
+   and set the task's due date to tomorrow (the agenda/calendar already reads task.dueDate).
+   TODO: when a day-scoped schedule exists, MOVE the block to tomorrow instead of dropping. */
+function _sendBlockToTomorrow(blk) {
+  if (!blk || !Array.isArray(state.scheduledBlocks)) return;
+  const t = state.tasks[blk.q] && state.tasks[blk.q][blk.taskIdx];
+  if (t) {
+    const d = new Date(); d.setDate(d.getDate() + 1);
+    t.dueDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  const idx = state.scheduledBlocks.indexOf(blk);
+  if (idx >= 0) state.scheduledBlocks.splice(idx, 1);
+  try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+}
+/* Leave-it: keep the block TODAY, clamped so it ends exactly at the boundary (truncated
+   rather than removed — the task stays on the gauge). REPORTED behavior = clamp-to-boundary. */
+function _leaveBlockAtBoundary(blk) {
+  if (!blk) return;
+  const limit = _pushBoundaryMs();
+  if (limit) {
+    const now = Date.now();
+    const dur = blk.endMs - blk.startMs;
+    let ns = Math.max(now, limit - dur);                                // start so it ends at the boundary, not before now
+    const delta = ns - blk.startMs;
+    if (delta) {
+      blk.startMs += delta;
+      if (Array.isArray(blk.taskSegs))      blk.taskSegs.forEach(s => { s.startMs += delta; s.endMs += delta; });
+      if (Array.isArray(blk.breakSegments)) blk.breakSegments.forEach(s => { s.startMs += delta; s.endMs += delta; });
+    }
+    blk.endMs = Math.min(blk.startMs + dur, limit);                     // truncate the tail at the boundary
+  }
+  delete blk._dLimitAsked;
+  try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
 }
 /* #22 — keep an un-started plan glued to the now-line. When NOTHING is running and the
    current-time line has reached the earliest un-started (never-worked) block, slide that
@@ -23455,6 +23814,15 @@ window.bidoroLocale = bidoroLocale; window.bidoroCur = bidoroCur;
 /* Core string dictionary (key = English source). Translations are kept CONCISE so a
    1-line button never wraps to 2 lines; calendar tabs use short forms (Bilan, 习惯…). */
 const BIDORO_I18N = {
+  "Early":{ko:"일찍",zh:"提前",ja:"早め",es:"Pronto",fr:"En avance"},
+  "Finished early —":{ko:"일찍 끝났어요 —",zh:"提前完成 —",ja:"早く終わった —",es:"Terminaste antes —",fr:"Fini en avance —"},
+  "m freed":{ko:"분 여유",zh:"分钟空出",ja:"分の余裕",es:"min libres",fr:"min libérées"},
+  "Pull next task up":{ko:"다음 작업 당기기",zh:"提前下一个任务",ja:"次のタスクを繰り上げ",es:"Adelantar lo siguiente",fr:"Avancer la suite"},
+  "Keep it as a break":{ko:"휴식으로 두기",zh:"留作休息",ja:"休憩にする",es:"Dejar de descanso",fr:"Garder en pause"},
+  "won't fit today.":{ko:"— 오늘 일정이 꽉 찼어요.",zh:"— 今天排不下了。",ja:"— 今日はもう埋まってます。",es:"— hoy ya no cabe.",fr:"— plus de place aujourd'hui."},
+  "Send to tomorrow":{ko:"내일로 보내기",zh:"移到明天",ja:"明日に回す",es:"Pasar a mañana",fr:"Reporter à demain"},
+  "Leave it":{ko:"그대로 두기",zh:"先放着",ja:"そのまま",es:"Dejarlo",fr:"Laisser"},
+  "Full":{ko:"가득",zh:"已满",ja:"満杯",es:"Lleno",fr:"Complet"},
   "Calendar":{ko:"캘린더",zh:"日历",ja:"カレンダー",es:"Calendario",fr:"Calendrier"},
   "Settings":{ko:"설정",zh:"设置",ja:"設定",es:"Ajustes",fr:"Réglages"},
   "Statistics":{ko:"통계",zh:"统计",ja:"統計",es:"Estadísticas",fr:"Stats"},
@@ -33363,6 +33731,51 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         endX = startX;
       }
     }
+
+    // ===== WIDE layout (iPad / web PC): the bucket sits BESIDE/ABOVE the "Now focusing on" card,
+    // so a single arc from the task row would flow UP-and-over (unnatural) — and the
+    // `endY - startY < 20` guard below would skip the animation entirely. Per user request, do a
+    // TWO-PHASE vertical drop instead: (1) fall straight DOWN from the task row and off the bottom
+    // edge; (2) immediately reappear just ABOVE the bucket (top-right) and fall straight DOWN to
+    // the target point. =====
+    const _wide = (typeof window.matchMedia === 'function') && window.matchMedia('(min-width: 701px)').matches;
+    if (_wide) {
+      if (cb) { try { cb.style.transition = 'transform .12s ease'; cb.style.transform = 'scale(1.25)'; setTimeout(() => { try { cb.style.transform = ''; } catch (_) {} }, 130); } catch (_) {} }
+      const N = _dropN, STAG = 32;
+      const mkDrop = (sx, sy, fallPx, delay, dur) => setTimeout(() => {
+        try {
+          const d = document.createElement('div'); d.className = 'task-water-droplet';
+          const sz = 5 + Math.random() * 8, hue = 195 + Math.random() * 15, lit = 55 + Math.random() * 20;
+          d.style.width = sz.toFixed(1) + 'px'; d.style.height = sz.toFixed(1) + 'px';
+          d.style.background = 'hsl(' + hue.toFixed(0) + ', 90%, ' + lit.toFixed(0) + '%)';
+          d.style.left = (sx - sz / 2) + 'px'; d.style.top = sy + 'px';
+          d.style.setProperty('--fall-px', fallPx + 'px'); d.style.setProperty('--arc-x', '0px');
+          d.style.animation = 'task-droplet-vfall ' + dur + 'ms linear forwards';
+          document.body.appendChild(d);
+          setTimeout(() => { try { d.remove(); } catch (_) {} }, dur + 90);
+        } catch (_) {}
+      }, delay);
+      // Phase 1 — task row → straight down, off the bottom edge.
+      const P1_FALL = (window.innerHeight + 70) - startY, P1_MS = 470;
+      for (let i = 0; i < N; i++) mkDrop(startX + (Math.random() - 0.5) * 8, startY, P1_FALL, i * STAG, P1_MS);
+      // Phase 2 — just above the bucket rim → straight down to the target.
+      const _scene = document.getElementById('b3d-scene');
+      let topY = endY - 150;
+      try { if (_scene) { const sr = _scene.getBoundingClientRect(); if (sr.height > 0) topY = sr.top - 16; } } catch (_) {}
+      topY = Math.max(6, Math.min(topY, endY - 30));
+      const P2_FALL = endY - topY, P2_MS = 480, P2_DELAY = P1_MS - 90;
+      for (let i = 0; i < N; i++) mkDrop(endX + (Math.random() - 0.5) * 8, topY, P2_FALL, P2_DELAY + i * STAG, P2_MS);
+      // Splash + bucket fill, timed to the phase-2 landing.
+      const land = P2_DELAY + P2_MS;
+      setTimeout(() => { try { splashAt(endX, endY); } catch (_) {} }, land - 40);
+      if (_dropN > 3) {
+        setTimeout(() => { try { splashAt(endX + (Math.random() - 0.5) * 8, endY); } catch (_) {} }, land + 170);
+        setTimeout(() => { try { splashAt(endX + (Math.random() - 0.5) * 8, endY); } catch (_) {} }, land + 340);
+      }
+      setTimeout(() => { try { if (_addW > 0 && typeof window.bidoroBucketAddWater === 'function') window.bidoroBucketAddWater(_addW); } catch (_) {} }, land - 60);
+      return;
+    }
+
     if (endY - startY < 20) return;
     const centerX = endX;
     const arcX = endX - startX;
@@ -35946,6 +36359,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       updateMoney();
       enterWaterField();                                // open straight onto the garden, in WATER mode
       try { renderShop(); scheduleShopHint(); } catch (_) {}   // (legacy strip — hidden, kept for safety)
+      // Wide screens (iPad / PC): open the whole catalogue by default — there's room to
+      // show every item tile at once, so the user doesn't tap category-by-category.
+      try { if (_gbWide()) { _gbOpenCat = '__all__'; _gbWideTarget = null; } } catch (_) {}
       try { renderGardenBar(); } catch (_) {}                  // the unified bottom bar
     }
     function close() {
@@ -36878,7 +37294,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (!tileTypeBar) return;
       tileTypeBar.classList.toggle('hidden', !buildMode);
       const sel = selectedTileType();
-      tileTypeBar.querySelectorAll('.tt-pick').forEach(b => b.classList.toggle('sel', b.getAttribute('data-tt') === sel));
+      tileTypeBar.querySelectorAll('.tt-pick').forEach(b => {
+        b.classList.toggle('sel', b.getAttribute('data-tt') === sel);
+        // Localise the hard-coded $ price (₩/¥/€ + rate + k abbrev) every sync so it follows the locale.
+        const tt = b.getAttribute('data-tt'), pb = b.querySelector('.tt-pick-label b');
+        if (pb && TILE_TYPES[tt]) pb.textContent = _shopPrice(TILE_TYPES[tt].price);
+      });
     }
     if (tileTypeBar) {
       tileTypeBar.querySelectorAll('.tt-pick').forEach(b => {
@@ -36905,8 +37326,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const gbMent    = document.getElementById('gb-ment');
     const gbPop     = document.getElementById('gb-pop');
     const gbNow     = document.getElementById('gb-now');
-    let _gbOpenCat  = null;            // open category key ('Tile' | face name) — SINGLE open
+    let _gbOpenCat  = null;            // open category key ('Tile' | face name | '__all__' on wide) — SINGLE open
+    let _gbWideTarget = null;          // (wide) which section the last-tapped category should scroll to
     let _gbMentTO   = 0;
+    // Wide screens (iPad / PC) show the WHOLE catalogue at once instead of one category.
+    function _gbWide(){ try { return !!(window.matchMedia && window.matchMedia('(min-width:701px)').matches); } catch(_) { return false; } }
+    function _gbCatSel(key){ return _gbOpenCat === key || (_gbOpenCat === '__all__' && _gbWideTarget === key); }
     // Category icons (filled silhouettes, tinted to the bucket-face colour).
     const CAT_ICON = {
       Tile:  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 6-9 6-9-6z" fill="currentColor"/></svg>',
@@ -36944,7 +37369,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // Composite labels → translate the parts (the item / tile name resolves through the
       // same dictionary the shop uses) so the hint reads e.g. "심는 중 · 작은 고요함".
       if (sellMode) t = tr('Tap a plant or tile to sell');
-      else if (buildMode) t = tr('Placing') + ' · ' + tr((TILE_TYPES[selectedTileType()] || {}).label || '') + ' ' + tr('tile');
+      else if (buildMode) t = tr((TILE_TYPES[selectedTileType()] || {}).label || '') + ' ' + tr('tile');   // just the tile name (no "Placing ·" prefix), all locales
       else if (plantMode) t = tr(selectedItem());   // just the item name (no "Planting ·" prefix), all locales
       gbNow.textContent = t; gbNow.classList.toggle('hidden', !t); gbNow.setAttribute('aria-hidden', t ? 'false' : 'true');
       if (t) _gbPositionNow();
@@ -36976,7 +37401,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (!buildOn) enterWaterField();
       plantMode = true; buildMode = false; sellMode = false; waterMode = false;
       renderField(); renderGardenBar();
-      showGbMent(itemConcern(id) || (((typeof _gName === 'function') ? _gName(id) : id) + ' · ' + _shopPrice(d.price)), rect);                  // the seed concern
+      showGbMent(((typeof _gName === 'function') ? _gName(id) : id), rect);                  // the item NAME, floating just above the tapped tile
     }
     function gbToggleSell(){
       hideGbMent(); _gbOpenCat = null;
@@ -36990,16 +37415,68 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       c.className = 'gb-pop-item' + (o.sel ? ' sel' : '') + (o.locked ? ' locked' : '');
       c.innerHTML = (o.locked
         ? '<span class="gb-sil" style="-webkit-mask-image:url(\'' + o.img + '\');mask-image:url(\'' + o.img + '\')"></span><span class="gb-lock"><svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path d="M7 10V8a5 5 0 0 1 10 0v2" fill="none" stroke="currentColor" stroke-width="2.2"/><rect x="5" y="10" width="14" height="9.5" rx="2" fill="currentColor"/></svg></span>'
-        : '<img src="' + o.img + '" alt="">') + '<span class="gb-price">$' + o.price + '</span>';
+        : '<img src="' + o.img + '" alt="">') + '<span class="gb-price">' + _shopPrice(o.price) + '</span>';
       c.setAttribute('aria-label', o.label);
+      // Web (mouse) hover → preview the item NAME floating just above this tile (touch devices
+      // use the tap path instead, so this is gated to fine-pointer/hover-capable devices).
+      if (window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+        const _nm = (typeof _gName === 'function') ? _gName(o.label) : o.label;
+        c.addEventListener('mouseenter', () => { try { showGbMent(_nm, c.getBoundingClientRect()); } catch (_) {} });
+        c.addEventListener('mouseleave', () => { try { hideGbMent(); } catch (_) {} });
+      }
       const act = (e) => { e.preventDefault(); e.stopPropagation(); o.onTap(c); };
       c.addEventListener('click', act); c.addEventListener('touchend', act, { passive:false });
       return c;
     }
+    // Build one tile/item button for a given section key, reused by both layouts.
+    function _gbTileBtns(key, append){
+      if (key === 'Tile') {
+        ['soil','pasture','estate'].forEach(tt => append(_gbPopItem({
+          img: TILE_TYPES[tt].img, price: TILE_TYPES[tt].price, label: TILE_TYPES[tt].label, locked: false,
+          sel: (buildMode && selectedTileType() === tt),
+          onTap: () => { gbSelectTile(tt); renderGbPop(); }
+        })));
+      } else {
+        faceItems(key).forEach(id => append(_gbPopItem({
+          img: itemImg(id, 1), price: SHOP_ITEMS[id].price, label: id, locked: !isItemUnlocked(id),
+          sel: (plantMode && selectedItem() === id),
+          onTap: (el) => { gbSelectItem(id, el); renderGbPop(); }
+        })));
+      }
+    }
     function renderGbPop(){
       if (!gbPop) return;
-      if (!_gbOpenCat) { gbPop.classList.add('hidden'); gbPop.innerHTML = ''; gbPop.setAttribute('aria-hidden','true'); return; }
+      const wide = _gbWide();
+      // A leftover '__all__' (e.g. resized wide→narrow) → fall back to a real section.
+      if (!wide && _gbOpenCat === '__all__') _gbOpenCat = _gbWideTarget || FACE_ORDER[0];
+      if (!_gbOpenCat) { gbPop.classList.add('hidden'); gbPop.classList.remove('gb-pop-wide'); gbPop.innerHTML = ''; gbPop.setAttribute('aria-hidden','true'); return; }
       gbPop.classList.remove('hidden'); gbPop.setAttribute('aria-hidden','false'); gbPop.innerHTML = '';
+      if (wide) {
+        // WIDE: one panel, every section (Tile + each face) under a label, wrapping.
+        gbPop.classList.add('gb-pop-wide');
+        const panel = document.createElement('div'); panel.className = 'gb-pop-panel';
+        const addSec = (key, label, color) => {
+          const sec = document.createElement('div'); sec.className = 'gb-pop-sec'; sec.dataset.sec = key;
+          const h = document.createElement('div'); h.className = 'gb-pop-sec-h';
+          if (color) h.style.setProperty('--sec-color', color);
+          h.textContent = label; sec.appendChild(h);
+          const r = document.createElement('div'); r.className = 'gb-pop-sec-row';
+          _gbTileBtns(key, (el) => r.appendChild(el));
+          sec.appendChild(r); panel.appendChild(sec);
+        };
+        addSec('Tile', tr('Tile'), '#B08968');
+        FACE_ORDER.forEach(face => addSec(face, catLabel(face), faceColor(face)));
+        gbPop.appendChild(panel);
+        const br = gardenBar.getBoundingClientRect();
+        gbPop.style.bottom = Math.round(window.innerHeight - br.top + 6) + 'px';
+        gbPop.style.removeProperty('--pop-tail');
+        if (_gbWideTarget) {
+          let s = null; panel.querySelectorAll('.gb-pop-sec').forEach(el => { if (el.dataset.sec === _gbWideTarget) s = el; });
+          if (s) try { s.scrollIntoView({ block: 'nearest' }); } catch (_) {}
+        }
+        return;
+      }
+      gbPop.classList.remove('gb-pop-wide');
       const row = document.createElement('div'); row.className = 'gb-pop-row';
       if (_gbOpenCat === 'Tile') {
         ['soil','pasture','estate'].forEach(tt => row.appendChild(_gbPopItem({
@@ -37032,13 +37509,22 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       c.addEventListener('click', act); c.addEventListener('touchend', act, { passive:false });
       return c;
     }
-    function _gbToggleCat(key){ _gbOpenCat = (_gbOpenCat === key) ? null : key; hideGbMent(); renderGardenBar(); }
+    function _gbToggleCat(key){
+      if (_gbWide()) {
+        // Wide: the whole catalogue is one panel; a category tap just scrolls to that
+        // section (and re-tapping the same one closes the panel).
+        if (_gbOpenCat === '__all__' && _gbWideTarget === key) { _gbOpenCat = null; _gbWideTarget = null; }
+        else { _gbOpenCat = '__all__'; _gbWideTarget = key; }
+        hideGbMent(); renderGardenBar(); return;
+      }
+      _gbOpenCat = (_gbOpenCat === key) ? null : key; hideGbMent(); renderGardenBar();
+    }
     function renderGardenBar(){
       if (!gardenBar) return;
       gardenBar.innerHTML = '';
       gardenBar.appendChild(_gbCat({ isImg:true, icon:'clover/trowel.png', label:'Sell', color:'#e1567c', sel:sellMode, onTap: gbToggleSell }));
-      gardenBar.appendChild(_gbCat({ icon:CAT_ICON.Tile, label:'Tile', color:'#B08968', sel:(_gbOpenCat==='Tile'), onTap:()=>_gbToggleCat('Tile') }));
-      FACE_ORDER.forEach(face => gardenBar.appendChild(_gbCat({ icon:CAT_ICON[face], label:catLabel(face), color:faceColor(face), sel:(_gbOpenCat===face), onTap:()=>_gbToggleCat(face) })));
+      gardenBar.appendChild(_gbCat({ icon:CAT_ICON.Tile, label:'Tile', color:'#B08968', sel:_gbCatSel('Tile'), onTap:()=>_gbToggleCat('Tile') }));
+      FACE_ORDER.forEach(face => gardenBar.appendChild(_gbCat({ icon:CAT_ICON[face], label:catLabel(face), color:faceColor(face), sel:_gbCatSel(face), onTap:()=>_gbToggleCat(face) })));
       renderGbPop(); _gbNowText();
     }
     function _gbCloseAll(){ hideGbMent(); if (_gbOpenCat){ _gbOpenCat = null; renderGardenBar(); } }
