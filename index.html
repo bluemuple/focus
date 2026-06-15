@@ -4947,6 +4947,9 @@
     font-size: .8rem; cursor: pointer; width: 100%;
   }
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
+  /* (user) Empty-cell hint — slightly darker than the cell wash, low-key. Colour/opacity set in JS
+     per quadrant hue. Left/right padding so it doesn't hug the cell edges. */
+  .focus-cell .cell-hint { margin: 0 0 6px; padding: 0 4px; font-size: .76rem; font-weight: 600; line-height: 1.3; }
   /* When the cell HAS tasks the +Add moves below the list (DOM-reordered). Stop .tasks from
      flex-growing so the button hugs the last row instead of being pushed to the cell's bottom
      edge; give the button a small top margin (its bottom margin is now the cell padding). */
@@ -9025,6 +9028,15 @@
   <section id="settings-page" style="display:none;">
     <div class="panel" id="language-panel">
       <h2>Language</h2>
+      <!-- (user) Matrix empty-cell hints on/off. -->
+      <h3 class="fm-h">Matrix hints</h3>
+      <p class="help" style="margin:2px 0 7px;">Show a short "how to handle this" tip in empty matrix cells.</p>
+      <div class="seg-control" id="cellhint-seg" role="group" aria-label="Matrix hints">
+        <button type="button" class="seg-btn" data-ch="on">On</button>
+        <button type="button" class="seg-btn" data-ch="off">Off</button>
+      </div>
+      <!-- (user) The language picker now lives under a "Translation" sub-section. -->
+      <h3 class="fm-h" style="margin-top:16px;">Translation</h3>
       <p class="help">Choose the app language. "Auto" follows your device. Money shows in the matching currency.</p>
       <div class="lang-list" id="lang-list">
         <button type="button" class="lang-opt" data-loc="auto">Auto</button>
@@ -10442,6 +10454,7 @@ function migrateState() {
   // layout always runs, and clear any stale snapshot from the previous toggle model.
   state.shuffled = false; state._preShuffleBlocks = null;
   if (state.arrangeMode !== 'prioritize' && state.arrangeMode !== 'shuffle') state.arrangeMode = 'shuffle';
+  if (state.cellHints == null) state.cellHints = true;   // (user) empty matrix-cell hints, on by default
   if (!Array.isArray(state.versions)) state.versions = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
@@ -11306,6 +11319,7 @@ function _buildSettingsPayload(ts, versionsForPush) {
       gaugeMode:               state.gaugeMode || 'set',
       gaugeZoom:               (+state.gaugeZoom >= 1) ? Math.min(4, +state.gaugeZoom) : 1,
       soundMode:               state.soundMode || 'on',
+      cellHints:               state.cellHints !== false,
       locale:                  state.locale || 'auto',
       timerTransition:         (state.timerTransition === 'manual') ? 'manual' : 'gentleAuto',
       pomodoroAuto:            !!state.pomodoroAuto,
@@ -11656,6 +11670,7 @@ function applyRemoteSettings(remote) {
     if (['on','off'].includes(ss.soundMode)) state.soundMode = ss.soundMode;
     else if (ss.soundMode === 'none') state.soundMode = 'off';
     else if (['loud','soft'].includes(ss.soundMode)) state.soundMode = 'on';
+    if (typeof ss.cellHints === 'boolean') state.cellHints = ss.cellHints;
     if (['auto','en','ko','zh','ja','es','fr'].includes(ss.locale)) state.locale = ss.locale;
     if (ss.timerTransition === 'manual' || ss.timerTransition === 'gentleAuto') state.timerTransition = ss.timerTransition;
     if (typeof ss.pomodoroAuto === 'boolean')          state.pomodoroAuto = ss.pomodoroAuto;
@@ -11815,6 +11830,7 @@ function showPage(name) {
   if (name === 'settings') {
     try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){}
     try { if (typeof _syncSoundSeg === 'function') _syncSoundSeg(); } catch(_){}
+    try { if (typeof _syncCellHintSeg === 'function') _syncCellHintSeg(); } catch(_){}
     try { if (typeof _pillarEditorLoad === 'function') _pillarEditorLoad(); } catch(_){}
     try { if (typeof _bucketViewLoad === 'function') _bucketViewLoad(); } catch(_){}
     try { if (typeof loadFocusPlaylist === 'function') loadFocusPlaylist().then(() => { try { syncMusicPlayBtn(); } catch(_){} }); } catch(_){}   // Focus Music: track title
@@ -13310,6 +13326,22 @@ function _syncSoundSeg(){
     if (mode === 'on') { try { playFx('start'); } catch (_) {} }   // preview
   }));
   _syncSoundSeg();
+})();
+/* (user) Matrix-hints on/off toggle (Settings → Language → Matrix hints). */
+function _syncCellHintSeg(){
+  const cur = (typeof state !== 'undefined' && state.cellHints === false) ? 'off' : 'on';
+  document.querySelectorAll('#cellhint-seg .seg-btn').forEach(b => b.classList.toggle('selected', b.dataset.ch === cur));
+}
+(function wireCellHintPanel(){
+  const seg = document.getElementById('cellhint-seg'); if (!seg) return;
+  seg.querySelectorAll('.seg-btn').forEach(b => b.addEventListener('click', () => {
+    const v = b.dataset.ch; if (!['on','off'].includes(v)) return;
+    state.cellHints = (v === 'on');
+    try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+    _syncCellHintSeg();
+    try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  }));
+  _syncCellHintSeg();
 })();
 
 /* (Pillar editor lives below, after the pillar consts + _ensureFaceText — it uses
@@ -17505,6 +17537,48 @@ function _pillarEditorLoad() {
   if (inc) inc.addEventListener('click', () => step(1));
   _pillarEditorLoad();
 })();
+/* (user) Empty-cell coaching: a short imperative hint per Eisenhower quadrant, shown only when the
+   cell has no tasks. Localised per language. Session-fixed random pick per (quadrant, locale) so it
+   stays stable within a session (no flicker) but varies between sessions/languages. Toggle:
+   state.cellHints (Settings → Language → Matrix hints). */
+const _CELL_HINTS = {
+  q1: { en:['Do this first.','Tackle it now.','It can’t wait — start here.'],
+        ko:['이것부터 해요.','지금 바로 처리해요.','미룰 수 없어요 — 여기부터.'],
+        zh:['先做这个。','现在就处理。','不能等，从这里开始。'],
+        ja:['これを最初に。','今すぐ取りかかろう。','後回しにできない、ここから。'],
+        es:['Hazlo primero.','Atácalo ahora.','No puede esperar: empieza aquí.'],
+        fr:['Fais-le en premier.','Attaque-le maintenant.','Ça ne peut pas attendre.'] },
+  q2: { en:['Schedule time for this.','Plan it before it’s urgent.','Invest here — it matters most.'],
+        ko:['시간을 미리 잡아요.','긴급해지기 전에 계획해요.','여기에 투자해요 — 가장 중요해요.'],
+        zh:['为它安排时间。','在变紧急前计划好。','值得投入，这最重要。'],
+        ja:['時間を確保しよう。','急ぐ前に計画を。','ここに投資を、最も大切。'],
+        es:['Resérvale tiempo.','Planéalo antes de que urja.','Invierte aquí: es lo que más importa.'],
+        fr:['Réserve-lui du temps.','Planifie-le avant l’urgence.','Investis ici, c’est l’essentiel.'] },
+  q3: { en:['Delegate if you can.','Do it fast, or pass it on.','Keep it quick.'],
+        ko:['가능하면 맡겨요.','빨리 끝내거나 넘겨요.','짧게 끝내요.'],
+        zh:['能交给别人就交。','快速做完或转交。','尽量简短。'],
+        ja:['任せられるなら任せて。','手早く、または引き継ぎを。','手短に。'],
+        es:['Delega si puedes.','Hazlo rápido o pásalo.','Que sea breve.'],
+        fr:['Délègue si possible.','Fais vite ou transmets.','Fais court.'] },
+  q4: { en:['Save it for spare time.','Let this one go.','Do you need this at all?'],
+        ko:['여유 있을 때 해요.','이건 놓아줘도 돼요.','꼭 필요한 일인가요?'],
+        zh:['有空再做。','可以放下它。','真的需要吗？'],
+        ja:['余裕がある時に。','手放してもいい。','本当に必要？'],
+        es:['Déjalo para tiempo libre.','Suelta este.','¿De verdad lo necesitas?'],
+        fr:['Garde-le pour plus tard.','Laisse tomber celui-ci.','En as-tu vraiment besoin ?'] }
+};
+const _cellHintPick = {};   // session cache: "<q>_<loc>" → chosen phrase
+function _cellHintEnabled() { return !(typeof state !== 'undefined' && state.cellHints === false); }
+function _cellHintFor(q) {
+  if (!_cellHintEnabled()) return '';
+  const loc = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const m = _CELL_HINTS[q]; if (!m) return '';
+  const pool = m[loc] || m.en || [];
+  if (!pool.length) return '';
+  const key = q + '_' + loc;
+  if (_cellHintPick[key] == null) _cellHintPick[key] = pool[Math.floor(Math.random() * pool.length)];
+  return _cellHintPick[key];
+}
 function renderFocusMatrix() {
   const root = document.getElementById('focus-matrix');
   // A matrix-cell rich +Add picker (.mca) lives INSIDE #focus-matrix — a rebuild would
@@ -17561,7 +17635,16 @@ function renderFocusMatrix() {
       cell.classList.add('tasks-first');
       cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div><button class="add-task" data-q="${q}">+ Add</button>`;
     } else {
-      cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>`;
+      // (user) empty cell → a short "how to handle this quadrant" hint under the title (only when on).
+      const _hint = (typeof _cellHintFor === 'function') ? _cellHintFor(q) : '';
+      const _hintHtml = _hint ? `<div class="cell-hint"></div>` : '';
+      cell.innerHTML = `<h4>${titles[q]}</h4>${_hintHtml}<button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>`;
+      const _hEl = cell.querySelector('.cell-hint');
+      if (_hEl) {
+        _hEl.textContent = _hint;   // textContent → no HTML injection
+        // Slightly darker than the pale cell, same quadrant hue, low-key (not loud).
+        try { const _c = (typeof focusQuadAccent === 'function') ? focusQuadAccent(q) : ''; if (_c) { _hEl.style.color = _c; _hEl.style.opacity = '0.7'; } } catch (_) {}
+      }
     }
     // Paint the title's strikethrough (the struck "not" word) in THIS quadrant's SATURATED
     // accent (focusQuadAccent = rose/amber/violet/blue ring, theme-aware) — far more visible
@@ -30453,6 +30536,15 @@ function _buildPillarPicker() {
   return wrap;
 }
 function showQuadrantInput(parent, picker, masterBtn, q) {
+  // (user) When this quadrant has NO tasks yet, flash its "how to handle it" hint in the top bar —
+  // exactly the moment the user is deciding what to put there.
+  try {
+    if (typeof _cellHintFor === 'function' && typeof bidoroShowGardenConcern === 'function'
+        && !((state.tasks[q] || []).length)) {
+      const _h = _cellHintFor(q);
+      if (_h) bidoroShowGardenConcern(_h);
+    }
+  } catch (_) {}
   // ── Measure the picker's button + column gap BEFORE clearing it, so the new
   // in-place layout sums to the SAME total height and the resize handle + gauge
   // BELOW never shift on the y-axis: input = 1 button tall, slider = 3 buttons +
