@@ -7981,6 +7981,12 @@
   .cal-task-row .cal-task-tx { flex: 1 1 auto; min-width: 0; }
   /* Completed task: leading check + strikethrough name + worked-time chip on the right. */
   .cal-task-row .cal-task-check { flex: 0 0 auto; display: inline-flex; align-items: center; }
+  /* (user) Tappable tick box on the LEFT — coloured by the task's bucket side (--cb). Empty white box
+     with a coloured border; filled with the side colour + white check when done. */
+  .cal-task-row .cal-task-cb { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 5px; border: 2px solid var(--cb, #9ca3af); background: #fff; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: #fff; -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  .cal-task-row .cal-task-cb.on { background: var(--cb, #9ca3af); }
+  .cal-task-row .cal-task-cb:active { transform: scale(.9); }
+  .cal-task-row .cal-task-cb svg { width: 12px; height: 12px; }
   .cal-task-row .cal-task-tx.done { text-decoration: line-through; opacity: .62; }
   .cal-task-row .cal-task-time { flex: 0 0 auto; font-size: .72rem; font-weight: 800; opacity: .82; }
   /* Red "Due" pill on a calendar/agenda task row that is DUE that day. */
@@ -12219,6 +12225,40 @@ function _calOpenDayPop(key) {
 function _calCloseDayPop() { const p = document.getElementById('cal-daypop'); if (p) { p.classList.add('hidden'); p.setAttribute('aria-hidden', 'true'); } }
 /* Due entries lead the list (the deadline is the headline for that day). */
 function _calSortDue(arr) { return arr.slice().sort((a, b) => (b._due ? 1 : 0) - (a._due ? 1 : 0)); }
+/* (user) Toggle a task's done state from OUTSIDE the matrix (e.g. the calendar tick) — same money /
+   timer-stop / block-trim / reward logic as the home checkbox, so the two stay in sync. */
+function bidoroSetTaskDone(q, i, done) {
+  const task = state.tasks[q] && state.tasks[q][i];
+  if (!task) return;
+  done = !!done;
+  if (!!task.done === done) return;
+  if (done) {
+    const _at = state.activeTimer;
+    if (_at && _at.type === 'pomodoro' && _at.q === q && _at.idx === i) { try { stopActiveTimer('finish'); } catch (_) {} }
+    try { if (typeof trimFutureBlocksForTask === 'function') trimFutureBlocksForTask(q, i); } catch (_) {}
+  }
+  task.done = done;
+  task.completedAt = done ? Date.now() : null;
+  try { if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks(); } catch (_) {}
+  if (done) {
+    const plannedMs = _taskPlannedMs(task);
+    const actualMs  = taskActualWorkedMs(q, i);
+    const rw = computeTaskReward(task, q, plannedMs, actualMs);
+    task.lastReward = rw.total;
+    if (rw.total !== 0) applyMoney(+rw.total, `Finished: ${task.text || '(task)'}`, 'finish-task');
+    logEvent({ type: 'finish-task', name: task.text || '(task)', money: +rw.total, q });
+    try { if (typeof showRewardBadge === 'function') showRewardBadge(rw); } catch (_) {}
+    try { playFx('complete'); } catch (_) {}
+  } else {
+    const back = (typeof task.lastReward === 'number') ? task.lastReward : taskPlannedReward(task, q);
+    if (back !== 0) applyMoney(-back, `Un-finished: ${task.text || '(task)'}`, 'unfinish-task');
+    logEvent({ type: 'unfinish-task', name: task.text || '(task)', money: -back, q });
+    task.lastReward = null;
+  }
+  saveState(); markSettingsChanged(); debouncedPushSettings();
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}   // keep home in sync
+}
+window.bidoroSetTaskDone = bidoroSetTaskDone;
 /* One calendar/agenda task row: a red "Due" pill on its due day, ↻ on a projected repeat. */
 function _calTaskRowHtml(o) {
   const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(o.q, o.idx) : '#374151';
@@ -12227,10 +12267,21 @@ function _calTaskRowHtml(o) {
   const txt = (typeof bidoroTaskText === 'function') ? bidoroTaskText(o.q, o.idx) : '#1f2937';
   const tag = o._due ? '<span class="cal-task-due-tag">Due</span>'
             : (o._repeat ? '<span class="cal-task-rep">↻</span>' : '');
-  // Completion: a leading check + strikethrough name, and the worked time on the right.
-  // (A future repeat projection or a no-time check-only task shows no time chip.)
+  // Completion: a leading TICK BOX (left) the user can tap to (un)complete that day's task —
+  // synced with the home task bar via bidoroSetTaskDone. The box is coloured by the task's chosen
+  // bucket SIDE (task.pillar). Repeat PROJECTIONS aren't a real instance → keep a static check only.
   const done = !!(o.task && o.task.done);
-  const check = done ? '<span class="cal-task-check"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg></span>' : '';
+  const _checkSvg = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
+  const _pill = (o.task && typeof o.task.pillar === 'number') ? o.task.pillar : null;
+  const _pcol = (_pill != null && typeof _calSideColor === 'function') ? _calSideColor(_pill)
+              : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(o.q, o.idx) : '#374151');
+  let check;
+  if (o._repeat) {                                  // projection → static (no per-occurrence toggle)
+    check = done ? '<span class="cal-task-check">' + _checkSvg + '</span>' : '';
+  } else {
+    check = '<span class="cal-task-cb' + (done ? ' on' : '') + '" role="checkbox" tabindex="0" aria-checked="' + done + '"'
+      + ' data-q="' + o.q + '" data-idx="' + o.idx + '" style="--cb:' + _pcol + '">' + (done ? _checkSvg : '') + '</span>';
+  }
   let timeChip = '';
   if (done && !o._repeat) {
     let ms = 0;
@@ -13194,6 +13245,19 @@ window.bidoroCalSync = bidoroCalSync;
   if (seg) seg.querySelectorAll('.cal-seg-btn').forEach(b => b.addEventListener('click', () => {
     _calInit(); _calState.view = b.dataset.view || 'month'; renderCalendar();
   }));
+  // (user) Calendar task-bar tick box → (un)complete that day's task, synced with home.
+  document.addEventListener('click', (e) => {
+    const cb = e.target && e.target.closest ? e.target.closest('.cal-task-cb') : null;
+    if (!cb) return;
+    e.preventDefault(); e.stopPropagation();
+    const q = cb.dataset.q, idx = parseInt(cb.dataset.idx, 10);
+    if (!q || !(idx >= 0)) return;
+    const cur = !!(state.tasks[q] && state.tasks[q][idx] && state.tasks[q][idx].done);
+    try { if (typeof bidoroSetTaskDone === 'function') bidoroSetTaskDone(q, idx, !cur); } catch (_) {}
+    // Refresh whatever calendar surface is showing (lists / month / agenda / open day popup).
+    try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
+    try { const pop = document.getElementById('cal-daypop'); if (pop && !pop.classList.contains('hidden') && _calState && _calState.selKey && typeof _calOpenDayPop === 'function') _calOpenDayPop(_calState.selKey); } catch (_) {}
+  });
   const prev = document.getElementById('cal-prev'), next = document.getElementById('cal-next');
   if (prev) prev.addEventListener('click', () => _calAnimateShift(-1));
   if (next) next.addEventListener('click', () => _calAnimateShift(1));
