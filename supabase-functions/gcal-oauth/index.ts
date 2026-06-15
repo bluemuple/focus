@@ -103,6 +103,37 @@ Deno.serve(async (req) => {
     }
   }
 
+  // ---- /disconnect → revoke at Google + delete the stored tokens for this uid ----
+  // POST { uid }. Best-effort revoke (so Google also drops the grant), then hard-delete the row.
+  if (route === "disconnect") {
+    let uid = url.searchParams.get("uid") || "";
+    if (!uid && req.method === "POST") {
+      try { const b = await req.json(); uid = (b && b.uid) || ""; } catch (_) { /* ignore */ }
+    }
+    if (!uid) return json({ ok: false, error: "missing uid" }, 400);
+    try {
+      const sb = createClient(SUPABASE_URL, SERVICE_KEY);
+      // Pull whatever token we have so we can ask Google to revoke the grant too.
+      const { data } = await sb.from("focus_gcal_tokens")
+        .select("refresh_token, access_token").eq("user_id", uid).maybeSingle();
+      const tokenToRevoke = (data && (data.refresh_token || data.access_token)) || "";
+      if (tokenToRevoke) {
+        try {
+          await fetch("https://oauth2.googleapis.com/revoke", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ token: tokenToRevoke }),
+          });
+        } catch (_) { /* revoke is best-effort; deletion below is what matters */ }
+      }
+      const { error } = await sb.from("focus_gcal_tokens").delete().eq("user_id", uid);
+      if (error) return json({ ok: false, error: error.message }, 500);
+      return json({ ok: true, disconnected: true });
+    } catch (e) {
+      return json({ ok: false, error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  }
+
   // ---- /status → { connected } (does a token row exist for this uid?) ----
   if (route === "status") {
     const uid = url.searchParams.get("uid") || "";

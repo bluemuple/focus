@@ -8196,6 +8196,11 @@
   .cal-sync-btn.is-syncing { opacity: .6; pointer-events: none; }
   .cal-sync-status { min-height: 0; margin-top: 8px; font-size: .8rem; font-weight: 700; color: var(--accent, #2563eb); text-align: center; opacity: 0; transition: opacity .2s ease; }
   .cal-sync-status.show { opacity: 1; }
+  /* (user) Google-connected state row: shows "✓ connected" + a Disconnect button, only when linked. */
+  .gcal-conn-row { display: none; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+  .gcal-conn-label { font-size: .8rem; font-weight: 700; color: #16a34a; }
+  .gcal-disconnect-btn { padding: 6px 12px; border-radius: 9px; border: 1px solid var(--card-border, #e5e7eb); background: var(--card-bg, #fff); color: #dc2626; font-weight: 700; font-size: .8rem; cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
+  .gcal-disconnect-btn:active { transform: scale(.97); }
   /* Calendar + Garden are iPhone-app features for now → hidden on plain web / iPad. */
   /* Calendar + My Garden now show on web too (mirror the iOS app menu). */
 </style>
@@ -8443,6 +8448,10 @@
         <div class="cal-sync-btns">
           <button class="cal-sync-btn" type="button" data-prov="apple">Apple Calendar</button>
           <button class="cal-sync-btn" type="button" data-prov="google">Google Calendar</button>
+        </div>
+        <div class="gcal-conn-row">
+          <span class="gcal-conn-label">✓ Google Calendar connected</span>
+          <button class="gcal-disconnect-btn" type="button">Disconnect</button>
         </div>
         <div class="cal-sync-status" aria-live="polite"></div>
       </div>
@@ -9149,6 +9158,10 @@
           <div class="cal-sync-btns">
             <button class="cal-sync-btn" id="cal-sync-apple"  type="button" data-prov="apple">Apple Calendar</button>
             <button class="cal-sync-btn" id="cal-sync-google" type="button" data-prov="google">Google Calendar</button>
+          </div>
+          <div class="gcal-conn-row">
+            <span class="gcal-conn-label">✓ Google Calendar connected</span>
+            <button class="gcal-disconnect-btn" type="button">Disconnect</button>
           </div>
           <div class="cal-sync-status" id="cal-sync-status" aria-live="polite"></div>
         </div>
@@ -11755,8 +11768,9 @@ function showPage(name) {
   saveState();
   if (name === 'focus') { initFocusPage(); try { if (window.bidoroBucket3DScheduleHint) window.bidoroBucket3DScheduleHint(); } catch (_) {} }
   if (name === 'notes'    && typeof renderNotes   === 'function') { try { renderNotes(); }   catch(_){} }
-  if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} try { if (typeof _gcalAutoSync === 'function') _gcalAutoSync(); } catch(_){} }
+  if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){} try { if (typeof _gcalAutoSync === 'function') _gcalAutoSync(); } catch(_){} }
   if (name === 'settings') {
+    try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){}
     try { if (typeof _syncSoundSeg === 'function') _syncSoundSeg(); } catch(_){}
     try { if (typeof _pillarEditorLoad === 'function') _pillarEditorLoad(); } catch(_){}
     try { if (typeof _bucketViewLoad === 'function') _bucketViewLoad(); } catch(_){}
@@ -12703,7 +12717,7 @@ function _gcalRunSync() {
     .then(r => r.json())
     .then(j => {
       if (!j || j.ok === false) {
-        if (j && j.error === 'not_connected') { state.gcalConnected = false; try { saveState(); } catch (_) {} }
+        if (j && j.error === 'not_connected') { state.gcalConnected = false; try { saveState(); } catch (_) {} try { _applyGcalConnUI(); } catch (_) {} }
         setStatus(T({ ko:'동기화 실패 — 다시 연결해 주세요', en:'Sync failed — reconnect', ja:'同期失敗 — 再連携を', zh:'同步失败 — 请重新连接', es:'Error — reconecta', fr:'Échec — reconnecte' }), true);
         setTimeout(() => setStatus('', false), 3200);
         return;
@@ -12739,6 +12753,56 @@ function _gcalRunSync() {
     });
 }
 window._gcalRunSync = _gcalRunSync;
+/* (user) Reflect the connected/disconnected state in the UI: show the "✓ connected" + Disconnect
+   row only while linked, and translate its labels for the current locale. Safe to call any time. */
+function _applyGcalConnUI() {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  const connected = !!(typeof state !== 'undefined' && state.gcalConnected);
+  document.querySelectorAll('.gcal-conn-row').forEach(r => { r.style.display = connected ? 'flex' : 'none'; });
+  document.querySelectorAll('.gcal-conn-label').forEach(el => {
+    el.textContent = T({ ko:'✓ Google 캘린더 연결됨', en:'✓ Google Calendar connected', ja:'✓ Googleカレンダー連携中', zh:'✓ 已连接 Google 日历', es:'✓ Google Calendar conectado', fr:'✓ Google Calendar connecté' });
+  });
+  document.querySelectorAll('.gcal-disconnect-btn').forEach(el => {
+    el.textContent = T({ ko:'연결 끊기', en:'Disconnect', ja:'連携解除', zh:'断开连接', es:'Desconectar', fr:'Déconnecter' });
+  });
+  // Google sync button doubles as "Sync now" once connected.
+  document.querySelectorAll('.cal-sync-btn[data-prov="google"]').forEach(b => {
+    b.textContent = connected
+      ? T({ ko:'Google 동기화', en:'Sync Google', ja:'Google 同期', zh:'同步 Google', es:'Sincronizar Google', fr:'Sync Google' })
+      : T({ ko:'Google Calendar', en:'Google Calendar', ja:'Google Calendar', zh:'Google 日历', es:'Google Calendar', fr:'Google Calendar' });
+  });
+}
+window._applyGcalConnUI = _applyGcalConnUI;
+/* (user) Disconnect Google Calendar: ask the Edge Function to delete the stored tokens (and revoke
+   them at Google), then clear local state + sync stops. Clears locally even if the network call
+   fails, so the UI always reflects the user's intent. */
+function _gcalDisconnect() {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  const ok = (typeof window.confirm === 'function')
+    ? window.confirm(T({ ko:'Google 캘린더 연결을 끊을까요?\nBidoro에 저장된 인증 토큰이 삭제되고 동기화가 중단됩니다.', en:'Disconnect Google Calendar?\nBidoro will delete its stored tokens and stop syncing.', ja:'Googleカレンダーの連携を解除しますか？\n保存された認証情報を削除し、同期を停止します。', zh:'断开 Google 日历连接？\nBidoro 将删除已保存的令牌并停止同步。', es:'¿Desconectar Google Calendar?\nBidoro eliminará los tokens guardados y dejará de sincronizar.', fr:'Déconnecter Google Calendar ?\nBidoro supprimera les jetons enregistrés et arrêtera la synchronisation.' }))
+    : true;
+  if (!ok) return;
+  const base = ((typeof getSbUrl === 'function' ? getSbUrl() : '') || '').replace(/\/+$/, '');
+  const uid  = (typeof getEffectiveUserId === 'function' ? getEffectiveUserId() : 'me');
+  const key  = (typeof getSbKey === 'function' ? getSbKey() : '');
+  const stats = document.querySelectorAll('.cal-sync-status');
+  const setStatus = (txt, show) => stats.forEach(s => { s.textContent = txt; s.classList.toggle('show', !!show); });
+  setStatus(T({ ko:'연결 끊는 중…', en:'Disconnecting…', ja:'解除中…', zh:'断开中…', es:'Desconectando…', fr:'Déconnexion…' }), true);
+  const finish = () => {
+    state.gcalConnected = false; try { saveState(); } catch (_) {}
+    try { _applyGcalConnUI(); } catch (_) {}
+    setStatus(T({ ko:'연결이 끊겼어요', en:'Disconnected', ja:'解除しました', zh:'已断开连接', es:'Desconectado', fr:'Déconnecté' }), true);
+    setTimeout(() => setStatus('', false), 2600);
+  };
+  fetch(base + '/functions/v1/gcal-oauth/disconnect', {
+    method: 'POST',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, key ? { apikey: key } : {}),
+    body: JSON.stringify({ uid }),
+  }).then(() => finish()).catch(() => finish());
+}
+window._gcalDisconnect = _gcalDisconnect;
 /* (B3a) Near-real-time: auto-sync when the calendar opens / the app regains focus, throttled so
    it never spams the Edge Function. Manual button still forces an immediate sync. */
 let _gcalLastSync = 0;
@@ -12801,6 +12865,7 @@ function bidoroCalSync(provider) {
           if (j && j.connected) {
             clearInterval(window._gcalPoll);
             state.gcalConnected = true; try { saveState(); } catch (_) {}
+            try { _applyGcalConnUI(); } catch (_) {}
             setStatus(T({ ko:'Google 연결됨!', en:'Google connected!', ja:'Google 連携完了!', zh:'已连接 Google!', es:'¡Google conectado!', fr:'Google connecté !' }), true);
             setTimeout(() => { try { _gcalRunSync(); } catch (_) {} }, 800);   // first sync right after connecting
           } else if (_tries >= 24) {   // ~60s
@@ -12842,6 +12907,12 @@ window.bidoroCalSync = bidoroCalSync;
     e.preventDefault(); e.stopPropagation();
     bidoroCalSync(b.dataset.prov);
   }));
+  // (user) Disconnect Google button (both the Month + Account copies).
+  document.querySelectorAll('.gcal-disconnect-btn').forEach((b) => b.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    _gcalDisconnect();
+  }));
+  try { _applyGcalConnUI(); } catch (_) {}
   _applyCalSyncVis();
   const grid = document.getElementById('cal-grid');
   if (grid) grid.addEventListener('click', (e) => {
