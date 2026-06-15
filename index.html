@@ -1685,7 +1685,7 @@
   :root[data-theme="solarized"] .gb-cell.locked { background: rgba(7,54,66,.4); }
   :root[data-theme="solarized"] .gb-cell .gb-price { color:#93A1A1; }
   :root[data-theme="solarized"] .gb-title { color:#EEE8D5; }
-  :root[data-theme="solarized"] .gb-ment { background:#0E4A57; color:#EEE8D5; }
+  :root[data-theme="solarized"] .gb-ment { background:rgba(17,24,39,.92); color:#fff; }
   :root[data-theme="solarized"] .gb-ment::after { border-top-color:#0E4A57; }
 
   /* ===== Watering full-screen (🌱 sprout) ===== */
@@ -1697,6 +1697,11 @@
     overflow: hidden;
   }
   .water-overlay.hidden { display: none; }
+  /* Garden-as-page: open() offsets the overlay's top to the (notch-aware) top bar's
+     bottom, so the overlay must NOT re-add the safe-area inset in its own top padding. */
+  body.garden-page .water-overlay { padding-top: 14px; }
+  /* ✕ removed — the garden closes via the top bar's home / menu (like other pages). */
+  #water-close { display: none; }
   .water-scene {
     position: relative; flex: 1 1 auto; min-height: 0; width: 100%; max-width: 380px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -1720,10 +1725,24 @@
     pointer-events: none;                /* taps pass through to the field / drops below */
   }
   .water-money {
-    position: absolute; left: 16px; top: max(14px, env(safe-area-inset-top));
+    position: absolute; right: 16px; top: max(14px, env(safe-area-inset-top));
     font-size: .95rem; font-weight: 800; color: #4b5563;
     pointer-events: none; z-index: 30;
   }
+  /* ADMIN buttons (TEMPORARY) — toggled by tapping the money; sits just below it, top-right. */
+  .gb-admin {
+    position: absolute; right: 12px; top: max(44px, calc(env(safe-area-inset-top) + 30px));
+    display: flex; flex-direction: column; align-items: flex-end; gap: 6px; z-index: 40;
+  }
+  .gb-admin.hidden { display: none; }
+  .gb-admin-btn {
+    font-size: .74rem; font-weight: 700; white-space: nowrap;
+    padding: 6px 11px; border-radius: 9px;
+    border: 1px solid rgba(60,70,90,.22); background: rgba(255,255,255,.94); color: #374151;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .gb-admin-btn:active { transform: scale(.95); }
+  .gb-admin-btn.on { background: #fde68a; border-color: #f59e0b; color: #7a4f00; }
   .water-bucket-host .bucket-svg { cursor: default; }
   /* Pour icon — overlays the dirt CENTRE, gently pulses (fade in/out). */
   @keyframes water-pour-pulse { 0%,100% { opacity: .4; transform: translate(-50%,-50%) scale(.94); } 50% { opacity: 1; transform: translate(-50%,-50%) scale(1.04); } }
@@ -1876,13 +1895,15 @@
     position:absolute; left:2px; bottom: calc(100% + 1px); white-space:nowrap;
     font-size:.62rem; font-weight:800; letter-spacing:.02em; color:#334155; pointer-events:none; z-index:3;
   }
+  /* Item tooltip above a tapped tile — BLACK bubble (was white): "Planting X" on an
+     unlocked item, the unlock condition on a locked one. */
   .gb-ment {
-    position:absolute; bottom: calc(100% - 2px); min-width:120px; max-width:240px;
-    background:#fff; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.22);
-    padding:8px 11px; font-size:.68rem; line-height:1.3; color:#1f2937; z-index:20;
+    position:fixed; bottom:auto; min-width:110px; max-width:240px;
+    background:rgba(17,24,39,.92); border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.32);
+    padding:8px 12px; font-size:.7rem; font-weight:700; line-height:1.3; color:#fff; z-index:20;
   }
   .gb-ment.hidden { display:none; }
-  .gb-ment::after { content:''; position:absolute; left:var(--gm-tail,50%); top:100%; transform:translateX(-50%); border:7px solid transparent; border-top-color:#fff; }
+  .gb-ment::after { content:''; position:absolute; left:var(--gm-tail,50%); top:100%; transform:translateX(-50%); border:7px solid transparent; border-top-color:rgba(17,24,39,.92); }
   /* ===== Garden bar v2: category icons + single-open popup-above ===== */
   .gb-cat {
     flex: 0 0 auto; position: relative; width: 56px; height: 56px;
@@ -1952,7 +1973,7 @@
   :root[data-theme="solarized"] .gb-pop-panel { background:#0E4A57; }
   :root[data-theme="solarized"] .gb-pop-sec-h { color: var(--sec-color, #93A1A1); }
   .gb-now {
-    position: absolute; left: 0; top: 0;
+    position: fixed; left: 0; top: 0;
     background: rgba(17,24,39,.86); color: #fff; font-size: .64rem; font-weight: 700;
     padding: 4px 11px; border-radius: 999px; z-index: 30; pointer-events: none; white-space: nowrap;
   }
@@ -1965,6 +1986,37 @@
   :root[data-theme="solarized"] .gb-pop-item.sel { background: rgba(14,74,87,.95); }
   :root[data-theme="solarized"] .gb-pop-item .gb-price { color:#93A1A1; }
   :root[data-theme="solarized"] .gb-now { background: rgba(238,232,213,.92); color:#002B36; }
+  .gb-ment.gb-ment-side::after { display: none; }   /* side-placed tooltip (landscape) — no down-tail */
+  /* Garden concern ment: when too long it scrolls left like a ticker (JS adds .gb-marq after
+     a 4s static delay) and LOOPS — re-entering from the right. Works on any width (the normal
+     motivation marquee is phone-only); a dedicated class so it never conflicts with it. */
+  @keyframes gb-concern-marquee { from { transform: translateX(0); } to { transform: translateX(-100%); } }
+  .motivation.gb-marq { overflow: hidden; text-overflow: clip; }
+  .motivation.gb-marq .gb-concern-track {
+    display: inline-block; white-space: nowrap; padding-left: 100%;
+    animation: gb-concern-marquee var(--gb-marq-dur, 14s) linear infinite;
+  }
+  /* ===== LANDSCAPE (PC / phone-landscape / iPad-landscape): the category bar becomes a
+     VERTICAL toolbar pinned to the left edge; the open category's items show as a vertical
+     sub-toolbar to its right (JS sets its left/top, position:fixed). ===== */
+  @media (orientation: landscape) {
+    .garden-bar {
+      position: fixed; left: 8px; top: 96px; bottom: 14px;
+      width: auto; max-width: none; margin: 0;
+      flex-direction: column; justify-content: flex-start; align-items: stretch;
+      gap: 7px; padding: 8px 8px;
+      overflow-y: auto; overflow-x: visible;
+      z-index: 22;
+    }
+    .gb-pop.gb-pop-land {
+      position: fixed; left: auto; right: auto; bottom: auto;
+      display: block; padding: 0; z-index: 21;
+    }
+    .gb-pop.gb-pop-land .gb-pop-row {
+      flex-direction: column; max-height: 78vh; overflow-y: auto; overflow-x: visible;
+    }
+    .gb-pop.gb-pop-land .gb-pop-arr { display: none; }
+  }
   /* Build view — isometric SimCity field built FROM the earth tiles; pan by sliding */
   .water-field-vp {
     /* Full-bleed: width:100vw + the parent's align-items:center auto-centres
@@ -1987,7 +2039,7 @@
     cursor: pointer; white-space: nowrap; z-index: 9000;
     display: inline-flex; align-items: center; justify-content: center; line-height: 1;
     -webkit-tap-highlight-color: transparent;
-    box-sizing: border-box; padding: 0 0.5em; width: auto;   /* GROW to fit long values (₩136,612) */
+    box-sizing: border-box; padding: 0 0.75em; width: auto;   /* GROW to fit long values (₩136,612) + roomy L/R padding */
     /* min-width / height / font-size set inline (~10% of a cell); width grows past min-width */
   }
   .wg-capsule:active { transform: translate(-50%, -50%) scale(.82); }
@@ -3957,6 +4009,17 @@
     border-radius: 999px; padding: 4px 12px;
   }
   .focus-card .fc-session:empty { display: none; }
+  /* (첨부2) Take5 — a sky-blue pill next to the Session badge, shown only while a
+     "keep going" extension is running; tap = start a 5-min break now. */
+  .focus-card .fc-take5 {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: .76rem; font-weight: 700; line-height: 1;
+    color: #075985; background: #7DD3FC; border: none;
+    border-radius: 999px; padding: 4px 11px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .focus-card .fc-take5.hidden { display: none; }
+  .focus-card .fc-take5:active { transform: scale(.94); }
   /* Big live ring — light track + the task-colour REMAINING arc; a knob marks the
      elapsed edge (NO dot at the 12-o'clock start); mm:ss + a pause button sit inside. */
   .focus-card .fc-ring-wrap { position: relative; flex: 0 0 auto; width: 108px; height: 108px; }
@@ -4311,12 +4374,12 @@
      the now-overlay goes IN-FLOW, so nav.tabs (grid col 3, `auto`) shrinks to the
      overlay's content. The motivation quote (col 2, 1fr) then grows — a SHORT
      task name → narrow [| • name] cluster on the right → wider quote on the left. */
-  body.scrolled-now nav.tabs { gap: 0; }
-  body.scrolled-now nav.tabs > button {
+  body.scrolled-now nav.tabs, body.garden-peek nav.tabs { gap: 0; }
+  body.scrolled-now nav.tabs > button, body.garden-peek nav.tabs > button {
     opacity: 0; pointer-events: none;
     width: 0; min-width: 0; padding: 0; margin: 0; border-width: 0; overflow: hidden;
   }
-  body.scrolled-now .topbar-now {
+  body.scrolled-now .topbar-now, body.garden-peek .topbar-now {
     position: static; opacity: 1; max-width: 55vw;   /* in-flow + right-anchored (col 3); cap so a long name can't eat the quote */
   }
 
@@ -5347,6 +5410,21 @@
   }
   body.tt-edit .gauge-edit-tool { display: flex; }
   body.tt-split.tt-edit .gauge-edit-tool { margin-top: 0; }   /* its top aligns with the gauge top (Time & Tasks) */
+  /* (user) Phone: stretch the edit pad to the task column's FULL width so its RIGHT
+     edge lines up with the task bars (it was content-width + centered → inset). The
+     buttons + slider then share the width — buttons a bit wider (get-pad grows ~57%),
+     the gap a touch larger. The iPad floating pad (.get-float) is excluded. */
+  @media (max-width: 700px) {
+    body.tt-edit .gauge-edit-tool:not(.get-float) {
+      width: 100%; max-width: none; margin-left: 0; margin-right: 0; gap: 12px;
+    }
+    body.tt-edit .gauge-edit-tool:not(.get-float) .get-pad {
+      flex: 1.35 1 0; width: auto; gap: 9px;
+    }
+    body.tt-edit .gauge-edit-tool:not(.get-float) .get-slider {
+      flex: 1 1 0; min-width: 0;
+    }
+  }
   /* 3×2 pad — fixed-width block so the slider claims the rest. Row-major pairs:
      undo|redo (history) · up|move · down|del. up+down stack as the nav pair. */
   .gauge-edit-tool .get-pad {
@@ -8191,22 +8269,21 @@
       </div>
 
       <div class="panel" id="money-factors-panel">
-        <h2>Rewards</h2>
+        <h2>Time &amp; Rewards</h2>
         <!-- Timer transition moved into the "Timer & Theme" panel (above the theme tiles). -->
-        <!-- Task Duration sits at the TOP — neutral grey tone (it's not a
-             money rule, just a default block length). The 4 money factors
-             below tile in a 2×2 grid. -->
-        <ul class="money-factors-list mcf-top">
-          <li>Task Duration: <span class="mcf-val mcf-neu" data-mcf="taskDurationDefault">25 min</span></li>
-        </ul>
+        <!-- Block lengths + finish reward — 2 columns × 2 rows:
+             [Task | Finish task]
+             [Break | Long break]
+             Task/Break/Long break (minutes) drive the gauge color-coding; the long
+             break replaces every 4th break. -->
         <ul class="money-factors-list mcf-grid">
+          <li>Task: <span class="mcf-val mcf-neu" data-mcf="taskDurationDefault">25 min</span></li>
           <li>Finish task: <span class="mcf-val mcf-pos" data-mcf="finishTask">+$10</span></li>
+          <li>Break: <span class="mcf-val mcf-neu" data-mcf="defaultBreakMin">5 min</span></li>
+          <li>Long break: <span class="mcf-val mcf-neu" data-mcf="longBreakMin">15 min</span></li>
         </ul>
         <!-- Gentle-coach reward system: per-quadrant $ per 5-min of planned
              work, with a capped early bonus and a floored late adjustment. -->
-        <ul class="money-factors-list mcf-top">
-          <li>Break Duration: <span class="mcf-val mcf-neu" data-mcf="defaultBreakMin">5 min</span></li>
-        </ul>
         <ul class="money-factors-list mcf-grid">
           <li>Q1 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ1">+$15</span></li>
           <li>Q2 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ2">+$25</span></li>
@@ -8324,7 +8401,10 @@
                 <div class="fc-label">Now focusing on</div>
                 <div class="fc-sub" id="fc-sub" aria-live="polite" style="display:none;"></div>
                 <span class="fc-name" id="fc-name">—</span>
-                <span class="fc-session" id="fc-session" aria-hidden="true"></span>
+                <span class="fc-badge-row" style="display:inline-flex;align-items:center;gap:6px">
+                  <span class="fc-session" id="fc-session" aria-hidden="true"></span>
+                  <button class="fc-take5 hidden" id="fc-take5" type="button" aria-label="Take a 5-minute break"></button>
+                </span>
               </div>
               <!-- Big pomodoro ring (lands where the start-now cat's play-circle was):
                    the time + a pause button sit inside it; a knob marks the elapsed
@@ -9824,6 +9904,7 @@ const defaultState = () => ({
     allowNegativeMoney: false, // never let the balance go negative — debt discourages + hurts retention
     focusDripPerMin: 0.5, // $/min paid per FOCUSED minute (rewards effort/showing-up, not only completion)
     defaultBreakMin: 5,   // default break length (focus default = taskDurationDefaultMin)
+    longBreakMin: 15,     // longer break taken after every 4th focus session (drives the color-coding)
     // q4 drift: grace minutes, then water drains, then money bleeds once dry. (Gentle.)
     driftGraceMin:        5,  // free minutes before water starts draining
     driftDrainPctPerMin:  1,  // % bucket water drained per minute after grace
@@ -10183,6 +10264,7 @@ function migrateState() {
     if (typeof mcf.allowNegativeMoney     !== 'boolean') mcf.allowNegativeMoney = false;
     if (typeof mcf.focusDripPerMin        !== 'number') mcf.focusDripPerMin = 0.5;
     if (typeof mcf.defaultBreakMin        !== 'number') mcf.defaultBreakMin = 5;
+    if (typeof mcf.longBreakMin           !== 'number') mcf.longBreakMin = 15;
     if (typeof mcf.driftGraceMin          !== 'number') mcf.driftGraceMin = 5;
     if (typeof mcf.driftDrainPctPerMin    !== 'number') mcf.driftDrainPctPerMin = 1;
     if (typeof mcf.driftMoneyLossPerMin   !== 'number') mcf.driftMoneyLossPerMin = 2;
@@ -10797,6 +10879,37 @@ function _showAdminMessage(msg) {
   el._heartTapRestore = restore;                // tap to dismiss (reuses the same hook)
   _motNoticeTimer = setTimeout(restore, 12000);
 }
+/* (My Garden #3) Tapping a shop item shows its CONCERN (e.g. "Mind won't stop
+   chattering?") in the top-bar text slot for 7s, then restores the normal note.
+   The garden now keeps the top bar visible, so this reads there. */
+let _gbConcernMarqTO = null;
+function bidoroShowGardenConcern(text) {
+  const el = _motEl(); if (!el || !text) return;
+  clearTimeout(_motNoticeTimer);
+  if (_gbConcernMarqTO) { clearTimeout(_gbConcernMarqTO); _gbConcernMarqTO = null; }
+  el.classList.remove('gb-marq'); el.style.removeProperty('--gb-marq-dur');
+  el.innerHTML = '<span class="motivation-track gb-concern-track"></span>';
+  const t = el.querySelector('.gb-concern-track'); if (t) t.textContent = text;
+  const restore = () => { try { el.classList.remove('gb-marq'); el.style.removeProperty('--gb-marq-dur'); } catch (_) {} try { refreshMotivation(false); } catch (_) {} };
+  el._heartTapRestore = restore;
+  // If the ment is too long to fit, after 4s static it scrolls left like a ticker and
+  // loops (re-enters from the right). Short ments just sit still.
+  let overflow = false;
+  try { overflow = !!(t && t.scrollWidth > el.clientWidth + 1); } catch (_) {}
+  if (overflow) {
+    _gbConcernMarqTO = setTimeout(() => {
+      try {
+        if (!(t && t.scrollWidth > el.clientWidth + 1)) return;
+        const distance = el.clientWidth + t.scrollWidth;             // off-right → past-left
+        const seconds = Math.max(8, Math.round(distance / 28));      // ~28 px/sec ticker
+        el.style.setProperty('--gb-marq-dur', seconds + 's');
+        el.classList.add('gb-marq');
+      } catch (_) {}
+    }, 4000);
+  }
+  _motNoticeTimer = setTimeout(restore, overflow ? 14000 : 7000);
+}
+window.bidoroShowGardenConcern = bidoroShowGardenConcern;
 /* Poll: new replies on my memo → "A friend left a memo."; my replies that got
    ♡'d → "Your friend ♡ your message". Seen-ids in state so a notice fires once. */
 let _memoSocialBusy = false;
@@ -14374,6 +14487,7 @@ function renderMoneyFactors() {
       return;
     }
     if (k === 'defaultBreakMin')      { el.textContent = (+mcf.defaultBreakMin || 0) + ' min'; return; }
+    if (k === 'longBreakMin')         { el.textContent = (+mcf.longBreakMin || 0) + ' min'; return; }
     if (k === 'driftGraceMin')        { el.textContent = (+mcf.driftGraceMin || 0) + ' min'; return; }
     if (k === 'earlyBonusCapPct')     { el.textContent = (+mcf.earlyBonusCapPct || 0) + '%'; return; }
     if (k === 'lateMinPct')           { el.textContent = (+mcf.lateMinPct || 0) + '%'; return; }
@@ -14414,6 +14528,7 @@ async function editMoneyFactor(key) {
       'Why this exists: to make sure no day passes with zero task work, and to nudge you to keep your bedtime promise. ' +
       'If a timer is running or you finished a task in the last hour, you\'re working past bedtime and the penalty is skipped.'],
     defaultBreakMin:      ['Break duration', 'Default break length in minutes after a focus block.'],
+    longBreakMin:         ['Long break', 'Longer break in minutes, taken after every 4th focus session (drives the gauge color-coding).'],
     rewardRateQ1:         ['Q1 reward rate', 'Important & Urgent — dollars earned per 5 minutes of planned work.'],
     rewardRateQ2:         ['Q2 reward rate', 'Important & Not Urgent — dollars earned per 5 minutes of planned work.'],
     rewardRateQ3:         ['Q3 reward rate', 'Not Important & Urgent — dollars earned per 5 minutes of planned work.'],
@@ -14819,6 +14934,17 @@ async function editEntryNote(idx) {
   }
 }
 
+/* If the garden (watering) overlay is open, close it so a "keep working?" style timer
+   dialog shows on the HOME screen, not over the garden. Used by the pomodoro phase-confirm,
+   keep-going conflict, and the post-notification recovery prompt (user request). */
+function _exitGardenForDialog() {
+  try {
+    const ov = document.getElementById('water-overlay');
+    if (ov && !ov.classList.contains('hidden') && typeof window._closeWaterOverlay === 'function') {
+      window._closeWaterOverlay();
+    }
+  } catch (_) {}
+}
 function customConfirm(title, message, opts) {
   opts = opts || {};
   return new Promise((resolve) => {
@@ -14837,6 +14963,14 @@ function customConfirm(title, message, opts) {
     msgEl.textContent   = message || '';
     yesBtn.textContent  = opts.yesLabel || 'Yes';
     noBtn.textContent   = opts.noLabel  || 'No';
+    // Optional per-button tint (e.g. the keep-going dialog colors each button to its task).
+    function _applyBtnColor(btn, c) {
+      if (!btn) return;
+      if (c && c.bg) { btn.style.background = c.bg; btn.style.borderColor = c.bg; btn.style.color = c.fg || '#fff'; }
+      else { btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = ''; }
+    }
+    _applyBtnColor(yesBtn, opts.yesColor);
+    _applyBtnColor(noBtn, opts.noColor);
 
     let _closerRef, _cdTimer = null, _cdTick = null;
     const _origYes = yesBtn.textContent;
@@ -14844,6 +14978,8 @@ function customConfirm(title, message, opts) {
       if (_cdTimer) { clearTimeout(_cdTimer); _cdTimer = null; }
       if (_cdTick)  { clearInterval(_cdTick); _cdTick = null; }
       yesBtn.textContent = _origYes;
+      _applyBtnColor(yesBtn, null);   // reset any per-button tint
+      _applyBtnColor(noBtn, null);
       modal.classList.add('hidden');
       modal.setAttribute('aria-hidden', 'true');
       yesBtn.onclick = null;
@@ -18313,6 +18449,7 @@ let _lastTransitionSoundBoundary = 0;
 async function showPomoPhaseConfirm() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
+  _exitGardenForDialog();   // a "continue?" dialog should show on HOME, not over the garden
   // Decide what the next phase WOULD be
   let nextPhase, nextDurMs, nextLabel, currentLabel;
   if (at.phase === 'work') {
@@ -19477,6 +19614,11 @@ function drawTimeArea() {
               _fillColor = bidoroTaskBg(b.q, b.taskIdx);
             }
             fill.style.background = _fillColor;
+            // (첨부1) A 5-min break that sits BELOW a work segment gets a crisp 1px
+            // white divider at its top so the task↔break boundary reads clearly.
+            if (seg.type === 'break' && fStart > b.startMs + 500) {
+              fill.style.borderTop = '1px solid #fff'; fill.style.boxSizing = 'border-box';
+            }
             div.appendChild(fill);
           }
         });
@@ -19519,9 +19661,16 @@ function drawTimeArea() {
       };
       if (_ch > 0) {
         let _coff = 0;
+        const _bWorked = (b.activeAt != null) || (Array.isArray(b.workedSegments) && b.workedSegments.length > 0);
         computeSpanSegments(_ch).forEach(sg => {
           if (sg.type === 'break') {
-            _addBand(_coff, sg.ms, _breakColor());
+            // (첨부2) A planned break the now-line has already PASSED with no actual
+            // break recorded there = the user kept working through it → re-color the
+            // sky fingernail to the task colour. Future / actually-taken breaks stay sky.
+            const _bs = b.startMs + _coff, _be = _bs + sg.ms;
+            const _took = Array.isArray(b.breakSegments) && b.breakSegments.some(s => s.startMs < _be && s.endMs > _bs);
+            const _workedThru = _bWorked && _be <= now && !_took;
+            _addBand(_coff, sg.ms, _workedThru ? bidoroTaskBg(b.q, b.taskIdx) : _breakColor());
           } else if (_multi) {
             // split this 25-min work run into per-task colour bands
             const wStart = b.startMs + _coff, wEnd = wStart + sg.ms;
@@ -20451,13 +20600,21 @@ function getBlockColorSegments(b, now) {
    These power the LEFT "fingernail" planned bands on the gauge. ----------- */
 const POMO_WORK_MS_PLAN  = 25 * 60 * 1000;
 const POMO_BREAK_MS_PLAN =  5 * 60 * 1000;
+/* The work / break / long-break lengths used for the GAUGE color-coding come from
+   Settings → Time & Rewards (Task / Break / Long break), so editing them re-chunks
+   the fingernails. A LONG break replaces every 4th break (the pomodoro long-break). */
+function _planWorkMs()  { return Math.max(60000, ((+((state.moneyChangeFactors||{}).taskDurationDefaultMin)) || 25) * 60000); }
+function _planBreakMs()  { return Math.max(60000, ((+((state.moneyChangeFactors||{}).defaultBreakMin)) || 5) * 60000); }
+function _planLongBreakMs() { return Math.max(60000, ((+((state.moneyChangeFactors||{}).longBreakMin)) || 15) * 60000); }
+function _planBreakMsFor(breakIdx /* 1-based */) { return (breakIdx % 4 === 0) ? _planLongBreakMs() : _planBreakMs(); }
 function computePlannedSegments(workMs) {
-  const segs = []; let rem = Math.max(0, +workMs || 0), guard = 0;
+  const W = _planWorkMs();
+  const segs = []; let rem = Math.max(0, +workMs || 0), guard = 0, completed = 0;
   while (rem > 0 && guard++ < 200) {
-    const w = Math.min(POMO_WORK_MS_PLAN, rem);
+    const w = Math.min(W, rem);
     segs.push({ type: 'work', ms: w });
     rem -= w;
-    if (w >= POMO_WORK_MS_PLAN) segs.push({ type: 'break', ms: POMO_BREAK_MS_PLAN });   // a completed 25 earns a break
+    if (w >= W) { completed++; segs.push({ type: 'break', ms: _planBreakMsFor(completed) }); }   // a completed work session earns a break (long every 4th)
   }
   return segs;
 }
@@ -20468,11 +20625,13 @@ function plannedTotalMs(workMs) { return computePlannedSegments(workMs).reduce((
    needs no extra state — drag → span changes → bands re-chunk. e.g. 30 →
    [w25,b5], 35 → [w25,b5,w5], 60 → [w25,b5,w25,b5]. */
 function computeSpanSegments(totalMs) {
-  const segs = []; let rem = Math.max(0, +totalMs || 0), guard = 0;
+  const W = _planWorkMs();
+  const segs = []; let rem = Math.max(0, +totalMs || 0), guard = 0, brk = 0;
   while (rem > 0 && guard++ < 200) {
-    const w = Math.min(POMO_WORK_MS_PLAN, rem); segs.push({ type: 'work', ms: w }); rem -= w;
+    const w = Math.min(W, rem); segs.push({ type: 'work', ms: w }); rem -= w;
     if (rem <= 0) break;
-    const b = Math.min(POMO_BREAK_MS_PLAN, rem); segs.push({ type: 'break', ms: b }); rem -= b;
+    brk++;                                                   // long break replaces every 4th
+    const b = Math.min(_planBreakMsFor(brk), rem); segs.push({ type: 'break', ms: b }); rem -= b;
   }
   return segs;
 }
@@ -20666,24 +20825,38 @@ function _pullUpFutureBlocks() {
 function _noRoomCombine() {
   if (state.shuffled) return;                          // Shuffle owns the gauge then
   if (!Array.isArray(state.scheduledBlocks)) return;
-  const now = Date.now(), WORK = 25 * 60000, BRK = 5 * 60000;
+  // WORK chunk = the configured Task length so the packed 25-min chunks + their
+  // fingernail color-coding (computeSpanSegments) agree. Break lives inside each
+  // _combine box via plannedTotalMs (long break every 4th).
+  const now = Date.now(), WORK = _planWorkMs(), BRK = _planBreakMs();
   // Start at the now-line, or right after a still-running block.
   let startMs = now;
   state.scheduledBlocks.forEach(b => { if (b && b.activeAt != null && b.endMs > startMs) startMs = b.endMs; });
   // Future incomplete tasks, ordered the way they sit on the gauge (earliest start first).
   const firstStart = {};
+  const actualWork = {};   // (user) pack by the ACTUAL on-gauge block work, not the planned default
   const _note = (q, idx, ms) => { if (typeof q !== 'string' || typeof idx !== 'number' || idx < 0) return; const k = q + ' ' + idx; if (firstStart[k] == null || ms < firstStart[k]) firstStart[k] = ms; };
+  const _addWork = (q, idx, ms) => { if (typeof q !== 'string' || typeof idx !== 'number' || idx < 0) return; const k = q + ' ' + idx; actualWork[k] = (actualWork[k] || 0) + Math.max(0, +ms || 0); };
   state.scheduledBlocks.forEach(b => {
     if (!b || b.isBreak || b.kind === 'tracker') return;
     if (b.activeAt != null || b.activeEndMs != null) return;        // running / finalized — leave alone
     if (b.endMs <= now) return;                                     // past
     _note(b.q, b.taskIdx, b.startMs);
-    if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => _note(sg.q, sg.taskIdx, sg.startMs));
+    if (Array.isArray(b.taskSegs) && b.taskSegs.length) {
+      b.taskSegs.forEach(sg => { _note(sg.q, sg.taskIdx, sg.startMs); _addWork(sg.q, sg.taskIdx, (+sg.endMs) - (+sg.startMs)); });   // taskSegs cover the WORK portion
+    } else {
+      const span = (+b.endMs) - (+b.startMs);
+      const w = computeSpanSegments(span).reduce((t, s) => t + (s.type === 'work' ? s.ms : 0), 0) || span;   // span minus internal breaks
+      _addWork(b.q, b.taskIdx, w);
+    }
   });
   const tasks = Object.keys(firstStart).map(k => {
     const j = k.indexOf(' '); const q = k.slice(0, j), idx = +k.slice(j + 1);
     const t = state.tasks[q] && state.tasks[q][idx];
-    const work = (t && typeof _taskPlannedMs === 'function') ? _taskPlannedMs(t) : ((t && t.durationMs) || 0);
+    // Use the task's ACTUAL gauge work (so a 10-min block stays 10 min, not padded to 25);
+    // fall back to the planned default only if it has no measurable block.
+    const work = (actualWork[k] > 0) ? actualWork[k]
+               : ((t && typeof _taskPlannedMs === 'function') ? _taskPlannedMs(t) : ((t && t.durationMs) || 0));
     return { q, idx, name: (t && t.text) || '', done: !!(t && t.done), work, _s: firstStart[k] };
   }).filter(o => o.work > 0 && !o.done).sort((a, b) => a._s - b._s);
   if (!tasks.length) return;
@@ -22147,28 +22320,37 @@ function _growKeepGoing() {
 async function _showKeepGoingConflict(b, next) {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
+  _exitGardenForDialog();   // show the "still going?" dialog on HOME, not over the garden
   const nextName = (next && (next.taskName
                    || (state.tasks[next.q] && state.tasks[next.q][next.taskIdx] && state.tasks[next.q][next.taskIdx].text)))
                    || 'the next task';
   const title = 'Still going?';
   const msg   = 'Make room and keep going, or switch?';
   try { notify(title, msg, { noToast: true }); } catch (_) {}
-  const gentle = (state.timerTransition !== 'manual');     // Gentle Auto auto-continues; Manual waits
+  const gentle = (state.timerTransition !== 'manual');     // Gentle Auto auto-switches; Manual waits
+  // Each button is tinted to ITS task's theme accent: Keep going = the current task,
+  // Switch = the next task. Switch is the DEFAULT (right side + 30s countdown) — if you
+  // don't decide, the plan wins and the next task starts.
+  const _acc = (typeof focusQuadAccent === 'function') ? focusQuadAccent : (() => '#334155');
+  const _curColor  = _acc((b && b.q) || at.q);
+  const _nextColor = (next && typeof next.q === 'string') ? _acc(next.q) : '#185FA5';
   const ans = await customConfirm(title, msg, {
-    yesLabel: 'Keep going',
-    noLabel:  'Switch to ' + nextName,
-    countdownMs: gentle ? 30000 : 0                        // 30s default = Keep going (push)
+    yesLabel: 'Switch to ' + nextName,                     // DEFAULT (right + countdown)
+    noLabel:  'Keep going',
+    countdownMs: gentle ? 30000 : 0,                       // 30s default = Switch to next
+    yesColor: { bg: _nextColor, fg: '#fff' },              // next task's theme color
+    noColor:  { bg: _curColor,  fg: '#fff' }               // current task's theme color
   });
   if (ans === 'remote') return;                            // answered on another device
   const at2 = state.activeTimer;
   if (!at2 || at2.type !== 'pomodoro') return;
   at2.pendingKgConflict = false;
-  if (ans === false && next && typeof next.q === 'string' && typeof next.taskIdx === 'number') {
-    // SWITCH → start the next task's pomodoro (stops + settles the current keep-going run).
+  if (ans === true && next && typeof next.q === 'string' && typeof next.taskIdx === 'number') {
+    // SWITCH (default / 30s countdown / Switch button) → start the next task's pomodoro.
     startPomodoro(next.q, next.taskIdx);
     return;
   }
-  // KEEP GOING (yes / 30s default / dismiss) → push the rest down + resume the cascade.
+  // KEEP GOING (Keep going button / dismiss) → push the rest down + resume the cascade.
   at2._kgPushed = true;
   try { saveState(); markSettingsChanged(); if (typeof pushSettingsToCloud === 'function') pushSettingsToCloud(); } catch (_) {}
   try { if (typeof bidoroToast === 'function') bidoroToast('Moved your later blocks down.'); } catch (_) {}
@@ -22182,6 +22364,39 @@ function _settleKeepGoing() {
   if (!Array.isArray(state.scheduledBlocks)) return;
   state.scheduledBlocks.forEach(b => { delete b._extending; delete b._pushOrigStartMs; delete b._kgAsked; delete b._dLimitAsked; });
   const at = state.activeTimer; if (at) { delete at._kgPushed; delete at.pendingKgConflict; }   // end the keep-going run cleanly
+}
+/* (첨부2) "Take 5" — during a keep-going work EXTENSION, end the work now and start a
+   5-min break from this point (the manual counterpart to letting the planned break run).
+   Closes the extending block's open work segment at NOW, then continues the break inside
+   the same _combine block if it still has room, else spawns a 5-min break block. */
+function _takeFiveBreak() {
+  const at = state.activeTimer;
+  if (!at || at.type !== 'pomodoro' || at.phase !== 'work') return;
+  const now = Date.now();
+  _settleKeepGoing();
+  at.keepGoingCount = 0;
+  if (Array.isArray(state.scheduledBlocks) && typeof at.q === 'string' && typeof at.idx === 'number') {
+    let blk = state.scheduledBlocks.find(b => b.q === at.q && b.taskIdx === at.idx && (b.activeAt != null || b.activeBreakAt != null) && !b.activeEndMs);
+    if (!blk) { let best = Infinity; for (const b of state.scheduledBlocks) { if (b.q !== at.q || b.taskIdx !== at.idx) continue; const d = Math.abs(b.endMs - now); if (d < best) { blk = b; best = d; } } }
+    if (blk) {
+      if (blk.activeAt != null) { if (!Array.isArray(blk.workedSegments)) blk.workedSegments = []; blk.workedSegments.push({ startMs: blk.activeAt, endMs: now }); blk.activeAt = null; }
+      if (blk._combine && (+blk.endMs) > now + 60000) {
+        blk.activeBreakAt = now;                       // open the break INSIDE the same block
+        blk.activeEndMs = null;
+      } else {
+        if (blk.endMs > now) blk.endMs = now;
+        if (!blk.activeEndMs) blk.activeEndMs = now;
+        state.scheduledBlocks.push({ id: now + '_' + Math.random().toString(36).slice(2), q: at.q, taskIdx: at.idx, taskName: blk.taskName || '', startMs: now, endMs: now + POMO_SHORT_MS, activeAt: null, activeBreakAt: now, activeEndMs: null });
+      }
+    }
+  }
+  at.phase = 'short-break'; at.phaseStartedAt = now; at.phaseDurationMs = POMO_SHORT_MS; at.startedAt = now; at.totalPausedMs = 0;
+  try { saveState(); markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+  try { if (typeof playFx === 'function') playFx('wave'); } catch (_) {}
+  window._fcRingInstant = true;
+  try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  try { renderImDoing(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
 }
 /* (Spec D) Today's push boundary: midnight tonight, OR the goal time (state.deadline)
    if it's set and lands earlier. Blocks can't be cascaded past this. Returns ms. */
@@ -23345,6 +23560,22 @@ function renderImDoing() {
       _sessEl.style.background  = _ac6 ? (accent + '1f') : '#fce7eb';   // ~12% tint fill
       _sessEl.style.borderColor = _ac6 ? (accent + '55') : '#f6c9d3';   // ~33% tint border
     }
+    // (첨부2) Take5 pill — visible only while a "keep going" work extension is running.
+    const _t5 = document.getElementById('fc-take5');
+    if (_t5) {
+      const _extended = (at.phase === 'work' && (+at.keepGoingCount || 0) > 0);
+      _t5.classList.toggle('hidden', !_extended);
+      if (_extended) {
+        _t5.textContent = (typeof tr === 'function') ? tr('Take 5') : 'Take 5';
+        if (!_t5._wired) {
+          _t5._wired = true;
+          _t5.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (typeof _takeFiveBreak === 'function') _takeFiveBreak();
+          });
+        }
+      }
+    }
     // pause/play button inside the ring (reflects + toggles the live pause state)
     const _pz = document.getElementById('fc-ring-pause');
     if (_pz) {
@@ -23740,6 +23971,22 @@ function _shopPrice(n) {
   const sym = (typeof bidoroCur === 'function') ? bidoroCur().sym : '$';
   return sym + _shopPriceNum(n);
 }
+/* FULL (non-abbreviated) localised price with thousands separators — for the in-field
+   green capsules where the user wants the whole number, e.g. ₩136,612 not ₩137k. */
+function _shopPriceFull(n) {
+  const c = (typeof bidoroCur === 'function') ? bidoroCur() : { sym: '$', dec: 0, rate: 1 };
+  const v = Math.round((+n || 0) * (c.rate || 1));
+  return (c.sym || '$') + v.toLocaleString('en-US', { maximumFractionDigits: (c.dec || 0) });
+}
+/* Korean object particle 을/를: a Hangul syllable whose last char has a final consonant
+   (받침) takes 을, otherwise 를. Non-Hangul endings fall back to 를. */
+function _josa(word) {
+  const s = ('' + (word == null ? '' : word)).trim();
+  if (!s) return '를';
+  const code = s.charCodeAt(s.length - 1);
+  if (code >= 0xAC00 && code <= 0xD7A3) return ((code - 0xAC00) % 28) ? '을' : '를';
+  return '를';
+}
 /* Localised My-Garden plant/tile dialogs. The item / tile NAME is run through tr() so it
    shows in the user's language (e.g. "Snooze Snail" → "꾸벅 달팽이"); the sentence frame is
    written per-locale (not a literal word-for-word translation). */
@@ -23756,7 +24003,7 @@ function _gPlantConfirm(name, price) { const n = _gName(name);
   } }
 function _gPlantNoMoney(name, price) { const n = _gName(name);
   switch (_gLoc()) {
-    case 'ko': return n + '을(를) 심을 돈이 부족해요 (' + price + ').';
+    case 'ko': return n + _josa(n) + ' 심을 돈이 부족해요 (' + price + ').';
     case 'zh': return '钱不够，种不了' + n + '（' + price + '）。';
     case 'ja': return n + 'を植えるにはお金が足りません（' + price + '）。';
     case 'es': return 'No te alcanza para plantar ' + n + ' (' + price + ').';
@@ -23815,6 +24062,7 @@ window.bidoroLocale = bidoroLocale; window.bidoroCur = bidoroCur;
    1-line button never wraps to 2 lines; calendar tabs use short forms (Bilan, 习惯…). */
 const BIDORO_I18N = {
   "Early":{ko:"일찍",zh:"提前",ja:"早め",es:"Pronto",fr:"En avance"},
+  "Take 5":{ko:"5분 휴식",zh:"休息5分",ja:"5分休憩",es:"Pausa 5",fr:"Pause 5"},
   "Finished early —":{ko:"일찍 끝났어요 —",zh:"提前完成 —",ja:"早く終わった —",es:"Terminaste antes —",fr:"Fini en avance —"},
   "m freed":{ko:"분 여유",zh:"分钟空出",ja:"分の余裕",es:"min libres",fr:"min libérées"},
   "Pull next task up":{ko:"다음 작업 당기기",zh:"提前下一个任务",ja:"次のタスクを繰り上げ",es:"Adelantar lo siguiente",fr:"Avancer la suite"},
@@ -28060,26 +28308,31 @@ if (_editToggle) {
   let _prevPending = false, _prevBoundary = 0, _prevTask = null, _open = false;
   function _taskName(q, idx){ const t = state.tasks[q] && state.tasks[q][idx]; return (t && t.text) || 'your task'; }
   function _esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-  function _rewind(task, boundaryMs){
+  // Paint the task's block as ONE CONTINUOUS task-colored span from its work-start to capMs,
+  // then finalize it + stop the timer. While the screen was off there are NO 25/5 breaks —
+  // the whole off period reads as task color. (Yes → capMs = now · No → capMs = screen-off time.)
+  function _settleRecovery(task, capMs){
     try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser('remote'); } catch (_) {}   // close any open prompt w/o acting
     (state.scheduledBlocks || []).forEach(b => {
       if (!b || b.q !== task.q || b.taskIdx !== task.idx) return;
-      if (Array.isArray(b.workedSegments)) {
-        b.workedSegments = b.workedSegments
-          .map(s => ({ startMs: s.startMs, endMs: Math.min(s.endMs, boundaryMs) }))
-          .filter(s => s.endMs > s.startMs);
+      if (b.activeEndMs != null) return;   // already finalized — leave it
+      // work-start = earliest of the open session / recorded segments / block start
+      let ws = (b.activeAt != null) ? +b.activeAt : null;
+      if (Array.isArray(b.workedSegments) && b.workedSegments.length) {
+        const fs = Math.min.apply(null, b.workedSegments.map(s => +s.startMs));
+        ws = (ws == null) ? fs : Math.min(ws, fs);
       }
-      if (b.activeAt != null) {
-        if (b.activeAt < boundaryMs) {
-          if (!Array.isArray(b.workedSegments)) b.workedSegments = [];
-          b.workedSegments.push({ startMs: b.activeAt, endMs: boundaryMs });
-        }
-        b.activeAt = null;
-        b.activeEndMs = boundaryMs;
-      }
+      if (ws == null) ws = +b.startMs;
+      const cap = Math.max(ws + 1000, +capMs);
+      b.workedSegments = [{ startMs: ws, endMs: cap }];   // single continuous task-colored run
+      b.breakSegments  = [];                              // no breaks during the off period
+      b.activeAt = null; b.activeBreakAt = null;
+      b.endMs = cap; b.activeEndMs = cap;
+      delete b._extending; delete b._combine;             // solid finalized task block (no 25/5 fingernails)
     });
     const at = state.activeTimer;
-    if (at && at.q === task.q && at.idx === task.idx) { at.pendingPhaseConfirm = false; state.activeTimer = null; }
+    if (at && at.type === 'pomodoro' && at.q === task.q && at.idx === task.idx) { at.pendingPhaseConfirm = false; state.activeTimer = null; }
+    try { _settleKeepGoing(); } catch (_) {}
     try { saveState(); } catch (_) {}
     try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
     try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
@@ -28088,9 +28341,13 @@ if (_editToggle) {
     try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
     try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
   }
-  function _keep(){ try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser(true); } catch (_) {} }
+  // No, I stopped → paint only up to the SCREEN-OFF moment (awayStartMs).
+  function _rewind(task, awayStartMs){ _settleRecovery(task, awayStartMs); }
+  // Yes, keep it → paint from block start through NOW, all task color.
+  function _keep(task){ _settleRecovery(task, Date.now()); }
   function _ask(task, boundaryMs, awayStartMs){
     if (_open) return; _open = true;
+    _exitGardenForDialog();   // tapped a notification while in the garden → show on HOME
     const mins = Math.max(1, Math.round((Date.now() - awayStartMs) / 60000));
     const ov = document.createElement('div');
     ov.className = 'reopen-ask-overlay';
@@ -28105,8 +28362,8 @@ if (_editToggle) {
       '</div>';
     document.body.appendChild(ov);
     const close = () => { try { ov.remove(); } catch (_) {} _open = false; };
-    ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(); close(); });
-    ov.querySelector('.reopen-ask-no').addEventListener('click', () => { _rewind(task, boundaryMs); close(); });
+    ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(task); close(); });           // paint start→now, task color
+    ov.querySelector('.reopen-ask-no').addEventListener('click', () => { _rewind(task, awayStartMs); close(); });   // paint start→screen-off only
   }
   // on-device test hook (the suspend trigger can't fire in a desktop preview):
   // call __reopenDidYouDoIt({q,idx,name}, boundaryMs, awayStartMs) to show the dialog.
@@ -30481,6 +30738,35 @@ function _fmtDurHM(ms) {
   onScroll();
 })();
 
+/* ===== My Garden: top-bar right alternation =====
+   The garden is a page with the top bar visible but no scroll, so the normal
+   scroll-driven crossfade can't run. While the garden is open AND a pomodoro is
+   running, alternate the top-bar right slot: the 4 nav buttons for 30 s, then the
+   live pomodoro ring + task name for 5 s, repeating (via body.garden-peek, which
+   mirrors the scrolled-now CSS). No timer running → just keep the buttons. */
+let _gardenPeekTimer = null;
+function _gardenPeekStop() {
+  if (_gardenPeekTimer) { clearTimeout(_gardenPeekTimer); _gardenPeekTimer = null; }
+  document.body.classList.remove('garden-peek');
+}
+function _gardenPeekStart() {
+  _gardenPeekStop();
+  const buttonsPhase = () => {
+    document.body.classList.remove('garden-peek');                  // show the 4 nav buttons
+    _gardenPeekTimer = setTimeout(() => {
+      const running = !!(state.activeTimer && state.activeTimer.type === 'pomodoro');
+      if (running) {
+        try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // keep #tn-name/#tn-pomo fresh
+        document.body.classList.add('garden-peek');                 // show pomodoro + task
+        _gardenPeekTimer = setTimeout(buttonsPhase, 5000);
+      } else {
+        _gardenPeekTimer = setTimeout(buttonsPhase, 30000);         // nothing to peek → recheck later
+      }
+    }, 30000);
+  };
+  buttonsPhase();
+}
+
 /* ===== Manual button inside the Account row ===== */
 const _acctManualBtn = document.getElementById('account-manual-btn');
 if (_acctManualBtn) _acctManualBtn.onclick = () => {
@@ -32161,6 +32447,10 @@ setInterval(() => {
                 _fillColor = bidoroTaskBg(b.q, b.taskIdx);
               }
               fill.style.background = _fillColor;
+              // (첨부1) 1px white divider above a break that follows a work segment.
+              if (seg.type === 'break' && fStart > b.startMs + 500) {
+                fill.style.borderTop = '1px solid #fff'; fill.style.boxSizing = 'border-box';
+              }
               div.appendChild(fill);
             }
           });
@@ -32193,9 +32483,13 @@ setInterval(() => {
             band.style.background = bg; div.appendChild(band);
           };
           let _coff = 0;
+          const _bWorkedW = (b.activeAt != null) || (Array.isArray(b.workedSegments) && b.workedSegments.length > 0);
           computeSpanSegments(totalH).forEach(sg => {
             if (sg.type === 'break') {
-              _addW(_coff, sg.ms, _breakColor());
+              // (첨부2) passed-and-skipped planned break → re-color to task; else sky.
+              const _bs = b.startMs + _coff, _be = _bs + sg.ms;
+              const _took = Array.isArray(b.breakSegments) && b.breakSegments.some(s => s.startMs < _be && s.endMs > _bs);
+              _addW(_coff, sg.ms, (_bWorkedW && _be <= now && !_took) ? bidoroTaskBg(b.q, b.taskIdx) : _breakColor());
             } else if (_multiW) {
               const wStart = b.startMs + _coff, wEnd = wStart + sg.ms;
               b.taskSegs.forEach(ts => {
@@ -36352,6 +36646,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       overlay.classList.remove('hidden');
       overlay.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
+      // Garden is now a PAGE that keeps the app top bar visible above it (no ✕ —
+      // close via the top bar's home/menu). Start the overlay BELOW the sticky top
+      // bar so the bar stays visible + tappable and the money/bucket sit under it.
+      document.body.classList.add('garden-page');
+      try {
+        const _tb = document.querySelector('header.topbar');
+        overlay.style.top = _tb ? Math.round(_tb.getBoundingClientRect().bottom) + 'px' : '';
+      } catch (_) { overlay.style.top = ''; }
       pourBtn.classList.add('hidden');                  // legacy single-tile icon: unused here
       // Drop any face the user had selected at home so the full-screen opens clean.
       try { if (window.bidoroBucket3DDeselect) window.bidoroBucket3DDeselect(); } catch (_) {}
@@ -36359,10 +36661,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       updateMoney();
       enterWaterField();                                // open straight onto the garden, in WATER mode
       try { renderShop(); scheduleShopHint(); } catch (_) {}   // (legacy strip — hidden, kept for safety)
-      // Wide screens (iPad / PC): open the whole catalogue by default — there's room to
-      // show every item tile at once, so the user doesn't tap category-by-category.
-      try { if (_gbWide()) { _gbOpenCat = '__all__'; _gbWideTarget = null; } } catch (_) {}
-      try { renderGardenBar(); } catch (_) {}                  // the unified bottom bar
+      _gbOpenCat = null;                                        // start with no category open (tap to open)
+      try { renderGardenBar(); } catch (_) {}                  // the category bar (bottom row / left rail)
+      try { _gardenPeekStart(); } catch (_) {}                 // #4 top-bar 4-buttons (30s) ↔ pomodoro (5s)
     }
     function close() {
       pouring = false;
@@ -36384,6 +36685,10 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       bucketSvg = null;
       overlay.classList.add('hidden');
       overlay.setAttribute('aria-hidden', 'true');
+      overlay.style.top = '';                           // restore full-screen inset for next open
+      document.body.classList.remove('garden-page');
+      try { _admStage = null; if (window.__gbAdminReset) window.__gbAdminReset(); } catch (_) {}   // close/reset admin panel
+      try { _gardenPeekStop(); } catch (_) {}           // stop the top-bar buttons↔pomodoro alternation
       document.body.style.overflow = '';
       fxEl.innerHTML = '';
     }
@@ -36708,7 +37013,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       }
       const names = d.unlock.map(n => (typeof _gName === 'function') ? _gName(n) : n).join(' + ');   // item names → tr()
       switch (L) {
-        case 'ko': return names + '을(를) 가지면 열려요.';
+        case 'ko': return names + _josa(names) + ' 구매하면 열려요.';
         case 'zh': return '拥有' + names + '后解锁。';
         case 'ja': return names + 'を持っていると解放されます。';
         case 'es': return 'Se desbloquea al tener ' + names + '.';
@@ -36954,6 +37259,24 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               nb.addEventListener('click', tell); nb.addEventListener('touchend', tell, { passive: false });
               fieldEl.appendChild(nb);
             }
+            // ADMIN (temporary): in stage-image mode, tap a planted item to step its image
+            // forward / back. A top hit layer so it wins over the water/sell taps.
+            if (_admStage) {
+              const ah = document.createElement('div'); ah.className = 'wg-hit';
+              ah.style.left = (p.x - DIAMOND_W / 2) + 'px'; ah.style.top = (p.y - DIAMOND_H / 2) + 'px';
+              ah.style.width = DIAMOND_W + 'px'; ah.style.height = DIAMOND_H + 'px';
+              ah.style.zIndex = String(z + 20);
+              const _ar = r, _ac = c, _dir = _admStage;
+              const chg = (e) => {
+                e.preventDefault(); e.stopPropagation(); if (panMoved) return;
+                const s = seedAt(_ar, _ac); if (!s) return;
+                const maxS = seedMaxStage(s); const cur = Math.max(1, Math.min(maxS, s.stage || 1));
+                s.stage = (_dir === 'next') ? Math.min(maxS, cur + 1) : Math.max(1, cur - 1);
+                delete s._newStage; try { persistSeeds(); } catch (_) {} renderField();
+              };
+              ah.addEventListener('click', chg); ah.addEventListener('touchend', chg, { passive: false });
+              fieldEl.appendChild(ah);
+            }
           }
           if (waterMode && hasWater() && planted && !plantFull) {   // blinking blue water-drop → tap to water. ONLY on a PLANTED seed (you water seeds, not bare dirt — addWaterToClover no-ops without a seed). HIDDEN when the bucket is empty, OR the plant's gauge is full (max stage / next image already earned — no more watering needed)
             const wd = document.createElement('button'); wd.className = 'wg-wdrop'; wd.type = 'button';
@@ -36998,9 +37321,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
             const capW = Math.round(DIAMOND_W * 0.16);
             cap.style.left = p.x + 'px'; cap.style.top = (p.y - DIAMOND_H * 0.13) + 'px';   // above the small seed
             cap.style.minWidth = capW + 'px'; cap.style.height = Math.round(capW * 0.56) + 'px';
-            cap.style.fontSize = Math.round(capW * 0.32) + 'px'; cap.style.padding = '0';
+            cap.style.fontSize = Math.round(capW * 0.32) + 'px';
             cap.style.zIndex = String(z + 5);
-            cap.textContent = _shopPrice(itemPrice(selectedItem()));
+            cap.textContent = _shopPriceFull(itemPrice(selectedItem()));
             cap.addEventListener('touchend', plant, { passive: false });
             cap.addEventListener('click', plant);
             fieldEl.appendChild(cap);
@@ -37033,9 +37356,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               }
               cap.style.left = p.x + 'px'; cap.style.top = capY + 'px';
               cap.style.minWidth = capW + 'px'; cap.style.height = Math.round(capW * 0.56) + 'px';
-              cap.style.fontSize = Math.round(capW * 0.30) + 'px'; cap.style.padding = '0';
+              cap.style.fontSize = Math.round(capW * 0.30) + 'px';
               cap.style.zIndex = String(z + 9);
-              cap.textContent = _shopPrice(_val);
+              cap.textContent = _shopPriceFull(_val);
               cap.addEventListener('touchend', sell, { passive: false });
               cap.addEventListener('click', sell);
               fieldEl.appendChild(cap);
@@ -37055,9 +37378,9 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
           const capW = Math.round(DIAMOND_W * 0.13);
           cap.style.left = p.x + 'px'; cap.style.top = p.y + 'px';
           cap.style.minWidth = capW + 'px'; cap.style.height = Math.round(capW * 0.56) + 'px';
-          cap.style.fontSize = Math.round(capW * 0.30) + 'px'; cap.style.padding = '0';
+          cap.style.fontSize = Math.round(capW * 0.30) + 'px';
           cap.style.zIndex = String(z + 1);
-          cap.textContent = _shopPrice(tileTypePrice());
+          cap.textContent = _shopPriceFull(tileTypePrice());
           const buy = (e) => {
             e.preventDefault(); e.stopPropagation(); if (panMoved) return;
             const _tt = selectedTileType(), _pr = TILE_TYPES[_tt].price;
@@ -37326,12 +37649,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const gbMent    = document.getElementById('gb-ment');
     const gbPop     = document.getElementById('gb-pop');
     const gbNow     = document.getElementById('gb-now');
-    let _gbOpenCat  = null;            // open category key ('Tile' | face name | '__all__' on wide) — SINGLE open
-    let _gbWideTarget = null;          // (wide) which section the last-tapped category should scroll to
+    let _gbOpenCat  = null;            // open category key ('Tile' | face name) — SINGLE open
     let _gbMentTO   = 0;
-    // Wide screens (iPad / PC) show the WHOLE catalogue at once instead of one category.
-    function _gbWide(){ try { return !!(window.matchMedia && window.matchMedia('(min-width:701px)').matches); } catch(_) { return false; } }
-    function _gbCatSel(key){ return _gbOpenCat === key || (_gbOpenCat === '__all__' && _gbWideTarget === key); }
+    let _admStage   = null;            // ADMIN (temporary): 'next' | 'prev' — tap a planted item to step its image
+    // LANDSCAPE (PC / phone-landscape / iPad-landscape): the category bar becomes a VERTICAL
+    // left-edge rail and the open category's items show as a vertical sub-toolbar to its right.
+    // PORTRAIT (incl. iPad portrait): the original bottom category bar + a 1-row popup above.
+    function _gbWide(){ try { return !!(window.matchMedia && window.matchMedia('(orientation: landscape)').matches); } catch(_) { return false; } }
+    function _gbCatSel(key){ return _gbOpenCat === key; }
     // Category icons (filled silhouettes, tinted to the bucket-face colour).
     const CAT_ICON = {
       Tile:  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l9 6-9 6-9-6z" fill="currentColor"/></svg>',
@@ -37353,12 +37678,23 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       gbMent.textContent = text;
       gbMent.classList.remove('hidden'); gbMent.setAttribute('aria-hidden','false');
       gbMent.style.bottom = 'auto'; gbMent.style.left = '0px'; gbMent.style.top = '0px';   // measure
-      const bw = gbMent.offsetWidth || 160, bh = gbMent.offsetHeight || 36, vw = window.innerWidth;
-      const cx = rect.left + rect.width / 2;
-      const left = Math.max(6, Math.min(vw - bw - 6, cx - bw / 2));
-      gbMent.style.left = Math.round(left) + 'px';
-      gbMent.style.top  = Math.round(rect.top - bh - 8) + 'px';
-      gbMent.style.setProperty('--gm-tail', Math.round(cx - left) + 'px');
+      const bw = gbMent.offsetWidth || 160, bh = gbMent.offsetHeight || 36, vw = window.innerWidth, vh = window.innerHeight;
+      if (_gbWide()) {
+        // LANDSCAPE: the item sits in the left-edge sub-column, so float the tooltip to its
+        // RIGHT (into open garden space) — never over the rail or the column. Tail hidden.
+        gbMent.classList.add('gb-ment-side');
+        const left = Math.min(vw - bw - 6, rect.right + 10);
+        const top  = Math.max(6, Math.min(vh - bh - 6, rect.top + rect.height / 2 - bh / 2));
+        gbMent.style.left = Math.round(left) + 'px';
+        gbMent.style.top  = Math.round(top) + 'px';
+      } else {
+        gbMent.classList.remove('gb-ment-side');
+        const cx = rect.left + rect.width / 2;
+        const left = Math.max(6, Math.min(vw - bw - 6, cx - bw / 2));
+        gbMent.style.left = Math.round(left) + 'px';
+        gbMent.style.top  = Math.round(rect.top - bh - 8) + 'px';
+        gbMent.style.setProperty('--gm-tail', Math.round(cx - left) + 'px');
+      }
       _gbMentTO = setTimeout(hideGbMent, 4200);
     }
     // "now selected" indicator — a small pill floating just ABOVE the trowel (the
@@ -37370,7 +37706,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // same dictionary the shop uses) so the hint reads e.g. "심는 중 · 작은 고요함".
       if (sellMode) t = tr('Tap a plant or tile to sell');
       else if (buildMode) t = tr((TILE_TYPES[selectedTileType()] || {}).label || '') + ' ' + tr('tile');   // just the tile name (no "Placing ·" prefix), all locales
-      else if (plantMode) t = tr(selectedItem());   // just the item name (no "Planting ·" prefix), all locales
+      else if (plantMode) t = '';   // (My Garden #3) item-tap shows the black "Planting X" tooltip above the tile instead of this pill
       gbNow.textContent = t; gbNow.classList.toggle('hidden', !t); gbNow.setAttribute('aria-hidden', t ? 'false' : 'true');
       if (t) _gbPositionNow();
     }
@@ -37392,16 +37728,32 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       buildMode = true; plantMode = false; sellMode = false; waterMode = false;
       renderField(); renderGardenBar();
     }
+    // "Planting <name>" label for the black tile tooltip (localized).
+    function _gbPlantingLabel(id){
+      const nm = (typeof _gName === 'function') ? _gName(id) : id;
+      switch ((typeof bidoroLocale === 'function') ? bidoroLocale() : 'en') {
+        case 'ko': return nm + ' 심는 중';
+        case 'zh': return '种植 ' + nm;
+        case 'ja': return nm + 'を植え中';
+        case 'es': return 'Plantando ' + nm;
+        case 'fr': return 'Plantation de ' + nm;
+        default:   return 'Planting ' + nm;
+      }
+    }
     function gbSelectItem(id, anchorEl){
       const d = SHOP_ITEMS[id]; if (!d) return;
       const rect = anchorEl ? anchorEl.getBoundingClientRect() : null;
-      if (!isItemUnlocked(id)) { showGbMent('🔒 ' + unlockText(id), rect); return; }   // locked → condition, don't select
+      // LOCKED → black tooltip above the tile with the purchase condition; don't select.
+      if (!isItemUnlocked(id)) { showGbMent('🔒 ' + unlockText(id), rect); return; }
       hideGbMent();
       state.selectedShopItem = id; try { saveState(); } catch(_){}
       if (!buildOn) enterWaterField();
       plantMode = true; buildMode = false; sellMode = false; waterMode = false;
       renderField(); renderGardenBar();
-      showGbMent(((typeof _gName === 'function') ? _gName(id) : id), rect);                  // the item NAME, floating just above the tapped tile
+      // (My Garden #3) concern → top-bar text (7s, then the note returns); the black
+      // "Planting <name>" tooltip floats just above the tapped tile.
+      try { bidoroShowGardenConcern((typeof tr === 'function') ? tr(itemConcern(id)) : itemConcern(id)); } catch (_) {}
+      showGbMent(_gbPlantingLabel(id), rect);
     }
     function gbToggleSell(){
       hideGbMent(); _gbOpenCat = null;
@@ -37446,54 +37798,36 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     }
     function renderGbPop(){
       if (!gbPop) return;
-      const wide = _gbWide();
-      // A leftover '__all__' (e.g. resized wide→narrow) → fall back to a real section.
-      if (!wide && _gbOpenCat === '__all__') _gbOpenCat = _gbWideTarget || FACE_ORDER[0];
-      if (!_gbOpenCat) { gbPop.classList.add('hidden'); gbPop.classList.remove('gb-pop-wide'); gbPop.innerHTML = ''; gbPop.setAttribute('aria-hidden','true'); return; }
+      if (_gbOpenCat === '__all__') _gbOpenCat = FACE_ORDER[0];   // legacy guard
+      const land = _gbWide();   // landscape = left-rail mode
+      if (!_gbOpenCat) { gbPop.classList.add('hidden'); gbPop.classList.remove('gb-pop-land'); gbPop.innerHTML = ''; gbPop.setAttribute('aria-hidden','true'); gbPop.style.removeProperty('top'); gbPop.style.removeProperty('left'); return; }
       gbPop.classList.remove('hidden'); gbPop.setAttribute('aria-hidden','false'); gbPop.innerHTML = '';
-      if (wide) {
-        // WIDE: one panel, every section (Tile + each face) under a label, wrapping.
-        gbPop.classList.add('gb-pop-wide');
-        const panel = document.createElement('div'); panel.className = 'gb-pop-panel';
-        const addSec = (key, label, color) => {
-          const sec = document.createElement('div'); sec.className = 'gb-pop-sec'; sec.dataset.sec = key;
-          const h = document.createElement('div'); h.className = 'gb-pop-sec-h';
-          if (color) h.style.setProperty('--sec-color', color);
-          h.textContent = label; sec.appendChild(h);
-          const r = document.createElement('div'); r.className = 'gb-pop-sec-row';
-          _gbTileBtns(key, (el) => r.appendChild(el));
-          sec.appendChild(r); panel.appendChild(sec);
-        };
-        addSec('Tile', tr('Tile'), '#B08968');
-        FACE_ORDER.forEach(face => addSec(face, catLabel(face), faceColor(face)));
-        gbPop.appendChild(panel);
-        const br = gardenBar.getBoundingClientRect();
-        gbPop.style.bottom = Math.round(window.innerHeight - br.top + 6) + 'px';
+      gbPop.classList.toggle('gb-pop-land', land);
+      // The open category's item tiles (same set in both modes; layout differs by CSS).
+      const row = document.createElement('div'); row.className = 'gb-pop-row';
+      _gbTileBtns(_gbOpenCat, (el) => row.appendChild(el));
+      if (land) {
+        // LANDSCAPE: a vertical sub-toolbar to the RIGHT of the left rail, vertically
+        // aligned to the open category. position:fixed (see CSS) → viewport coords.
+        gbPop.appendChild(row);
+        gbPop.style.right = 'auto'; gbPop.style.bottom = 'auto';
+        const railR = gardenBar.getBoundingClientRect();
+        gbPop.style.left = Math.round(railR.right + 8) + 'px';
+        const catEl = gardenBar.querySelector('.gb-cat.sel');
+        const wantTop = catEl ? catEl.getBoundingClientRect().top : (railR.top + 8);
+        gbPop.style.top = Math.round(wantTop) + 'px';
+        // clamp on-screen once measured
+        requestAnimationFrame(() => {
+          try { const ph = gbPop.offsetHeight || 200; const maxTop = window.innerHeight - ph - 10;
+            gbPop.style.top = Math.round(Math.max(54, Math.min(wantTop, maxTop))) + 'px'; } catch (_) {}
+        });
         gbPop.style.removeProperty('--pop-tail');
-        if (_gbWideTarget) {
-          let s = null; panel.querySelectorAll('.gb-pop-sec').forEach(el => { if (el.dataset.sec === _gbWideTarget) s = el; });
-          if (s) try { s.scrollIntoView({ block: 'nearest' }); } catch (_) {}
-        }
         return;
       }
-      gbPop.classList.remove('gb-pop-wide');
-      const row = document.createElement('div'); row.className = 'gb-pop-row';
-      if (_gbOpenCat === 'Tile') {
-        ['soil','pasture','estate'].forEach(tt => row.appendChild(_gbPopItem({
-          img: TILE_TYPES[tt].img, price: TILE_TYPES[tt].price, label: TILE_TYPES[tt].label, locked: false,
-          sel: (buildMode && selectedTileType() === tt),
-          onTap: () => { gbSelectTile(tt); renderGbPop(); }
-        })));
-      } else {
-        faceItems(_gbOpenCat).forEach(id => row.appendChild(_gbPopItem({
-          img: itemImg(id, 1), price: SHOP_ITEMS[id].price, label: id, locked: !isItemUnlocked(id),
-          sel: (plantMode && selectedItem() === id),
-          onTap: (el) => { gbSelectItem(id, el); renderGbPop(); }
-        })));
-      }
+      // PORTRAIT: horizontal 1-row popup just above the bottom bar + scroll arrows.
+      gbPop.style.removeProperty('top'); gbPop.style.left = ''; gbPop.style.right = '';
       const arr = (cls, dir) => { const a = document.createElement('button'); a.type='button'; a.className='gb-pop-arr '+cls; a.textContent = dir; a.addEventListener('click', e=>{ e.stopPropagation(); row.scrollBy({ left: dir==='‹'?-row.clientWidth*0.7:row.clientWidth*0.7, behavior:'smooth' }); }); return a; };
       gbPop.appendChild(arr('gb-pop-arr-l','‹')); gbPop.appendChild(row); gbPop.appendChild(arr('gb-pop-arr-r','›'));
-      // sit just above the bar; tail points at the open category tile
       const br = gardenBar.getBoundingClientRect();
       gbPop.style.bottom = Math.round(window.innerHeight - br.top + 6) + 'px';
       const catEl = gardenBar.querySelector('.gb-cat.sel');
@@ -37510,13 +37844,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       return c;
     }
     function _gbToggleCat(key){
-      if (_gbWide()) {
-        // Wide: the whole catalogue is one panel; a category tap just scrolls to that
-        // section (and re-tapping the same one closes the panel).
-        if (_gbOpenCat === '__all__' && _gbWideTarget === key) { _gbOpenCat = null; _gbWideTarget = null; }
-        else { _gbOpenCat = '__all__'; _gbWideTarget = key; }
-        hideGbMent(); renderGardenBar(); return;
-      }
       _gbOpenCat = (_gbOpenCat === key) ? null : key; hideGbMent(); renderGardenBar();
     }
     function renderGardenBar(){
@@ -37529,6 +37856,30 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     }
     function _gbCloseAll(){ hideGbMent(); if (_gbOpenCat){ _gbOpenCat = null; renderGardenBar(); } }
     if (vpEl) vpEl.addEventListener('pointerdown', _gbCloseAll);
+
+    /* ===== ADMIN buttons (TEMPORARY — to be removed) =====
+       Tap the money to toggle a small panel: fill water, +$10000, and two image-step
+       buttons (arm one, then tap a planted item to step its image next / previous). */
+    (function setupGardenAdmin(){
+      const moneyEl = document.getElementById('water-money');
+      const ovEl    = document.getElementById('water-overlay');
+      if (!moneyEl || !ovEl || document.getElementById('gb-admin')) return;
+      const panel = document.createElement('div'); panel.id = 'gb-admin'; panel.className = 'gb-admin hidden';
+      const mk = (label, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'gb-admin-btn'; b.textContent = label;
+        const act = (e) => { e.preventDefault(); e.stopPropagation(); on(b); };
+        b.addEventListener('click', act); b.addEventListener('touchend', act, { passive:false }); return b; };
+      const bNext = mk('이미지 다음 ▶', () => { _admStage = (_admStage === 'next') ? null : 'next'; syncAdm(); });
+      const bPrev = mk('◀ 이미지 이전', () => { _admStage = (_admStage === 'prev') ? null : 'prev'; syncAdm(); });
+      function syncAdm(){ bNext.classList.toggle('on', _admStage === 'next'); bPrev.classList.toggle('on', _admStage === 'prev'); try { renderField(); } catch (_) {} }
+      panel.appendChild(mk('💧 물 채우기', () => { try { if (window.bidoroBucketAddWater) window.bidoroBucketAddWater(1); } catch (_) {} try { updatePourBtn(); } catch (_) {} }));
+      panel.appendChild(mk('+ $10000', () => { try { applyMoney(10000, 'Admin +$10000', 'admin'); } catch (_) {} try { updateMoney(); } catch (_) {} }));
+      panel.appendChild(bPrev); panel.appendChild(bNext);
+      ovEl.appendChild(panel);
+      moneyEl.style.pointerEvents = 'auto'; moneyEl.style.cursor = 'pointer'; moneyEl.setAttribute('role','button');
+      const toggle = (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.toggle('hidden'); };
+      moneyEl.addEventListener('click', toggle); moneyEl.addEventListener('touchend', toggle, { passive:false });
+      window.__gbAdminReset = () => { _admStage = null; try { bNext.classList.remove('on'); bPrev.classList.remove('on'); } catch (_) {} panel.classList.add('hidden'); };
+    })();
 
     sproutBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); });
     // Top-right hamburger (was ✕): close the garden → home, then open the SAME
