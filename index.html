@@ -8219,6 +8219,12 @@
   .gcal-conn-label { font-size: .8rem; font-weight: 700; color: #16a34a; }
   .gcal-disconnect-btn { padding: 6px 12px; border-radius: 9px; border: 1px solid var(--card-border, #e5e7eb); background: var(--card-bg, #fff); color: #dc2626; font-weight: 700; font-size: .8rem; cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
   .gcal-disconnect-btn:active { transform: scale(.97); }
+  /* (user) "Delete data that came from this calendar" — one trash button per provider, under the
+     sync buttons. Removes only the Bidoro copies (source account untouched). */
+  .cal-del-row { display: flex; gap: 8px; margin-top: 8px; }
+  .cal-del-btn { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 8px; border-radius: 9px; border: 1px solid var(--card-border, #e5e7eb); background: var(--surface-2, #f3f4f6); color: var(--text-muted, #6b7280); font-weight: 700; font-size: .78rem; cursor: pointer; -webkit-tap-highlight-color: transparent; white-space: nowrap; }
+  .cal-del-btn:active { transform: scale(.97); }
+  .cal-del-btn svg { flex: 0 0 auto; }
   /* Calendar + Garden are iPhone-app features for now → hidden on plain web / iPad. */
   /* Calendar + My Garden now show on web too (mirror the iOS app menu). */
 </style>
@@ -8466,6 +8472,10 @@
         <div class="cal-sync-btns">
           <button class="cal-sync-btn" type="button" data-prov="apple">Apple Calendar</button>
           <button class="cal-sync-btn" type="button" data-prov="google">Google Calendar</button>
+        </div>
+        <div class="cal-del-row">
+          <button class="cal-del-btn" type="button" data-prov="apple"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg><span>Apple</span></button>
+          <button class="cal-del-btn" type="button" data-prov="google"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg><span>Google</span></button>
         </div>
         <div class="gcal-conn-row" data-prov="google">
           <span class="gcal-conn-label">✓ Google Calendar connected</span>
@@ -12807,6 +12817,7 @@ function _gcalRunSync() {
       const have = new Set(state.events.map(e => e.gcalId).filter(Boolean));
       (j.pulled || []).forEach(p => {
         if (!p.gcalId) return;
+        if (Array.isArray(state.calDeleted) && state.calDeleted.indexOf(p.gcalId) >= 0) return;   // user-deleted → don't re-pull
         // All-day Google events arrive as date strings → local-midnight ms + allDay flag.
         const isAll = !!p.allDay;
         const sMs = isAll ? _ymdToLocalMidnight(p.startDate) : p.startMs;
@@ -12955,6 +12966,7 @@ function _appleCalRunSync() {
       const have = new Set(state.events.map(e => e.ekId).filter(Boolean));
       pulled.forEach(p => {
         if (!p.ekId) return;
+        if (Array.isArray(state.calDeleted) && state.calDeleted.indexOf(p.ekId) >= 0) return;   // user-deleted → don't re-pull
         const isAll = !!p.allDay;
         if (have.has(p.ekId)) {
           const ex = state.events.find(e => e.ekId === p.ekId);
@@ -12998,6 +13010,50 @@ function _appleCalDisconnect() {
   setTimeout(() => stats.forEach(s => s.classList.remove('show')), 2600);
 }
 window._appleCalDisconnect = _appleCalDisconnect;
+/* (user) Delete the events Bidoro pulled from a provider — LOCAL ONLY. The source Google/Apple
+   account keeps everything. Tombstones the ids in state.calDeleted so a later sync won't re-pull
+   the same ones (the merge skips tombstoned ids). */
+function _clearProviderEvents(prov) {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  const isApple = (prov === 'apple');
+  const idKey = isApple ? 'ekId' : 'gcalId';
+  const provName = isApple ? 'Apple Calendar' : 'Google Calendar';
+  const acct = isApple ? 'Apple' : 'Google';
+  const count = (state.events || []).filter(e => e && e[idKey]).length;
+  if (!count) {
+    const stats = document.querySelectorAll('.cal-sync-status');
+    stats.forEach(s => { s.textContent = T({ ko: provName + '에서 온 일정이 없어요', en: 'No ' + provName + ' events here', ja: provName + 'の予定はありません', zh: '没有来自' + provName + '的日程', es: 'No hay eventos de ' + provName, fr: 'Aucun événement ' + provName }); s.classList.add('show'); });
+    setTimeout(() => stats.forEach(s => s.classList.remove('show')), 2400);
+    return;
+  }
+  const title = T({ ko: provName + ' 데이터를 삭제할까요?', en: 'Delete ' + provName + ' data?', ja: provName + 'のデータを削除しますか？', zh: '删除来自' + provName + '的数据？', es: '¿Eliminar los datos de ' + provName + '?', fr: 'Supprimer les données ' + provName + ' ?' });
+  const msg = T({
+    ko: 'Bidoro에서 ' + provName + '로부터 가져온 일정 ' + count + '개를 삭제합니다.\n' + acct + ' 계정의 일정은 그대로 유지돼요.',
+    en: 'This removes the ' + count + ' event(s) Bidoro pulled from ' + provName + '.\nYour ' + acct + ' account events stay exactly as they are.',
+    ja: 'Bidoroが' + provName + 'から取り込んだ' + count + '件の予定を削除します。\n' + acct + 'アカウントの予定はそのまま残ります。',
+    zh: '将删除 Bidoro 从' + provName + '同步的 ' + count + ' 个日程。\n你的' + acct + '账户日程不受影响。',
+    es: 'Elimina los ' + count + ' eventos que Bidoro importó de ' + provName + '.\nLos eventos de tu cuenta de ' + acct + ' no se tocan.',
+    fr: 'Supprime les ' + count + ' événements importés de ' + provName + '.\nLes événements de ton compte ' + acct + ' restent intacts.'
+  });
+  const doDelete = () => {
+    if (!Array.isArray(state.calDeleted)) state.calDeleted = [];
+    (state.events || []).forEach(e => { if (e && e[idKey] && state.calDeleted.indexOf(e[idKey]) < 0) state.calDeleted.push(e[idKey]); });
+    state.events = (state.events || []).filter(e => !(e && e[idKey]));
+    try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+    try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+    const stats = document.querySelectorAll('.cal-sync-status');
+    stats.forEach(s => { s.textContent = T({ ko: '삭제했어요 (' + count + ')', en: 'Deleted (' + count + ')', ja: '削除しました (' + count + ')', zh: '已删除 (' + count + ')', es: 'Eliminado (' + count + ')', fr: 'Supprimé (' + count + ')' }); s.classList.add('show'); });
+    setTimeout(() => stats.forEach(s => s.classList.remove('show')), 2600);
+  };
+  const delLbl = T({ ko: '삭제', en: 'Delete', ja: '削除', zh: '删除', es: 'Eliminar', fr: 'Supprimer' });
+  const cancelLbl = T({ ko: '취소', en: 'Cancel', ja: 'キャンセル', zh: '取消', es: 'Cancelar', fr: 'Annuler' });
+  if (typeof customConfirm === 'function') {
+    customConfirm(title, msg, { yesLabel: delLbl, noLabel: cancelLbl, yesColor: { bg: '#dc2626', fg: '#fff' } }).then(ok => { if (ok && ok !== 'remote') doDelete(); });
+  } else if (window.confirm(title + '\n' + msg)) { doDelete(); }
+}
+window._clearProviderEvents = _clearProviderEvents;
 let _appleLastSync = 0;
 function _appleCalAutoSync(force) {
   try {
@@ -13161,6 +13217,11 @@ window.bidoroCalSync = bidoroCalSync;
     const row = b.closest('.gcal-conn-row');
     const prov = row ? (row.getAttribute('data-prov') || 'google') : 'google';
     if (prov === 'apple') _appleCalDisconnect(); else _gcalDisconnect();
+  }));
+  // (user) Per-provider "delete data from this calendar" trash buttons.
+  document.querySelectorAll('.cal-del-btn').forEach((b) => b.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    _clearProviderEvents(b.dataset.prov);
   }));
   try { _applyGcalConnUI(); } catch (_) {}
   _applyCalSyncVis();
