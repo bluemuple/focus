@@ -484,6 +484,11 @@
           apikey:         ANON,
           Authorization:  'Bearer ' + ANON,
           'Content-Type': blob.type || 'application/octet-stream',
+          // Egress saver: object paths are unique (timestamp+random) so the content at a URL
+          // never changes → cache it for a year. Repeat downloads then become CDN cache HITS
+          // (billed as the separate, near-empty "Cached Egress" pool) instead of counting
+          // against the 5 GB uncached egress quota. Default was only ~1 hour.
+          'Cache-Control': 'public, max-age=31536000, immutable',
           'x-upsert':     'true',
         },
         body: blob,
