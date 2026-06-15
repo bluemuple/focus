@@ -58,11 +58,22 @@ async function getAccessToken(sb: any, uid: string): Promise<string | null> {
   return t.access_token;
 }
 
-const gEventBody = (e: any) => ({
-  summary: String(e.name || "(no title)"),
-  start: { dateTime: new Date(Number(e.startMs)).toISOString() },
-  end:   { dateTime: new Date(Number(e.endMs)).toISOString() },
-});
+const gEventBody = (e: any) => {
+  // All-day events use date-only fields (end.date is EXCLUSIVE). The app sends startDate/endDate
+  // (local YYYY-MM-DD). Timed events keep dateTime.
+  if (e.allDay && e.startDate) {
+    return {
+      summary: String(e.name || "(no title)"),
+      start: { date: String(e.startDate) },
+      end:   { date: String(e.endDate || e.startDate) },
+    };
+  }
+  return {
+    summary: String(e.name || "(no title)"),
+    start: { dateTime: new Date(Number(e.startMs)).toISOString() },
+    end:   { dateTime: new Date(Number(e.endMs)).toISOString() },
+  };
+};
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -81,7 +92,8 @@ Deno.serve(async (req) => {
     // ---- PUSH ----
     const mapped: Record<string, string> = {};
     for (const e of events) {
-      if (!e || !e.startMs || !e.endMs) continue;
+      if (!e) continue;
+      if (!(e.allDay && e.startDate) && (!e.startMs || !e.endMs)) continue;   // timed needs ms; all-day needs startDate
       try {
         if (e.gcalId) {
           await fetch(apiBase + "/" + encodeURIComponent(e.gcalId), {
@@ -106,8 +118,15 @@ Deno.serve(async (req) => {
       const lj = await lr.json();
       for (const it of (lj.items || [])) {
         if (it.status === "cancelled") continue;
-        const s = it.start && (it.start.dateTime || (it.start.date ? it.start.date + "T00:00:00" : null));
-        const en = it.end && (it.end.dateTime || (it.end.date ? it.end.date + "T00:00:00" : null));
+        // All-day events carry start.date / end.date (no dateTime). Return them as date strings +
+        // an allDay flag so the app can place them at LOCAL midnight (Edge runtime is UTC).
+        if (it.start && it.start.date && !it.start.dateTime) {
+          pulled.push({ gcalId: it.id, name: it.summary || "(no title)", allDay: true,
+            startDate: it.start.date, endDate: (it.end && it.end.date) || it.start.date });
+          continue;
+        }
+        const s = it.start && it.start.dateTime;
+        const en = it.end && it.end.dateTime;
         if (!s || !en) continue;
         pulled.push({ gcalId: it.id, name: it.summary || "(no title)", startMs: Date.parse(s), endMs: Date.parse(en) });
       }

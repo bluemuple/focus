@@ -7527,6 +7527,12 @@
   .time-event .time-event-label { font-size: .72rem; font-weight: 700; color: #6b7280; padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   :root[data-theme="solarized"] .time-event { background: #0E4A57; }
   :root[data-theme="solarized"] .time-event .time-event-label { color: #93A1A1; }
+  /* (user) All-day events (no time) sit at the very TOP of the gauge as a plain bullet — NO colour
+     band (not even gray), just a dot + label. */
+  /* left:45px matches .time-block so the bullet lines up with the block column (not the hour labels). */
+  .time-event-allday { position: absolute; left: 45px; right: 11px; display: flex; align-items: center; gap: 5px; height: 17px; z-index: 6; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .time-event-allday .tea-dot { color: var(--text-muted, #6b7280); font-size: 1rem; line-height: 1; flex: 0 0 auto; }
+  .time-event-allday .tea-lbl { font-size: .72rem; font-weight: 700; color: var(--text-main, #374151); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .time-block {
     /* Shrunk a further 8 px centered (4 px each side) — total inset is now
        45 px left / 11 px right. 70 % opaque background lets the gauge grid
@@ -8196,6 +8202,18 @@
   .cal-sync-btn.is-syncing { opacity: .6; pointer-events: none; }
   .cal-sync-status { min-height: 0; margin-top: 8px; font-size: .8rem; font-weight: 700; color: var(--accent, #2563eb); text-align: center; opacity: 0; transition: opacity .2s ease; }
   .cal-sync-status.show { opacity: 1; }
+  /* (user) Month-view sync section, MINIMIZED once a calendar is connected: hide the buttons/title/✕
+     and show just a gray "<provider> Calendar synced / Syncing…" line. Management stays in Settings. */
+  .cal-sync-collapsed { display: none; font-size: .8rem; font-weight: 700; color: var(--text-muted, #6b7280); text-align: center; }
+  .cal-sync-sec.cal-sync-min { margin: 10px 0 4px; padding: 8px 12px; }
+  .cal-sync-sec.cal-sync-min .cal-sync-title,
+  .cal-sync-sec.cal-sync-min .cal-sync-btns,
+  .cal-sync-sec.cal-sync-min .cal-sync-x,
+  .cal-sync-sec.cal-sync-min .gcal-conn-row,
+  .cal-sync-sec.cal-sync-min .cal-sync-status { display: none !important; }
+  .cal-sync-sec.cal-sync-min .cal-sync-collapsed { display: block; }
+  /* allow the dismiss-hint toast to wrap to 2 lines (the default toast is single-line nowrap). */
+  .undo-toast.toast-wrap { white-space: normal; text-align: center; line-height: 1.35; max-width: 88vw; }
   /* (user) Google-connected state row: shows "✓ connected" + a Disconnect button, only when linked. */
   .gcal-conn-row { display: none; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
   .gcal-conn-label { font-size: .8rem; font-weight: 700; color: #16a34a; }
@@ -8449,8 +8467,12 @@
           <button class="cal-sync-btn" type="button" data-prov="apple">Apple Calendar</button>
           <button class="cal-sync-btn" type="button" data-prov="google">Google Calendar</button>
         </div>
-        <div class="gcal-conn-row">
+        <div class="gcal-conn-row" data-prov="google">
           <span class="gcal-conn-label">✓ Google Calendar connected</span>
+          <button class="gcal-disconnect-btn" type="button">Disconnect</button>
+        </div>
+        <div class="gcal-conn-row" data-prov="apple">
+          <span class="gcal-conn-label">✓ Apple Calendar connected</span>
           <button class="gcal-disconnect-btn" type="button">Disconnect</button>
         </div>
         <div class="cal-sync-status" aria-live="polite"></div>
@@ -9159,10 +9181,15 @@
             <button class="cal-sync-btn" id="cal-sync-apple"  type="button" data-prov="apple">Apple Calendar</button>
             <button class="cal-sync-btn" id="cal-sync-google" type="button" data-prov="google">Google Calendar</button>
           </div>
-          <div class="gcal-conn-row">
+          <div class="gcal-conn-row" data-prov="google">
             <span class="gcal-conn-label">✓ Google Calendar connected</span>
             <button class="gcal-disconnect-btn" type="button">Disconnect</button>
           </div>
+          <div class="gcal-conn-row" data-prov="apple">
+            <span class="gcal-conn-label">✓ Apple Calendar connected</span>
+            <button class="gcal-disconnect-btn" type="button">Disconnect</button>
+          </div>
+          <div class="cal-sync-collapsed"><span class="cal-sync-collapsed-txt">Google Calendar synced</span></div>
           <div class="cal-sync-status" id="cal-sync-status" aria-live="polite"></div>
         </div>
       </div>
@@ -9542,6 +9569,7 @@
     <h3 id="event-modal-title" style="margin-top:0;">Add event</h3>
     <div class="time-edit-inputs">
       <label><span>Name</span><input type="text" id="event-name" placeholder="Doctor appointment, …" maxlength="120"></label>
+      <label class="event-allday-row" style="display:flex;align-items:center;gap:8px;"><span>All day</span><input type="checkbox" id="event-allday" style="width:auto;flex:0 0 auto;transform:scale(1.2);"></label>
       <label><span>Start</span><input type="datetime-local" id="event-start"></label>
       <label><span>End</span><input type="datetime-local" id="event-end"></label>
     </div>
@@ -10399,6 +10427,11 @@ function migrateState() {
     }));
   }
   if (!Array.isArray(state.scheduledBlocks)) state.scheduledBlocks = [];
+  // (user) Shuffle is now a lightweight block-REORDER (no 25-min cutting, no "Undo" toggle — the
+  // Edit-panel Undo covers it). Retire the old "shuffle owns the gauge" mode so the normal rechunk
+  // layout always runs, and clear any stale snapshot from the previous toggle model.
+  state.shuffled = false; state._preShuffleBlocks = null;
+  if (state.arrangeMode !== 'prioritize' && state.arrangeMode !== 'shuffle') state.arrangeMode = 'shuffle';
   if (!Array.isArray(state.versions)) state.versions = [];
   if (state.lastSnapshotDate == null) state.lastSnapshotDate = '';
   if (state.last3amResetDate == null) state.last3amResetDate = '';
@@ -11768,7 +11801,7 @@ function showPage(name) {
   saveState();
   if (name === 'focus') { initFocusPage(); try { if (window.bidoroBucket3DScheduleHint) window.bidoroBucket3DScheduleHint(); } catch (_) {} }
   if (name === 'notes'    && typeof renderNotes   === 'function') { try { renderNotes(); }   catch(_){} }
-  if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){} try { if (typeof _gcalAutoSync === 'function') _gcalAutoSync(); } catch(_){} }
+  if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){} try { if (typeof _gcalAutoSync === 'function') _gcalAutoSync(); } catch(_){} try { if (typeof _appleCalAutoSync === 'function') _appleCalAutoSync(); } catch(_){} }
   if (name === 'settings') {
     try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){}
     try { if (typeof _syncSoundSeg === 'function') _syncSoundSeg(); } catch(_){}
@@ -12685,11 +12718,48 @@ function _calEditEvent(id) {
 }
 /* (user) Calendar-sync section visibility (Month-view copy only; the Settings → Account copy is
    always shown). ✕ sets state.calSyncHidden; this re-applies it on render / settings toggle. */
+function _calConnectedProviders() {
+  const provs = [];
+  if (typeof state !== 'undefined' && state.gcalConnected) provs.push('Google');
+  if (typeof state !== 'undefined' && state.appleConnected) provs.push('Apple');   // future (EventKit)
+  return provs;
+}
+function _calSyncSteadyText(provs) {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  if (provs.length <= 1) {
+    return (provs[0] || 'Google') + ' ' + T({ ko:'캘린더 동기화됨', en:'Calendar synced', ja:'カレンダー同期済み', zh:'日历已同步', es:'Calendar sincronizado', fr:'Calendar synchronisé' });
+  }
+  return provs.join(' · ') + ' ' + T({ ko:'동기화됨', en:'synced', ja:'同期済み', zh:'已同步', es:'sincronizado', fr:'synchronisé' });
+}
 function _applyCalSyncVis() {
   try {
-    const hid = !!(typeof state !== 'undefined' && state.calSyncHidden);
     const sec = document.getElementById('cal-sync-sec');
-    if (sec) sec.classList.toggle('cal-sync-hidden', hid);
+    if (!sec) return;
+    const provs = _calConnectedProviders();
+    if (provs.length > 0) {
+      // Connected → MINIMIZE: drop the buttons/✕, show just a gray status line. (calSyncHidden no
+      // longer applies — there's nothing to dismiss, it's informational only.)
+      sec.classList.remove('cal-sync-hidden');
+      sec.classList.add('cal-sync-min');
+      const t = sec.querySelector('.cal-sync-collapsed-txt');
+      if (t) t.textContent = _calSyncSteadyText(provs);
+    } else {
+      sec.classList.remove('cal-sync-min');
+      const hid = !!(typeof state !== 'undefined' && state.calSyncHidden);
+      sec.classList.toggle('cal-sync-hidden', hid);
+    }
+  } catch (_) {}
+}
+// While a sync is running and the Month section is minimized, flip its gray line to "Syncing…".
+function _setCalCollapsedSyncing() {
+  try {
+    const sec = document.getElementById('cal-sync-sec');
+    if (!sec || !sec.classList.contains('cal-sync-min')) return;
+    const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+    const T = (m) => (m[_L] || m.en);
+    const t = sec.querySelector('.cal-sync-collapsed-txt');
+    if (t) t.textContent = T({ ko:'동기화 중…', en:'Syncing…', ja:'同期中…', zh:'同步中…', es:'Sincronizando…', fr:'Synchronisation…' });
   } catch (_) {}
 }
 /* (user) Calendar sync entry point. PHASE 1 = UI only: it briefly flashes "동기화 중…" then
@@ -12698,6 +12768,9 @@ function _applyCalSyncVis() {
 /* (B2) Run a Google Calendar sync now: PUSH Bidoro events (store the returned gcalId on each)
    + PULL Google events (add ones we don't have, refresh matched ones). Updates the .cal-sync-
    status lines itself. Safe to call from the button (connected) or right after connecting. */
+// All-day date helpers: local YYYY-MM-DD ↔ local-midnight ms (shared by Google + Apple sync).
+function _ymdLocal(ms) { const d = new Date(+ms); const p = (n) => String(n).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()); }
+function _ymdToLocalMidnight(ymd) { if (!ymd) return null; const m = String(ymd).match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return null; return new Date(+m[1], +m[2]-1, +m[3], 0, 0, 0, 0).getTime(); }
 function _gcalRunSync() {
   const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
   const T = (m) => (m[_L] || m.en);
@@ -12707,8 +12780,14 @@ function _gcalRunSync() {
   const stats = document.querySelectorAll('.cal-sync-status');
   const setStatus = (txt, show) => stats.forEach(s => { s.textContent = txt; s.classList.toggle('show', !!show); });
   setStatus(T({ ko:'동기화 중…', zh:'同步中…', ja:'同期中…', es:'Sincronizando…', fr:'Synchronisation…', en:'Syncing…' }), true);
+  try { _setCalCollapsedSyncing(); } catch (_) {}
   if (!Array.isArray(state.events)) state.events = [];
-  const evs = state.events.map(e => ({ id: e.id, name: e.name, startMs: e.startMs, endMs: e.endMs, gcalId: e.gcalId || null }));
+  const evs = state.events.map(e => {
+    const base2 = { id: e.id, name: e.name, gcalId: e.gcalId || null };
+    // All-day events sync as date-only (Google end.date is EXCLUSIVE = next-day midnight = e.endMs).
+    if (e.allDay) return Object.assign(base2, { allDay: true, startDate: _ymdLocal(e.startMs), endDate: _ymdLocal(e.endMs) });
+    return Object.assign(base2, { startMs: e.startMs, endMs: e.endMs });
+  });
   return fetch(base + '/functions/v1/gcal-sync', {
     method: 'POST',
     headers: Object.assign({ 'Content-Type': 'application/json' }, key ? { apikey: key } : {}),
@@ -12728,15 +12807,20 @@ function _gcalRunSync() {
       const have = new Set(state.events.map(e => e.gcalId).filter(Boolean));
       (j.pulled || []).forEach(p => {
         if (!p.gcalId) return;
-        if (have.has(p.gcalId)) {                          // already have it → refresh name/time from Google
+        // All-day Google events arrive as date strings → local-midnight ms + allDay flag.
+        const isAll = !!p.allDay;
+        const sMs = isAll ? _ymdToLocalMidnight(p.startDate) : p.startMs;
+        const eMs = isAll ? _ymdToLocalMidnight(p.endDate)   : p.endMs;
+        if (sMs == null || eMs == null) return;
+        if (have.has(p.gcalId)) {                          // already have it → refresh from Google
           const ex = state.events.find(e => e.gcalId === p.gcalId);
-          if (ex && (ex.name !== p.name || ex.startMs !== p.startMs || ex.endMs !== p.endMs)) {
-            ex.name = p.name; ex.startMs = p.startMs; ex.endMs = p.endMs; changed = true;
+          if (ex && (ex.name !== p.name || ex.startMs !== sMs || ex.endMs !== eMs || !!ex.allDay !== isAll)) {
+            ex.name = p.name; ex.startMs = sMs; ex.endMs = eMs; ex.allDay = isAll; changed = true;
           }
           return;
         }
         state.events.push({ id: 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
-          name: p.name, startMs: p.startMs, endMs: p.endMs, side: null, gcalId: p.gcalId });
+          name: p.name, startMs: sMs, endMs: eMs, side: null, gcalId: p.gcalId, allDay: isAll });
         have.add(p.gcalId); added++; changed = true;
       });
       if (changed) {
@@ -12746,10 +12830,12 @@ function _gcalRunSync() {
       }
       setStatus(T({ ko:'동기화 완료', en:'Synced', ja:'同期完了', zh:'同步完成', es:'Sincronizado', fr:'Synchronisé' }) + (added ? ' (+' + added + ')' : ''), true);
       setTimeout(() => setStatus('', false), 2800);
+      try { _applyCalSyncVis(); } catch (_) {}   // restore the minimized "…synced" line
     })
     .catch(() => {
       setStatus(T({ ko:'동기화 실패 — 잠시 후 다시', en:'Sync failed — try again', ja:'同期失敗 — 後でもう一度', zh:'同步失败 — 稍后重试', es:'Error — reintenta', fr:'Échec — réessaie' }), true);
       setTimeout(() => setStatus('', false), 3000);
+      try { _applyCalSyncVis(); } catch (_) {}
     });
 }
 window._gcalRunSync = _gcalRunSync;
@@ -12758,20 +12844,35 @@ window._gcalRunSync = _gcalRunSync;
 function _applyGcalConnUI() {
   const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
   const T = (m) => (m[_L] || m.en);
-  const connected = !!(typeof state !== 'undefined' && state.gcalConnected);
-  document.querySelectorAll('.gcal-conn-row').forEach(r => { r.style.display = connected ? 'flex' : 'none'; });
-  document.querySelectorAll('.gcal-conn-label').forEach(el => {
-    el.textContent = T({ ko:'✓ Google 캘린더 연결됨', en:'✓ Google Calendar connected', ja:'✓ Googleカレンダー連携中', zh:'✓ 已连接 Google 日历', es:'✓ Google Calendar conectado', fr:'✓ Google Calendar connecté' });
+  const flags = {
+    google: !!(typeof state !== 'undefined' && state.gcalConnected),
+    apple:  !!(typeof state !== 'undefined' && state.appleConnected)
+  };
+  const labels = {
+    google: T({ ko:'✓ Google 캘린더 연결됨', en:'✓ Google Calendar connected', ja:'✓ Googleカレンダー連携中', zh:'✓ 已连接 Google 日历', es:'✓ Google Calendar conectado', fr:'✓ Google Calendar connecté' }),
+    apple:  T({ ko:'✓ Apple 캘린더 연결됨',  en:'✓ Apple Calendar connected',  ja:'✓ Appleカレンダー連携中',  zh:'✓ 已连接 Apple 日历',  es:'✓ Apple Calendar conectado',  fr:'✓ Apple Calendar connecté' })
+  };
+  const discLbl = T({ ko:'연결 끊기', en:'Disconnect', ja:'連携解除', zh:'断开连接', es:'Desconectar', fr:'Déconnecter' });
+  // Each .gcal-conn-row carries data-prov ('google' | 'apple'); show it only when that provider is linked.
+  document.querySelectorAll('.gcal-conn-row').forEach(r => {
+    const prov = r.getAttribute('data-prov') || 'google';
+    r.style.display = flags[prov] ? 'flex' : 'none';
+    const lbl = r.querySelector('.gcal-conn-label'); if (lbl) lbl.textContent = labels[prov] || '';
+    const db  = r.querySelector('.gcal-disconnect-btn'); if (db) db.textContent = discLbl;
   });
-  document.querySelectorAll('.gcal-disconnect-btn').forEach(el => {
-    el.textContent = T({ ko:'연결 끊기', en:'Disconnect', ja:'連携解除', zh:'断开连接', es:'Desconectar', fr:'Déconnecter' });
-  });
-  // Google sync button doubles as "Sync now" once connected.
+  // Sync button doubles as "Sync now" once its provider is connected.
   document.querySelectorAll('.cal-sync-btn[data-prov="google"]').forEach(b => {
-    b.textContent = connected
+    b.textContent = flags.google
       ? T({ ko:'Google 동기화', en:'Sync Google', ja:'Google 同期', zh:'同步 Google', es:'Sincronizar Google', fr:'Sync Google' })
       : T({ ko:'Google Calendar', en:'Google Calendar', ja:'Google Calendar', zh:'Google 日历', es:'Google Calendar', fr:'Google Calendar' });
   });
+  document.querySelectorAll('.cal-sync-btn[data-prov="apple"]').forEach(b => {
+    b.textContent = flags.apple
+      ? T({ ko:'Apple 동기화', en:'Sync Apple', ja:'Apple 同期', zh:'同步 Apple', es:'Sincronizar Apple', fr:'Sync Apple' })
+      : T({ ko:'Apple Calendar', en:'Apple Calendar', ja:'Apple Calendar', zh:'Apple 日历', es:'Apple Calendar', fr:'Apple Calendar' });
+  });
+  // Keep the Month section's minimized/full state in sync with the connection state.
+  try { _applyCalSyncVis(); } catch (_) {}
 }
 window._applyGcalConnUI = _applyGcalConnUI;
 /* (user) Disconnect Google Calendar: ask the Edge Function to delete the stored tokens (and revoke
@@ -12803,6 +12904,112 @@ function _gcalDisconnect() {
   }).then(() => finish()).catch(() => finish());
 }
 window._gcalDisconnect = _gcalDisconnect;
+
+/* ===== Apple Calendar (iOS EventKit) bridge ===============================
+   Native AppDelegate registers a WKScriptMessageHandler "bidoroCalendar"; each
+   request carries a reqId and the async reply arrives via window.__bidoroCalResult.
+   Unavailable (rejects) on web / non-iOS / an older build without the handler. */
+window.__bidoroCalPending = window.__bidoroCalPending || {};
+window.__bidoroCalResult = function (reqId, payload) {
+  const p = window.__bidoroCalPending[reqId];
+  if (!p) return;
+  delete window.__bidoroCalPending[reqId];
+  try { clearTimeout(p.to); } catch (_) {}
+  p.resolve(payload || {});
+};
+function _appleCalAvailable() {
+  return !!(window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroCalendar);
+}
+function _bidoroCalNative(action, payload) {
+  return new Promise((resolve, reject) => {
+    if (!_appleCalAvailable()) { reject(new Error('no-native')); return; }
+    const reqId = 'cal_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+    const to = setTimeout(() => { delete window.__bidoroCalPending[reqId]; reject(new Error('timeout')); }, 20000);
+    window.__bidoroCalPending[reqId] = { resolve, to };
+    try { window.webkit.messageHandlers.bidoroCalendar.postMessage(Object.assign({ action, reqId }, payload || {})); }
+    catch (e) { clearTimeout(to); delete window.__bidoroCalPending[reqId]; reject(e); }
+  });
+}
+/* Two-way sync with the device's Apple Calendar (EventKit). PUSH Bidoro events first (so they get
+   an ekId), then PULL the device's events into Bidoro (dedup by ekId). Mirrors _gcalRunSync. */
+function _appleCalRunSync() {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  const stats = document.querySelectorAll('.cal-sync-status');
+  const setStatus = (txt, show) => stats.forEach(s => { s.textContent = txt; s.classList.toggle('show', !!show); });
+  setStatus(T({ ko:'동기화 중…', en:'Syncing…', ja:'同期中…', zh:'同步中…', es:'Sincronizando…', fr:'Synchronisation…' }), true);
+  try { _setCalCollapsedSyncing(); } catch (_) {}
+  if (!Array.isArray(state.events)) state.events = [];
+  const now = Date.now();
+  const startMs = now - 60 * 24 * 3600 * 1000, endMs = now + 400 * 24 * 3600 * 1000;
+  const pushItems = state.events.map(e => ({ id: e.id, ekId: e.ekId || null, title: e.name || '', startMs: e.startMs, endMs: e.endMs, allDay: !!e.allDay }));
+  return _bidoroCalNative('push', { events: pushItems })
+    .then(res => {
+      const mapped = (res && res.mapped) || {};
+      state.events.forEach(e => { if (e.id && mapped[e.id]) e.ekId = mapped[e.id]; });
+      return _bidoroCalNative('pull', { startMs, endMs });
+    })
+    .then(res => {
+      let added = 0, changed = true;
+      const pulled = (res && res.events) || [];
+      const have = new Set(state.events.map(e => e.ekId).filter(Boolean));
+      pulled.forEach(p => {
+        if (!p.ekId) return;
+        const isAll = !!p.allDay;
+        if (have.has(p.ekId)) {
+          const ex = state.events.find(e => e.ekId === p.ekId);
+          if (ex && (ex.name !== p.title || ex.startMs !== p.startMs || ex.endMs !== p.endMs || !!ex.allDay !== isAll)) {
+            ex.name = p.title; ex.startMs = p.startMs; ex.endMs = p.endMs; ex.allDay = isAll;
+          }
+          return;
+        }
+        state.events.push({ id: 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+          name: p.title, startMs: p.startMs, endMs: p.endMs, side: null, ekId: p.ekId, allDay: isAll });
+        have.add(p.ekId); added++;
+      });
+      if (changed) {
+        try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+        try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
+        try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+      }
+      setStatus(T({ ko:'동기화 완료', en:'Synced', ja:'同期完了', zh:'同步完成', es:'Sincronizado', fr:'Synchronisé' }) + (added ? ' (+' + added + ')' : ''), true);
+      setTimeout(() => setStatus('', false), 2800);
+      try { _applyCalSyncVis(); } catch (_) {}
+    })
+    .catch(() => {
+      setStatus(T({ ko:'동기화 실패 — 잠시 후 다시', en:'Sync failed — try again', ja:'同期失敗 — 後でもう一度', zh:'同步失败 — 稍后重试', es:'Error — reintenta', fr:'Échec — réessaie' }), true);
+      setTimeout(() => setStatus('', false), 3000);
+      try { _applyCalSyncVis(); } catch (_) {}
+    });
+}
+window._appleCalRunSync = _appleCalRunSync;
+/* Disconnect Apple Calendar (local only — EventKit access itself is revoked from iOS Settings). */
+function _appleCalDisconnect() {
+  const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  const T = (m) => (m[_L] || m.en);
+  const ok = (typeof window.confirm === 'function')
+    ? window.confirm(T({ ko:'Apple 캘린더 연결을 끊을까요?\nBidoro가 더 이상 동기화하지 않습니다. (캘린더 접근 권한 자체는 iOS 설정에서 해제할 수 있어요.)', en:'Disconnect Apple Calendar?\nBidoro will stop syncing. (Fully revoke calendar access in iOS Settings.)', ja:'Appleカレンダーの連携を解除しますか？\n同期を停止します（権限自体はiOS設定で解除できます）。', zh:'断开 Apple 日历连接？\nBidoro 将停止同步。（可在 iOS 设置中彻底撤销日历权限。）', es:'¿Desconectar Apple Calendar?\nBidoro dejará de sincronizar.', fr:'Déconnecter Apple Calendar ?\nBidoro arrêtera la synchronisation.' }))
+    : true;
+  if (!ok) return;
+  state.appleConnected = false; try { saveState(); } catch (_) {}
+  try { _applyGcalConnUI(); } catch (_) {}
+  const stats = document.querySelectorAll('.cal-sync-status');
+  stats.forEach(s => { s.textContent = T({ ko:'연결이 끊겼어요', en:'Disconnected', ja:'解除しました', zh:'已断开连接', es:'Desconectado', fr:'Déconnecté' }); s.classList.add('show'); });
+  setTimeout(() => stats.forEach(s => s.classList.remove('show')), 2600);
+}
+window._appleCalDisconnect = _appleCalDisconnect;
+let _appleLastSync = 0;
+function _appleCalAutoSync(force) {
+  try {
+    if (!(typeof state !== 'undefined' && state.appleConnected)) return;
+    if (!_appleCalAvailable()) return;
+    const now = Date.now();
+    if (!force && (now - _appleLastSync) < 45000) return;
+    _appleLastSync = now;
+    _appleCalRunSync();
+  } catch (_) {}
+}
+window._appleCalAutoSync = _appleCalAutoSync;
 /* (B3a) Near-real-time: auto-sync when the calendar opens / the app regains focus, throttled so
    it never spams the Edge Function. Manual button still forces an immediate sync. */
 let _gcalLastSync = 0;
@@ -12820,7 +13027,7 @@ window._gcalAutoSync = _gcalAutoSync;
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   const cp = document.getElementById('calendar-page');
-  if (cp && cp.style.display !== 'none') _gcalAutoSync();
+  if (cp && cp.style.display !== 'none') { _gcalAutoSync(); try { _appleCalAutoSync(); } catch (_) {} }
 });
 let _calSyncTO = 0;
 function bidoroCalSync(provider) {
@@ -12877,12 +13084,37 @@ function bidoroCalSync(provider) {
     return;
   }
 
-  // ---- Apple: native EventKit (later). Phase-1 placeholder: brief "syncing" then clear. ----
-  _calSyncTO = setTimeout(() => {
-    stopBusy();
-    setStatus(T({ ko:'iOS 업데이트 후 사용 가능해요', en:'Available in an upcoming iOS update', ja:'今後のiOS更新で対応', zh:'将在 iOS 更新中支持', es:'Disponible en una próxima versión iOS', fr:'Bientôt sur iOS' }), true);
-    setTimeout(() => setStatus('', false), 2600);
-  }, 900);
+  // ---- Apple: native iOS EventKit two-way sync. ----
+  if (provider === 'apple') {
+    if (!_appleCalAvailable()) {
+      // web / PC / older build without the native handler
+      _calSyncTO = setTimeout(() => {
+        stopBusy();
+        setStatus(T({ ko:'아이폰 Bidoro 앱에서만 사용할 수 있어요', en:'Available in the Bidoro iPhone app', ja:'iPhoneアプリでのみ利用できます', zh:'仅在 iPhone 应用中可用', es:'Disponible solo en la app de iPhone', fr:'Disponible seulement dans l’app iPhone' }), true);
+        setTimeout(() => setStatus('', false), 2600);
+      }, 700);
+      return;
+    }
+    if (state.appleConnected) { stopBusy(); _appleCalRunSync(); return; }
+    // Not connected → request EventKit access, then run the first sync.
+    _bidoroCalNative('requestAccess', {}).then(res => {
+      stopBusy();
+      if (res && res.granted) {
+        state.appleConnected = true; try { saveState(); } catch (_) {}
+        try { _applyGcalConnUI(); } catch (_) {}
+        setStatus(T({ ko:'Apple 캘린더 연결됨!', en:'Apple Calendar connected!', ja:'Appleカレンダー連携完了!', zh:'已连接 Apple 日历!', es:'¡Apple Calendar conectado!', fr:'Apple Calendar connecté !' }), true);
+        setTimeout(() => { try { _appleCalRunSync(); } catch (_) {} }, 400);
+      } else {
+        setStatus(T({ ko:'캘린더 접근이 거부됐어요 — iOS 설정에서 허용', en:'Calendar access denied — enable it in iOS Settings', ja:'カレンダーへのアクセスが拒否されました', zh:'日历访问被拒绝 — 请在 iOS 设置中允许', es:'Acceso al calendario denegado — actívalo en Ajustes', fr:'Accès au calendrier refusé — activez-le dans Réglages' }), true);
+        setTimeout(() => setStatus('', false), 3400);
+      }
+    }).catch(() => {
+      stopBusy();
+      setStatus(T({ ko:'연결 실패 — 다시 시도', en:'Connection failed — try again', ja:'連携失敗 — 再試行', zh:'连接失败 — 请重试', es:'Error de conexión — reintenta', fr:'Échec — réessaie' }), true);
+      setTimeout(() => setStatus('', false), 3000);
+    });
+    return;
+  }
 }
 window.bidoroCalSync = bidoroCalSync;
 (function wireCalendar() {
@@ -12901,16 +13133,34 @@ window.bidoroCalSync = bidoroCalSync;
     e.preventDefault(); e.stopPropagation();
     state.calSyncHidden = true; try { saveState(); } catch (_) {}
     _applyCalSyncVis();
-    try { if (typeof bidoroToast === 'function') bidoroToast('Settings → Account 에서 다시 열 수 있어요.'); } catch (_) {}
+    try {
+      const _L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+      const T = (m) => (m[_L] || m.en);
+      const msg = T({
+        ko:'나중에 원하면 아래 가운데 Settings → Account에서 동기화할 수 있어요.',
+        en:'You can sync anytime later from Settings → Account (bottom centre).',
+        ja:'あとで下中央の Settings → Account からいつでも同期できます。',
+        zh:'之后可随时在底部中间的 Settings → Account 中同步。',
+        es:'Puedes sincronizar más tarde desde Settings → Account (abajo en el centro).',
+        fr:'Tu peux synchroniser plus tard depuis Settings → Account (en bas au centre).'
+      });
+      if (typeof bidoroToast === 'function') {
+        bidoroToast(msg);
+        const tEl = document.getElementById('bidoro-toast');
+        if (tEl) tEl.classList.add('toast-wrap');   // allow this longer hint to wrap to 2 lines
+      }
+    } catch (_) {}
   });
   document.querySelectorAll('.cal-sync-btn').forEach((b) => b.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
     bidoroCalSync(b.dataset.prov);
   }));
-  // (user) Disconnect Google button (both the Month + Account copies).
+  // (user) Disconnect button (per provider, both the Month + Account copies).
   document.querySelectorAll('.gcal-disconnect-btn').forEach((b) => b.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
-    _gcalDisconnect();
+    const row = b.closest('.gcal-conn-row');
+    const prov = row ? (row.getAttribute('data-prov') || 'google') : 'google';
+    if (prov === 'apple') _appleCalDisconnect(); else _gcalDisconnect();
   }));
   try { _applyGcalConnUI(); } catch (_) {}
   _applyCalSyncVis();
@@ -14846,6 +15096,7 @@ let _bidoroToastTimer = null;
 function bidoroToast(msg, tag) {
   let el = document.getElementById('bidoro-toast');
   if (!el) { el = document.createElement('div'); el.id = 'bidoro-toast'; el.className = 'undo-toast'; document.body.appendChild(el); }
+  el.classList.remove('toast-wrap');   // default single-line; callers re-add for long messages
   el.textContent = '';
   if (tag) { const t = document.createElement('span'); t.className = 'undo-toast-tag'; t.textContent = tag; el.appendChild(t); }
   const m = document.createElement('span'); m.className = 'undo-toast-msg'; m.textContent = msg; el.appendChild(m);
@@ -15386,7 +15637,9 @@ function customConfirm(title, message, opts) {
     // Optional per-button tint (e.g. the keep-going dialog colors each button to its task).
     function _applyBtnColor(btn, c) {
       if (!btn) return;
-      if (c && c.bg) { btn.style.background = c.bg; btn.style.borderColor = c.bg; btn.style.color = c.fg || '#fff'; }
+      // c.border lets a white-bg button (e.g. the break button: white bg + sky text) keep a visible
+      // outline; defaults to the bg so solid task-coloured buttons look borderless as before.
+      if (c && c.bg) { btn.style.background = c.bg; btn.style.borderColor = c.border || c.bg; btn.style.color = c.fg || '#fff'; }
       else { btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = ''; }
     }
     _applyBtnColor(yesBtn, opts.yesColor);
@@ -18557,10 +18810,12 @@ function _riseDroplet(fromX, fromY, toX, toY) {
     setTimeout(() => _distractionSplash(toX, toY), dur - 40);
   } catch (_) {}
 }
-function _distractionSplash(x, y) {
+function _distractionSplash(x, y, reward) {
+  // (user) reward=true → GREEN 연두 splash (money landing on the "$"); default → sky-blue (distraction).
+  const rw = reward ? ' is-reward' : '';
   try {
     const sp = document.createElement('div');
-    sp.className = 'task-water-splash';
+    sp.className = 'task-water-splash' + rw;
     sp.style.left = x + 'px';
     sp.style.top  = y + 'px';
     sp.style.width = '20px';
@@ -18572,7 +18827,7 @@ function _distractionSplash(x, y) {
       const ang = (-Math.PI * 0.5) + (Math.random() - 0.5) * 2.2;
       const speed = 9 + Math.random() * 11;
       const b = document.createElement('div');
-      b.className = 'task-splash-droplet';
+      b.className = 'task-splash-droplet' + rw;
       b.style.left = x + 'px';
       b.style.top  = y + 'px';
       b.style.setProperty('--sx', (Math.cos(ang) * speed).toFixed(1) + 'px');
@@ -18634,7 +18889,7 @@ function _spawnMoneyDroplet(fromX, fromY, onArrive) {
     document.body.appendChild(drop);
     setTimeout(() => { try { drop.remove(); } catch (_) {} }, dur + 80);
     setTimeout(() => {
-      try { _distractionSplash(tgt.x, tgt.y); } catch (_) {}
+      try { _distractionSplash(tgt.x, tgt.y, true); } catch (_) {}   // (user) money landing → GREEN 연두 splash
       try {
         if (tgt.el) {
           tgt.el.classList.add('fc-money-pop');
@@ -18970,11 +19225,14 @@ async function showPomoPhaseConfirm() {
   } else {
     notify(gTitle, gMsg, { noToast: true });        // haptic + background system alert (popup is the foreground UI)
     const gentle = (state.timerTransition !== 'manual');   // GENTLE AUTO is the default
-    // (user) COLOUR-CODE the buttons so the choice reads at a glance: BREAK = sky-blue (the app's
-    // break theme), FOCUS = the task's quadrant accent. A deeper sky (#0EA5E9) keeps the white
-    // label crisp/legible while still reading as the break colour.
-    const _break = { bg: '#0EA5E9', fg: '#fff' };
-    const _focus = { bg: (typeof focusQuadAccent === 'function' ? focusQuadAccent(at.q) : '#B23A5B') || '#B23A5B', fg: '#fff' };
+    // (user) COLOUR-CODE the buttons so the choice reads at a glance:
+    //   • FOCUS button → looks like the TASK BAR (task-bar bg + task-bar text colour).
+    //   • BREAK button → break-pomodoro style: WHITE bg, SKY-BLUE text + outline.
+    const _break = { bg: '#fff', fg: '#0EA5E9', border: '#0EA5E9' };
+    const _focus = {
+      bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(at.q, at.idx) : '#B23A5B'),
+      fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(at.q, at.idx) : '#fff')
+    };
     answer = await customConfirm(gTitle, gMsg, {
       yesLabel: gYes, noLabel: gNo,
       // work-end: Start break (yes)=sky · Keep going (no)=focus · break-end: Start focus (yes)=focus
@@ -19489,6 +19747,7 @@ function drawGauge() {
   // so the activity color always wins where they overlap.
   (state.events || []).forEach(ev => {
     if (!ev || !ev.startMs || !ev.endMs) return;
+    if (ev.allDay) return;   // (user) all-day events are NOT drawn as bands (shown elsewhere, no colour)
     if (ev.endMs <= ev.startMs) return;
     if (ev.endMs < topMs || ev.startMs > bottomMs) return;   // outside view
     addGaugeSegment(segmentsEl, pct, {
@@ -19947,9 +20206,26 @@ function drawTimeArea() {
   // User-created calendar EVENTS — light-gray bands, drawn FIRST so they sit UNDER the task
   // blocks (a task box always wins where they overlap). Mirrors the wide gauge (drawGauge),
   // so the phone Time & Tasks gauge shows events too. Tap a band → edit that event.
+  let _adIdx = 0;
   (state.events || []).forEach(ev => {
     if (!ev || !ev.startMs || !ev.endMs || ev.endMs <= ev.startMs) return;
     if (ev.endMs <= contentTopMs || ev.startMs >= contentBotMs) return;   // outside the visible window
+    // (user) All-day events → a plain bullet pinned at the very TOP of the gauge (no colour band).
+    if (ev.allDay) {
+      const b = document.createElement('div');
+      b.className = 'time-event-allday';
+      b.style.top = (2 + _adIdx * 19) + 'px';
+      if (ev.id) b.setAttribute('data-event-id', ev.id);
+      const dot = document.createElement('span'); dot.className = 'tea-dot'; dot.textContent = '•';
+      const lbl = document.createElement('span'); lbl.className = 'tea-lbl'; lbl.textContent = ev.name || 'Event';
+      b.appendChild(dot); b.appendChild(lbl);
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        try { if (ev.id && typeof _calEditEvent === 'function') _calEditEvent(ev.id); else if (typeof openEventModal === 'function') openEventModal(ev); } catch (_) {}
+      });
+      blocksEl.appendChild(b); _adIdx++;
+      return;
+    }
     const _etPx = Math.max(0, msToPx(ev.startMs));
     const _ebPx = Math.min(_contentPxH, msToPx(ev.endMs));
     if (_ebPx - _etPx < 2) return;
@@ -20069,7 +20345,7 @@ function drawTimeArea() {
             // (첨부1) A 5-min break that sits BELOW a work segment gets a crisp 1px
             // white divider at its top so the task↔break boundary reads clearly.
             if (seg.type === 'break' && fStart > b.startMs + 500) {
-              fill.style.borderTop = '1px solid #fff'; fill.style.boxSizing = 'border-box';
+              fill.style.borderTop = '1px solid #38BDF8'; fill.style.boxSizing = 'border-box';   // (user) task↔break divider = SKY BLUE
             }
             div.appendChild(fill);
           }
@@ -21124,6 +21400,8 @@ function getPlannedSegments(b) {
    can split it by task colour, and its 30/35-min length drives the pomodoro. */
 const _SHUFFLE_ICON_SVG  = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7 H8 L16 17 H21"/><path d="M3 17 H8 L16 7 H21"/><polyline points="18 14 21 17 18 20"/><polyline points="18 4 21 7 18 10"/></svg>';
 const _SHUFFLE_REVERT_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>';
+// (user) Prioritize icon — ranked/decreasing bars: a "sort by priority, top→bottom" glyph.
+const _PRIORITIZE_ICON_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="5" x2="18" y2="5"/><line x1="3" y1="10" x2="13" y2="10"/><line x1="3" y1="15" x2="9" y2="15"/><line x1="3" y1="20" x2="6" y2="20"/></svg>';
 function buildShuffleBlocks(startMs) {
   const WORK = 25*60000, BRK = 5*60000, LONG = 15*60000, MAXMERGE = 35*60000;
   const tasks = [];
@@ -21375,40 +21653,76 @@ function _noRoomCombine() {
     s += _span;
   });
 }
-function applyShuffle() {
+/* (user) The future task blocks that can be re-ordered: one entry per incomplete task that has a
+   FUTURE (not running / not past) block on the gauge. Each block stays WHOLE — we only change the
+   ORDER (no 25-min cutting). createdAt rides along for Prioritize. */
+function _arrangeableTaskKeys() {
   const now = Date.now();
-  const blocks = buildShuffleBlocks(now + 60000);   // start just ahead of the now-line
-  if (!blocks || !blocks.length) { try { bidoroToast('No tasks to shuffle.'); } catch (_) {} return false; }
-  state._preShuffleBlocks = JSON.parse(JSON.stringify(state.scheduledBlocks || []));
-  const keep = (state.scheduledBlocks || []).filter(b => b.kind === 'tracker' || b.endMs <= now);
-  state.scheduledBlocks = keep.concat(blocks);
-  state.shuffled = true;
-  saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged();
-  if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-  if (typeof drawTimeArea === 'function') drawTimeArea(); if (typeof drawGauge === 'function') drawGauge();
-  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('medium'); } catch (_) {}
-  _renderShuffleBtn(); return true;
+  const seen = new Set(), out = [];
+  const add = (q, idx) => {
+    if (typeof q !== 'string' || typeof idx !== 'number' || idx < 0) return;
+    const k = q + ' ' + idx; if (seen.has(k)) return;
+    const t = state.tasks[q] && state.tasks[q][idx];
+    if (!t || t.done) return;
+    seen.add(k); out.push({ key: k, q, idx, createdAt: (typeof t.createdAt === 'number' ? t.createdAt : 0) });
+  };
+  (state.scheduledBlocks || []).forEach(b => {
+    if (!b || b.isBreak || b.kind === 'tracker') return;
+    if (b.activeAt != null || b.activeEndMs != null) return;   // running / finalized stay put
+    if (b.endMs <= now) return;                                // past
+    add(b.q, b.taskIdx);
+    if (Array.isArray(b.taskSegs)) b.taskSegs.forEach(sg => add(sg.q, sg.taskIdx));
+  });
+  return out;
 }
-function revertShuffle() {
-  if (Array.isArray(state._preShuffleBlocks)) state.scheduledBlocks = state._preShuffleBlocks;
-  state._preShuffleBlocks = null; state.shuffled = false;
-  saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged();
-  if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
-  if (typeof drawTimeArea === 'function') drawTimeArea(); if (typeof drawGauge === 'function') drawGauge();
+/* Re-lay the future task blocks into `keyObjs` order, keeping each block whole. Reuses
+   _rechunkFutureTasks(forceOrderKeys) which rebuilds each task as ONE _combine box (internal 25/5
+   bands) contiguous from the now-line — so blocks are reordered, never cut. Undo = the pre-action
+   snapshot the global stack takes on touchstart (Edit-panel Undo reverts it). */
+function _applyArrange(keyObjs) {
+  const forceKeys = keyObjs.map(o => o.key);
+  if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks(forceKeys);
+  try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+  try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('medium'); } catch (_) {}
+}
+function doShuffleArrange() {
+  const keys = _arrangeableTaskKeys();
+  if (keys.length < 2) { try { bidoroToast('Add 2+ tasks to shuffle.'); } catch (_) {} return; }
+  const orig = keys.map(o => o.key).join('|');
+  const order = keys.slice();
+  // Fisher–Yates; retry so the NEW order differs from the current one (per user: each Shuffle differs).
+  for (let attempt = 0; attempt < 8; attempt++) {
+    for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); const t = order[i]; order[i] = order[j]; order[j] = t; }
+    if (order.map(o => o.key).join('|') !== orig) break;
+  }
+  _applyArrange(order);
+  state.arrangeMode = 'prioritize';   // next press offers Prioritize
   _renderShuffleBtn();
 }
-async function toggleShuffle() {
-  if (state.shuffled) { revertShuffle(); return; }   // restoring needs no confirm
-  const ok = await customConfirm("Mix today's blocks?", '', { yesLabel: 'OK', noLabel: 'Cancel' });
-  if (ok) applyShuffle();
+function doPrioritizeArrange() {
+  const keys = _arrangeableTaskKeys();
+  if (keys.length < 2) { try { bidoroToast('Add 2+ tasks to prioritize.'); } catch (_) {} return; }
+  const qRank = { q1: 0, q2: 1, q3: 2, q4: 3 };
+  // q1→q2→q3→q4; within the same cell, earlier-added (smaller createdAt) sits higher.
+  keys.sort((a, b) => ((qRank[a.q] != null ? qRank[a.q] : 9) - (qRank[b.q] != null ? qRank[b.q] : 9)) || (a.createdAt - b.createdAt));
+  _applyArrange(keys);
+  state.arrangeMode = 'shuffle';      // next press offers Shuffle again
+  _renderShuffleBtn();
+}
+// Button handler: performs whichever action the button is currently showing, then flips it.
+function toggleShuffle() {
+  if (state.arrangeMode === 'prioritize') doPrioritizeArrange();
+  else doShuffleArrange();
 }
 function _renderShuffleBtn() {
   const btn = document.getElementById('shuffle-toggle'); if (!btn) return;
-  const on = !!state.shuffled;
-  btn.classList.toggle('is-revert', on);
-  btn.title = on ? 'Undo (셔플 취소)' : '셔플 — task를 25분 단위로 자동 배치';
-  btn.innerHTML = (on ? _SHUFFLE_REVERT_SVG : _SHUFFLE_ICON_SVG) +
-                  '<span class="hd-lbl">' + (on ? 'Undo' : 'Shuffle') + '</span>';
+  const prioritize = (state.arrangeMode === 'prioritize');
+  btn.classList.toggle('is-revert', prioritize);
+  btn.title = prioritize ? 'Prioritize — q1→q4, 셀 안은 추가한 순서대로' : 'Shuffle — 블록 순서 섞기 (자르지 않음)';
+  btn.innerHTML = (prioritize ? _PRIORITIZE_ICON_SVG : _SHUFFLE_ICON_SVG) +
+                  '<span class="hd-lbl">' + (prioritize ? 'Prioritize' : 'Shuffle') + '</span>';
 }
 /* ===== GTD chip (merged-header right side): the remaining time until "get
    things done" (or a clock icon when unset) + the total task count. ===== */
@@ -21650,16 +21964,46 @@ function openEventModal(existing, opts) {
     if (!m) return null;
     return new Date(+m[1], +m[2]-1, +m[3], +m[4], +m[5], 0, 0).getTime();
   }
+  function dateInput(ms) { if (!ms) return ''; const d = new Date(+ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; }
+  // (user) All-day toggle: when on, the Start/End inputs become date-only (no time). Flipping it
+  // converts the current values, keeping the date part. Adding a time (toggle OFF) → timed event.
+  const alldayEl = document.getElementById('event-allday');
+  function _applyAllDayInputType(on) {
+    const sv = startEl.value, ev = endEl.value;
+    const sDate = (sv.slice(0, 10)) || dateInput(Date.now());
+    const eDate = (ev.slice(0, 10)) || sDate;
+    if (on) {
+      startEl.type = 'date'; endEl.type = 'date';
+      startEl.value = sDate; endEl.value = eDate;
+    } else {
+      startEl.type = 'datetime-local'; endEl.type = 'datetime-local';
+      // give a sensible default time when coming FROM all-day (date-only had no time).
+      startEl.value = (sv.indexOf('T') >= 0) ? sv : (sDate + 'T09:00');
+      endEl.value   = (ev.indexOf('T') >= 0) ? ev : (eDate + 'T10:00');
+    }
+  }
   // Populate
   if (existing && existing.id) {
     titleEl.textContent = 'Edit event';
     nameEl.value = existing.name || '';
-    startEl.value = msToInput(existing.startMs);
-    endEl.value   = msToInput(existing.endMs);
+    if (existing.allDay) {
+      if (alldayEl) alldayEl.checked = true;
+      startEl.type = 'date'; endEl.type = 'date';
+      startEl.value = dateInput(existing.startMs);
+      // Google all-day end is EXCLUSIVE (next-day midnight); show the LAST day inclusive.
+      endEl.value   = dateInput((+existing.endMs || +existing.startMs) - 12 * 3600 * 1000);
+    } else {
+      if (alldayEl) alldayEl.checked = false;
+      startEl.type = 'datetime-local'; endEl.type = 'datetime-local';
+      startEl.value = msToInput(existing.startMs);
+      endEl.value   = msToInput(existing.endMs);
+    }
     deleteBtn.style.display = '';
   } else {
     titleEl.textContent = 'Add event';
     nameEl.value = '';
+    if (alldayEl) alldayEl.checked = false;
+    startEl.type = 'datetime-local'; endEl.type = 'datetime-local';
     // Default: opts.defaultDate at 9–10 AM (calendar), else now → +1 hour.
     let s, e;
     if (opts.defaultDate instanceof Date) {
@@ -21672,6 +22016,7 @@ function openEventModal(existing, opts) {
     endEl.value   = msToInput(e.getTime());
     deleteBtn.style.display = 'none';
   }
+  if (alldayEl) alldayEl.onchange = () => _applyAllDayInputType(alldayEl.checked);
   // Alert (reminder lead time) row → opens the alert option menu. (_selIcon is preserved from the
   // existing event so re-saving never wipes an icon set before the Type picker was retired.)
   let _selAlert = (existing && typeof existing.alert === 'number') ? existing.alert : null;
@@ -21709,16 +22054,30 @@ function openEventModal(existing, opts) {
   saveBtn.onclick = () => {
     const name = (nameEl.value || '').trim();
     if (!name) { try { nameEl.focus(); } catch (_) {} return; }
-    let startMs = inputToMs(startEl.value);
-    let endMs   = inputToMs(endEl.value);
-    if (!startMs || !endMs) return;
-    if (endMs < startMs) { const t = startMs; startMs = endMs; endMs = t; }
+    const allday = !!(alldayEl && alldayEl.checked);
+    let startMs, endMs;
+    if (allday) {
+      // date-only inputs → local midnight; end is EXCLUSIVE (last day + 1), matching Google.
+      const sd = startEl.value, ed = endEl.value || startEl.value;
+      const sm = sd.match(/^(\d{4})-(\d{2})-(\d{2})/), em = ed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!sm) return;
+      startMs = new Date(+sm[1], +sm[2]-1, +sm[3], 0, 0, 0, 0).getTime();
+      endMs   = em ? new Date(+em[1], +em[2]-1, +em[3], 0, 0, 0, 0).getTime() + 24 * 3600 * 1000 : startMs + 24 * 3600 * 1000;
+      if (endMs <= startMs) endMs = startMs + 24 * 3600 * 1000;
+    } else {
+      startMs = inputToMs(startEl.value);
+      endMs   = inputToMs(endEl.value);
+      if (!startMs || !endMs) return;
+      if (endMs < startMs) { const t = startMs; startMs = endMs; endMs = t; }
+    }
     if (!Array.isArray(state.events)) state.events = [];
-    const _evObj = { name, startMs, endMs, icon: _selIcon || null, side: (_selSide != null ? _selSide : null), alert: (_selAlert != null ? _selAlert : null) };
+    const _evObj = { name, startMs, endMs, allDay: allday, icon: _selIcon || null, side: (_selSide != null ? _selSide : null), alert: (_selAlert != null ? _selAlert : null) };
     if (existing && existing.id) {
       const idx = state.events.findIndex(x => x.id === existing.id);
-      if (idx >= 0) state.events[idx] = Object.assign({ id: existing.id }, _evObj);
-      else state.events.push(Object.assign({ id: existing.id }, _evObj));
+      // Merge over the existing event so the sync links (gcalId / ekId) survive an edit — without
+      // this, editing a synced event dropped its id and the next sync created a duplicate.
+      if (idx >= 0) state.events[idx] = Object.assign({}, existing, _evObj, { id: existing.id });
+      else state.events.push(Object.assign({}, existing, _evObj, { id: existing.id }));
     } else {
       const id = 'ev_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
       state.events.push(Object.assign({ id }, _evObj));
@@ -22802,15 +23161,19 @@ async function _showKeepGoingConflict(b, next) {
   // Each button is tinted to ITS task's theme accent: Keep going = the current task,
   // Switch = the next task. Switch is the DEFAULT (right side + 30s countdown) — if you
   // don't decide, the plan wins and the next task starts.
-  const _acc = (typeof focusQuadAccent === 'function') ? focusQuadAccent : (() => '#334155');
-  const _curColor  = _acc((b && b.q) || at.q);
-  const _nextColor = (next && typeof next.q === 'string') ? _acc(next.q) : '#185FA5';
+  // (user) Both buttons are TASKS → style each like its TASK BAR (task-bar bg + task-bar text):
+  // Keep going = the current task, Switch = the next task.
+  const _curQ = (b && b.q) || at.q, _curIdx = (b && b.taskIdx != null) ? b.taskIdx : at.idx;
+  const _taskStyle = (q, idx) => ({
+    bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(q, idx) : '#334155'),
+    fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(q, idx) : '#fff')
+  });
   const ans = await customConfirm(title, msg, {
     yesLabel: 'Switch to ' + nextName,                     // DEFAULT (right + countdown)
     noLabel:  'Keep going',
     countdownMs: gentle ? 30000 : 0,                       // 30s default = Switch to next
-    yesColor: { bg: _nextColor, fg: '#fff' },              // next task's theme color
-    noColor:  { bg: _curColor,  fg: '#fff' }               // current task's theme color
+    yesColor: (next && typeof next.q === 'string') ? _taskStyle(next.q, next.taskIdx) : { bg: '#185FA5', fg: '#fff' },
+    noColor:  _taskStyle(_curQ, _curIdx)
   });
   if (ans === 'remote') return;                            // answered on another device
   const at2 = state.activeTimer;
@@ -28509,6 +28872,11 @@ if (_editToggle) {
     const blocks = state.scheduledBlocks || [];
     // the selected reference can go stale after a redraw → re-resolve by id
     const cur = blocks.find(b => b && b.id === s.id) || s;
+    // (user) If the deleted block is the one currently running the pomodoro, STOP it — same as the
+    // on-block × (_deleteScheduledBlock). Without this the "Now focusing on" timer kept running.
+    if (typeof _blockHasRunningTimer === 'function' && _blockHasRunningTimer(cur)) {
+      try { stopActiveTimer('reset'); } catch (_) {}
+    }
     // After deleting, auto-select the block JUST BELOW (next future block by start
     // time); if none below, the one just ABOVE. Compute it BEFORE the splice.
     const fut = _futureBlocks();
@@ -28522,6 +28890,7 @@ if (_editToggle) {
     try { saveState(); } catch (_) {}
     try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
     _redraw();
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // clear the focus card if its timer was stopped
     _centerSelInGauge();   // keep the newly-selected block in view
   });
   if (slider) {
@@ -32924,7 +33293,7 @@ setInterval(() => {
               fill.style.background = _fillColor;
               // (첨부1) 1px white divider above a break that follows a work segment.
               if (seg.type === 'break' && fStart > b.startMs + 500) {
-                fill.style.borderTop = '1px solid #fff'; fill.style.boxSizing = 'border-box';
+                fill.style.borderTop = '1px solid #38BDF8'; fill.style.boxSizing = 'border-box';   // (user) task↔break divider = SKY BLUE
               }
               div.appendChild(fill);
             }
@@ -34600,7 +34969,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       try {
         // Expanding ring — small (≈9px radius) per request.
         const sp = document.createElement('div');
-        sp.className = 'task-water-splash is-reward';   // (user) green 연두 reward splash
+        sp.className = 'task-water-splash';   // (user) water landing in the bucket → SKY BLUE
         sp.style.left   = x + 'px';
         sp.style.top    = y + 'px';
         sp.style.width  = '18px';
@@ -34615,7 +34984,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
           const sxv = Math.cos(ang) * speed;
           const syv = Math.sin(ang) * speed;          // negative = up
           const b = document.createElement('div');
-          b.className = 'task-splash-droplet is-reward';   // (user) green 연두 reward burst
+          b.className = 'task-splash-droplet';   // (user) water landing in the bucket → SKY BLUE
           b.style.left = x + 'px';
           b.style.top  = y + 'px';
           b.style.setProperty('--sx', sxv.toFixed(1) + 'px');
