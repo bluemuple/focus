@@ -7237,12 +7237,13 @@
   }
   .tg-block:active { cursor: grabbing; }
   /* iPad / web (mouse): hovering a gauge time-block darkens it slightly as a
-     pointer affordance. Gated to hover-capable, fine-pointer devices so touch
-     phones are unaffected; skips the non-interactive +Add preview block. */
+     pointer affordance. Driven by a JS-tracked `.tb-hover` class (NOT CSS :hover)
+     because the gauge rebuilds its blocks every second — a CSS :hover would drop
+     on each rebuild and the transition would replay, making the block flicker.
+     The class is re-applied after each rebuild (see the gauge-hover observer), so
+     no transition is needed. Gated to hover-capable, fine-pointer devices. */
   @media (hover: hover) and (pointer: fine) {
-    .time-block, .tg-block { transition: filter .12s ease; }
-    .time-block:not(.preview):hover,
-    .tg-block:not(.preview):hover { filter: brightness(0.92); }
+    .time-block.tb-hover, .tg-block.tb-hover { filter: brightness(0.92); }
   }
   /* +Add duration-preview block on the WIDE gauge — transient (window._previewBlock), non-interactive,
      green bottom edge (matches the phone gauge's .time-block.preview). */
@@ -16763,6 +16764,41 @@ let _globalPomoTickHandle = null;
   _globalPomoTickHandle = setInterval(() => {
     try { if (typeof tickPomodoro === 'function') tickPomodoro(); } catch (_) {}
   }, 1000);
+})();
+
+/* Gauge time-block HOVER (iPad / web). drawGauge() rebuilds every block DOM node
+   once a second, so a pure CSS :hover drops on each rebuild and visibly flickers.
+   Instead we TRACK the hovered block by id and re-apply a `.tb-hover` class after
+   every rebuild (via a MutationObserver, which runs before paint → no flash). The
+   visual darken itself is gated to mouse devices by the CSS @media rule, so adding
+   the class on a touch tap is a harmless no-op. */
+(function wireGaugeBlockHover(){
+  const _bid = (el) => (el && (el.dataset.bid || el.dataset.blockId)) || null;
+  let _hoverBid = null;
+  function _apply() {
+    document.querySelectorAll('.tg-block.tb-hover, .time-block.tb-hover')
+      .forEach(el => el.classList.remove('tb-hover'));
+    if (_hoverBid == null) return;
+    document.querySelectorAll('.tg-block, .time-block').forEach(el => {
+      if (!el.classList.contains('preview') && _bid(el) === _hoverBid) el.classList.add('tb-hover');
+    });
+  }
+  // Pointer enters any element → is it (inside) a gauge block? Track that block's id.
+  // mouseover on a non-block (gridline / background) clears the hover.
+  document.addEventListener('mouseover', (e) => {
+    const t = e.target;
+    const blk = (t && t.closest) ? t.closest('.tg-block:not(.preview), .time-block:not(.preview)') : null;
+    const bid = _bid(blk);
+    if (bid !== _hoverBid) { _hoverBid = bid; _apply(); }
+  });
+  document.addEventListener('mouseleave', () => { if (_hoverBid != null) { _hoverBid = null; _apply(); } });
+  // Re-apply after the 1s drawGauge rebuild swaps in fresh block nodes (the pointer
+  // hasn't moved, so no new mouseover fires — the observer is what keeps it stable).
+  const _mo = new MutationObserver(() => { if (_hoverBid != null) _apply(); });
+  ['gauge-inner', 'time-blocks'].forEach(id => {
+    const c = document.getElementById(id);
+    if (c) _mo.observe(c, { childList: true });
+  });
 })();
 
 /* iPad / wide web: the matrix +Add inputs in the LOWER cells (q3/q4) sit near the
