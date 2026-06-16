@@ -12015,10 +12015,13 @@ function _tasksOnDate(key) {               // [{q,idx,task,_repeat?,_due?}] on t
     const repeats = !onCreated && Array.isArray(t.repeat) && t.repeat.length && dow >= 0 &&
                     t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart &&
                     (!repEnd || key <= repEnd);
+    // (user) A day the user ticked DONE in the Routine grid that ISN'T a scheduled repeat day still
+    // shows a completed task bar (duration 0) on that day in Month/Agenda.
+    const extraTick = !onCreated && !repeats && !!(t.repeatDone && t.repeatDone[key]);
     // A due task shows on its DUE day (red "D") AND on its do/created day (normal "T") —
     // two markers across the calendar. On a day that is BOTH, the due marker wins.
     if (isDue) out.push({ q, idx, task: t, _due: true, _key: key });
-    else if (onCreated || repeats) out.push({ q, idx, task: t, _repeat: !!repeats, _key: key });
+    else if (onCreated || repeats || extraTick) out.push({ q, idx, task: t, _repeat: !!(repeats || extraTick), _key: key });
   }));
   return out;
 }
@@ -12589,10 +12592,11 @@ function _calRenderHabit() {
         const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         const dow = new Date(y, m, day).getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked in Month tab
-        if (worked.has(day) || ticked) cells += '<span class="cal-hb-cell done" style="background:' + col + '"></span>';
-        else if (isRepeat)     cells += '<span class="cal-hb-cell rep"></span>';
-        else                   cells += '<span class="cal-hb-cell"></span>';
+        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked here or in Month tab
+        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to toggle done
+        if (worked.has(day) || ticked) cells += '<span class="cal-hb-cell done"' + _d + ' style="background:' + col + '"></span>';
+        else if (isRepeat)     cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
+        else                   cells += '<span class="cal-hb-cell"' + _d + '></span>';
       }
       // The task NAME pops in a more saturated colour (vivid bucket-side hue when tagged,
       // else the darker quadrant text tint) — the pastel square colour was too washed out.
@@ -12649,10 +12653,11 @@ function _calRenderHabitWeek(grid, title, tasks) {
       days.forEach(d => {
         const key = _calDateKey(d), dow = d.getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked in Month tab
-        if (worked.has(key) || ticked) cells += '<span class="cal-hbw-cell done" style="background:' + col + '"></span>';
-        else if (isRepeat)    cells += '<span class="cal-hbw-cell rep"></span>';
-        else                  cells += '<span class="cal-hbw-cell"></span>';
+        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked here or in Month tab
+        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to toggle done
+        if (worked.has(key) || ticked) cells += '<span class="cal-hbw-cell done"' + _d + ' style="background:' + col + '"></span>';
+        else if (isRepeat)    cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
+        else                  cells += '<span class="cal-hbw-cell"' + _d + '></span>';
       });
       // Task NAME in a more saturated colour (vivid bucket-side hue when tagged, else the
       // darker quadrant text tint) so it stands out above the 7 squares.
@@ -13281,6 +13286,22 @@ window.bidoroCalSync = bidoroCalSync;
       const cur = !!(state.tasks[q] && state.tasks[q][idx] && state.tasks[q][idx].done);
       try { if (typeof bidoroSetTaskDone === 'function') bidoroSetTaskDone(q, idx, !cur); } catch (_) {}
     }
+    try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
+    try { const pop = document.getElementById('cal-daypop'); if (pop && !pop.classList.contains('hidden') && _calState && _calState.selKey && typeof _calOpenDayPop === 'function') _calOpenDayPop(_calState.selKey); } catch (_) {}
+  });
+  // (user) Routine grid cell tap → toggle that day's done for the repeat task (plan OR off-plan day).
+  // Off-plan ticks also surface a completed task bar (duration 0) on that day in Month/Agenda.
+  document.addEventListener('click', (e) => {
+    const cell = e.target && e.target.closest ? e.target.closest('.cal-hb-cell, .cal-hbw-cell') : null;
+    if (!cell || !cell.dataset.day) return;
+    e.preventDefault(); e.stopPropagation();
+    const q = cell.dataset.q, idx = parseInt(cell.dataset.idx, 10), day = cell.dataset.day;
+    const task = state.tasks[q] && state.tasks[q][idx];
+    if (!task || !day) return;
+    if (!task.repeatDone || typeof task.repeatDone !== 'object') task.repeatDone = {};
+    if (task.repeatDone[day]) delete task.repeatDone[day]; else task.repeatDone[day] = true;
+    try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+    try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
     // Refresh whatever calendar surface is showing (lists / month / agenda / open day popup).
     try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
     try { const pop = document.getElementById('cal-daypop'); if (pop && !pop.classList.contains('hidden') && _calState && _calState.selKey && typeof _calOpenDayPop === 'function') _calOpenDayPop(_calState.selKey); } catch (_) {}
