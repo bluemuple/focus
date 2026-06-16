@@ -12017,8 +12017,8 @@ function _tasksOnDate(key) {               // [{q,idx,task,_repeat?,_due?}] on t
                     (!repEnd || key <= repEnd);
     // A due task shows on its DUE day (red "D") AND on its do/created day (normal "T") —
     // two markers across the calendar. On a day that is BOTH, the due marker wins.
-    if (isDue) out.push({ q, idx, task: t, _due: true });
-    else if (onCreated || repeats) out.push({ q, idx, task: t, _repeat: !!repeats });
+    if (isDue) out.push({ q, idx, task: t, _due: true, _key: key });
+    else if (onCreated || repeats) out.push({ q, idx, task: t, _repeat: !!repeats, _key: key });
   }));
   return out;
 }
@@ -12270,18 +12270,19 @@ function _calTaskRowHtml(o) {
   // Completion: a leading TICK BOX (left) the user can tap to (un)complete that day's task —
   // synced with the home task bar via bidoroSetTaskDone. The box is coloured by the task's chosen
   // bucket SIDE (task.pillar). Repeat PROJECTIONS aren't a real instance → keep a static check only.
-  const done = !!(o.task && o.task.done);
+  const _rkey = o._key || null;
+  // For a repeat OCCURRENCE the "done" state is PER-DAY (task.repeatDone[key]) — ticking it marks
+  // just that day (→ Routine tab). For a normal/due row it's the task's own done flag.
+  const done = o._repeat
+    ? !!(o.task && o.task.repeatDone && _rkey && o.task.repeatDone[_rkey])
+    : !!(o.task && o.task.done);
   const _checkSvg = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
   const _pill = (o.task && typeof o.task.pillar === 'number') ? o.task.pillar : null;
   const _pcol = (_pill != null && typeof _calSideColor === 'function') ? _calSideColor(_pill)
               : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(o.q, o.idx) : '#374151');
-  let check;
-  if (o._repeat) {                                  // projection → static (no per-occurrence toggle)
-    check = done ? '<span class="cal-task-check">' + _checkSvg + '</span>' : '';
-  } else {
-    check = '<span class="cal-task-cb' + (done ? ' on' : '') + '" role="checkbox" tabindex="0" aria-checked="' + done + '"'
-      + ' data-q="' + o.q + '" data-idx="' + o.idx + '" style="--cb:' + _pcol + '">' + (done ? _checkSvg : '') + '</span>';
-  }
+  const _rep = o._repeat ? (' data-repeat="1" data-day="' + escapeHTML(_rkey || '') + '"') : '';
+  const check = '<span class="cal-task-cb' + (done ? ' on' : '') + '" role="checkbox" tabindex="0" aria-checked="' + done + '"'
+    + ' data-q="' + o.q + '" data-idx="' + o.idx + '"' + _rep + ' style="--cb:' + _pcol + '">' + (done ? _checkSvg : '') + '</span>';
   let timeChip = '';
   if (done && !o._repeat) {
     let ms = 0;
@@ -12588,7 +12589,8 @@ function _calRenderHabit() {
         const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         const dow = new Date(y, m, day).getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        if (worked.has(day))   cells += '<span class="cal-hb-cell done" style="background:' + col + '"></span>';
+        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked in Month tab
+        if (worked.has(day) || ticked) cells += '<span class="cal-hb-cell done" style="background:' + col + '"></span>';
         else if (isRepeat)     cells += '<span class="cal-hb-cell rep"></span>';
         else                   cells += '<span class="cal-hb-cell"></span>';
       }
@@ -12647,7 +12649,8 @@ function _calRenderHabitWeek(grid, title, tasks) {
       days.forEach(d => {
         const key = _calDateKey(d), dow = d.getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        if (worked.has(key))  cells += '<span class="cal-hbw-cell done" style="background:' + col + '"></span>';
+        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked in Month tab
+        if (worked.has(key) || ticked) cells += '<span class="cal-hbw-cell done" style="background:' + col + '"></span>';
         else if (isRepeat)    cells += '<span class="cal-hbw-cell rep"></span>';
         else                  cells += '<span class="cal-hbw-cell"></span>';
       });
@@ -13266,8 +13269,18 @@ window.bidoroCalSync = bidoroCalSync;
     e.preventDefault(); e.stopPropagation();
     const q = cb.dataset.q, idx = parseInt(cb.dataset.idx, 10);
     if (!q || !(idx >= 0)) return;
-    const cur = !!(state.tasks[q] && state.tasks[q][idx] && state.tasks[q][idx].done);
-    try { if (typeof bidoroSetTaskDone === 'function') bidoroSetTaskDone(q, idx, !cur); } catch (_) {}
+    if (cb.dataset.repeat) {
+      // Repeat OCCURRENCE → toggle that DAY's habit mark (task.repeatDone[key]) → Routine tab. No money.
+      const day = cb.dataset.day, task = state.tasks[q] && state.tasks[q][idx];
+      if (task && day) {
+        if (!task.repeatDone || typeof task.repeatDone !== 'object') task.repeatDone = {};
+        if (task.repeatDone[day]) delete task.repeatDone[day]; else task.repeatDone[day] = true;
+        try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+      }
+    } else {
+      const cur = !!(state.tasks[q] && state.tasks[q][idx] && state.tasks[q][idx].done);
+      try { if (typeof bidoroSetTaskDone === 'function') bidoroSetTaskDone(q, idx, !cur); } catch (_) {}
+    }
     // Refresh whatever calendar surface is showing (lists / month / agenda / open day popup).
     try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
     try { const pop = document.getElementById('cal-daypop'); if (pop && !pop.classList.contains('hidden') && _calState && _calState.selKey && typeof _calOpenDayPop === 'function') _calOpenDayPop(_calState.selKey); } catch (_) {}
@@ -17716,6 +17729,10 @@ function renderFocusMatrix() {
   // hidden from today's list until their day arrives (the calendar still lists
   // them on that day by createdAt). String compare of 'YYYY-MM-DD' is chronological.
   const _todayKey = (typeof _calDateKey === 'function') ? _calDateKey(new Date()) : null;
+  // (user) Home shows ONLY today's tasks (created today / repeating today / due today). Built from
+  // the same day-membership logic the calendar uses, so carried-over past tasks drop off the home.
+  let _todaySet = null;
+  try { if (_todayKey && typeof _tasksOnDate === 'function') _todaySet = new Set((_tasksOnDate(_todayKey) || []).map(o => o.q + ':' + o.idx)); } catch (_) { _todaySet = null; }
   // 2×2 grid cell headers. "Not X" is shown as a STRIKETHROUGH on the word
   // itself (e.g. "Not Urgent" → <s>Urgent</s>) instead of the literal word
   // "Not" — matches the quadrant-picker scheme. Static strings → innerHTML
@@ -17804,8 +17821,9 @@ function renderFocusMatrix() {
     });
     _order.forEach((i) => {
       const t = _qTasks[i];
-      // (#19) Skip tasks deferred to a future day ("Do it tomorrow").
-      if (_todayKey && t && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _todayKey) return;
+      // (user) Show ONLY today's tasks. Falls back to the old future-only hide if the set failed.
+      if (_todaySet) { if (!_todaySet.has(q + ':' + i)) return; }
+      else if (_todayKey && t && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _todayKey) return;
       // Empty (newly-created) tasks render an inline input bar instead of a
       // popup. The input auto-focuses; Enter / blur commits and saves; an
       // empty commit deletes the task.
