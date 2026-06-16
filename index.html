@@ -15835,6 +15835,10 @@ function customConfirm(title, message, opts) {
       resolve(window.confirm(message || title || ''));
       return;
     }
+    // Belt-and-suspenders: if a confirm is somehow STILL open (its 30s countdown
+    // interval ticking), close it before reusing the shared modal — otherwise its
+    // interval keeps writing seconds onto this same button (flickering-seconds bug).
+    try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser('remote'); } catch (_) {}
     titleEl.textContent = title || 'Confirm';
     msgEl.textContent   = message || '';
     yesBtn.textContent  = opts.yesLabel || 'Yes';
@@ -19468,6 +19472,11 @@ let _lastTransitionSoundBoundary = 0;
 async function showPomoPhaseConfirm() {
   const at = state.activeTimer;
   if (!at || at.type !== 'pomodoro') return;
+  // Don't STACK a second transition dialog on top of one that's already open
+  // (several paths call this — tickPomodoro, cloud-sync, resume). Two open at
+  // once = two 30s-countdown intervals painting the SAME button → the seconds
+  // jump around (13s→10s→12s…). One dialog at a time.
+  if (_openConfirmCloser) return;
   _exitGardenForDialog();   // a "continue?" dialog should show on HOME, not over the garden
   // Decide what the next phase WOULD be
   let nextPhase, nextDurMs, nextLabel, currentLabel;
@@ -25084,10 +25093,12 @@ function logEvent(opts) {
 // The stored value + all earn/spend/price comparisons stay in USD — only the SHOWN
 // number changes, so the economy is identical across languages.
 function _moneyDigits(n) {
-  const c = (typeof bidoroCur === 'function') ? bidoroCur() : { dec: 2, rate: 1 };
-  const dec = c.dec || 0, rate = c.rate || 1;
+  // App-wide policy: money never shows decimals — rounded to the nearest whole
+  // unit with thousands separators (e.g. $33,600). (Per-locale `dec` is ignored.)
+  const c = (typeof bidoroCur === 'function') ? bidoroCur() : { dec: 0, rate: 1 };
+  const rate = c.rate || 1;
   const v = (Math.abs(+n) || 0) * rate;
-  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: dec });
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 function fmtMoney(amount) {
   const sign = amount < 0 ? '-' : '';
@@ -25105,7 +25116,7 @@ function _shopPriceNum(n) {
   const ab = x => (x >= 10 ? Math.round(x) : Math.round(x * 10) / 10);   // ≥10 → integer, else 1 decimal
   if (v >= 1000000) return ab(v / 1000000) + 'M';
   if (v >= 1000)    return ab(v / 1000) + 'k';
-  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: (c.dec || 0) });
+  return v.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 /* Locale currency symbol + compact price (₩/¥/€/$ + "k" abbreviation). */
 function _shopPrice(n) {
@@ -25117,7 +25128,7 @@ function _shopPrice(n) {
 function _shopPriceFull(n) {
   const c = (typeof bidoroCur === 'function') ? bidoroCur() : { sym: '$', dec: 0, rate: 1 };
   const v = Math.round((+n || 0) * (c.rate || 1));
-  return (c.sym || '$') + v.toLocaleString('en-US', { maximumFractionDigits: (c.dec || 0) });
+  return (c.sym || '$') + v.toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 /* Korean object particle 을/를: a Hangul syllable whose last char has a final consonant
    (받침) takes 을, otherwise 를. Non-Hangul endings fall back to 를. */
@@ -29455,7 +29466,7 @@ if (_editToggle) {
   const HEARTBEAT_MS = 4000;
   const SUSPEND_MS   = 3 * 60 * 1000;     // a gap bigger than this = the app was suspended
   let _lastTick = Date.now();
-  let _prevPending = false, _prevBoundary = 0, _prevTask = null, _open = false;
+  let _prevWork = false, _prevBoundary = 0, _prevTask = null, _open = false;
   function _taskName(q, idx){ const t = state.tasks[q] && state.tasks[q][idx]; return (t && t.text) || 'your task'; }
   function _esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
   // Paint the task's block as ONE CONTINUOUS task-colored span from its work-start to capMs,
@@ -29498,6 +29509,9 @@ if (_editToggle) {
   function _ask(task, boundaryMs, awayStartMs){
     if (_open) return; _open = true;
     _exitGardenForDialog();   // tapped a notification while in the garden → show on HOME
+    // Freeze the phase clock so tickPomodoro can't pop the normal "Focus complete."
+    // transition over this recovery dialog while it's open (we own the decision now).
+    try { const _at = state.activeTimer; if (_at && _at.type === 'pomodoro') _at.pendingPhaseConfirm = true; } catch (_) {}
     const mins = Math.max(1, Math.round((Date.now() - awayStartMs) / 60000));
     const ov = document.createElement('div');
     ov.className = 'reopen-ask-overlay';
@@ -29518,16 +29532,37 @@ if (_editToggle) {
   // on-device test hook (the suspend trigger can't fire in a desktop preview):
   // call __reopenDidYouDoIt({q,idx,name}, boundaryMs, awayStartMs) to show the dialog.
   window.__reopenDidYouDoIt = _ask;
-  setInterval(() => {
+  // Detect a SUSPEND gap (JS frozen while the phone slept / app backgrounded).
+  // Fire the "Welcome back" recovery when the app was frozen for >3 min DURING a
+  // WORK pomodoro whose phase boundary has since passed — so the off-screen time
+  // is never silently credited as focus, and the timer never strands at 00:00.
+  //
+  // (Was gated on `_prevPending` = the transition popup being ALREADY pending
+  //  before the freeze. That only caught the rare "boundary hit, then screen
+  //  off" order and MISSED the common "screen off mid-phase, boundary passes
+  //  while asleep" case — which left tickPomodoro to either strand the timer or
+  //  pop the wrong "Focus complete." dialog. Now we key off the boundary having
+  //  passed, which is a superset.)
+  function _checkResume() {
     const now = Date.now();
     const gap = now - _lastTick;
     const at = state.activeTimer;
-    if (gap > SUSPEND_MS && _prevPending && _prevTask) _ask(_prevTask, _prevBoundary, now - gap);
+    if (gap > SUSPEND_MS && !_open && _prevTask && _prevWork
+        && _prevBoundary && _prevBoundary <= now) {
+      _ask(_prevTask, _prevBoundary, now - gap);
+    }
     _lastTick = now;
-    _prevPending  = !!(at && at.type === 'pomodoro' && at.pendingPhaseConfirm);
+    _prevWork     = !!(at && at.type === 'pomodoro' && at.phase === 'work' && !at.paused);
     _prevBoundary = at ? ((+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0)) : 0;
     _prevTask     = (at && at.type === 'pomodoro') ? { q: at.q, idx: at.idx, name: _taskName(at.q, at.idx) } : null;
-  }, HEARTBEAT_MS);
+  }
+  setInterval(_checkResume, HEARTBEAT_MS);
+  // Also check the INSTANT the app returns to the foreground, so the recovery
+  // dialog wins the race against tickPomodoro's transition popup (which would
+  // otherwise flash for up to one heartbeat before being replaced).
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') _checkResume(); });
+  window.addEventListener('pageshow', _checkResume);
+  window.addEventListener('focus', _checkResume);
 })();
 
 /* ===== GTD chip → open the "Setting Time for Get Things Done" picker. ===== */
@@ -35734,6 +35769,18 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   function render(){ syncFromState(); build(); apply(); }
   window.bidoroBucket3DRender = render;
   window.bidoroBucket3DSync = syncLive;
+  /* Which face index currently sits at the FRONT (facing the viewer). Wall i rests
+     at i·360/N, and `spin = -i·360/N` brings it forward, so the front face =
+     round(-spin / (360/N)) mod N. The home-screen widget reads this so its pail
+     shows the SAME face front as the app. */
+  window.bidoroBucket3DFrontFace = function () {
+    try {
+      const step = 360 / N;
+      let i = Math.round(-spin / step) % N;
+      if (i < 0) i += N;
+      return i;
+    } catch (_) { return 0; }
+  };
   /* Clear any selected wall on the 3D home bucket (the watering full-screen calls
      this on enter so a face picked at home doesn't stay highlighted inside it). */
   window.bidoroBucket3DDeselect = function () { if (heightSel !== -1) { heightSel = -1; _selClass(); build(); } };
@@ -39833,6 +39880,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
      to hide the splash screen, style the status bar, schedule pomodoro-end
      local notifications, and add haptic feedback. Safe to load everywhere. -->
-<script defer src="ios-shim.js?v=ios-widget-2"></script>
+<script defer src="ios-shim.js?v=ios-widget-5"></script>
 </body>
 </html>

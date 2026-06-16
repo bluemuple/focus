@@ -343,6 +343,24 @@
       }
     }
 
+    // Per-face category names (the "big category" labels painted on the in-app 3D
+    // bucket faces) — state.bucket.faceText[i].title, falling back to the 7 default
+    // pillar names. The widget paints these small on each face so it matches the app.
+    function bucketFaceNames(state, N) {
+      const fallback = ['Mind', 'Body', 'Joy', 'Money', 'Growth', 'Study / Work', 'People'];
+      const out = [];
+      try {
+        const ft = (state.bucket && state.bucket.faceText) || [];
+        for (let i = 0; i < N; i++) {
+          const t = (ft[i] && ft[i].title) ? String(ft[i].title) : (fallback[i] || ('Side ' + (i + 1)));
+          out.push(t.replace(/\s+/g, ' ').trim());
+        }
+      } catch (_) {
+        for (let i = 0; i < N; i++) out.push(fallback[i] || ('Side ' + (i + 1)));
+      }
+      return out;
+    }
+
     // Incomplete tasks across the matrix — mirrors the unfinished-task filter in
     // index.html (!t.done && non-empty text).
     function openTasks(state) {
@@ -357,6 +375,57 @@
         });
         return n;
       } catch (_) { return 0; }
+    }
+
+    // The actual NAMES of the open tasks (q1→q4 order, important-first), capped so
+    // the JSON stays small — the Medium "balance" widget lists these as text.
+    function openTaskNames(state) {
+      try {
+        const out = [];
+        ['q1', 'q2', 'q3', 'q4'].forEach(q => {
+          const arr = (state.tasks && state.tasks[q]) || [];
+          for (let i = 0; i < arr.length && out.length < 8; i++) {
+            const t = arr[i];
+            if (t && !t.done && t.text && String(t.text).trim()) {
+              out.push(String(t.text).trim());
+            }
+          }
+        });
+        return out;
+      } catch (_) { return []; }
+    }
+
+    // Upcoming SCHEDULED BLOCKS for the gauge widget. Mirrors state.scheduledBlocks
+    // (see drawGauge/renderScheduledBlocks in index.html) but trimmed to a compact
+    // shape: { s, e, q, br, t } = start/end epoch-ms, quadrant index 0–3 (-1 if
+    // none/break), isBreak, task title. Only blocks that overlap [now, now+12h] are
+    // pushed (the widget shows a forward window with "now" pinned near the top),
+    // capped at 18 so the snapshot JSON stays tiny.
+    function scheduleBlocks(state) {
+      try {
+        const raw = (state && Array.isArray(state.scheduledBlocks)) ? state.scheduledBlocks : [];
+        const now = Date.now();
+        const horizon = now + 12 * 3600000;
+        const qIdx = { q1: 0, q2: 1, q3: 2, q4: 3 };
+        const out = [];
+        for (let i = 0; i < raw.length; i++) {
+          const b = raw[i];
+          if (!b || b._preview) continue;
+          const s = +b.startMs, e = +b.endMs;
+          if (!(e > s)) continue;
+          if (e <= now || s >= horizon) continue;       // outside the window
+          const isBreak = !!b.isBreak;
+          out.push({
+            s: s,
+            e: e,
+            q: isBreak ? -1 : (qIdx[b.q] != null ? qIdx[b.q] : -1),
+            br: isBreak,
+            t: isBreak ? '' : String(b.taskName || b.trackerName || '').trim().slice(0, 40)
+          });
+        }
+        out.sort((a, b) => a.s - b.s);
+        return out.slice(0, 18);
+      } catch (_) { return []; }
     }
 
     function buildPayload() {
@@ -386,11 +455,20 @@
         water: waterRatio(state),
         faces: geo.faces,
         heights: geo.heights,
+        faceNames: bucketFaceNames(state, geo.faces),
+        frontFace: (function () {
+          try {
+            return (typeof window.bidoroBucket3DFrontFace === 'function')
+              ? (window.bidoroBucket3DFrontFace() | 0) : 0;
+          } catch (_) { return 0; }
+        })(),
         phase: phase,
         phaseEndMs: phaseEndMs,
         paused: paused,
         taskTitle: taskTitle,
         tasksOpen: openTasks(state),
+        tasks: openTaskNames(state),
+        blocks: scheduleBlocks(state),
         updatedMs: Date.now()
       };
     }
