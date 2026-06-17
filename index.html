@@ -8249,6 +8249,34 @@
 </head>
 <body>
 
+<style>
+  /* Sign-up avatar (emoji) button + picker. */
+  .login-avatar-btn{ width:46px;height:46px;flex:0 0 46px;border:1px solid var(--line,#d1d5db);
+    border-radius:12px;background:var(--surface-2,#fff);font-size:26px;line-height:1;cursor:pointer;
+    display:flex;align-items:center;justify-content:center;padding:0; }
+  .login-avatar-btn:active{ transform:scale(.95); }
+  .av-pick-overlay{ position:fixed;inset:0;z-index:100050;display:flex;align-items:center;justify-content:center;
+    background:rgba(15,23,42,.46);padding:20px; }
+  .av-pick-overlay.hidden{ display:none; }
+  .av-pick-panel{ width:300px;max-width:90vw;background:var(--surface,#fff);border-radius:16px;
+    box-shadow:0 12px 40px rgba(0,0,0,.28);overflow:hidden;display:flex;flex-direction:column; }
+  .av-pick-head{ display:flex;align-items:center;gap:4px;padding:9px 10px;border-bottom:1px solid var(--line,#eee); }
+  .av-pick-title{ flex:1;text-align:center;font-weight:700;font-size:15px;color:var(--text-main,#111827); }
+  .av-pick-back,.av-pick-x{ width:32px;height:32px;border:none;background:transparent;font-size:20px;line-height:1;
+    cursor:pointer;color:var(--text-main,#374151);border-radius:8px;padding:0; }
+  .av-pick-back.hidden{ visibility:hidden; }
+  .av-pick-back:active,.av-pick-x:active{ background:rgba(0,0,0,.07); }
+  .av-pick-grid{ display:grid;grid-template-columns:repeat(5,1fr);gap:2px;padding:10px;
+    height:280px;overflow-y:auto;-webkit-overflow-scrolling:touch;align-content:start; }
+  .av-pick-grid.hidden{ display:none; }
+  .av-pick-grid.tones{ grid-template-columns:repeat(3,1fr);gap:8px;align-content:center;justify-items:center; }
+  .av-pick-grid.tones .av-pick-cell{ font-size:44px;height:64px;width:64px; }
+  .av-pick-cell{ font-size:30px;line-height:1;height:50px;display:flex;align-items:center;justify-content:center;
+    border:none;background:transparent;border-radius:10px;cursor:pointer;padding:0; }
+  .av-pick-cell:hover{ background:rgba(0,0,0,.06); }
+  .av-pick-cell:active{ transform:scale(.9); }
+</style>
+
 <header class="topbar">
   <div class="brand" id="brand-home" role="button" tabindex="0" title="Go to Focus page">Bidoro<small>Bid on your time</small></div>
   <div class="motivation" id="motivation-display"></div>
@@ -9292,6 +9320,12 @@
          iOS keyboard. The full feature walkthrough is still reachable via
          "In detail →" below the sign-in buttons. -->
     <div class="auth-form">
+      <!-- Avatar (emoji) + nickname — used when signing UP. -->
+      <div class="login-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
+        <button type="button" id="login-avatar" class="login-avatar-btn" title="Choose avatar" aria-label="Choose avatar">👤</button>
+        <input type="text" id="login-nickname" placeholder="Nickname (optional)" maxlength="24" autocomplete="nickname"
+               style="flex:1 1 auto; min-width:0;">
+      </div>
       <input type="email" id="login-email" placeholder="Email" autocomplete="email">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
       <div class="row-flex" style="grid-column: 1 / -1; flex-wrap: wrap;">
@@ -9304,6 +9338,21 @@
     <div style="text-align: right; margin: 8px 0 0;">
       <button class="btn-link" id="open-manual" type="button">In detail →</button>
     </div>
+  </div>
+</div>
+
+<!-- Avatar (emoji) picker — opened by the 👤 button in the sign-up modal.
+     Panel 1 = scrollable emoji grid; tap an emoji → Panel 2 = skin-tone choices
+     (same panel size) with a back (‹) button top-left. -->
+<div class="av-pick-overlay hidden" id="avatar-picker" aria-hidden="true">
+  <div class="av-pick-panel" role="dialog" aria-modal="true" aria-label="Choose avatar">
+    <div class="av-pick-head">
+      <button type="button" class="av-pick-back hidden" id="ap-back" aria-label="Back">‹</button>
+      <span class="av-pick-title" id="ap-title">Pick an avatar</span>
+      <button type="button" class="av-pick-x" id="ap-close" aria-label="Close">✕</button>
+    </div>
+    <div class="av-pick-grid" id="ap-emoji"></div>
+    <div class="av-pick-grid tones hidden" id="ap-tone"></div>
   </div>
 </div>
 
@@ -10709,10 +10758,14 @@ let _currentAuthEmail = null;
 function getEffectiveUserId() {
   return _currentAuthUserId || state.sbUserId || 'me';
 }
-async function authSignUp(email, password) {
+async function authSignUp(email, password, meta) {
   const sb = await getSupabaseClient();
   if (!sb) throw new Error('Configure Project URL and anon key first.');
-  const { data, error } = await sb.auth.signUp({ email, password });
+  // Optional profile (nickname + avatar emoji) → stored in Supabase user_metadata.
+  const payload = (meta && (meta.nickname || meta.avatar))
+    ? { email, password, options: { data: meta } }
+    : { email, password };
+  const { data, error } = await sb.auth.signUp(payload);
   if (error) throw error;
   return data.user;
 }
@@ -26369,7 +26422,10 @@ window.trf = trf;
   "Apple Calendar":  { ko: "애플 캘린더", zh: "Apple 日历", ja: "Apple カレンダー", es: "Calendario de Apple", fr: "Calendrier Apple" },
   "Google Calendar": { ko: "구글 캘린더", zh: "Google 日历", ja: "Google カレンダー", es: "Calendario de Google", fr: "Agenda Google" },
   "Backups":         { ko: "백업", zh: "备份", ja: "バックアップ", es: "Copias de seguridad", fr: "Sauvegardes" },
-  "{n} min":         { ko: "{n}분", zh: "{n} 分钟", ja: "{n} 分", es: "{n} min", fr: "{n} min" }
+  "{n} min":         { ko: "{n}분", zh: "{n} 分钟", ja: "{n} 分", es: "{n} min", fr: "{n} min" },
+  "Nickname (optional)": { ko: "닉네임 (선택)", zh: "昵称（可选）", ja: "ニックネーム（任意）", es: "Apodo (opcional)", fr: "Pseudo (facultatif)" },
+  "Pick an avatar":  { ko: "아바타 선택", zh: "选择头像", ja: "アバターを選択", es: "Elige un avatar", fr: "Choisir un avatar" },
+  "Skin tone":       { ko: "피부색 선택", zh: "肤色", ja: "肌の色", es: "Tono de piel", fr: "Teint" }
 });
 const _I18N_ATTRS = ['placeholder','title','aria-label','alt'];
 function _i18nNode(node) {
@@ -28251,8 +28307,13 @@ async function handleLoginModalSignUp() {
   if (!email || !password) { setLoginStatus('Enter email and password', '#dc2626'); return; }
   if (password.length < 6) { setLoginStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setLoginStatus('Creating account...', '#6b7280');
+  const _nick = (document.getElementById('login-nickname') || {}).value || '';
+  const _avatar = window._bidoroSignupAvatar || '';
+  const _meta = { nickname: _nick.trim(), avatar: _avatar };
   try {
-    const user = await authSignUp(email, password);
+    // Persist the chosen nickname + avatar locally too (syncs with the rest of state).
+    try { state.profile = Object.assign({}, state.profile, _meta); saveState(); } catch (_) {}
+    const user = await authSignUp(email, password, _meta);
     if (user && user.id) {
       updateAuthUI(user);
       setLoginStatus('✓ Account created.' + (user.confirmed_at ? '' : ' Check email if confirmation is on.'), '#059669');
@@ -28282,6 +28343,62 @@ if (loginTryItBtn)  loginTryItBtn.onclick  = () => {
   if (!el) return;
   el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleLoginModalSignIn(); } };
 });
+
+/* Sign-up AVATAR (emoji) picker: 👤 → scrollable emoji grid → tap one → skin-tone
+   panel (same panel, ‹ back top-left) → tap a tone = chosen avatar. The chosen
+   emoji is held in window._bidoroSignupAvatar and saved at sign-up. */
+(function wireAvatarPicker(){
+  const AVATARS = ['👶','🧒','👦','👧','🧑','👱','👨','🧔','🧔‍♂️','🧔‍♀️','👨‍🦰','👨‍🦱','👨‍🦳','👨‍🦲','👩','👩‍🦰','🧑‍🦰','👩‍🦱','🧑‍🦱','👩‍🦳','🧑‍🦳','👩‍🦲','🧑‍🦲','👱‍♀️','👱‍♂️','🧓','👴','👵'];
+  const TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];   // default + 5 Fitzpatrick
+  const overlay = document.getElementById('avatar-picker');
+  const emojiGrid = document.getElementById('ap-emoji');
+  const toneGrid = document.getElementById('ap-tone');
+  const backBtn = document.getElementById('ap-back');
+  const closeBtn = document.getElementById('ap-close');
+  const titleEl = document.getElementById('ap-title');
+  const avBtn = document.getElementById('login-avatar');
+  if (!overlay || !emojiGrid || !toneGrid || !avBtn) return;
+  const _tr = (s) => (typeof tr === 'function') ? tr(s) : s;
+  // Insert the skin-tone modifier AFTER the first code point (the person base),
+  // so ZWJ sequences (👨‍🦰, 👱‍♀️, 🧔‍♂️…) get toned correctly.
+  function applyTone(base, tone){
+    if (!tone) return base;
+    const cps = Array.from(base);
+    return cps[0] + tone + cps.slice(1).join('');
+  }
+  function showEmoji(){
+    toneGrid.classList.add('hidden'); emojiGrid.classList.remove('hidden');
+    backBtn.classList.add('hidden'); titleEl.textContent = _tr('Pick an avatar');
+  }
+  function showTones(base){
+    emojiGrid.classList.add('hidden'); toneGrid.classList.remove('hidden');
+    backBtn.classList.remove('hidden'); titleEl.textContent = _tr('Skin tone');
+    toneGrid.innerHTML = '';
+    TONES.forEach(t => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'av-pick-cell'; b.textContent = applyTone(base, t);
+      b.addEventListener('click', () => { setAvatar(applyTone(base, t)); closePicker(); });
+      toneGrid.appendChild(b);
+    });
+  }
+  function setAvatar(emoji){ avBtn.textContent = emoji; window._bidoroSignupAvatar = emoji; }
+  let _built = false;
+  function buildEmoji(){
+    if (_built) return; _built = true;
+    AVATARS.forEach(em => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'av-pick-cell'; b.textContent = em;
+      b.addEventListener('click', () => showTones(em));
+      emojiGrid.appendChild(b);
+    });
+  }
+  function openPicker(){ buildEmoji(); showEmoji(); overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden','false'); }
+  function closePicker(){ overlay.classList.add('hidden'); overlay.setAttribute('aria-hidden','true'); }
+  avBtn.addEventListener('click', openPicker);
+  backBtn.addEventListener('click', showEmoji);
+  closeBtn.addEventListener('click', closePicker);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closePicker(); });
+})();
 
 /* Setup-page auth banner — same logic as the login modal, but inline. */
 const setupAuthEmailInput    = document.getElementById('setup-auth-email');
