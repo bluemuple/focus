@@ -63,6 +63,24 @@ alter table public.focus_profiles       add column if not exists shared_note_at 
 alter table public.focus_friendships    add column if not exists share_notes    boolean not null default false;
 alter table public.focus_share_requests add column if not exists want_notes     boolean not null default false;
 
+-- ---- Focusing-quadrant presence + Unfriend notices (added later; idempotent) ----
+-- focusing_q = which Eisenhower quadrant (q1..q4) the running pomodoro belongs to,
+-- so a friend's "Focusing now" dot can be tinted with that task's colour.
+alter table public.focus_profiles add column if not exists focusing_q text;
+
+create table if not exists public.focus_notices (
+  id          bigint generated always as identity primary key,
+  to_user     text not null,
+  kind        text not null,                          -- 'unfriend' (extensible)
+  from_nick   text,
+  message     text,
+  created_at  timestamptz not null default now(),
+  seen        boolean not null default false
+);
+create index if not exists focus_notices_to_idx on public.focus_notices (to_user, seen);
+alter table public.focus_notices enable row level security;
+revoke all on public.focus_notices from anon, authenticated;
+
 -- ---- Lock the tables: access ONLY via the RPCs below. ----
 alter table public.focus_profiles       enable row level security;
 alter table public.focus_friendships    enable row level security;
@@ -166,6 +184,7 @@ begin
         'other_id', case when f.user_a=uid then f.user_b else f.user_a end,
         'nickname', pr.nickname, 'avatar', pr.avatar,
         'focusing', coalesce(pr.focusing,false) and pr.focusing_at > now() - interval '3 minutes',
+        'focusing_q', case when (coalesce(pr.focusing,false) and pr.focusing_at > now() - interval '3 minutes') then pr.focusing_q else null end,
         'status', f.status,
         'requested_by_me', (f.requested_by = uid),
         'share_timeline', f.share_timeline, 'share_balance', f.share_balance, 'share_routine', f.share_routine, 'share_notes', f.share_notes,
@@ -303,15 +322,68 @@ begin
   ), '[]'::json);
 end $$;
 
+-- 4-arg profile upsert overload: ALSO records which quadrant (q1..q4) is focusing
+-- now, so friends can tint the "Focusing now" indicator with that task's colour.
+create or replace function public.focus_profile_upsert(p_nickname text, p_avatar text, p_focusing boolean, p_focusing_q text)
+returns text language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid(); code text;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  select friend_code into code from focus_profiles where user_id = uid;
+  if code is null then code := _focus_gen_code(); end if;
+  insert into focus_profiles (user_id, friend_code, nickname, avatar, focusing, focusing_q, focusing_at, updated_at)
+    values (uid, code, p_nickname, p_avatar, coalesce(p_focusing,false),
+            case when coalesce(p_focusing,false) then p_focusing_q else null end, now(), now())
+  on conflict (user_id) do update set
+    nickname   = coalesce(p_nickname, focus_profiles.nickname),
+    avatar     = coalesce(p_avatar,   focus_profiles.avatar),
+    focusing   = coalesce(p_focusing, focus_profiles.focusing),
+    focusing_q = case when coalesce(p_focusing,false) then p_focusing_q else null end,
+    focusing_at = now(), updated_at = now();
+  return code;
+end $$;
+
+-- Unfriend: delete the pair row (cascade drops its share requests) + leave a notice
+-- (with an optional message) the other person picks up via focus_notices_fetch().
+create or replace function public.focus_friend_remove(p_friendship_id bigint, p_message text)
+returns json language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid(); f record; other text; mynick text;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  select * into f from focus_friendships where id=p_friendship_id and (user_a=uid or user_b=uid);
+  if f is null then return json_build_object('ok',false,'error','not_found'); end if;
+  other := case when f.user_a=uid then f.user_b else f.user_a end;
+  select nickname into mynick from focus_profiles where user_id=uid;
+  delete from focus_friendships where id=p_friendship_id;
+  insert into focus_notices (to_user, kind, from_nick, message)
+    values (other, 'unfriend', mynick, nullif(trim(coalesce(p_message,'')),''));
+  return json_build_object('ok',true);
+end $$;
+
+-- Fetch + mark-seen MY unseen notices (e.g. "X removed you" with their message).
+create or replace function public.focus_notices_fetch()
+returns json language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid(); res json;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  select coalesce(json_agg(json_build_object('id',id,'kind',kind,'from',from_nick,'message',message,'at',created_at) order by id), '[]'::json)
+    into res from focus_notices where to_user=uid and not seen;
+  update focus_notices set seen=true where to_user=uid and not seen;
+  return res;
+end $$;
+
 grant execute on function
   public.focus_profile_upsert(text,text,boolean),
+  public.focus_profile_upsert(text,text,boolean,text),
   public.focus_friend_add(text,text),
   public.focus_friend_respond(bigint,boolean),
+  public.focus_friend_remove(bigint,text),
   public.focus_friends_list(),
   public.focus_friend_data(text,text),
   public.focus_share_change(bigint,boolean,boolean,boolean,boolean,text),
   public.focus_share_respond(bigint,boolean,text),
   public.focus_share_replies(),
   public.focus_set_note(text),
-  public.focus_friend_notes()
+  public.focus_friend_notes(),
+  public.focus_notices_fetch()
   to anon, authenticated;

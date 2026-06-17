@@ -8320,6 +8320,18 @@
   .frt-row{ display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--card-border,#eee); }
   .frt-dot{ width:10px;height:10px;border-radius:3px;flex:0 0 auto; }
   .fr-name{ color:#16a34a;font-weight:700;margin-right:5px;flex:0 0 auto; }
+  /* Account box + identity header */
+  .account-box{ border:1px solid var(--card-border,#e5e7eb); border-radius:12px;
+    background:var(--surface-2, var(--button-bg, #f3f4f6)); padding:14px 12px; margin:0 0 4px; }
+  .acct-id-row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .acct-id-name{ font-size:1.02rem; }
+  .acct-id-name b{ cursor:default; }
+  #acct-avatar{ cursor:pointer; }
+  /* Deep Focus: actual-extension block (right 1/3) = same task colour, a touch darker. */
+  .time-block.time-block-ext, .tg-block.tg-block-ext { filter: brightness(0.88); }
+  /* Home hero: "[friend] is focusing now" line under the left text. */
+  .fc-friends { margin-top: 6px; font-size: .82rem; font-weight: 700; line-height: 1.35; color: var(--text-muted, #6b7280); }
+  .fc-friends .ff-nm { font-weight: 800; }
 </style>
 
 <header class="topbar">
@@ -8579,9 +8591,17 @@
         </div>
         <div class="cal-sync-status" aria-live="polite"></div>
       </div>
-      <!-- Signed-in state (the only visible state on the setup page now) -->
+      <!-- Bidoro account — grouped in a box (Calendar sync is moved below it by JS) -->
+      <div class="account-box">
+      <!-- Signed-in state -->
       <div id="auth-logged-in" class="auth-section hidden">
-        <p>✓ Signed in as <strong id="auth-email-display">—</strong></p>
+        <div class="acct-id-row">
+          <button class="login-avatar-btn" id="acct-avatar" type="button" title="Change avatar" style="width:42px;height:42px;flex:0 0 42px;font-size:24px;">🙂</button>
+          <div class="acct-id-text" style="min-width:0;flex:1 1 auto;">
+            <div class="acct-id-name"><b id="acct-nick">—</b> <span class="help">(logged in)</span> <button class="btn-link" id="acct-nick-edit" type="button" style="font-size:.78rem;">edit</button></div>
+            <div class="help" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span id="auth-email-display">—</span></div>
+          </div>
+        </div>
         <!-- Daily backup list (auto-created at 3 AM, up to 4 kept). Only
              shown when 2+ versions exist. -->
         <div id="versions-list" class="versions-list hidden"></div>
@@ -8616,6 +8636,7 @@
         <input id="sb-url"><input id="sb-key"><input id="sb-user">
         <button id="sb-test"></button><span id="sb-status"></span>
       </div>
+      </div><!-- /account-box -->
     </div>
 
   </section>
@@ -8680,6 +8701,7 @@
                   <span class="fc-session" id="fc-session" aria-hidden="true"></span>
                   <button class="fc-take5 hidden" id="fc-take5" type="button" aria-label="Take a 5-minute break"></button>
                 </span>
+                <div class="fc-friends" id="fc-friends" style="display:none;"></div>
               </div>
               <!-- Big pomodoro ring (lands where the start-now cat's play-circle was):
                    the time + a pause button sit inside it; a knob marks the elapsed
@@ -9367,11 +9389,27 @@
         <button class="fd-tab" data-tab="routine" type="button">Routine</button>
       </div>
       <div id="fd-body"></div>
-      <div style="margin-top:14px;text-align:center;">
+      <div style="margin-top:14px;display:flex;gap:8px;justify-content:center;">
         <button class="btn" id="fd-change-sharing" type="button">Change Sharing</button>
+        <button class="btn" id="fd-unfriend" type="button">Unfriend</button>
       </div>
     </div>
   </section>
+
+  <!-- Unfriend modal -->
+  <div class="modal hidden" id="unfriend-modal" aria-hidden="true">
+    <div class="modal-backdrop" id="uf-backdrop"></div>
+    <div class="modal-content" style="width:340px;max-width:92vw;">
+      <h3 style="margin:0 0 4px;">Remove friend?</h3>
+      <p class="help" id="uf-detail" style="margin:0 0 12px;"></p>
+      <input type="text" id="uf-message" placeholder="Add a short message (optional)" maxlength="140" style="width:100%;box-sizing:border-box;">
+      <div class="actions" style="margin-top:12px;">
+        <button class="btn" id="uf-cancel" type="button">Cancel</button>
+        <button class="btn primary" id="uf-confirm" type="button">Unfriend</button>
+      </div>
+      <div class="help" id="uf-status" style="min-height:1.1em;margin-top:6px;"></div>
+    </div>
+  </div>
 
   <!-- Change Sharing modal -->
   <div class="modal hidden" id="change-sharing-modal" aria-hidden="true">
@@ -10959,6 +10997,7 @@ function updateAuthUI(user) {
     _currentAuthUserId = user.id;
     _currentAuthEmail = user.email || null;
     if (typeof renderVersionsList === 'function') renderVersionsList();
+    try { if (window._renderAcctHeader) window._renderAcctHeader(); } catch (_) {}
   } else {
     if (inEl) inEl.classList.add('hidden');
     if (outEl) outEl.classList.remove('hidden');
@@ -12624,19 +12663,27 @@ function _calRenderRings() {
    filled-vs-empty lengths are directly comparable; the side with the FEWEST active days is
    flagged ("↓ lowest") = the lowest bucket face = next month's priority. (Water metaphor:
    empty cells = water not yet poured, filled = poured.) */
-function _calRenderCategory() {
-  const wrap = document.getElementById('cal-rt-category'); if (!wrap) return;
-  const y = _calState.y, m = _calState.m;
+function _calRenderCategory(opts) {
+  // opts (optional) lets a FRIEND's data render into a different container with the
+  // SAME visuals: { target, watchLog, tasks, y, m }. Defaults = the user's own.
+  const wrap = (opts && opts.target) || document.getElementById('cal-rt-category'); if (!wrap) return;
+  const _wl    = (opts && opts.watchLog) || state.watchLog || [];
+  const _tasks = (opts && opts.tasks)    || state.tasks    || {};
+  const y = (opts && opts.y != null) ? opts.y : _calState.y;
+  const m = (opts && opts.m != null) ? opts.m : _calState.m;
   const dim = new Date(y, m + 1, 0).getDate();         // days in THIS month (28/29/30/31)
   const N = _calSideCount();
   // which sides were active on each day + WHICH tasks fed them (for the hover/tap tooltip)
   const dayActive = {};                                // 'YYYY-MM-DD' -> Set(side)
   const dayTasks  = {};                                // 'YYYY-MM-DD' -> { side -> Set(taskName) }
-  (state.watchLog || []).forEach(e => {
+  (_wl || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
     const d = new Date(e.startedAt);
     if (d.getFullYear() !== y || d.getMonth() !== m) return;
-    const side = _calEntrySide(e);
+    // resolve the bucket side from the entry, falling back to the SUPPLIED tasks
+    // (a friend's, when rendered for them) — not always the user's own.
+    let side = (typeof e.pillar === 'number') ? e.pillar : null;
+    if (side == null) { const t = (_tasks[e.q] || [])[e.taskIdx]; side = (t && typeof t.pillar === 'number') ? t.pillar : null; }
     if (side == null || side < 0) return;
     const k = _calDateKey(e.startedAt);
     (dayActive[k] = dayActive[k] || new Set()).add(side);
@@ -12646,7 +12693,7 @@ function _calRenderCategory() {
   // (user) A COMPLETED task that had a bucket SIDE chosen also fills its day's square for that side —
   // so ticking it in the Month view colours the matching Balance cell. Keyed by the task's calendar
   // day (createdAt; falls back to completedAt).
-  ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach(t => {
+  ['q1', 'q2', 'q3', 'q4'].forEach(q => (_tasks[q] || []).forEach(t => {
     if (!t || !t.done || typeof t.pillar !== 'number' || t.pillar < 0 || t.pillar >= N) return;
     const when = (typeof t.createdAt === 'number') ? t.createdAt : t.completedAt;
     if (typeof when !== 'number') return;
@@ -12736,23 +12783,29 @@ function _calHabitWeekShift(delta) {
   _calRenderHabit();
 }
 function _calHabitNav(delta) { if (_calHabitWeekly()) _calHabitWeekShift(delta); else _calMonthShift(delta); }
-function _calRenderHabit() {
-  const grid = document.getElementById('cal-hb-grid'); if (!grid) return;
-  const title = document.getElementById('cal-hb-title');
+function _calRenderHabit(opts) {
+  // opts (optional) renders a FRIEND's data into another container, same visuals:
+  // { target, titleEl, watchLog, tasks, y, m, weekStart, weekly }.
+  const grid = (opts && opts.target) || document.getElementById('cal-hb-grid'); if (!grid) return;
+  const title = (opts && 'titleEl' in opts) ? opts.titleEl : document.getElementById('cal-hb-title');
+  const _wl    = (opts && opts.watchLog) || state.watchLog || [];
+  const _tasksObj = (opts && opts.tasks) || state.tasks || {};
   // repeat tasks (any quadrant) — those with a weekday set
   const tasks = [];
-  ['q1', 'q2', 'q3', 'q4'].forEach(q => (state.tasks[q] || []).forEach((t, idx) => {
+  ['q1', 'q2', 'q3', 'q4'].forEach(q => (_tasksObj[q] || []).forEach((t, idx) => {
     if (t && Array.isArray(t.repeat) && t.repeat.length) tasks.push({ q, idx, t });
   }));
   // iPhone portrait → weekly grid (7 big squares); wider devices keep the full-month grid.
-  if (_calHabitWeekly()) { _calRenderHabitWeek(grid, title, tasks); return; }
+  const _weekly = (opts && 'weekly' in opts) ? opts.weekly : _calHabitWeekly();
+  if (_weekly) { _calRenderHabitWeek(grid, title, tasks, { watchLog: _wl, weekStart: (opts && opts.weekStart) }); return; }
   grid.classList.remove('cal-hb-weekly');
-  const y = _calState.y, m = _calState.m;
+  const y = (opts && opts.y != null) ? opts.y : _calState.y;
+  const m = (opts && opts.m != null) ? opts.m : _calState.m;
   if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
   const dim = new Date(y, m + 1, 0).getDate();
   // worked days this month per task name (watchLog pomodoro)
   const workedByName = {};
-  (state.watchLog || []).forEach(e => {
+  (_wl || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
     const d = new Date(e.startedAt);
     if (d.getFullYear() !== y || d.getMonth() !== m) return;
@@ -12798,10 +12851,11 @@ function _calRenderHabit() {
    is too cramped on a narrow phone). Week-anchored to _habitWeekStart (Sunday); the ◀ ▶
    buttons move a week at a time (via _calHabitNav). Task name sits above its row of squares
    so they get the full width; the weekday/date header spans the same 7 columns. */
-function _calRenderHabitWeek(grid, title, tasks) {
+function _calRenderHabitWeek(grid, title, tasks, opts) {
   grid.classList.add('cal-hb-weekly');
-  if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
-  const ws = _habitWeekStart;
+  const _wl = (opts && opts.watchLog) || state.watchLog || [];
+  if (!(opts && opts.weekStart) && !_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+  const ws = (opts && opts.weekStart) || _habitWeekStart;
   const days = [];
   for (let i = 0; i < 7; i++) days.push(new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i));
   const a = days[0], b = days[6];
@@ -12813,7 +12867,7 @@ function _calRenderHabitWeek(grid, title, tasks) {
   }
   // worked days per task name → set of full date-keys (the week can straddle two months).
   const workedByName = {};
-  (state.watchLog || []).forEach(e => {
+  (_wl || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
     const nm = ((e.name || '') + '').trim();
     (workedByName[nm] = workedByName[nm] || new Set()).add(_calDateKey(e.startedAt));
@@ -13481,6 +13535,7 @@ window.bidoroCalSync = bidoroCalSync;
   document.addEventListener('click', (e) => {
     const cell = e.target && e.target.closest ? e.target.closest('.cal-hb-cell, .cal-hbw-cell') : null;
     if (!cell || !cell.dataset.day) return;
+    if (cell.closest('#fd-rt-grid')) return;   // a FRIEND's routine grid is read-only — never toggle our tasks
     e.preventDefault(); e.stopPropagation();
     const q = cell.dataset.q, idx = parseInt(cell.dataset.idx, 10), day = cell.dataset.day;
     const task = state.tasks[q] && state.tasks[q][idx];
@@ -16046,6 +16101,7 @@ function customConfirm(title, message, opts) {
     }
     _applyBtnColor(yesBtn, opts.yesColor);
     _applyBtnColor(noBtn, opts.noColor);
+    noBtn.style.display = opts.hideNo ? 'none' : '';   // OK-only dialogs (Pomodoro / break-end)
 
     let _closerRef, _cdTimer = null, _cdTick = null;
     const _origYes = yesBtn.textContent;
@@ -16053,6 +16109,7 @@ function customConfirm(title, message, opts) {
       if (_cdTimer) { clearTimeout(_cdTimer); _cdTimer = null; }
       if (_cdTick)  { clearInterval(_cdTick); _cdTick = null; }
       yesBtn.textContent = _origYes;
+      noBtn.style.display = '';
       _applyBtnColor(yesBtn, null);   // reset any per-button tint
       _applyBtnColor(noBtn, null);
       modal.classList.add('hidden');
@@ -16092,7 +16149,7 @@ function customConfirm(title, message, opts) {
       const _paint = () => { yesBtn.textContent = _origYes + ' (' + _left + 's)'; };
       _paint();
       _cdTick = setInterval(() => { _left -= 1; if (_left >= 0) _paint(); }, 1000);
-      _cdTimer = setTimeout(() => done(true), _cdMs);
+      _cdTimer = setTimeout(() => done(opts.countdownAnswer === false ? false : true), _cdMs);
     }
   });
 }
@@ -19850,22 +19907,32 @@ async function showPomoPhaseConfirm() {
     }
   } else {
     notify(gTitle, gMsg, { noToast: true });        // haptic + background system alert (popup is the foreground UI)
-    const gentle = (state.timerTransition !== 'manual');   // GENTLE AUTO is the default
-    // (user) COLOUR-CODE the buttons so the choice reads at a glance:
-    //   • FOCUS button → looks like the TASK BAR (task-bar bg + task-bar text colour).
-    //   • BREAK button → break-pomodoro style: WHITE bg, SKY-BLUE text + outline.
+    const _deep = (state.timerTransition !== 'manual');   // Deep Focus (gentle) vs Pomodoro (manual)
+    // Button colours: BREAK = white bg + sky text; FOCUS = the task-bar colour.
     const _break = { bg: '#fff', fg: '#0EA5E9', border: '#0EA5E9' };
     const _focus = {
       bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(at.q, at.idx) : '#B23A5B'),
       fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(at.q, at.idx) : '#fff')
     };
-    answer = await customConfirm(gTitle, gMsg, {
-      yesLabel: gYes, noLabel: gNo,
-      // work-end: Start break (yes)=sky · Keep going (no)=focus · break-end: Start focus (yes)=focus
-      yesColor: isWorkEnd ? _break : _focus,
-      noColor:  isWorkEnd ? _focus : null,
-      countdownMs: gentle ? 30000 : 0
-    });
+    let _tname = ''; try { const _t = state.tasks[at.q] && state.tasks[at.q][at.idx]; _tname = (_t && _t.text) ? String(_t.text).trim() : ''; } catch (_) {}
+    if (!isWorkEnd) {
+      // BREAK end (Deep Focus & Pomodoro) → single OK: "Time for {task}".
+      answer = await customConfirm(_tname ? trf('Time for {task}', { task: _tname }) : tr('Ready for the next focus?'), '',
+                                   { yesLabel: tr('OK'), hideNo: true, yesColor: _focus });
+      if (answer === false) answer = true;            // OK-only → advance to focus
+    } else if (!_deep) {
+      // POMODORO work end → single OK: "Break time".
+      answer = await customConfirm(tr('Break time'), tr('Time for a break.'),
+                                   { yesLabel: tr('OK'), hideNo: true, yesColor: _break });
+      if (answer === false) answer = true;            // OK-only → advance to break
+    } else {
+      // DEEP FOCUS work end → choice; if ignored, 30s auto = Keep going (continue).
+      answer = await customConfirm(gTitle, gMsg, {
+        yesLabel: tr('Take a break'), noLabel: tr('Keep going'),
+        yesColor: _break, noColor: _focus,
+        countdownMs: 30000, countdownAnswer: false    // 30s → Keep going (no = continue)
+      });
+    }
   }
   // 'remote' = the modal was force-closed because the answer arrived from
   // another device via cloud sync. State has already been updated remotely;
@@ -20066,7 +20133,47 @@ async function showPomoPhaseConfirm() {
           if (d < best) { oldBlock = b; best = d; }
         }
       }
-      if (oldBlock) {
+      // DEEP FOCUS keep-going model: the plan block stays FIXED at [start, planEnd];
+      // the overrun lives in a SEPARATE `_actualExt` block (right 1/3, a touch darker)
+      // so the blocks you scheduled below never get pushed down. (Pomodoro/Auto never
+      // reach this "keep going" branch, but keep the old grow-down as a safe fallback.)
+      const _deepExt = !state.pomodoroAuto && state.timerTransition === 'gentleAuto';
+      if (_deepExt) {
+        // Close the just-finished work segment at the phase boundary (popup-wait isn't painted).
+        if (oldBlock && oldBlock.activeAt != null) {
+          if (!Array.isArray(oldBlock.workedSegments)) oldBlock.workedSegments = [];
+          oldBlock.workedSegments.push({ startMs: oldBlock.activeAt, endMs: _phaseBoundary });
+          oldBlock.activeAt = null;
+        }
+        if (oldBlock && oldBlock._actualExt) {
+          // Already extending → keep growing the SAME extension block (don't spawn a 2nd).
+          oldBlock.activeAt    = _resumeMs;
+          oldBlock.activeBreakAt = null;
+          oldBlock.activeEndMs = null;
+          oldBlock._extending  = true;
+          if ((+oldBlock.endMs) < _resumeMs + 1000) oldBlock.endMs = _resumeMs + 1000;
+        } else {
+          // First keep-going → FINALIZE the plan block at planEnd, spawn the extension.
+          if (oldBlock) {
+            if ((+oldBlock.endMs) > _phaseBoundary) oldBlock.endMs = _phaseBoundary;
+            if (!oldBlock.activeEndMs) oldBlock.activeEndMs = _phaseBoundary;
+          }
+          const t = state.tasks[at2.q] && state.tasks[at2.q][at2.idx];
+          state.scheduledBlocks.push({
+            id:           _resumeMs + '_' + Math.random().toString(36).slice(2),
+            q:            at2.q,
+            taskIdx:      at2.idx,
+            taskName:     (oldBlock && oldBlock.taskName) || (t && t.text) || '',
+            startMs:      _phaseBoundary,        // begins where the plan ended → visually connected
+            endMs:        _resumeMs + 1000,
+            activeAt:     _resumeMs,
+            activeBreakAt:null,
+            activeEndMs:  null,
+            _actualExt:   true,                  // right-column overrun block
+            _extending:   true                   // _growKeepGoing tracks the now-line (no push)
+          });
+        }
+      } else if (oldBlock) {
         // Close the just-finished work segment at the phase boundary (popup-wait
         // time isn't painted), then RE-OPEN the same block — no finalize, no new
         // block. Mark it extending so the gauge grows its bottom + pushes below.
@@ -20885,6 +20992,11 @@ function drawTimeArea() {
     if (!b || b.endMs <= now || b._preview || (window._previewBlock && b === window._previewBlock)) return;
     if (!_nowLineBlock || b.startMs < _nowLineBlock.startMs) _nowLineBlock = b;
   });
+  // Deep Focus actual-extension blocks (`_actualExt`): the right 1/3 column shows
+  // the task you KEPT working on past its plan; the plan blocks it overran shift to
+  // the left 2/3. Collect those ranges once so the loop can shift overlapping plans.
+  const _extRanges = _renderBlocks.filter(x => x && x._actualExt &&
+    !(window._previewBlock && x === window._previewBlock));
   _renderBlocks.forEach(b => {
     if (b.endMs <= contentTopMs || b.startMs >= contentBotMs) return;
     const tPx = Math.max(0, msToPx(b.startMs));
@@ -20913,6 +21025,15 @@ function drawTimeArea() {
     if (b.id && window._tgFlyHideIds && window._tgFlyHideIds.has(b.id)) div.style.visibility = 'hidden';
     div.style.top    = tPx + 'px';
     div.style.height = (bPx - tPx) + 'px';
+    // Deep Focus 2-column layout: the extension lives in the RIGHT 1/3 (a touch
+    // darker, same task colour); plan blocks it overlaps shrink to the LEFT 2/3.
+    if (b._actualExt) {
+      div.classList.add('time-block-ext');
+      div.style.left = 'calc(66% + 2px)';
+    } else if (_extRanges.length && _extRanges.some(x => x !== b &&
+        b.startMs < x.endMs && b.endMs > x.startMs)) {
+      div.style.right = 'calc(34% + 2px)';
+    }
 
     // Render one coloured fill per worked / break session. Paused intervals
     // are not in any segment so they stay grey — exactly what the user
@@ -23726,6 +23847,11 @@ function _growKeepGoing() {
   const b = state.scheduledBlocks.find(x => x._extending && x.q === at.q && x.taskIdx === at.idx && !x.activeEndMs);
   if (!b) return;
   if (now > (+b.endMs)) b.endMs = now;          // bottom of the block tracks the now-line
+  // Deep Focus actual-extension: the overrun lives in its OWN right-column block,
+  // so it just grows down the now-line — never fills gaps, pushes, or asks "make
+  // room?". The plan blocks it overlaps stay exactly where they are (rendered in
+  // the left 2/3 by drawTimeArea / drawGauge).
+  if (b._actualExt) return;
   // Blocks to make room for = any non-finalized planned block that OVERLAPS or sits below the
   // extending block (its end is after the extending block's start). Using `endMs > b.startMs`
   // (not `startMs > b.startMs`) is what catches a pre-existing block that started at/just before
@@ -24825,11 +24951,33 @@ function _flashFocusPraise() {
     try { renderImDoing(); } catch (_) {}
   }, 2600);
 }
+/* "[friend] is focusing now" line under the hero's left text. Driven by
+   window._focusingFriends (published by the Friends poller). Each name is tinted
+   with the colour of the quadrant (q1..q4) that friend is focusing on; multiple
+   friends read "A and B are focusing now". */
+function bidoroRenderFocusFriends() {
+  const el = document.getElementById('fc-friends'); if (!el) return;
+  const fr = Array.isArray(window._focusingFriends) ? window._focusingFriends : [];
+  if (!fr.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const _name = (f) => {
+    let c = ''; try { if (f.q && typeof focusQuadAccent === 'function') c = focusQuadAccent(f.q); } catch (_) {}
+    const nm = (typeof escapeHTML === 'function') ? escapeHTML(f.name || 'Friend') : (f.name || 'Friend');
+    return '<span class="ff-nm"' + (c ? (' style="color:' + c + '"') : '') + '>' + nm + '</span>';
+  };
+  const AND = (typeof tr === 'function') ? tr('and') : 'and';
+  let names;
+  if (fr.length === 1) names = _name(fr[0]);
+  else names = fr.slice(0, -1).map(_name).join(', ') + ' ' + AND + ' ' + _name(fr[fr.length - 1]);
+  el.innerHTML = (fr.length === 1) ? trf('{names} is focusing now', { names }) : trf('{names} are focusing now', { names });
+  el.style.display = '';
+}
+window.bidoroRenderFocusFriends = bidoroRenderFocusFriends;
 function renderImDoing() {
   // Populates the sticky "Now focusing on" card (expanded + compact layouts).
   // Reuses the exact same call sites the old "I'm doing" area used.
   const card = document.getElementById('focus-card');
   if (!card) return;
+  try { bidoroRenderFocusFriends(); } catch (_) {}
   // Geometric auto-layout runs AFTER this render settles (double-rAF so it wins over the
   // per-state _fitIdleText/_fitFocusName calls scheduled inside this function).
   try { requestAnimationFrame(() => requestAnimationFrame(_layoutFocusCard)); } catch (_) {}
@@ -26536,6 +26684,51 @@ window.trf = trf;
     ja: "本当に取り組んでいましたか？",
     es: "¿De verdad estabas trabajando en ello?",
     fr: "Étiez-vous vraiment en train de le faire ?"
+  },
+  "Welcome back": {
+    ko: "다시 오셨네요", zh: "欢迎回来", ja: "おかえりなさい", es: "Bienvenido de nuevo", fr: "Bon retour"
+  },
+  "The screen was off for {dur}.": {
+    ko: "화면이 꺼지고 {dur} 지났어요.",
+    zh: "屏幕已关闭 {dur}。",
+    ja: "画面がオフになって {dur} 経ちました。",
+    es: "La pantalla estuvo apagada {dur}.",
+    fr: "L'écran est resté éteint pendant {dur}."
+  },
+  "Did you keep working on {task} the whole time?": {
+    ko: "그동안 {task}을(를) 계속 하고 있었나요?",
+    zh: "这段时间你一直在做 {task} 吗？",
+    ja: "その間ずっと {task} を続けていましたか？",
+    es: "¿Seguiste trabajando en {task} todo ese tiempo?",
+    fr: "Avez-vous continué {task} pendant tout ce temps ?"
+  },
+  "Yes, I did": {
+    ko: "네, 했어요", zh: "是的", ja: "はい、しました", es: "Sí", fr: "Oui"
+  },
+  "min": {
+    ko: "분", zh: "分钟", ja: "分", es: "min", fr: "min"
+  },
+  "{names} is focusing now": {
+    ko: "{names}님이 집중하고 있어요", zh: "{names} 正在专注", ja: "{names} さんが集中中です",
+    es: "{names} está concentrado ahora", fr: "{names} se concentre"
+  },
+  "{names} are focusing now": {
+    ko: "{names}님이 집중하고 있어요", zh: "{names} 正在专注", ja: "{names} さんが集中中です",
+    es: "{names} están concentrados ahora", fr: "{names} se concentrent"
+  },
+  "Focusing now": { ko: "집중하고 있어요", zh: "正在专注", ja: "集中中", es: "Concentrado ahora", fr: "En concentration" },
+  "Idle": { ko: "쉬는 중", zh: "空闲", ja: "待機中", es: "Inactivo", fr: "Inactif" },
+  "and": { ko: "그리고", zh: "和", ja: "と", es: "y", fr: "et" },
+  "Unfriend": { ko: "친구 끊기", zh: "解除好友", ja: "友達を解除", es: "Eliminar amigo", fr: "Retirer l'ami" },
+  "Remove friend?": { ko: "친구를 끊을까요?", zh: "解除好友？", ja: "友達を解除しますか？", es: "¿Eliminar amigo?", fr: "Retirer cet ami ?" },
+  "Add a short message (optional)": { ko: "짧은 메시지 (선택)", zh: "添加简短留言（可选）", ja: "ひとことメッセージ（任意）", es: "Añade un mensaje breve (opcional)", fr: "Ajouter un petit message (facultatif)" },
+  "{name} removed you as a friend.": { ko: "{name}님이 친구를 끊었어요.", zh: "{name} 解除了与你的好友关系。", ja: "{name} さんがあなたとの友達を解除しました。", es: "{name} te eliminó como amigo.", fr: "{name} vous a retiré de ses amis." },
+  "Remove {name} from your friends? They’ll be notified.": {
+    ko: "{name}님을 친구에서 삭제할까요? 상대방에게 알림이 가요.",
+    zh: "将 {name} 从好友中移除？对方会收到通知。",
+    ja: "{name} さんを友達から削除しますか？相手に通知されます。",
+    es: "¿Eliminar a {name} de tus amigos? Se le notificará.",
+    fr: "Retirer {name} de vos amis ? Il/elle sera averti(e)."
   }
 });
 /* Settings labels / capsules that were still English (merged, never clobber). */
@@ -26549,7 +26742,12 @@ window.trf = trf;
   "{n} min":         { ko: "{n}분", zh: "{n} 分钟", ja: "{n} 分", es: "{n} min", fr: "{n} min" },
   "Nickname (optional)": { ko: "닉네임 (선택)", zh: "昵称（可选）", ja: "ニックネーム（任意）", es: "Apodo (opcional)", fr: "Pseudo (facultatif)" },
   "Pick an avatar":  { ko: "아바타 선택", zh: "选择头像", ja: "アバターを選択", es: "Elige un avatar", fr: "Choisir un avatar" },
-  "Skin tone":       { ko: "피부색 선택", zh: "肤色", ja: "肌の色", es: "Tono de piel", fr: "Teint" }
+  "Skin tone":       { ko: "피부색 선택", zh: "肤色", ja: "肌の色", es: "Tono de piel", fr: "Teint" },
+  "Break time":      { ko: "휴식 시간", zh: "休息时间", ja: "休憩の時間", es: "Hora de descanso", fr: "Pause" },
+  "Time for a break.": { ko: "쉬어갈 시간이에요.", zh: "该休息了。", ja: "休憩しましょう。", es: "Hora de descansar.", fr: "C'est la pause." },
+  "Time for {task}": { ko: "{task} 할 시간이에요", zh: "该做 {task} 了", ja: "{task} の時間です", es: "Hora de {task}", fr: "C'est l'heure de {task}" },
+  "Take a break":    { ko: "쉬어가기", zh: "休息一下", ja: "休憩する", es: "Descansar", fr: "Faire une pause" },
+  "OK":              { ko: "확인", zh: "确定", ja: "OK", es: "OK", fr: "OK" }
 });
 const _I18N_ATTRS = ['placeholder','title','aria-label','alt'];
 function _i18nNode(node) {
@@ -28520,7 +28718,8 @@ if (loginTryItBtn)  loginTryItBtn.onclick  = () => {
       toneGrid.appendChild(b);
     });
   }
-  function setAvatar(emoji){ avBtn.textContent = emoji; window._bidoroSignupAvatar = emoji; }
+  let _onPick = null;
+  function setAvatar(emoji){ if (typeof _onPick === 'function') _onPick(emoji); }
   let _built = false;
   function buildEmoji(){
     if (_built) return; _built = true;
@@ -28531,12 +28730,47 @@ if (loginTryItBtn)  loginTryItBtn.onclick  = () => {
       emojiGrid.appendChild(b);
     });
   }
-  function openPicker(){ buildEmoji(); showEmoji(); overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden','false'); }
+  function openPicker(cb){ _onPick = cb || null; buildEmoji(); showEmoji(); overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden','false'); }
   function closePicker(){ overlay.classList.add('hidden'); overlay.setAttribute('aria-hidden','true'); }
-  avBtn.addEventListener('click', openPicker);
+  // default trigger = the sign-up avatar button
+  avBtn.addEventListener('click', () => openPicker(em => { avBtn.textContent = em; window._bidoroSignupAvatar = em; }));
   backBtn.addEventListener('click', showEmoji);
   closeBtn.addEventListener('click', closePicker);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closePicker(); });
+  // expose so other places (the Settings account header) can open the same picker
+  window._openAvatarPicker = (cb) => openPicker(cb);
+})();
+
+/* Settings → Account header: [emoji] nickname (logged in) + email, with the emoji
+   and nickname editable; and moves the Calendar-sync section BELOW the account box. */
+(function wireAccountHeader(){
+  const $ = (id) => document.getElementById(id);
+  try { const ss = $('acct-sync-sec'); if (ss && ss.parentElement) ss.parentElement.appendChild(ss); } catch (_) {}
+  function _nick(){ const p = state.profile || {}; if (p.nickname) return p.nickname; if (typeof _currentAuthEmail === 'string' && _currentAuthEmail) return _currentAuthEmail.split('@')[0]; return 'Me'; }
+  function render(){
+    const av = $('acct-avatar'); if (av) av.textContent = (state.profile && state.profile.avatar) || '🙂';
+    const nk = $('acct-nick'); if (nk) nk.textContent = _nick();
+  }
+  window._renderAcctHeader = render;
+  function _save(patch){
+    state.profile = Object.assign({}, state.profile, patch);
+    try { saveState(); } catch (_) {}
+    render();
+    try { if (window.Friends && Friends.syncProfile) Friends.syncProfile(true); } catch (_) {}
+    try { markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+  }
+  const av = $('acct-avatar');
+  if (av) av.addEventListener('click', () => { if (window._openAvatarPicker) window._openAvatarPicker(em => _save({ avatar: em })); });
+  async function editNick(){
+    let v;
+    try { v = (typeof customPrompt === 'function') ? await customPrompt('Nickname', 'Choose a nickname', _nick()) : window.prompt('Nickname', _nick()); }
+    catch (_) { v = null; }
+    if (v == null) return; v = String(v).trim().slice(0, 24); if (!v) return;
+    _save({ nickname: v });
+  }
+  const ne = $('acct-nick-edit'); if (ne) ne.addEventListener('click', editNick);
+  const nk = $('acct-nick'); if (nk) { nk.style.cursor = 'pointer'; nk.addEventListener('click', editNick); }
+  render();
 })();
 
 /* ============================ FRIENDS ============================
@@ -28554,6 +28788,7 @@ const Friends = (function(){
     if (error) throw error; return data;
   }
   function focusingNow(){ const at = state.activeTimer; return !!(at && at.type === 'pomodoro' && !at.paused); }
+  function focusingQ(){ const at = state.activeTimer; return (focusingNow() && typeof at.q === 'string') ? at.q : null; }
   function _scrollTop(){ const m = document.querySelector('main'); if (m) m.scrollTo({ top:0, behavior:'auto' }); }
   function _defaultNick(){
     const p = state.profile || {};
@@ -28567,7 +28802,7 @@ const Friends = (function(){
     _lastProfileSync = now;
     const p = state.profile || {};
     try {
-      const code = await rpc('focus_profile_upsert', { p_nickname: _defaultNick(), p_avatar: p.avatar || null, p_focusing: focusingNow() });
+      const code = await rpc('focus_profile_upsert', { p_nickname: _defaultNick(), p_avatar: p.avatar || null, p_focusing: focusingNow(), p_focusing_q: focusingQ() });
       if (code) { _myCode = code; if ($('fr-mycode')) $('fr-mycode').textContent = code; }
     } catch (_) {}
   }
@@ -28578,11 +28813,20 @@ const Friends = (function(){
       const d = await rpc('focus_friends_list');
       _friends = (d && d.friends) || [];
       if (d && d.me && d.me.friend_code) { _myCode = d.me.friend_code; if ($('fr-mycode')) $('fr-mycode').textContent = _myCode; }
+      _publishFocusing();
       _render(); _badge(_pendingCount());
     } catch (_) { /* SQL not deployed yet → leave UI as-is */ }
   }
   function _pendingCount(){
     return _friends.filter(f => (f.status==='pending' && !f.requested_by_me) || f.incoming_share_req).length;
+  }
+  // Publish the friends currently focusing (name + quadrant colour) so the home hero
+  // card can show "[friend] is focusing now". Re-renders the hero on change.
+  function _publishFocusing(){
+    window._focusingFriends = _friends
+      .filter(f => f.status === 'accepted' && f.focusing)
+      .map(f => ({ name: f.nickname || 'Friend', q: f.focusing_q || null }));
+    try { if (typeof bidoroRenderFocusFriends === 'function') bidoroRenderFocusFriends(); } catch (_) {}
   }
   async function fetchNotes(){
     if (!signedIn()) { window._friendNotes = []; return; }
@@ -28622,8 +28866,13 @@ const Friends = (function(){
       } else if (f.status === 'pending') {
         st.textContent = 'request sent'; const tag = document.createElement('span'); tag.className='help'; tag.textContent='Pending'; acts.appendChild(tag);
       } else {
-        if (f.focusing) { st.textContent = '● Focusing now'; st.classList.add('focusing'); }
-        else st.textContent = 'Idle';
+        if (f.focusing) {
+          st.textContent = '● ' + tr('Focusing now'); st.classList.add('focusing');
+          // (user) tint the "Focusing now" dot+text with the colour of the quadrant
+          // (q1..q4) the friend is currently focusing on.
+          try { if (f.focusing_q && typeof focusQuadAccent === 'function') st.style.color = focusQuadAccent(f.focusing_q); } catch (_) {}
+        }
+        else st.textContent = tr('Idle');
         if (f.incoming_share_req) {
           const req = _btn('● Sharing request','primary', () => _openShareReq(f));
           acts.appendChild(req);
@@ -28749,45 +28998,46 @@ const Friends = (function(){
     _gauge($('fd-tl-mine'), (state.scheduledBlocks||[]), true);
     _gauge($('fd-tl-theirs'), (data.scheduledBlocks||[]), false);   // names already stripped server-side
   }
+  // Friend Balance / Routine now reuse the SAME renderers as the user's own calendar
+  // (Balance = the monthly "where you poured your water" category dot-grid; Routine =
+  // the repeat-task week/month grid), fed the friend's shared data via the opts arg.
+  const _CHEV_L = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg>';
+  const _CHEV_R = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>';
+  let _fdBalY = null, _fdBalM = null, _fdWeek = null, _fdHabY = null, _fdHabM = null;
   function _renderBalance(body, data){
-    const tasks = data.tasks || {}, log = data.watch_log || [];
-    const names = (typeof _PILLAR_NAMES !== 'undefined') ? _PILLAR_NAMES : ['Mind','Body','Joy','Money','Growth','Study / Work','People'];
-    const colors = (typeof _PILLAR_COLORS_VIVID !== 'undefined') ? _PILLAR_COLORS_VIVID : ['#E85A8A','#F0863D','#EAB81E','#43B96B','#27AFC1','#4585D6','#9A5BD8'];
-    const mins = {}; let total = 0;
-    log.forEach(e => {
-      if (!e || (e.type !== 'pomodoro' && e.type !== 'uptask')) return;
-      const d = (+e.durationMs||0)/60000; if (d<=0) return;
-      let pillar = null;
-      try { const arr = tasks[e.q]; const t = arr && arr[e.taskIdx]; if (t && t.pillar != null) pillar = +t.pillar; } catch(_){}
-      const key = (pillar==null) ? 'other' : pillar;
-      mins[key] = (mins[key]||0) + d; total += d;
-    });
-    if (total <= 0) { body.innerHTML = '<div class="fd-empty">No focus logged yet.</div>'; return; }
-    const max = Math.max.apply(null, Object.values(mins));
-    let html = '<div style="padding:6px 2px;">';
-    names.forEach((nm,i) => {
-      const m = mins[i]||0; if (m<=0) return;
-      html += '<div class="fbal-row"><span class="fbal-name">'+_esc(nm)+'</span>'
-            + '<span class="fbal-bar"><span class="fbal-fill" style="width:'+Math.round(m/max*100)+'%;background:'+colors[i%colors.length]+';"></span></span>'
-            + '<span class="fbal-min">'+Math.round(m)+'m</span></div>';
-    });
-    if (mins.other) html += '<div class="fbal-row"><span class="fbal-name">Other</span><span class="fbal-bar"><span class="fbal-fill" style="width:'+Math.round(mins.other/max*100)+'%;background:#9ca3af;"></span></span><span class="fbal-min">'+Math.round(mins.other)+'m</span></div>';
-    html += '</div>';
-    body.innerHTML = html;
+    if (_fdBalY == null) { const d = new Date(); _fdBalY = d.getFullYear(); _fdBalM = d.getMonth(); }
+    const draw = () => {
+      const title = (typeof _CAL_MONTHS !== 'undefined') ? (_CAL_MONTHS[_fdBalM] + ' ' + _fdBalY) : ((_fdBalM + 1) + '/' + _fdBalY);
+      body.innerHTML = '<div class="cal-month-head"><button class="cal-nav" id="fd-bal-prev" type="button">' + _CHEV_L + '</button>'
+        + '<h2>' + _esc(title) + '</h2><button class="cal-nav" id="fd-bal-next" type="button">' + _CHEV_R + '</button></div>'
+        + '<div id="fd-bal-cat" class="cal-rt-category"></div>';
+      try { _calRenderCategory({ target: $('fd-bal-cat'), watchLog: data.watch_log || [], tasks: data.tasks || {}, y: _fdBalY, m: _fdBalM }); } catch (_) {}
+      if ($('fd-bal-prev')) $('fd-bal-prev').onclick = () => { _fdBalM--; if (_fdBalM < 0) { _fdBalM = 11; _fdBalY--; } draw(); };
+      if ($('fd-bal-next')) $('fd-bal-next').onclick = () => { _fdBalM++; if (_fdBalM > 11) { _fdBalM = 0; _fdBalY++; } draw(); };
+    };
+    draw();
   }
   function _renderRoutine(body, data){
-    const tasks = data.tasks || {}; const rows = [];
-    ['q1','q2','q3','q4'].forEach((q,qi) => {
-      (tasks[q]||[]).forEach((t,idx) => {
-        if (!t || !t.text) return;
-        const isRoutine = Array.isArray(t.repeat) ? t.repeat.length>0 : !!t.repeat;
-        if (!isRoutine) return;
-        rows.push({ text: t.text, color: (typeof bidoroTaskBg==='function')?bidoroTaskBg(q,idx):'#cbd5e1' });
-      });
-    });
-    if (!rows.length) { body.innerHTML = '<div class="fd-empty">No routines (repeating tasks) yet.</div>'; return; }
-    body.innerHTML = '<div style="padding:6px 2px;">' + rows.map(r =>
-      '<div class="frt-row"><span class="frt-dot" style="background:'+r.color+';"></span><span>'+_esc(r.text)+'</span></div>').join('') + '</div>';
+    const weekly = (typeof _calHabitWeekly === 'function') ? _calHabitWeekly() : (window.innerWidth <= 700);
+    if (!_fdWeek && typeof _startOfWeek === 'function') _fdWeek = _startOfWeek(new Date());
+    if (_fdHabY == null) { const d = new Date(); _fdHabY = d.getFullYear(); _fdHabM = d.getMonth(); }
+    const draw = () => {
+      body.innerHTML = '<div class="cal-month-head"><button class="cal-nav" id="fd-rt-prev" type="button">' + _CHEV_L + '</button>'
+        + '<h2 id="fd-rt-title">Routine</h2><button class="cal-nav" id="fd-rt-next" type="button">' + _CHEV_R + '</button></div>'
+        + '<div id="fd-rt-grid" class="cal-hb-grid"></div>';
+      try {
+        _calRenderHabit({ target: $('fd-rt-grid'), titleEl: $('fd-rt-title'), watchLog: data.watch_log || [], tasks: data.tasks || {},
+          weekly: weekly, weekStart: _fdWeek, y: _fdHabY, m: _fdHabM });
+      } catch (_) {}
+      const step = (dir) => {
+        if (weekly) { _fdWeek = new Date(_fdWeek.getFullYear(), _fdWeek.getMonth(), _fdWeek.getDate() + dir * 7); }
+        else { _fdHabM += dir; if (_fdHabM < 0) { _fdHabM = 11; _fdHabY--; } else if (_fdHabM > 11) { _fdHabM = 0; _fdHabY++; } }
+        draw();
+      };
+      if ($('fd-rt-prev')) $('fd-rt-prev').onclick = () => step(-1);
+      if ($('fd-rt-next')) $('fd-rt-next').onclick = () => step(1);
+    };
+    draw();
   }
   // ---- change sharing ----
   function _openChangeSharing(){
@@ -28813,6 +29063,44 @@ const Friends = (function(){
         _renderTab();
       } else { $('cs-status').textContent = 'Could not apply.'; }
     } catch(e){ $('cs-status').textContent = '✗ ' + (e.message||'Failed'); }
+  }
+  // ---- unfriend ----
+  function _openUnfriend(){
+    if (!_cur) return;
+    const nm = _cur.nickname || 'this friend';
+    if ($('uf-detail')) $('uf-detail').textContent = trf('Remove {name} from your friends? They’ll be notified.', { name: nm });
+    if ($('uf-message')) $('uf-message').value = '';
+    if ($('uf-status')) $('uf-status').textContent = '';
+    _showModal('unfriend-modal');
+  }
+  async function _doUnfriend(){
+    if (!_cur) return;
+    const fid = _cur.friendship_id, msg = ($('uf-message') ? $('uf-message').value : '') || '';
+    if ($('uf-status')) $('uf-status').textContent = 'Removing…';
+    try {
+      const res = await rpc('focus_friend_remove', { p_friendship_id: fid, p_message: msg });
+      if (res && res.ok) {
+        _hideModal('unfriend-modal');
+        _cur = null;
+        showPage('friends'); _scrollTop();
+        await refresh();
+      } else { if ($('uf-status')) $('uf-status').textContent = 'Could not remove.'; }
+    } catch (e) { if ($('uf-status')) $('uf-status').textContent = '✗ ' + (e.message || 'Failed'); }
+  }
+  // Pull any unseen notices (e.g. "X removed you as a friend") → small toast.
+  async function fetchNotices(){
+    if (!signedIn()) return;
+    let list = [];
+    try { list = await rpc('focus_notices_fetch'); } catch (_) { return; }   // SQL not deployed → skip
+    if (!Array.isArray(list) || !list.length) return;
+    list.forEach(n => {
+      if (!n) return;
+      let txt;
+      if (n.kind === 'unfriend') txt = trf('{name} removed you as a friend.', { name: n.from || 'A friend' });
+      else txt = (n.message || '');
+      if (n.message && n.kind === 'unfriend') txt += ' “' + n.message + '”';
+      try { if (typeof bidoroToast === 'function') bidoroToast(txt); else if (typeof _memoToast === 'function') _memoToast(txt); } catch (_) {}
+    });
   }
   // ---- incoming share request ----
   function _openShareReq(f){
@@ -28843,6 +29131,10 @@ const Friends = (function(){
     if ($('fd-back')) $('fd-back').onclick = () => { showPage('friends'); _scrollTop(); };
     document.querySelectorAll('.fd-tab').forEach(t => t.onclick = () => { _curTab=t.dataset.tab; document.querySelectorAll('.fd-tab').forEach(x=>x.classList.toggle('active',x===t)); _renderTab(); });
     if ($('fd-change-sharing')) $('fd-change-sharing').onclick = _openChangeSharing;
+    if ($('fd-unfriend')) $('fd-unfriend').onclick = _openUnfriend;
+    if ($('uf-cancel')) $('uf-cancel').onclick = () => _hideModal('unfriend-modal');
+    if ($('uf-backdrop')) $('uf-backdrop').onclick = () => _hideModal('unfriend-modal');
+    if ($('uf-confirm')) $('uf-confirm').onclick = _doUnfriend;
     if ($('cs-cancel')) $('cs-cancel').onclick = () => _hideModal('change-sharing-modal');
     if ($('cs-backdrop')) $('cs-backdrop').onclick = () => _hideModal('change-sharing-modal');
     if ($('cs-send')) $('cs-send').onclick = _sendSharing;
@@ -28850,13 +29142,13 @@ const Friends = (function(){
     if ($('sr-approve')) $('sr-approve').onclick = () => _respondShare(true);
     if ($('sr-backdrop')) $('sr-backdrop').onclick = () => _hideModal('share-request-modal');
   }
-  function openList(){ _wire(); syncProfile(true); refresh(); fetchNotes(); applyPendingAdd(); }
+  function openList(){ _wire(); syncProfile(true); refresh(); fetchNotes(); fetchNotices(); applyPendingAdd(); }
   try { _wire(); } catch (_) {}   // wire once at init (static elements exist) so the detail page works on first open
   try { _consumeAddParam(); } catch (_) {}   // handle a scanned-QR ?addfriend=CODE deep link
   // background: keep profile + badge + friend notes fresh while signed in
-  setInterval(() => { if (signedIn()) { syncProfile(false); refresh(); fetchNotes(); } }, 30000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn()) { syncProfile(true); refresh(); fetchNotes(); } });
-  setTimeout(() => { if (signedIn()) { fetchNotes(); applyPendingAdd(); } }, 3000);   // initial load + apply any pending QR add
+  setInterval(() => { if (signedIn()) { syncProfile(false); refresh(); fetchNotes(); fetchNotices(); } }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn()) { syncProfile(true); refresh(); fetchNotes(); fetchNotices(); } });
+  setTimeout(() => { if (signedIn()) { fetchNotes(); fetchNotices(); applyPendingAdd(); } }, 3000);   // initial load + apply any pending QR add
   return { openList, refresh, syncProfile, openDetail, fetchNotes, setNote, addCode, applyPendingAdd, friendNotes: () => (window._friendNotes||[]) };
 })();
 window.Friends = Friends;
@@ -30247,15 +30539,31 @@ if (_editToggle) {
 (function wireReopenDidYouDoIt(){
   const HEARTBEAT_MS = 4000;
   const SUSPEND_MS   = 3 * 60 * 1000;     // a gap bigger than this = the app was suspended
+  const ASK_MS       = 10 * 60 * 1000;    // (user) screen off <10 min → just continue + extend silently;
+                                          //        ≥10 min → ask "did you keep working?" (could be a long away)
   let _lastTick = Date.now();
   let _prevWork = false, _prevBoundary = 0, _prevTask = null, _open = false;
   function _taskName(q, idx){ const t = state.tasks[q] && state.tasks[q][idx]; return (t && t.text) || 'your task'; }
   function _esc(s){ return String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c])); }
-  // Paint the task's block as ONE CONTINUOUS task-colored span from its work-start to capMs,
+  function _isDeep(){ return !state.pomodoroAuto && state.timerTransition === 'gentleAuto'; }
+  // (user) Never let recovered / extended time spill PAST midnight — clamp to the
+  // last moment of the day the work started on.
+  function _midnightAfter(ms){ const d = new Date(+ms); d.setHours(23, 59, 59, 999); return d.getTime(); }
+  // Format an elapsed gap as h:mm (≥1 h) or "{m} min" — for the "hh:mm has passed" copy.
+  function _fmtElapsed(ms){
+    const total = Math.max(1, Math.round(ms / 60000));
+    const h = Math.floor(total / 60), m = total % 60;
+    return h > 0 ? (h + ':' + String(m).padStart(2, '0')) : (m + ' ' + tr('min'));
+  }
+  // Paint the task's block as a CONTINUOUS task-colored span from its work-start to capMs,
   // then finalize it + stop the timer. While the screen was off there are NO 25/5 breaks —
-  // the whole off period reads as task color. (Yes → capMs = now · No → capMs = screen-off time.)
-  function _settleRecovery(task, capMs){
+  // the whole off period reads as task color. (Yes → capMs = now · No → capMs = the plan end.)
+  // In Deep Focus, any time PAST the plan end (planEndMs) splits off into a separate
+  // `_actualExt` block so it reads as a right-column overrun, just like a live extension.
+  function _settleRecovery(task, capMs, planEndMs){
     try { if (typeof _openConfirmCloser === 'function') _openConfirmCloser('remote'); } catch (_) {}   // close any open prompt w/o acting
+    const _deep = _isDeep();
+    const _spawn = [];
     (state.scheduledBlocks || []).forEach(b => {
       if (!b || b.q !== task.q || b.taskIdx !== task.idx) return;
       if (b.activeEndMs != null) return;   // already finalized — leave it
@@ -30266,13 +30574,35 @@ if (_editToggle) {
         ws = (ws == null) ? fs : Math.min(ws, fs);
       }
       if (ws == null) ws = +b.startMs;
-      const cap = Math.max(ws + 1000, +capMs);
-      b.workedSegments = [{ startMs: ws, endMs: cap }];   // single continuous task-colored run
-      b.breakSegments  = [];                              // no breaks during the off period
-      b.activeAt = null; b.activeBreakAt = null;
-      b.endMs = cap; b.activeEndMs = cap;
-      delete b._extending; delete b._combine;             // solid finalized task block (no 25/5 fingernails)
+      let cap = Math.max(ws + 1000, +capMs);
+      cap = Math.min(cap, _midnightAfter(ws));            // (user) never spill past midnight
+      // Deep Focus: keep the plan block at its planned end and break the overrun out into
+      // its own actual-extension block (right column). Falls back to one solid block when
+      // not Deep, when there's no overrun, or when we don't know the plan end.
+      const planEnd = (planEndMs != null) ? Math.min(+planEndMs, cap) : null;
+      if (_deep && planEnd != null && cap > planEnd + 1000 && planEnd > ws) {
+        b.workedSegments = [{ startMs: ws, endMs: planEnd }];
+        b.breakSegments  = [];
+        b.activeAt = null; b.activeBreakAt = null;
+        b.endMs = planEnd; b.activeEndMs = planEnd;
+        delete b._extending; delete b._combine;
+        _spawn.push({
+          id:           planEnd + '_' + Math.random().toString(36).slice(2),
+          q:            b.q, taskIdx: b.taskIdx, taskName: b.taskName || '',
+          startMs:      planEnd, endMs: cap,
+          workedSegments: [{ startMs: planEnd, endMs: cap }], breakSegments: [],
+          activeAt: null, activeBreakAt: null, activeEndMs: cap,
+          _actualExt: true
+        });
+      } else {
+        b.workedSegments = [{ startMs: ws, endMs: cap }];   // single continuous task-colored run
+        b.breakSegments  = [];                              // no breaks during the off period
+        b.activeAt = null; b.activeBreakAt = null;
+        b.endMs = cap; b.activeEndMs = cap;
+        delete b._extending; delete b._combine;             // solid finalized task block (no 25/5 fingernails)
+      }
     });
+    if (_spawn.length && Array.isArray(state.scheduledBlocks)) state.scheduledBlocks.push(..._spawn);
     const at = state.activeTimer;
     if (at && at.type === 'pomodoro' && at.q === task.q && at.idx === task.idx) { at.pendingPhaseConfirm = false; state.activeTimer = null; }
     try { _settleKeepGoing(); } catch (_) {}
@@ -30284,40 +30614,102 @@ if (_editToggle) {
     try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
     try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
   }
-  // No, I stopped → paint only up to the SCREEN-OFF moment (awayStartMs).
-  function _rewind(task, awayStartMs){ _settleRecovery(task, awayStartMs); }
-  // Yes, keep it → paint from block start through NOW, all task color.
-  function _keep(task){ _settleRecovery(task, Date.now()); }
+  // No → planned only: cap at the plan end (boundary), no extension credited.
+  function _rewind(task, boundaryMs){ _settleRecovery(task, boundaryMs, boundaryMs); }
+  // Yes, I did → extension to now: plan block stays, overrun → right-column ext block.
+  function _keep(task, boundaryMs){ _settleRecovery(task, Date.now(), boundaryMs); }
+  // Screen off < 10 min → no question: assume you kept working, extend to now, and
+  // keep timing (a fresh work phase from now). Deep Focus only — other modes still ask.
+  function _autoContinue(task, boundaryMs){
+    const now = Date.now();
+    const cap = Math.min(now, _midnightAfter(boundaryMs));
+    // Close the plan block at its boundary, then spawn / extend the live ext block to now.
+    let plan = (state.scheduledBlocks || []).find(b => b && b.q === task.q && b.taskIdx === task.idx &&
+      b.activeEndMs == null && !b._actualExt);
+    if (plan) {
+      let ws = (plan.activeAt != null) ? +plan.activeAt : null;
+      if (Array.isArray(plan.workedSegments) && plan.workedSegments.length) {
+        const fs = Math.min.apply(null, plan.workedSegments.map(s => +s.startMs));
+        ws = (ws == null) ? fs : Math.min(ws, fs);
+      }
+      if (ws == null) ws = +plan.startMs;
+      const pe = Math.min(+boundaryMs, cap);
+      plan.workedSegments = [{ startMs: ws, endMs: pe }];
+      plan.breakSegments = []; plan.activeAt = null; plan.activeBreakAt = null;
+      plan.endMs = pe; plan.activeEndMs = pe;
+      delete plan._extending; delete plan._combine;
+    }
+    if (Array.isArray(state.scheduledBlocks)) {
+      let ext = state.scheduledBlocks.find(b => b && b._actualExt && b.q === task.q && b.taskIdx === task.idx && b.activeEndMs == null);
+      if (!ext) {
+        ext = { id: boundaryMs + '_' + Math.random().toString(36).slice(2),
+                q: task.q, taskIdx: task.idx, taskName: (plan && plan.taskName) || _taskName(task.q, task.idx),
+                startMs: +boundaryMs, endMs: cap, workedSegments: [], breakSegments: [],
+                activeAt: null, activeBreakAt: null, activeEndMs: null, _actualExt: true, _extending: true };
+        state.scheduledBlocks.push(ext);
+      }
+      // off-period reads as worked; keep timing live from now.
+      ext.workedSegments = [{ startMs: +boundaryMs, endMs: cap }];
+      ext.activeAt = (cap >= now) ? now : null;     // still live unless we hit midnight
+      ext.activeEndMs = (cap >= now) ? null : cap;
+      ext.endMs = Math.max(cap, now);
+    }
+    const at = state.activeTimer;
+    if (at && at.type === 'pomodoro' && at.q === task.q && at.idx === task.idx) {
+      at.pendingPhaseConfirm = false;
+      at.phase = 'work'; at.phaseStartedAt = now; at.startedAt = now;
+      at.phaseDurationMs = (typeof POMO_WORK_MS !== 'undefined') ? POMO_WORK_MS : 1500000;
+      at.totalPausedMs = 0;
+      if (cap < now) { state.activeTimer = null; }   // crossed midnight → stop
+    }
+    try { saveState(); } catch (_) {}
+    try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
+    try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+    try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+    try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
+  }
   function _ask(task, boundaryMs, awayStartMs){
     if (_open) return; _open = true;
     _exitGardenForDialog();   // tapped a notification while in the garden → show on HOME
     // Freeze the phase clock so tickPomodoro can't pop the normal "Focus complete."
     // transition over this recovery dialog while it's open (we own the decision now).
     try { const _at = state.activeTimer; if (_at && _at.type === 'pomodoro') _at.pendingPhaseConfirm = true; } catch (_) {}
-    const mins = Math.max(1, Math.round((Date.now() - awayStartMs) / 60000));
+    const elapsed = _fmtElapsed(Date.now() - awayStartMs);
+    // (user) Yes = the task-bar colour (you DID keep working) · No = plain white.
+    let _yc = { bg: '#3FA36B', fg: '#fff' };
+    try { _yc = { bg: bidoroTaskBg(task.q, task.idx), fg: bidoroTaskText(task.q, task.idx) }; } catch (_) {}
     const ov = document.createElement('div');
     ov.className = 'reopen-ask-overlay';
     ov.innerHTML =
       '<div class="reopen-ask-card" role="dialog" aria-modal="true">' +
-        '<div class="reopen-ask-title">Welcome back 👋</div>' +
+        '<div class="reopen-ask-title">' + tr('Welcome back') + ' 👋</div>' +
         '<div class="reopen-ask-msg">' +
-          trf('The app was closed for about {min} min while {task} was still timing.',
-              { min: '<b>' + mins + '</b>', task: '<b>' + _esc(task.name) + '</b>' }) +
-          '<br>' + tr('Were you actually working on it?') +
+          trf('The screen was off for {dur}.', { dur: '<b>' + _esc(elapsed) + '</b>' }) +
+          '<br>' + trf('Did you keep working on {task} the whole time?', { task: '<b>' + _esc(task.name) + '</b>' }) +
         '</div>' +
         '<div class="reopen-ask-btns">' +
-          '<button type="button" class="reopen-ask-no">No, I stopped</button>' +
-          '<button type="button" class="reopen-ask-yes">Yes, keep it</button>' +
+          '<button type="button" class="reopen-ask-no">' + tr('No') + '</button>' +
+          '<button type="button" class="reopen-ask-yes">' + tr('Yes, I did') + '</button>' +
         '</div>' +
       '</div>';
     document.body.appendChild(ov);
+    try {
+      const _yb = ov.querySelector('.reopen-ask-yes');
+      if (_yb) { _yb.style.background = _yc.bg; _yb.style.borderColor = _yc.bg; _yb.style.color = _yc.fg; }
+      const _nb = ov.querySelector('.reopen-ask-no');
+      if (_nb) { _nb.style.background = '#fff'; _nb.style.borderColor = 'var(--card-border,#d1d5db)'; _nb.style.color = 'var(--text-main,#374151)'; }
+    } catch (_) {}
     const close = () => { try { ov.remove(); } catch (_) {} _open = false; };
-    ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(task); close(); });           // paint start→now, task color
-    ov.querySelector('.reopen-ask-no').addEventListener('click', () => { _rewind(task, awayStartMs); close(); });   // paint start→screen-off only
+    ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(task, boundaryMs); close(); });   // extension to now
+    ov.querySelector('.reopen-ask-no').addEventListener('click', () => { _rewind(task, boundaryMs); close(); }); // planned only (cap at plan end)
   }
   // on-device test hook (the suspend trigger can't fire in a desktop preview):
   // call __reopenDidYouDoIt({q,idx,name}, boundaryMs, awayStartMs) to show the dialog.
   window.__reopenDidYouDoIt = _ask;
+  // parallel hook for the <10 min silent continue+extend path.
+  window.__autoContinueRecovery = _autoContinue;
   // Detect a SUSPEND gap (JS frozen while the phone slept / app backgrounded).
   // Fire the "Welcome back" recovery when the app was frozen for >3 min DURING a
   // WORK pomodoro whose phase boundary has since passed — so the off-screen time
@@ -30335,7 +30727,10 @@ if (_editToggle) {
     const at = state.activeTimer;
     if (gap > SUSPEND_MS && !_open && _prevTask && _prevWork
         && _prevBoundary && _prevBoundary <= now) {
-      _ask(_prevTask, _prevBoundary, now - gap);
+      // (user) Screen off < 10 min in Deep Focus → assume you kept working: extend
+      // to now and keep timing, no question. ≥ 10 min (or non-Deep) → ask.
+      if (_isDeep() && gap < ASK_MS) _autoContinue(_prevTask, _prevBoundary);
+      else                           _ask(_prevTask, _prevBoundary, now - gap);
     }
     _lastTick = now;
     _prevWork     = !!(at && at.type === 'pomodoro' && at.phase === 'work' && !at.paused);
@@ -31733,6 +32128,13 @@ function showMatrixCellAdd(cell, addBtn, q){
   // short iPhone-landscape strip; every other size gets a centred modal-style panel (positioned below).
   const _shortLandscape = _wideMca && window.innerHeight < 520;
   try { if (typeof _resetAddRepeat === 'function') _resetAddRepeat(); } catch(_){}   // fresh add state
+  // (user) Opening the Add panel closes Edit mode — the edit panel disappears, the add
+  // panel takes over (mirrors the close-Edit-on-delete pattern).
+  if (state.splitActionsVisible) {
+    state.splitActionsVisible = false;
+    try { saveState(); } catch (_) {}
+    try { if (typeof _syncEditClasses === 'function') _syncEditClasses(); } catch (_) {}
+  }
   document.body.classList.add('tt-adding');
   // The V2 panel carries its own Sides/Repeat/Memo/Due mode buttons → NO matrix-header chip relocation.
   const addSvg = '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>';
@@ -34385,6 +34787,9 @@ setInterval(() => {
       return Math.max(0, Math.min(100, ((ms - topMs) / (bottomMs - topMs)) * 100));
     }
 
+    // Deep Focus actual-extension blocks → right 1/3; the plans they overran → left 2/3.
+    const _extRangesW = blocks.filter(x => x && x._actualExt);
+
     blocks.forEach((b, idx) => {
       if (b.endMs <= topMs || b.startMs >= bottomMs) return;
 
@@ -34399,6 +34804,14 @@ setInterval(() => {
       if (_arrowBlock && b.id === _arrowBlock.id) div.classList.add('selected');
       div.style.top    = topPct + '%';
       div.style.height = htPct  + '%';
+      // Deep Focus 2-column layout (matches the phone gauge).
+      if (b._actualExt) {
+        div.classList.add('tg-block-ext');
+        div.style.left = 'calc(66% + 2px)';
+      } else if (_extRangesW.length && _extRangesW.some(x => x !== b &&
+          b.startMs < x.endMs && b.endMs > x.startMs)) {
+        div.style.right = 'calc(34% + 2px)';
+      }
       div.dataset.bid  = String(b.id);
 
       // Unified BREAK box (wide gauge): same shape/size + base bg as a task box,
