@@ -8375,6 +8375,11 @@
   .sync-guard-card .sg-btn.sg-primary { background:var(--accent,#3FA36B); border-color:var(--accent,#3FA36B); color:#fff; }
   .sync-guard-card .sg-btn:active { transform:scale(.98); }
   #sync-guard-status { font-size:.82rem; color:#b45309; margin-top:6px; }
+  /* (user) iCloud connection status in Settings → Account. */
+  .icloud-status-row { display:flex; align-items:center; gap:7px; font-size:.84rem; color:var(--text-muted,#6b7280); margin:0 0 12px; }
+  .icloud-status-row .ics-dot { width:8px; height:8px; border-radius:50%; background:#9ca3af; flex:0 0 8px; }
+  .icloud-status-row.ics-on .ics-dot { background:#3FA36B; }
+  .icloud-status-row.ics-off .ics-dot { background:#dc2626; }
   /* (user) bottom-right Matrix hint (tap/swipe → 2×2 view). Only on phone-portrait split. */
   .tt-matrix-hint { display:none; }
   body.tt-split:not(.tt-flip):not(.tt-show-actions):not(.tt-adding) .tt-matrix-hint {
@@ -8650,6 +8655,11 @@
       </div>
       <!-- Bidoro account — grouped in a box (Calendar sync is moved below it by JS) -->
       <div class="account-box">
+      <!-- (user) iCloud connection status — device-level (independent of the web account),
+           so it shows for both signed-in and signed-out states. -->
+      <div id="icloud-status-row" class="icloud-status-row" style="display:none;">
+        <span class="ics-dot" aria-hidden="true"></span><span id="icloud-status-text"></span>
+      </div>
       <!-- Signed-in state -->
       <div id="auth-logged-in" class="auth-section hidden">
         <div class="acct-id-row">
@@ -8682,6 +8692,11 @@
            window — shown by updateAuthUI whenever there's no session). -->
       <div id="auth-logged-out" class="auth-section auth-form hidden">
         <p class="help" style="grid-column:1/-1; margin:0;">Sign up to use Bidoro Web on your computer.</p>
+        <!-- Avatar (emoji) + nickname — used when signing UP (mirrors the login modal). -->
+        <div class="login-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
+          <button type="button" id="acct-signup-avatar" class="login-avatar-btn" title="Choose avatar" aria-label="Choose avatar">👤</button>
+          <input type="text" id="acct-signup-nickname" placeholder="Nickname (optional)" maxlength="24" autocomplete="nickname" style="flex:1 1 auto; min-width:0;">
+        </div>
         <input type="email"    id="auth-email"    placeholder="Email"    autocomplete="email">
         <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
         <div class="row-flex">
@@ -11105,22 +11120,26 @@ function bidoroWebSyncState() { return _webSyncState; }
 function _webSyncBlocked() { return _webSyncState === 'pausedAccountConflict' || _webSyncState === 'iCloudOnly'; }
 function _mkUuid() { try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (_) {} return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2); }
 let _syncGroupCache = null;
-// The iCloud sync-group UUID: iCloud-backed (shared across the user's Apple
-// devices) via the ICloudKV plugin; per-browser localStorage fallback on web.
+// The iCloud sync-group UUID — shared across the user's Apple devices. PRIMARY source
+// is the iCloud-synced app STATE (state.icloudSyncGroupId), which rides the SAME proven
+// iPhone↔iPad state sync the app already uses (a standalone ICloudKV key would race —
+// each device generates its own before iCloud propagates → no conflict ever detected).
+// ICloudKV + localStorage are secondary mirrors. Always read state fresh so a value
+// that arrives via sync is adopted immediately (don't trust a stale session cache).
 async function bidoroSyncGroupId() {
-  if (_syncGroupCache) return _syncGroupCache;
   const KEY = 'icloud_sync_group_id';
+  try { if (typeof state !== 'undefined' && state && state.icloudSyncGroupId) { _syncGroupCache = state.icloudSyncGroupId; return state.icloudSyncGroupId; } } catch (_) {}
+  if (_syncGroupCache) return _syncGroupCache;
+  let v = null;
   const kv = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.ICloudKV) || null;
-  if (kv) {
-    try {
-      const res = await kv.get({ key: KEY }); let v = res && res.value;
-      if (!v) { v = _mkUuid(); try { await kv.set({ key: KEY, value: v }); } catch (_) {} }
-      try { localStorage.setItem(KEY, v); } catch (_) {}
-      _syncGroupCache = v; return v;
-    } catch (_) { /* fall through */ }
-  }
-  try { let v = localStorage.getItem(KEY); if (!v) { v = _mkUuid(); localStorage.setItem(KEY, v); } _syncGroupCache = v; return v; }
-  catch (_) { _syncGroupCache = _mkUuid(); return _syncGroupCache; }
+  if (kv) { try { const res = await kv.get({ key: KEY }); v = (res && res.value) || null; } catch (_) {} }
+  if (!v) { try { v = localStorage.getItem(KEY) || null; } catch (_) {} }
+  if (!v) v = _mkUuid();
+  // Persist to state (→ syncs to the user's other devices), plus the secondary mirrors.
+  try { if (typeof state !== 'undefined' && state) { state.icloudSyncGroupId = v; if (typeof saveState === 'function') saveState(); } } catch (_) {}
+  if (kv) { try { await kv.set({ key: KEY, value: v }); } catch (_) {} }
+  try { localStorage.setItem(KEY, v); } catch (_) {}
+  _syncGroupCache = v; return v;
 }
 function _syncDeviceId() {
   try { let d = localStorage.getItem('bidoro_device_id'); if (!d) { d = _mkUuid(); localStorage.setItem('bidoro_device_id', d); } return d; }
@@ -11196,6 +11215,28 @@ function _renderSyncStatus() {
   el.textContent = _webSyncBlocked() ? tr('Web sync paused to protect your data.') : '';
   el.style.display = _webSyncBlocked() ? '' : 'none';
 }
+/* (user) Settings → Account: show whether this device's iCloud sync is connected.
+   Native reports true sign-in via window.__bidoroICloudStatus (AppDelegate "status"
+   action); on the web there's no iCloud. Falls back to "on" for an app build that
+   predates the status action (still syncing via iCloud, just can't report sign-in). */
+function bidoroRenderICloudStatus() {
+  const row = document.getElementById('icloud-status-row'), txt = document.getElementById('icloud-status-text');
+  if (!row || !txt) return;
+  const native = (typeof bidoroIsNativeApp === 'function' && bidoroIsNativeApp());
+  if (!native) {
+    row.style.display = ''; row.className = 'icloud-status-row';
+    txt.textContent = tr('iCloud sync works in the iPhone / iPad app.');
+    return;
+  }
+  row.style.display = '';
+  const s = window._icloudConnected;
+  if (s === true)       { row.className = 'icloud-status-row ics-on';  txt.textContent = tr('iCloud connected'); }
+  else if (s === false) { row.className = 'icloud-status-row ics-off'; txt.textContent = tr('Not signed in to iCloud'); }
+  else                  { row.className = 'icloud-status-row';         txt.textContent = tr('iCloud sync on'); }
+  try { if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroICloud) window.webkit.messageHandlers.bidoroICloud.postMessage({ action: 'status' }); } catch (_) {}
+}
+window.__bidoroICloudStatus = function (signedIn) { window._icloudConnected = !!signedIn; try { bidoroRenderICloudStatus(); } catch (_) {} };
+window.bidoroRenderICloudStatus = bidoroRenderICloudStatus;
 // THE GUARD: returns true only when web sync may proceed. Handles A/B/C + modals.
 // Fails OPEN (returns true) when the backend isn't deployed/reachable so existing
 // sync is never broken for users who match (or before the SQL is run).
@@ -11207,7 +11248,7 @@ async function ensureWebSyncBinding(opts) {
   const uid = _currentAuthUserId, email = _currentAuthEmail || '';
   let binding = null;
   try { binding = await _syncRpc('focus_sync_binding_get', { p_group: group }); }
-  catch (_) { _webSyncState = 'ready'; return true; }   // SQL not deployed / offline → don't break sync
+  catch (e) { try { console.warn('[sync-guard] binding check failed — fail-open (deploy supabase-sync-guard.sql?):', (e && e.message) || e); } catch (_) {} _webSyncState = 'ready'; return true; }   // SQL not deployed / offline → don't break sync
   if (binding && binding.bound) {
     if (binding.mine || binding.web_user_id === uid) {
       try { await _syncRpc('focus_sync_binding_create', { p_group: group, p_email: email, p_device: _syncDeviceId() }); } catch (_) {}
@@ -12260,6 +12301,8 @@ function showPage(name) {
     // grid (CSS @media ≥701px) can take effect; every other page stays 'block'.
     el.style.display = (k === name) ? (id === 'settings-page' ? '' : 'block') : 'none';
   });
+  // (user) Refresh the iCloud connection status whenever Settings is opened.
+  if (name === 'settings') { try { if (typeof bidoroRenderICloudStatus === 'function') bidoroRenderICloudStatus(); } catch (_) {} }
   ['focus','stats'].forEach(k => {
     const tab = document.getElementById('tab-'+k);
     if (tab) tab.classList.toggle('active', k===name);
@@ -27025,6 +27068,10 @@ window.trf = trf;
   },
   "Undo": { ko: "되돌리기", zh: "撤销", ja: "元に戻す", es: "Deshacer", fr: "Annuler" },
   "Do it tomorrow": { ko: "내일로 미루기", zh: "推到明天", ja: "明日にまわす", es: "Dejar para mañana", fr: "Reporter à demain" },
+  "iCloud connected": { ko: "iCloud 연결됨", zh: "iCloud 已连接", ja: "iCloud 接続済み", es: "iCloud conectado", fr: "iCloud connecté" },
+  "Not signed in to iCloud": { ko: "iCloud에 로그인되어 있지 않아요", zh: "未登录 iCloud", ja: "iCloud にサインインしていません", es: "No has iniciado sesión en iCloud", fr: "Non connecté à iCloud" },
+  "iCloud sync on": { ko: "iCloud 동기화 켜짐", zh: "iCloud 同步已开启", ja: "iCloud 同期オン", es: "Sincronización de iCloud activada", fr: "Synchro iCloud activée" },
+  "iCloud sync works in the iPhone / iPad app.": { ko: "iCloud 동기화는 iPhone·iPad 앱에서 작동해요.", zh: "iCloud 同步在 iPhone / iPad 应用中运行。", ja: "iCloud 同期は iPhone・iPad アプリで動作します。", es: "La sincronización de iCloud funciona en la app de iPhone / iPad.", fr: "La synchro iCloud fonctionne dans l'app iPhone / iPad." },
   "Link this iCloud data to your Bidoro account?": { ko: "이 iCloud 데이터를 Bidoro 계정에 연결할까요?", zh: "将此 iCloud 数据连接到您的 Bidoro 账户？", ja: "この iCloud データを Bidoro アカウントに連携しますか？", es: "¿Vincular estos datos de iCloud a tu cuenta de Bidoro?", fr: "Lier ces données iCloud à votre compte Bidoro ?" },
   "This iCloud data will be connected to {email}.": { ko: "이 iCloud 데이터가 {email} 계정에 연결됩니다.", zh: "此 iCloud 数据将连接到 {email}。", ja: "この iCloud データは {email} に接続されます。", es: "Estos datos de iCloud se conectarán a {email}.", fr: "Ces données iCloud seront connectées à {email}." },
   "To prevent your data from mixing, this iCloud data can only sync with one Bidoro account.": { ko: "데이터가 섞이지 않도록, 이 iCloud 데이터는 하나의 Bidoro 계정과만 동기화할 수 있어요.", zh: "为避免数据混合，此 iCloud 数据只能与一个 Bidoro 账户同步。", ja: "データが混ざらないよう、この iCloud データは 1 つの Bidoro アカウントとだけ同期できます。", es: "Para evitar que tus datos se mezclen, estos datos de iCloud solo pueden sincronizarse con una cuenta de Bidoro.", fr: "Pour éviter que vos données se mélangent, ces données iCloud ne peuvent se synchroniser qu'avec un seul compte Bidoro." },
@@ -28840,8 +28887,13 @@ async function handleSignUp() {
   if (!email || !password) { setAuthStatus('Enter email and password', '#dc2626'); return; }
   if (password.length < 6) { setAuthStatus('Password must be at least 6 chars', '#dc2626'); return; }
   setAuthStatus('Creating account...', '#6b7280');
+  // (user) emoji avatar + nickname chosen above the email field (mirrors the login modal).
+  const _nick = ((document.getElementById('acct-signup-nickname') || {}).value || '').trim();
+  const _avatar = window._bidoroSignupAvatar || '';
+  const _meta = { nickname: _nick, avatar: _avatar };
+  try { if (_nick || _avatar) { state.profile = Object.assign({}, state.profile, _meta); saveState(); } } catch (_) {}
   try {
-    const user = await authSignUp(email, password);
+    const user = await authSignUp(email, password, _meta);
     if (user && user.id) {
       // Either auto-signed-in or pending email confirmation
       updateAuthUI(user);
@@ -29081,6 +29133,13 @@ if (loginTryItBtn)  loginTryItBtn.onclick  = () => {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) closePicker(); });
   // expose so other places (the Settings account header) can open the same picker
   window._openAvatarPicker = (cb) => openPicker(cb);
+})();
+// (user) Settings → Account sign-up: the emoji avatar button opens the same picker.
+(function(){
+  const b = document.getElementById('acct-signup-avatar');
+  if (b && typeof window._openAvatarPicker === 'function') {
+    b.addEventListener('click', () => window._openAvatarPicker(em => { b.textContent = em; window._bidoroSignupAvatar = em; }));
+  }
 })();
 
 /* Settings → Account header: [emoji] nickname (logged in) + email, with the emoji
@@ -30297,13 +30356,19 @@ function flipTimeTasks(toBack) {
   const _ffArea = document.getElementById('time-area');
   if (_ffArea) _ffArea.style.transition = 'none';
   try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {}
-  const H = wrap.offsetHeight;            // remember the height BEFORE flipping
+  const H = wrap.offsetHeight;            // remember the height BEFORE sliding
   const HALF = 200;
-  // 1) front turns edge-on
-  wrap.style.transition = 'transform ' + HALF + 'ms ease';
-  wrap.style.transform = 'perspective(1200px) rotateY(90deg)';
+  // (user) SLIDE (not flip): the section slides sideways. To Matrix → current pane
+  // slides OUT left, the new pane slides IN from the right; back to T&T → the reverse.
+  // Clip horizontal overflow on the parent so the off-screen pane doesn't show / scroll.
+  const outX = toBack ? -100 : 100, inFromX = toBack ? 100 : -100;
+  const _par = wrap.parentElement, _parOvf = _par ? _par.style.overflowX : '';
+  if (_par) _par.style.overflowX = 'hidden';
+  // 1) current pane slides out
+  wrap.style.transition = 'transform ' + HALF + 'ms cubic-bezier(.4,0,.2,1)';
+  wrap.style.transform = 'translateX(' + outX + '%)';
   setTimeout(() => {
-    // 2) at the hidden midpoint: swap layout state + re-render, lock height
+    // 2) at the off-screen midpoint: swap layout state + re-render, lock height
     state.ttFlipped = toBack;
     applyTtState();
     try { saveState(); } catch (_) {}
@@ -30316,17 +30381,18 @@ function flipTimeTasks(toBack) {
     window._ttLockedH = toBack ? H : 0;
     wrap.style.height = ''; wrap.style.minHeight = '';
     if (typeof drawTimeArea === 'function') drawTimeArea();
-    // 3) jump to the other side, then turn in
+    // 3) place the new pane off-screen on the opposite side, then slide it in
     wrap.style.transition = 'none';
-    wrap.style.transform = 'perspective(1200px) rotateY(-90deg)';
+    wrap.style.transform = 'translateX(' + inFromX + '%)';
     void wrap.offsetHeight;               // reflow
     requestAnimationFrame(() => {
-      wrap.style.transition = 'transform ' + HALF + 'ms ease';
-      wrap.style.transform = 'perspective(1200px) rotateY(0deg)';
+      wrap.style.transition = 'transform ' + HALF + 'ms cubic-bezier(.4,0,.2,1)';
+      wrap.style.transform = 'translateX(0)';
     });
     setTimeout(() => {
       wrap.style.transition = '';
       wrap.style.transform = '';
+      if (_par) _par.style.overflowX = _parOvf;   // restore the parent's overflow
       try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
       // Restore the gauge height transition (after the final size is in place, so
       // restoring it can't itself trigger a late glide).
@@ -30337,6 +30403,34 @@ function flipTimeTasks(toBack) {
     }, HALF + 40);
   }, HALF + 10);
 }
+// (user) Swipe the Time&Tasks section sideways to switch panes (phone portrait):
+// swipe LEFT → Matrix (+ gauge below); swipe RIGHT → back to Time & Tasks. The
+// flip is gone — this triggers the horizontal SLIDE in flipTimeTasks.
+(function wireTtSwipe(){
+  const wrap = document.getElementById('time-tasks-wrap'); if (!wrap) return;
+  let sx = 0, sy = 0, tracking = false, decided = false, horiz = false;
+  wrap.addEventListener('touchstart', (e) => {
+    if (window.matchMedia && window.matchMedia('(min-width:701px)').matches) return;     // phone portrait only
+    if (document.body.classList.contains('tt-adding') || document.body.classList.contains('tt-show-actions')) return;
+    if (!e.touches || e.touches.length !== 1) return;
+    // don't hijack swipes that begin on an interactive / draggable control
+    if (e.target.closest && e.target.closest('button, a, input, textarea, select, .tg-block, .time-block, .task-row, .mca, .sg-btn, .time-resize-handle')) return;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true; decided = false; horiz = false;
+  }, { passive: true });
+  wrap.addEventListener('touchmove', (e) => {
+    if (!tracking || !e.touches || !e.touches.length) return;
+    const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
+    if (!decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) { decided = true; horiz = Math.abs(dx) > Math.abs(dy) * 1.4; }
+  }, { passive: true });
+  wrap.addEventListener('touchend', (e) => {
+    if (!tracking) return; tracking = false;
+    const t = e.changedTouches && e.changedTouches[0]; if (!t || !horiz) return;
+    const dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+    if (dx < 0) { if (!state.ttFlipped) flipTimeTasks(true); }     // left → Matrix
+    else        { if (state.ttFlipped)  flipTimeTasks(false); }    // right → Time & Tasks
+  }, { passive: true });
+})();
 // FRONT button (2×2 grid icon, "Time & Tasks" header) → flip to the Tasks face.
 const _splitViewBtn = document.getElementById('split-view-toggle');
 if (_splitViewBtn) {
