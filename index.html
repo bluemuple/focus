@@ -8332,6 +8332,16 @@
   /* Home hero: "[friend] is focusing now" line under the left text. */
   .fc-friends { margin-top: 6px; font-size: .82rem; font-weight: 700; line-height: 1.35; color: var(--text-muted, #6b7280); }
   .fc-friends .ff-nm { font-weight: 800; }
+  /* (user) Matrix task bar must stay the SAME height in Edit mode as before Edit.
+     Edit hides the 28px play button (which sets the row height), so the grip that
+     replaces it reserves the same 28px — height is then identical in both states,
+     independent of layout padding. */
+  body.tt-show-actions #focus-matrix .task-row .task-grip { min-height: 28px; align-items: center; }
+  /* (user, web PC) gauge drag-selection rectangle + multi-selected block outline. */
+  .tg-selrect { position: absolute; z-index: 40; pointer-events: none; border-radius: 4px;
+    background: rgba(100,116,139,.16); border: 1px solid rgba(100,116,139,.65); }
+  .tg-block.tg-multi { outline: 2px solid #2563EB; outline-offset: -2px;
+    box-shadow: 0 0 0 2px rgba(37,99,235,.25); z-index: 16; }
 </style>
 
 <header class="topbar">
@@ -30258,6 +30268,15 @@ if (_editToggle) {
   if (modeBtn) modeBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _mode = (_mode === 'move' ? 'resize' : 'move'); _renderMode(); if (_guideStage === 'mode') _setGuide('slider'); });
   if (del) del.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
+    // (user) Multi-selection (drag-rect) → delete them ALL in one press.
+    const _ms = window.__tgMultiSel;
+    if (_ms && _ms.size > 1) {
+      state.scheduledBlocks = (state.scheduledBlocks || []).filter(b => !(b && _ms.has(b.id)));
+      try { _ms.clear(); } catch (_) {}
+      if (window.__tgSelectBlock) window.__tgSelectBlock(null);
+      saveState(); debouncedPushSettings(); _redraw();
+      return;
+    }
     let s = _sel(); if (!s) s = _ensureSel();   // nothing selected → auto-select, then delete in ONE press
     if (!s) return;
     const blocks = state.scheduledBlocks || [];
@@ -34357,10 +34376,17 @@ setInterval(() => {
   let _ghost      = null;    // { startMs, durationMs } — live while dragging task→gauge
   let _tgBusy     = false;   // true during block drag/resize → skip re-render in drawGauge
   let _arrowBlock = null;    // last-placed / last-interacted block — arrow keys resize its endMs
+  // (user, web PC) MULTI-SELECT: a grey drag-rectangle over empty gauge space selects
+  // several blocks; they then drag / arrow-move / delete together (resize stays single).
+  // Holds block IDs. Undo/redo is automatic (global state snapshots on mousedown).
+  let _multiSel   = new Set();
+  function _multiBlocks() { return (state.scheduledBlocks || []).filter(x => x && _multiSel.has(x.id)); }
+  function _clearMulti() { if (_multiSel.size) { _multiSel.clear(); } }
+  window.__tgMultiSel = _multiSel;
 
   // Expose a way for drawTimeArea() (mobile mini-gauge, lives outside this
   // IIFE) to select a block as the arrow-key target.
-  window.__tgSelectBlock = function(b) { _arrowBlock = b; };
+  window.__tgSelectBlock = function(b) { _arrowBlock = b; _clearMulti(); };
   window.__tgGetSelectedBlock = function() { return _arrowBlock; };
 
   /* ---- Gauge coordinate helpers ---- */
@@ -34398,6 +34424,49 @@ setInterval(() => {
     if (Math.abs(ms - grid) < SNAP_THR) return grid;
     return ms;
   }
+
+  /* (user, web PC) DRAG-SELECTION RECTANGLE — mouse-drag over EMPTY gauge space
+     draws a grey rectangle; on release every block whose time range overlaps the
+     rectangle's vertical span is multi-selected (then drag / arrow / delete moves
+     them together). Mouse-only so it never fights touch scrolling on iPad. */
+  let _didRect = 0;   // timestamp of the last rect-select, so the trailing click doesn't clear it
+  gaugeInner.addEventListener('mousedown', ev => {
+    if (ev.button !== 0) return;
+    if (!(window.matchMedia && window.matchMedia('(pointer:fine)').matches)) return;   // PC mouse only
+    if (ev.target.closest('.tg-block') || ev.target.closest('.tg-ghost') || ev.target.closest('.tg-tooltip')) return;
+    const startX = ev.clientX, startY = ev.clientY;
+    let rectEl = null, moved = false;
+    const onMove = (mv) => {
+      if (!moved && (Math.abs(mv.clientY - startY) > 4 || Math.abs(mv.clientX - startX) > 4)) moved = true;
+      if (!moved) return;
+      if (!rectEl) { rectEl = document.createElement('div'); rectEl.className = 'tg-selrect'; gaugeInner.appendChild(rectEl); }
+      const ir = gaugeInner.getBoundingClientRect();
+      rectEl.style.top    = (Math.min(startY, mv.clientY) - ir.top)  + 'px';
+      rectEl.style.left   = (Math.min(startX, mv.clientX) - ir.left) + 'px';
+      rectEl.style.height = Math.abs(mv.clientY - startY) + 'px';
+      rectEl.style.width  = Math.abs(mv.clientX - startX) + 'px';
+    };
+    const onUp = (up) => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (rectEl) { rectEl.remove(); rectEl = null; }
+      if (!moved) {                                   // plain empty-space click → clear any selection
+        if (_multiSel.size) { _clearMulti(); drawGauge(); }
+        return;
+      }
+      const yA = yToMs(Math.min(startY, up.clientY)), yB = yToMs(Math.max(startY, up.clientY));
+      _multiSel.clear();
+      (state.scheduledBlocks || []).forEach(bk => {
+        if (!bk || bk.kind === 'tracker') return;
+        if (+bk.startMs < yB && +bk.endMs > yA) _multiSel.add(bk.id);   // time-range overlap
+      });
+      _arrowBlock = _multiBlocks()[0] || null;
+      _didRect = Date.now();
+      drawGauge();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
 
   function hhMM(ms) {
     const d = new Date(ms);
@@ -34605,13 +34674,23 @@ setInterval(() => {
        activeEl.isContentEditable);
 
     if (e.key === 'Escape') {
-      if (_arrowBlock) { _arrowBlock = null; hideTips(); _syncHotkeyHelp(); if (!_tgBusy) drawGauge(); }
+      if (_multiSel.size) { _clearMulti(); }
+      if (_arrowBlock || true) { _arrowBlock = null; hideTips(); _syncHotkeyHelp(); if (!_tgBusy) drawGauge(); }
       return;
     }
 
-    /* -- Backspace: delete selected block -- */
+    /* -- Backspace: delete selected block(s) -- */
     if (e.key === 'Backspace') {
-      if (isTyping || !_arrowBlock || _tgBusy) return;
+      if (isTyping || _tgBusy) return;
+      if (_multiSel.size > 1) {                 // delete the whole multi-selection at once
+        e.preventDefault();
+        const ids = _multiSel;
+        state.scheduledBlocks = (state.scheduledBlocks || []).filter(b => !(b && ids.has(b.id)));
+        _clearMulti(); _arrowBlock = null;
+        saveState(); debouncedPushSettings(); hideTips(); drawGauge();
+        return;
+      }
+      if (!_arrowBlock) return;
       e.preventDefault();
       const bi = state.scheduledBlocks.indexOf(_arrowBlock);
       if (bi >= 0) state.scheduledBlocks.splice(bi, 1);
@@ -34699,20 +34778,25 @@ setInterval(() => {
 
     /* -- Alt+↑/↓: MOVE the whole block ±5 min, keeping its duration. (#A2) ---- */
     if (e.altKey) {
-      if (!_arrowBlock) return;
+      if (!_arrowBlock && !_multiSel.size) return;
       e.preventDefault();
       const delta = (e.key === 'ArrowDown') ? STEP_MS : -STEP_MS;
-      _arrowBlock.startMs += delta;
-      _arrowBlock.endMs   += delta;
+      if (_multiSel.size > 1) {                 // shortcut-move the whole selection together
+        _multiBlocks().forEach(x => { x.startMs += delta; x.endMs += delta; });
+      } else {
+        _arrowBlock.startMs += delta;
+        _arrowBlock.endMs   += delta;
+        flashTips(_arrowBlock.startMs, _arrowBlock.endMs);
+      }
       saveState(); debouncedPushSettings();
       drawGauge();
-      flashTips(_arrowBlock.startMs, _arrowBlock.endMs);
       return;
     }
 
     /* -- Shift+↑/↓: resize bottom edge in 5-min steps
        -- Ctrl/Cmd+↑/↓: resize bottom edge in 1-min steps                       */
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      if (_multiSel.size > 1) { e.preventDefault(); return; }   // (user) NO resize for a multi-selection
       if (!_arrowBlock) return;
       e.preventDefault();
       const step = (e.ctrlKey || e.metaKey) ? 60 * 1000 : STEP_MS;   // 1 m or 5 m
@@ -34745,6 +34829,7 @@ setInterval(() => {
         nextIdx = Math.max(0, curIdx - 1);
       }
     }
+    if (_multiSel.size) _clearMulti();   // single-block navigation drops the group
     _arrowBlock = blocks[nextIdx];
     drawGauge();
     hideTips();   // (#A5) ↑/↓ navigation is selection, NOT a drag → no time capsule
@@ -34752,8 +34837,10 @@ setInterval(() => {
 
   /* ---- Click anywhere on gauge (not on a block) deselects arrow-key target ---- */
   gaugeCol.addEventListener('click', ev => {
-    if (!ev.target.closest('.tg-block') && _arrowBlock) {
+    if (_didRect && Date.now() - _didRect < 400) return;   // the click that ends a rect-drag must NOT clear it
+    if (!ev.target.closest('.tg-block') && (_arrowBlock || _multiSel.size)) {
       _arrowBlock = null;
+      if (_multiSel.size) { _clearMulti(); drawGauge(); }
       hideTips();
       _syncHotkeyHelp();   // (#A1) hide the shortcut panel on click-away deselect
     }
@@ -34802,6 +34889,7 @@ setInterval(() => {
       if (side[idx] === 'half-l') div.classList.add('half-l');
       if (side[idx] === 'half-r') div.classList.add('half-r');
       if (_arrowBlock && b.id === _arrowBlock.id) div.classList.add('selected');
+      if (_multiSel.size && _multiSel.has(b.id)) div.classList.add('tg-multi');
       div.style.top    = topPct + '%';
       div.style.height = htPct  + '%';
       // Deep Focus 2-column layout (matches the phone gauge).
@@ -34996,6 +35084,34 @@ setInterval(() => {
         if (ev.target === rtEl || ev.target === rbEl || ev.target === tailEl) return;
         if (ev.button !== 0) return;
         ev.preventDefault();
+        // (user, web PC) Grabbing ANY block in the multi-selection drags them ALL
+        // together by the same delta (no resize). Undo restores them in one step.
+        if (_multiSel.size > 1 && _multiSel.has(b.id)) {
+          if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
+          _arrowBlock = b; _tgBusy = true;
+          const orig = _multiBlocks().map(x => ({ b: x, s: +x.startMs, e: +x.endMs }));
+          const anchor = orig.find(o => o.b.id === b.id) || orig[0];
+          const grabMs = yToMs(ev.clientY);
+          const gMove = (mv) => {
+            const delta = snapMs(anchor.s + (yToMs(mv.clientY) - grabMs)) - anchor.s;
+            orig.forEach(o => {
+              o.b.startMs = o.s + delta; o.b.endMs = o.e + delta;
+              const el = gaugeInner.querySelector('.tg-block[data-bid="' + o.b.id + '"]');
+              if (el) el.style.top = msToPct(o.b.startMs) + '%';
+            });
+            showTips(anchor.b.startMs, anchor.b.endMs);
+          };
+          const gUp = () => {
+            window.removeEventListener('mousemove', gMove);
+            window.removeEventListener('mouseup', gUp);
+            _tgBusy = false; hideTips();
+            saveState(); debouncedPushSettings(); drawGauge();
+          };
+          window.addEventListener('mousemove', gMove);
+          window.addEventListener('mouseup', gUp);
+          return;
+        }
+        if (_multiSel.size) { _clearMulti(); }   // grabbing a single block drops the group
         // Light haptic on grab (PC main gauge, mouse path).
         if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('light');
         _arrowBlock = b;   // selecting this block enables arrow-key bottom-edge tuning
