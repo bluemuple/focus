@@ -57,6 +57,12 @@ create table if not exists public.focus_share_requests (
 );
 create index if not exists focus_share_req_to_idx on public.focus_share_requests (to_user, status);
 
+-- ---- Notes sharing (added later; idempotent so re-running this file is safe) ----
+alter table public.focus_profiles       add column if not exists shared_note    text;
+alter table public.focus_profiles       add column if not exists shared_note_at timestamptz;
+alter table public.focus_friendships    add column if not exists share_notes    boolean not null default false;
+alter table public.focus_share_requests add column if not exists want_notes     boolean not null default false;
+
 -- ---- Lock the tables: access ONLY via the RPCs below. ----
 alter table public.focus_profiles       enable row level security;
 alter table public.focus_friendships    enable row level security;
@@ -162,9 +168,9 @@ begin
         'focusing', coalesce(pr.focusing,false) and pr.focusing_at > now() - interval '3 minutes',
         'status', f.status,
         'requested_by_me', (f.requested_by = uid),
-        'share_timeline', f.share_timeline, 'share_balance', f.share_balance, 'share_routine', f.share_routine,
+        'share_timeline', f.share_timeline, 'share_balance', f.share_balance, 'share_routine', f.share_routine, 'share_notes', f.share_notes,
         'incoming_share_req', (select row_to_json(x) from (
-                                 select sr.id, sr.want_timeline, sr.want_balance, sr.want_routine, sr.message
+                                 select sr.id, sr.want_timeline, sr.want_balance, sr.want_routine, sr.want_notes, sr.message
                                  from focus_share_requests sr
                                  where sr.friendship_id=f.id and sr.to_user=uid and sr.status='pending'
                                  order by sr.id desc limit 1) x)
@@ -210,30 +216,31 @@ end $$;
 
 -- Change sharing. OFF transitions apply immediately; any OFF→ON creates a request.
 -- Returns {applied:bool, requested:bool}.
-create or replace function public.focus_share_change(p_friendship_id bigint, p_timeline boolean, p_balance boolean, p_routine boolean, p_message text)
+create or replace function public.focus_share_change(p_friendship_id bigint, p_timeline boolean, p_balance boolean, p_routine boolean, p_notes boolean, p_message text)
 returns json language plpgsql security definer set search_path = public as $$
 declare uid text := _focus_uid(); f record; other text; need_req boolean;
-        nt boolean; nb boolean; nr boolean;
+        nt boolean; nb boolean; nr boolean; nn boolean;
 begin
   if uid is null then raise exception 'not signed in'; end if;
   select * into f from focus_friendships where id=p_friendship_id and status='accepted' and (user_a=uid or user_b=uid);
   if f is null then return json_build_object('ok',false,'error','not_found'); end if;
   other := case when f.user_a=uid then f.user_b else f.user_a end;
   -- apply OFF immediately (new=false while current=true)
-  nt := f.share_timeline; nb := f.share_balance; nr := f.share_routine;
+  nt := f.share_timeline; nb := f.share_balance; nr := f.share_routine; nn := f.share_notes;
   if not p_timeline and f.share_timeline then nt := false; end if;
   if not p_balance  and f.share_balance  then nb := false; end if;
   if not p_routine  and f.share_routine  then nr := false; end if;
-  update focus_friendships set share_timeline=nt, share_balance=nb, share_routine=nr, updated_at=now() where id=f.id;
+  if not p_notes    and f.share_notes    then nn := false; end if;
+  update focus_friendships set share_timeline=nt, share_balance=nb, share_routine=nr, share_notes=nn, updated_at=now() where id=f.id;
   -- any OFF→ON needs approval
-  need_req := (p_timeline and not f.share_timeline) or (p_balance and not f.share_balance) or (p_routine and not f.share_routine);
+  need_req := (p_timeline and not f.share_timeline) or (p_balance and not f.share_balance)
+              or (p_routine and not f.share_routine) or (p_notes and not f.share_notes);
   if need_req then
-    -- supersede older pending requests from me on this friendship
     update focus_share_requests set status='denied', responded_at=now()
       where friendship_id=f.id and from_user=uid and status='pending';
-    insert into focus_share_requests (friendship_id, from_user, to_user, want_timeline, want_balance, want_routine, message)
+    insert into focus_share_requests (friendship_id, from_user, to_user, want_timeline, want_balance, want_routine, want_notes, message)
       values (f.id, uid, other,
-              p_timeline or nt, p_balance or nb, p_routine or nr, nullif(trim(coalesce(p_message,'')),''));
+              p_timeline or nt, p_balance or nb, p_routine or nr, p_notes or nn, nullif(trim(coalesce(p_message,'')),''));
   end if;
   return json_build_object('ok',true,'applied',true,'requested',coalesce(need_req,false));
 end $$;
@@ -249,7 +256,7 @@ begin
   if r is null then return json_build_object('ok',false,'error','not_found'); end if;
   if p_accept then
     update focus_friendships set share_timeline=r.want_timeline, share_balance=r.want_balance,
-           share_routine=r.want_routine, updated_at=now() where id=r.friendship_id;
+           share_routine=r.want_routine, share_notes=r.want_notes, updated_at=now() where id=r.friendship_id;
   end if;
   update focus_share_requests set status=(case when p_accept then 'approved' else 'denied' end),
          reply_message=nullif(trim(coalesce(p_reply,'')),''), responded_at=now() where id=p_request_id;
@@ -267,13 +274,44 @@ begin
     where from_user=uid and status in ('approved','denied') and responded_at > now() - interval '7 days'), '[]'::json);
 end $$;
 
+-- Set MY shared note (friends-only). Empty clears it.
+create or replace function public.focus_set_note(p_text text)
+returns json language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid(); code text; t text := nullif(trim(coalesce(p_text,'')),'');
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  select friend_code into code from focus_profiles where user_id=uid;
+  if code is null then code := _focus_gen_code(); end if;
+  insert into focus_profiles (user_id, friend_code, shared_note, shared_note_at, updated_at)
+    values (uid, code, t, now(), now())
+  on conflict (user_id) do update set shared_note=t, shared_note_at=now(), updated_at=now();
+  return json_build_object('ok',true);
+end $$;
+
+-- Friends' shared notes I'm allowed to see (accepted + share_notes on + non-empty).
+create or replace function public.focus_friend_notes()
+returns json language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid();
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  return coalesce((
+    select json_agg(json_build_object('name', coalesce(pr.nickname,'Friend'), 'text', pr.shared_note))
+    from focus_friendships f
+    join focus_profiles pr on pr.user_id = (case when f.user_a=uid then f.user_b else f.user_a end)
+    where f.status='accepted' and f.share_notes and (f.user_a=uid or f.user_b=uid)
+      and pr.shared_note is not null and length(trim(pr.shared_note))>0
+  ), '[]'::json);
+end $$;
+
 grant execute on function
   public.focus_profile_upsert(text,text,boolean),
   public.focus_friend_add(text,text),
   public.focus_friend_respond(bigint,boolean),
   public.focus_friends_list(),
   public.focus_friend_data(text,text),
-  public.focus_share_change(bigint,boolean,boolean,boolean,text),
+  public.focus_share_change(bigint,boolean,boolean,boolean,boolean,text),
   public.focus_share_respond(bigint,boolean,text),
-  public.focus_share_replies()
+  public.focus_share_replies(),
+  public.focus_set_note(text),
+  public.focus_friend_notes()
   to anon, authenticated;

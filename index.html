@@ -8319,6 +8319,7 @@
   .fbal-min{ flex:0 0 auto;font-size:.78rem;color:var(--text-muted,#6b7280); }
   .frt-row{ display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--card-border,#eee); }
   .frt-dot{ width:10px;height:10px;border-radius:3px;flex:0 0 auto; }
+  .fr-name{ color:#16a34a;font-weight:700;margin-right:5px;flex:0 0 auto; }
 </style>
 
 <header class="topbar">
@@ -9381,6 +9382,7 @@
         <label class="cs-row"><span>Timeline</span><input type="checkbox" id="cs-timeline" class="cs-toggle"></label>
         <label class="cs-row"><span>Balance</span><input type="checkbox" id="cs-balance" class="cs-toggle"></label>
         <label class="cs-row"><span>Routine</span><input type="checkbox" id="cs-routine" class="cs-toggle"></label>
+        <label class="cs-row"><span>Notes</span><input type="checkbox" id="cs-notes" class="cs-toggle"></label>
       </div>
       <input type="text" id="cs-message" placeholder="Message (optional)" maxlength="140" style="width:100%;box-sizing:border-box;margin:10px 0 0;">
       <div class="actions" style="margin-top:12px;">
@@ -9447,12 +9449,12 @@
       </div>
       <input type="email" id="login-email" placeholder="Email" autocomplete="email">
       <input type="password" id="login-password" placeholder="Password" autocomplete="current-password">
-      <div class="row-flex" style="grid-column: 1 / -1; flex-wrap: wrap;">
-        <button class="btn primary" id="login-signin">Sign in</button>
-        <button class="btn" id="login-signup">Sign up</button>
-        <button class="btn btn-try-it" id="login-try-it" type="button" title="Use the app without signing in (data stays on this device only)">Try it →</button>
-        <span id="login-status" class="help"></span>
+      <div class="row-flex" style="grid-column: 1 / -1; display:flex; gap:8px; flex-wrap:nowrap;">
+        <button class="btn primary" id="login-signin" style="flex:1 1 0; min-width:0; white-space:nowrap;">Sign in</button>
+        <button class="btn" id="login-signup" style="flex:1 1 0; min-width:0; white-space:nowrap;">Sign up</button>
+        <button class="btn btn-try-it" id="login-try-it" type="button" title="Use the app without signing in (data stays on this device only)" style="flex:1 1 0; min-width:0; white-space:nowrap;">Try it →</button>
       </div>
+      <span id="login-status" class="help" style="grid-column: 1 / -1;"></span>
     </div>
     <div style="text-align: right; margin: 8px 0 0;">
       <button class="btn-link" id="open-manual" type="button">In detail →</button>
@@ -11050,36 +11052,16 @@ const _PROFANITY_RE = /\b(fuck|shit|bitch|asshole|cunt|nigger|faggot|whore|dick|
 function containsProfanity(text) { return _PROFANITY_RE.test(String(text || '')); }
 function cleanShareText(text) { return String(text || '').replace(/\s+/g, ' ').trim().slice(0, SHARED_MEMO_MAX); }
 
-/* Upsert MY memo (keyed by shareClientId so I only ever own one row). An empty
-   memo deletes my row. Stores the row id so fetch can exclude it from "others".*/
+/* Publish MY shared note to FRIENDS only (no longer a public board). An empty memo
+   clears it. Routed through the Friends RPC focus_set_note (server enforces who can
+   read it via the per-friend "Notes" sharing flag). */
 async function pushSharedMemoToCloud() {
   try {
-    const sb = await getSupabaseClient();
-    if (!sb) return false;
     const text = cleanShareText(state.sharedMemo);
-    if (!text) {
-      if (state.shareClientId) {
-        await sb.from(SB_SHARED_TABLE).delete().eq('client_id', state.shareClientId);
-      }
-      state.sharedMemoRowId = null; saveState();
-      return true;
-    }
-    if (containsProfanity(text)) return false;   // never publish profane text
-    const _row = { client_id: state.shareClientId, text: text, updated_at: new Date().toISOString() };
-    const _emo = (state.sharedMemoEmoji || '').slice(0, 8);
-    if (_emo) _row.emoji = _emo;
-    // Attach the auth user id IF signed up (lets the admin page resolve an email).
-    try { const { data: { session } } = await sb.auth.getSession(); if (session && session.user && session.user.id) _row.user_id = session.user.id; } catch (_) {}
-    let res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
-    if (res.error && (_row.emoji || _row.user_id) && /emoji|user_id|column/i.test(res.error.message || '')) {   // optional columns not added yet → retry with just the base
-      delete _row.emoji; delete _row.user_id;
-      res = await sb.from(SB_SHARED_TABLE).upsert(_row, { onConflict: 'client_id' }).select('id').maybeSingle();
-    }
-    const { data, error } = res;
-    if (error) { console.warn('shared memo push error:', error); return false; }
-    if (data && data.id != null) { state.sharedMemoRowId = data.id; saveState(); }
+    if (text && containsProfanity(text)) return false;   // never publish profane text
+    if (typeof Friends !== 'undefined' && Friends.setNote) await Friends.setNote(text);
     return true;
-  } catch (e) { console.warn('shared memo push failed:', e); return false; }
+  } catch (e) { console.warn('shared note push failed:', e); return false; }
 }
 
 /* Pull the latest memos from OTHER users into the local pool. Excludes my own
@@ -28083,7 +28065,12 @@ function refreshMotivation(force) {
   if (myMemo) mine.push(myMemo);
   // Quotes from the topics/lists I subscribed to feed the rotation as "mine".
   try { if (typeof _subscribedQuoteLines === 'function') { const _sl = _subscribedQuoteLines(); if (_sl.length) mine.push.apply(mine, _sl); } } catch (_) {}
-  const others = (typeof getVisibleSharedMemos === 'function') ? getVisibleSharedMemos() : [];
+  // OTHERS' shared notes now come ONLY from FRIENDS (window._friendNotes), and only
+  // surface while RESTING (break) or on a q4 task — never during q1–q3 focused work.
+  const _atM = state.activeTimer;
+  const _workQ123 = !!(_atM && _atM.type === 'pomodoro' && _atM.phase === 'work' && (_atM.q === 'q1' || _atM.q === 'q2' || _atM.q === 'q3'));
+  const _fnotes = Array.isArray(window._friendNotes) ? window._friendNotes : [];
+  const others = _workQ123 ? [] : _fnotes.map((n, i) => ({ id: 'fn' + i, text: n.text, name: n.name, friend: true }));
   if (!mine.length && !others.length) { el.innerHTML = ''; el.classList.remove('is-marquee'); return; }
 
   const now = Date.now();
@@ -28092,7 +28079,9 @@ function refreshMotivation(force) {
   // pool (a memo can be deleted/hidden; a quote can be edited away).
   let curValid = false;
   if (cur && cur.text) {
-    curValid = cur.green ? others.some(m => m.id === cur.memoId) : mine.includes(cur.text);
+    curValid = cur.green
+      ? others.some(m => (cur.friend ? (m.text === cur.text && m.name === cur.name) : (m.id === cur.memoId)))
+      : mine.includes(cur.text);
   }
   const stale = !cur || force || (now - ((cur && cur.selectedAt) || 0)) > 3600000 || !curValid;
 
@@ -28102,7 +28091,7 @@ function refreshMotivation(force) {
     const useOthers = others.length && (!mine.length || Math.random() < 0.4);
     if (useOthers) {
       const m = others[Math.floor(Math.random() * others.length)];
-      state.motivationalCurrent = { text: m.text, selectedAt: now, green: true, memoId: m.id };
+      state.motivationalCurrent = { text: m.text, selectedAt: now, green: true, memoId: null, friend: true, name: m.name };
     } else {
       state.motivationalCurrent = { text: mine[Math.floor(Math.random() * mine.length)], selectedAt: now, green: false, memoId: null };
     }
@@ -28116,6 +28105,14 @@ function refreshMotivation(force) {
   // Wrap in an inner span so we can animate transform without affecting layout.
   // Others' memos render green (.is-shared) to signal "from another user".
   const isGreen = !!(state.motivationalCurrent && state.motivationalCurrent.green);
+  // FRIEND note → show the friend's NAME to the left of the message; no reply UI.
+  if (state.motivationalCurrent && state.motivationalCurrent.friend) {
+    const _nm = state.motivationalCurrent.name || 'Friend';
+    el.innerHTML = '<span class="fr-name">' + escapeHTML(_nm) + '</span>'
+      + '<span class="motivation-track is-shared">' + escapeHTML(state.motivationalCurrent.text) + '</span>';
+    try { if (typeof applyMotivationMarquee === 'function') applyMotivationMarquee(); } catch (_) {}
+    return;
+  }
   const memoId = isGreen ? (state.motivationalCurrent.memoId) : null;
   // Others' shared memos get a custom envelope icon (TAP IT to reply). The old
   // ✉ emoji + separate 💬 button are gone — the envelope is the reply trigger.
@@ -28566,6 +28563,14 @@ const Friends = (function(){
   function _pendingCount(){
     return _friends.filter(f => (f.status==='pending' && !f.requested_by_me) || f.incoming_share_req).length;
   }
+  async function fetchNotes(){
+    if (!signedIn()) { window._friendNotes = []; return; }
+    try { const d = await rpc('focus_friend_notes'); window._friendNotes = Array.isArray(d) ? d : []; }
+    catch(_) { /* leave */ }
+    try { if (typeof refreshMotivation === 'function') refreshMotivation(false); } catch(_){}
+  }
+  // Publish/clear MY shared note to friends (called by the Notes share toggle).
+  async function setNote(text){ if (!signedIn()) return; try { await rpc('focus_set_note', { p_text: text || '' }); } catch(_){} }
   function _badge(n){
     const b = $('tmd-friends-badge'); if (!b) return;
     if (n > 0) { b.textContent = n; b.classList.remove('hidden'); } else { b.classList.add('hidden'); }
@@ -28727,15 +28732,16 @@ const Friends = (function(){
     $('cs-timeline').checked = !!_cur.share_timeline;
     $('cs-balance').checked = !!_cur.share_balance;
     $('cs-routine').checked = !!_cur.share_routine;
+    if ($('cs-notes')) $('cs-notes').checked = !!_cur.share_notes;
     $('cs-message').value = ''; $('cs-status').textContent = '';
     _showModal('change-sharing-modal');
   }
   async function _sendSharing(){
     if (!_csFid) return;
-    const t=$('cs-timeline').checked, b=$('cs-balance').checked, r=$('cs-routine').checked, msg=$('cs-message').value||'';
+    const t=$('cs-timeline').checked, b=$('cs-balance').checked, r=$('cs-routine').checked, n=($('cs-notes')?$('cs-notes').checked:false), msg=$('cs-message').value||'';
     $('cs-status').textContent = 'Sending…';
     try {
-      const res = await rpc('focus_share_change', { p_friendship_id:_csFid, p_timeline:t, p_balance:b, p_routine:r, p_message:msg });
+      const res = await rpc('focus_share_change', { p_friendship_id:_csFid, p_timeline:t, p_balance:b, p_routine:r, p_notes:n, p_message:msg });
       if (res && res.ok) {
         _hideModal('change-sharing-modal');
         await refresh();
@@ -28749,7 +28755,7 @@ const Friends = (function(){
   function _openShareReq(f){
     const req = f.incoming_share_req; if (!req) return;
     _srReq = req; _srFid = f.friendship_id;
-    const want = []; if (req.want_timeline) want.push('Timeline'); if (req.want_balance) want.push('Balance'); if (req.want_routine) want.push('Routine');
+    const want = []; if (req.want_timeline) want.push('Timeline'); if (req.want_balance) want.push('Balance'); if (req.want_routine) want.push('Routine'); if (req.want_notes) want.push('Notes');
     $('sr-title').textContent = (f.nickname||'Your friend') + ' — sharing request';
     $('sr-detail').textContent = 'Wants to share: ' + (want.join(', ') || '(none)') + '.';
     $('sr-message').textContent = req.message ? '“' + req.message + '”' : '';
@@ -28778,12 +28784,13 @@ const Friends = (function(){
     if ($('sr-approve')) $('sr-approve').onclick = () => _respondShare(true);
     if ($('sr-backdrop')) $('sr-backdrop').onclick = () => _hideModal('share-request-modal');
   }
-  function openList(){ _wire(); syncProfile(true); refresh(); }
+  function openList(){ _wire(); syncProfile(true); refresh(); fetchNotes(); }
   try { _wire(); } catch (_) {}   // wire once at init (static elements exist) so the detail page works on first open
-  // background: keep profile + badge fresh while signed in
-  setInterval(() => { if (signedIn()) { syncProfile(false); refresh(); } }, 30000);
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn()) { syncProfile(true); refresh(); } });
-  return { openList, refresh, syncProfile, openDetail };
+  // background: keep profile + badge + friend notes fresh while signed in
+  setInterval(() => { if (signedIn()) { syncProfile(false); refresh(); fetchNotes(); } }, 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn()) { syncProfile(true); refresh(); fetchNotes(); } });
+  setTimeout(() => { if (signedIn()) fetchNotes(); }, 3000);   // initial load so top-bar friend notes appear without opening Friends
+  return { openList, refresh, syncProfile, openDetail, fetchNotes, setNote, friendNotes: () => (window._friendNotes||[]) };
 })();
 window.Friends = Friends;
 
