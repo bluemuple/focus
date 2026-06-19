@@ -12138,6 +12138,20 @@ async function fetchSettingsFromCloud() {
     return data;
   } catch (e) { console.warn('Settings fetch failed:', e); return null; }
 }
+// (egress) Cheap "is there anything new?" probe — pulls ONLY updated_at (~tens of bytes) instead of
+// the full state row. The poll uses this to avoid re-downloading the whole state when nothing changed.
+async function fetchSettingsTimestamp() {
+  try {
+    const sb = await getSupabaseClient();
+    if (!sb) return null;
+    const { data, error } = await sb.from(SB_SETTINGS_TABLE)
+      .select('updated_at')
+      .eq('user_id', getEffectiveUserId())
+      .maybeSingle();
+    if (error) return null;
+    return data ? data.updated_at : null;
+  } catch (_) { return null; }
+}
 async function syncSettingsBidi() {
   const remote = await fetchSettingsFromCloud();
   // CRITICAL: use the timestamp captured at hydration (BEFORE any boot-time
@@ -12461,13 +12475,17 @@ async function pollCloudForUpdates() {
   if (Date.now() - _lastPollMs < throttleMs) return;
   _lastPollMs = Date.now();
   try {
+    // (egress) Probe ONLY updated_at first; download the full state row ONLY when the remote is
+    // actually newer. Most polls find nothing new → a few bytes instead of the whole state.
+    const ts = await fetchSettingsTimestamp();
+    if (!ts) return;
+    const remoteTs = new Date(ts).getTime();
+    const localTs = state.settingsUpdatedAt || 0;
+    if (remoteTs <= localTs) return;  // nothing new → skip the full download
     const remote = await fetchSettingsFromCloud();
     if (!remote || !remote.updated_at) return;
-    const remoteTs = new Date(remote.updated_at).getTime();
-    const localTs = state.settingsUpdatedAt || 0;
-    if (remoteTs <= localTs) return;  // nothing new
     applyRemoteSettings(remote);
-    state.settingsUpdatedAt = remoteTs;
+    state.settingsUpdatedAt = new Date(remote.updated_at).getTime();
     saveState();
     renderEverythingFromState();
   } catch (e) { /* silent — best-effort polling */ }
