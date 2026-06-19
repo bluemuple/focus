@@ -154,6 +154,29 @@ begin
   end if;
 end $$;
 
+-- Accept an INVITE instantly: the invitee used the inviter's shared code/link, which IS the
+-- inviter's consent — so the friendship is created/updated as 'accepted' with no approval step.
+-- Returns the inviter's nickname so the invitee can be shown "[name] invited you".
+create or replace function public.focus_invite_accept(p_code text)
+returns json language plpgsql security definer set search_path = public as $$
+declare uid text := _focus_uid(); target text; nick text; a text; b text; fid bigint; st text;
+begin
+  if uid is null then raise exception 'not signed in'; end if;
+  select user_id, nickname into target, nick from focus_profiles where friend_code = upper(trim(p_code));
+  if target is null then return json_build_object('ok',false,'error','no_such_code'); end if;
+  if target = uid then return json_build_object('ok',false,'error','self'); end if;
+  a := least(uid,target); b := greatest(uid,target);
+  select id,status into fid,st from focus_friendships where user_a=a and user_b=b;
+  if fid is null then
+    insert into focus_friendships (user_a,user_b,requested_by,status) values (a,b,uid,'accepted') returning id into fid;
+  elsif st <> 'accepted' then
+    update focus_friendships set status='accepted', updated_at=now() where id=fid;
+  else
+    return json_build_object('ok',true,'status','already','friendship_id',fid,'inviter_nickname',nick);
+  end if;
+  return json_build_object('ok',true,'status','accepted','friendship_id',fid,'inviter_nickname',nick);
+end $$;
+
 -- Accept (p_accept=true) or decline (delete) an incoming friend request.
 create or replace function public.focus_friend_respond(p_friendship_id bigint, p_accept boolean)
 returns json language plpgsql security definer set search_path = public as $$
@@ -376,6 +399,7 @@ grant execute on function
   public.focus_profile_upsert(text,text,boolean),
   public.focus_profile_upsert(text,text,boolean,text),
   public.focus_friend_add(text,text),
+  public.focus_invite_accept(text),
   public.focus_friend_respond(bigint,boolean),
   public.focus_friend_remove(bigint,text),
   public.focus_friends_list(),

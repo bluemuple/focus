@@ -52,6 +52,18 @@
   @media (prefers-color-scheme: dark) { .ai-settings { background: #111827; border-color: #1f2937; } .ai-settings input, .ai-settings select { background: #0b0f17; color: #e5e7eb; border-color: #1f2937; } }
   .email { color: #047857; font-weight: 700; }
   .anon { color: #9ca3af; font-style: italic; }
+  .members-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  .members-table th, .members-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+  .members-table th { font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; color: #6b7280; border-bottom: 2px solid #e5e7eb; }
+  .members-table tr:hover td { background: rgba(0,0,0,.03); }
+  .members-table .m-code { font-family: ui-monospace, monospace; letter-spacing: .04em; }
+  .members-table .m-av { font-size: 1.2rem; }
+  .m-focusing { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #10b981; margin-left: 6px; vertical-align: middle; }
+  @media (prefers-color-scheme: dark) {
+    .members-table th, .members-table td { border-color: #1f2937; }
+    .members-table th { border-bottom-color: #374151; }
+    .members-table tr:hover td { background: rgba(255,255,255,.04); }
+  }
   .tag.umsg { background: #fef3c7; color: #92400e; }
   .u-frommsg { background: #f3f4f6; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: .9rem; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
   .u-fm-when { color: #9ca3af; font-size: .72rem; white-space: nowrap; flex: 0 0 auto; }
@@ -104,6 +116,7 @@
     <div class="toggle" id="page-toggle" style="margin:0 0 16px;">
       <button id="pg-notes" class="on">Shared notes</button>
       <button id="pg-subs">Subscriptions</button>
+      <button id="pg-members">Members</button>
     </div>
     <div id="notes-view">
     <h1>Shared notes — all users</h1>
@@ -145,6 +158,13 @@
       <div id="subs-pending"><p class="empty">Loading…</p></div>
       <h3 style="margin:18px 0 8px;">Published</h3>
       <div id="subs-published"></div>
+    </div>
+    <div id="members-view" style="display:none;">
+      <h1>Members</h1>
+      <p class="sub">Every registered Bidoro account — newest first. Search by email, nickname, or friend code.</p>
+      <div class="bar" id="members-bar"></div>
+      <input id="members-search" placeholder="Search email / nickname / code…" style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid #d1d5db;border-radius:10px;font:inherit;margin:0 0 12px;background:transparent;color:inherit;">
+      <div id="members-root"><p class="empty">Loading…</p></div>
     </div>
   </div>
 
@@ -351,14 +371,62 @@ document.getElementById('ais-save').onclick = async () => {
 // ---- Page toggle: Shared notes / Subscriptions ----
 let _subsLists = [];
 function showAdminPage(p){
-  document.getElementById('notes-view').style.display = (p === 'notes') ? '' : 'none';
-  document.getElementById('subs-view').style.display  = (p === 'subs')  ? '' : 'none';
+  document.getElementById('notes-view').style.display   = (p === 'notes')   ? '' : 'none';
+  document.getElementById('subs-view').style.display    = (p === 'subs')    ? '' : 'none';
+  document.getElementById('members-view').style.display = (p === 'members') ? '' : 'none';
   document.getElementById('pg-notes').classList.toggle('on', p === 'notes');
   document.getElementById('pg-subs').classList.toggle('on', p === 'subs');
+  document.getElementById('pg-members').classList.toggle('on', p === 'members');
   if (p === 'subs') loadSubs();
+  if (p === 'members') loadMembers();
 }
-document.getElementById('pg-notes').onclick = () => showAdminPage('notes');
-document.getElementById('pg-subs').onclick  = () => showAdminPage('subs');
+document.getElementById('pg-notes').onclick   = () => showAdminPage('notes');
+document.getElementById('pg-subs').onclick    = () => showAdminPage('subs');
+document.getElementById('pg-members').onclick = () => showAdminPage('members');
+
+// ---- Members (registered accounts) ----
+let _members = [];
+function renderMembers(){
+  const rootEl = document.getElementById('members-root');
+  const q = (document.getElementById('members-search').value || '').trim().toLowerCase();
+  let list = _members;
+  if (q) list = _members.filter(u =>
+    (u.email && u.email.toLowerCase().includes(q)) ||
+    (u.nickname && u.nickname.toLowerCase().includes(q)) ||
+    (u.friend_code && u.friend_code.toLowerCase().includes(q)));
+  document.getElementById('members-bar').innerHTML =
+    '<span class="stat"><b>' + _members.length + '</b> members</span>' +
+    '<span class="stat"><b>' + _members.filter(u => u.email).length + '</b> with email</span>' +
+    '<span class="stat"><b>' + _members.filter(u => u.friends > 0).length + '</b> with friends</span>' +
+    (q ? '<span class="stat"><b>' + list.length + '</b> matched</span>' : '');
+  if (!list.length) { rootEl.innerHTML = '<p class="empty">' + (q ? 'No matching members.' : 'No members yet.') + '</p>'; return; }
+  let html = '<table class="members-table"><thead><tr>'
+    + '<th>#</th><th>Nickname</th><th>Email</th><th>Friend code</th><th>Friends</th><th>Joined</th><th>Last seen</th>'
+    + '</tr></thead><tbody>';
+  list.forEach((u, i) => {
+    html += '<tr>'
+      + '<td>' + (i + 1) + '</td>'
+      + '<td><span class="m-av">' + esc(u.avatar || '🙂') + '</span> ' + esc(u.nickname || '—') + (u.focusing ? '<span class="m-focusing" title="focusing now"></span>' : '') + '</td>'
+      + '<td>' + (u.email ? '<span class="email">' + esc(u.email) + '</span>' : '<span class="anon">—</span>') + '</td>'
+      + '<td class="m-code">' + esc(u.friend_code || '—') + '</td>'
+      + '<td>' + (u.friends || 0) + '</td>'
+      + '<td>' + (u.created_at ? fmt(u.created_at) : '—') + '</td>'
+      + '<td>' + (u.last_sign_in_at ? fmt(u.last_sign_in_at) : '—') + '</td>'
+      + '</tr>';
+  });
+  html += '</tbody></table>';
+  rootEl.innerHTML = html;
+}
+async function loadMembers(){
+  const rootEl = document.getElementById('members-root');
+  rootEl.innerHTML = '<p class="empty">Loading…</p>';
+  let d;
+  try { d = await callAdmin('users'); }
+  catch (e) { rootEl.innerHTML = '<div class="err">Could not load (' + esc(e.message) + '). Redeploy focus-admin-api with the new "users" action.</div>'; return; }
+  _members = d.users || [];
+  renderMembers();
+}
+document.getElementById('members-search').addEventListener('input', renderMembers);
 
 async function loadSubs(){
   const pend = document.getElementById('subs-pending'), pub = document.getElementById('subs-published');

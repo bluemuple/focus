@@ -29784,19 +29784,44 @@ const Friends = (function(){
     const code = (rawCode||'').trim().toUpperCase(); if (!code) return null;
     if (stEl) stEl.textContent = 'Sending…';
     try {
-      const r = await rpc('focus_friend_add', { p_code: code, p_message: null });
-      const msg = (!r || !r.ok)
-        ? (r && r.error === 'no_such_code' ? 'No such code.' : (r && r.error==='self' ? 'That’s your own code.' : 'Could not send.'))
-        : (r.status === 'accepted' ? 'Friend added!' : (r.status === 'already' ? 'Already friends.' : 'Request sent.'));
-      if (stEl) stEl.textContent = msg;
-      if (r && r.ok) {
-        const _acc = (r.status === 'accepted');
-        if (_acc) _suppressInviterCelebrate = true;   // I'm the invitee — the choose-seed popup handles this, not the inviter msg
+      // Using someone's shared code/link = accepting their invite → INSTANT friend (no approval).
+      // Fall back to the legacy pending-request RPC if focus_invite_accept isn't deployed yet.
+      let r, instant = true;
+      try { r = await rpc('focus_invite_accept', { p_code: code }); }
+      catch (e1) { instant = false; r = await rpc('focus_friend_add', { p_code: code, p_message: null }); }
+      const ok = !!(r && r.ok);
+      const already = ok && r.status === 'already';
+      if (stEl) stEl.textContent = !ok
+        ? (r && r.error === 'no_such_code' ? 'No such code.' : (r && r.error==='self' ? 'That’s your own code.' : 'Could not add.'))
+        : (already ? 'Already friends.' : (instant ? 'Friend added!' : 'Request sent.'));
+      if (ok) {
+        _suppressInviterCelebrate = true;   // I'm the invitee — the invite/seed popup handles this, not the inviter msg
         try { await refresh(); } catch (_) {}
-        if (_acc) { _suppressInviterCelebrate = false; _inviteeChooseSeed(); }
+        _suppressInviterCelebrate = false;
+        // Instant accept (real invite) → "[name] invited you" → pick a secret seed. (Skip if already friends.)
+        if (!already && (instant || r.status === 'accepted')) _inviteeInvited(r.inviter_nickname || '');
       }
       return r;
     } catch (e) { if (stEl) stEl.textContent = '✗ ' + (e.message || 'Failed (deploy supabase-friends.sql first?)'); return null; }
+  }
+  // Invitee just joined via an invite (code/link) → "[name] invited you" → then the seed chooser.
+  function _inviteeInvited(name){
+    const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+    const fallNm = { ko:'친구', en:'A friend', zh:'朋友', ja:'友達', es:'Un amigo', fr:'Un ami' }[L] || 'A friend';
+    const nm = name || fallNm;
+    const T = {
+      ko:{t:'🎉 '+nm+'님이 초대했어요!', m:'친구가 됐어요. 이제 비밀씨앗을 하나 골라 정원에 심어보세요.', y:'비밀씨앗 고르기'},
+      en:{t:'🎉 '+nm+' invited you!', m:"You're now friends. Pick a secret seed to plant in your garden.", y:'Pick a seed'},
+      zh:{t:'🎉 '+nm+' 邀请了你！', m:'你们成为好友啦。选一颗秘密种子，种到花园里吧。', y:'选择种子'},
+      ja:{t:'🎉 '+nm+'さんが招待しました！', m:'友達になりました。秘密の種を1つ選んで庭に植えよう。', y:'種を選ぶ'},
+      es:{t:'🎉 ¡'+nm+' te invitó!', m:'Ya sois amigos. Elige una semilla secreta para tu jardín.', y:'Elegir semilla'},
+      fr:{t:'🎉 '+nm+' t’a invité !', m:'Vous êtes amis. Choisis une graine secrète pour ton jardin.', y:'Choisir une graine'}
+    };
+    const c = T[L] || T.en;
+    try {
+      if (typeof customConfirm === 'function') customConfirm(c.t, c.m, { yesLabel: c.y, hideNo: true }).then(() => { _inviteeChooseSeed(); });
+      else _inviteeChooseSeed();
+    } catch (_) { _inviteeChooseSeed(); }
   }
   function _addByCode(){ const inp = $('fr-add-input'); addCode(inp.value, $('fr-add-status')).then(r => { if (r && r.ok) inp.value=''; }); }
   // ---- My QR code ----
@@ -29835,10 +29860,15 @@ const Friends = (function(){
       // clean the URL so a refresh doesn't re-add
       try { history.replaceState(null, '', location.pathname + location.hash); } catch(_){}
       if (!code) return;
-      // accepted → the friend-count celebration (in refresh) shows the unified message; only toast the
-      // pending / error cases here so we don't double up.
-      if (signedIn()) { addCode(code, null).then(r => { try { if (r && r.ok && r.status !== 'accepted' && typeof _memoToast==='function') _memoToast('Friend request sent.'); else if ((!r || !r.ok) && typeof _memoToast==='function') _memoToast('Could not add friend.'); } catch(_){} }); }
-      else { _pendingAdd = code; }   // apply once signed in
+      if (signedIn()) {
+        // Already a member → accept the invite right away (addCode shows "[name] invited you" + seed).
+        addCode(code, null);
+      } else {
+        // Fresh visitor opened the invite link → remember it and surface the sign-up modal so that,
+        // the moment they join, the invite auto-applies (SIGNED_IN → applyPendingAdd).
+        _pendingAdd = code;
+        try { const lm = document.getElementById('login-modal'); if (lm && !bidoroIsNativeApp()) lm.classList.remove('hidden'); } catch(_){}
+      }
     } catch(_){}
   }
   function applyPendingAdd(){ if (_pendingAdd && signedIn()) { const c=_pendingAdd; _pendingAdd=null; addCode(c, null); } }
@@ -30414,6 +30444,13 @@ function runDailyChecksAfterSync() {
       sb.auth.onAuthStateChange((event, sess) => {
         if (sess && sess.user) updateAuthUI(sess.user);
         else updateAuthUI(null);
+        // Just signed up/in via an invite link → auto-apply the pending friend-add (instant friend +
+        // "[name] invited you" → seed chooser). Delay lets the session + Friends profile settle.
+        try {
+          if (event === 'SIGNED_IN' && window.Friends && Friends.applyPendingAdd) {
+            setTimeout(() => { try { Friends.syncProfile && Friends.syncProfile(true); } catch(_){} try { Friends.applyPendingAdd(); } catch(_){} }, 900);
+          }
+        } catch (_) {}
       });
     }
   } catch (e) {

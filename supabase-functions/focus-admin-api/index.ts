@@ -68,6 +68,45 @@ Deno.serve(async (req) => {
       comments.forEach((c: any) => { c.email = c.user_id ? (emailByUid[c.user_id] || null) : null; });
       return json({ ok: true, memos: memos || [], comments, controls: controls || [], userMessages: userMessages || [] });
     }
+    if (action === "users") {
+      // Member list: every registered auth user + their Bidoro profile (nickname / friend code).
+      const perPage = 1000;
+      const authUsers: any[] = [];
+      for (let page = 1; page <= 50; page++) {
+        const { data, error } = await sb.auth.admin.listUsers({ page, perPage });
+        if (error || !data || !data.users || !data.users.length) break;
+        authUsers.push(...data.users);
+        if (data.users.length < perPage) break;
+      }
+      const { data: profiles } = await sb.from("focus_profiles")
+        .select("user_id, friend_code, nickname, avatar, focusing, updated_at");
+      const pByUid: Record<string, any> = {};
+      (profiles || []).forEach((p: any) => { if (p.user_id) pByUid[p.user_id] = p; });
+      // Friend counts per user (accepted friendships) so the admin can see who's connected.
+      const friendCount: Record<string, number> = {};
+      const { data: fr } = await sb.from("focus_friendships").select("user_a, user_b, status");
+      (fr || []).forEach((f: any) => {
+        if (f.status && f.status !== "accepted") return;
+        if (f.user_a) friendCount[f.user_a] = (friendCount[f.user_a] || 0) + 1;
+        if (f.user_b) friendCount[f.user_b] = (friendCount[f.user_b] || 0) + 1;
+      });
+      const users = authUsers.map((u: any) => {
+        const p = pByUid[u.id] || {};
+        return {
+          id: u.id,
+          email: u.email || null,
+          created_at: u.created_at || null,
+          last_sign_in_at: u.last_sign_in_at || null,
+          nickname: p.nickname || null,
+          friend_code: p.friend_code || null,
+          avatar: p.avatar || null,
+          focusing: !!p.focusing,
+          friends: friendCount[u.id] || 0,
+        };
+      });
+      users.sort((a, b2) => String(b2.created_at || "").localeCompare(String(a.created_at || "")));
+      return json({ ok: true, users });
+    }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }
     if (action === "deleteComment") { await sb.from("focus_memo_comments").delete().eq("id", b.id);    return json({ ok: true }); }
     if (action === "addComment") {
