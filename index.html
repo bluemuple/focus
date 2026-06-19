@@ -8349,7 +8349,19 @@
   .fr-sheet-x{ position:absolute; top:14px; right:14px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; border:none; border-radius:50%; background:var(--surface-2,#f1f5f9); color:var(--text-muted,#6b7280); cursor:pointer; -webkit-tap-highlight-color:transparent; }
   .fr-sheet-x:active{ transform:scale(.92); }
   .fas-view.hidden{ display:none; }
-  .fas-hero{ display:block; width:128px; height:auto; margin:2px auto 6px; -webkit-user-drag:none; }
+  .fas-hero-wrap{ position:relative; width:128px; margin:2px auto 6px; }
+  .fas-hero{ display:block; width:100%; height:auto; -webkit-user-drag:none; }
+  /* The chosen seed floats in the cupped hands: bobs up/down + glows. Hidden until a seed is picked. */
+  .fas-hero-glow{ position:absolute; left:50%; top:60%; width:48%; aspect-ratio:1/1; transform:translate(-50%,-50%);
+    border-radius:50%; pointer-events:none; opacity:0;
+    background:radial-gradient(circle, rgba(255,226,140,.95) 0%, rgba(255,214,130,.5) 42%, rgba(255,214,130,0) 70%); }
+  .fas-hero-seed{ position:absolute; left:50%; top:60%; width:30%; height:auto; transform:translate(-50%,-50%);
+    pointer-events:none; opacity:0; filter:drop-shadow(0 0 5px rgba(255,214,130,.95)) drop-shadow(0 0 12px rgba(255,206,110,.7)); }
+  .fas-hero-wrap.has-seed .fas-hero-seed{ opacity:1; animation:fas-seed-bob 2.2s ease-in-out infinite; }
+  .fas-hero-wrap.has-seed .fas-hero-glow{ animation:fas-glow-pulse 2.2s ease-in-out infinite; }
+  @keyframes fas-seed-bob{ 0%,100%{ transform:translate(-50%,-50%); } 50%{ transform:translate(-50%, calc(-50% - 9px)); } }
+  @keyframes fas-glow-pulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
+  @media (prefers-reduced-motion: reduce){ .fas-hero-wrap.has-seed .fas-hero-seed, .fas-hero-wrap.has-seed .fas-hero-glow{ animation:none; } .fas-hero-wrap.has-seed .fas-hero-glow{ opacity:.85; } }
   .fas-title{ text-align:center; margin:2px 0 14px; font-size:1.15rem; font-weight:800; }
   .fas-sub{ text-align:center; margin:-6px 0 14px; font-size:.85rem; color:var(--text-muted,#6b7280); line-height:1.45; }
   .fas-back{ position:absolute; top:16px; left:14px; border:none; background:none; color:var(--text-muted,#6b7280); font-size:.92rem; font-weight:700; cursor:pointer; padding:4px; }
@@ -8385,6 +8397,15 @@
   .fas-code-status{ text-align:center; margin-bottom:10px; }
   .fas-mycode-row{ display:flex; align-items:center; justify-content:center; gap:10px; margin-top:16px; }
   .fas-mycode-row b{ font-size:1.05rem; letter-spacing:.06em; }
+  /* Invitee "choose your secret seed" popup (after accepting an invite) */
+  .fas-choose-overlay{ position:fixed; inset:0; z-index:10000; background:rgba(15,23,42,.55); -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px); display:flex; align-items:center; justify-content:center; padding:18px; }
+  .fas-choose-card{ width:100%; max-width:460px; max-height:88vh; overflow-y:auto; background:var(--card-bg,#fff); color:var(--text-main,#111827); border-radius:20px; padding:22px 18px; box-shadow:0 18px 50px rgba(0,0,0,.32); }
+  /* QR scan camera overlay (BarcodeDetector path) */
+  .fas-scan-overlay{ position:fixed; inset:0; z-index:10000; background:#000; display:flex; align-items:center; justify-content:center; }
+  .fas-scan-video{ width:100%; height:100%; object-fit:cover; }
+  .fas-scan-frame{ position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:64vw; max-width:280px; aspect-ratio:1/1; border:3px solid rgba(255,255,255,.95); border-radius:18px; box-shadow:0 0 0 100vmax rgba(0,0,0,.45); }
+  .fas-scan-hint{ position:absolute; left:0; right:0; bottom:120px; text-align:center; color:#fff; font-weight:700; font-size:.95rem; padding:0 24px; text-shadow:0 1px 4px rgba(0,0,0,.6); }
+  .fas-scan-cancel{ position:absolute; bottom:max(40px,env(safe-area-inset-bottom,24px)); left:50%; transform:translateX(-50%); padding:12px 28px; border:none; border-radius:24px; background:#fff; color:#111827; font-weight:800; font-size:1rem; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   /* (user) flex-wrap + a real flex-basis on the info column so a wide action set (e.g. the
      "Sharing request" + Details pair) WRAPS to its own line instead of crushing the name/status. */
   .friend-bar{ display:flex;flex-wrap:wrap;align-items:center;gap:10px;row-gap:8px;padding:10px 12px;border:1px solid var(--card-border,#e5e7eb);
@@ -9599,7 +9620,11 @@
       <!-- SEEDS -->
       <div class="fas-view hidden" data-view="seeds">
         <button class="fas-back" data-back type="button">‹ Back</button>
-        <img class="fas-hero" src="items/add-a-friend.png" alt="" draggable="false">
+        <div class="fas-hero-wrap">
+          <img class="fas-hero" src="items/add-a-friend.png" alt="" draggable="false">
+          <span class="fas-hero-glow" aria-hidden="true"></span>
+          <img class="fas-hero-seed" id="fas-hero-seed" alt="" draggable="false" aria-hidden="true">
+        </div>
         <h3 class="fas-title">Pick a secret seed</h3>
         <p class="fas-sub">Choose one mystery seed to send. Your friend plants it in their garden — each grants a fun superpower.</p>
         <div class="fas-seed-grid" id="fas-seed-grid"></div>
@@ -29586,34 +29611,100 @@ const Friends = (function(){
     try { if (typeof showPage === 'function') showPage('focus'); } catch (_) {}
     requestAnimationFrame(() => { try { const sb = document.getElementById('bucket-sprout-btn'); if (sb) sb.click(); } catch (_) {} });
   }
-  function _friendCelebrate(){
-    const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
-    const T = {
-      ko:{t:'🌱 친구가 생겼어요!', m:'축하해요! 비밀씨앗이 My Garden에 도착했어요.\n정원에서 심어 슈퍼파워를 키워보세요.', y:'정원으로 가기'},
-      en:{t:"🌱 You've got a friend!", m:'Nice! Secret seeds just landed in your garden.\nPlant them in My Garden to grow your superpowers.', y:'Open My Garden'},
-      zh:{t:'🌱 你有新朋友啦！', m:'恭喜！秘密种子已送到你的花园。\n去“我的花园”种下它们，培养超能力吧。', y:'打开我的花园'},
-      ja:{t:'🌱 友達ができました！', m:'おめでとう！秘密の種がマイガーデンに届きました。\nマイガーデンで植えてスーパーパワーを育てよう。', y:'マイガーデンへ'},
-      es:{t:'🌱 ¡Tienes un amigo!', m:'¡Genial! Semillas secretas llegaron a tu jardín.\nPlántalas en Mi Jardín para cultivar tus superpoderes.', y:'Abrir Mi Jardín'},
-      fr:{t:'🌱 Un nouvel ami !', m:'Super ! Des graines secrètes sont arrivées dans ton jardin.\nPlante-les dans Mon Jardin pour cultiver tes superpouvoirs.', y:'Ouvrir Mon Jardin'}
-    };
-    const c = T[L] || T.en;
+  // (user) Asymmetric seed gifting:
+  //  • INVITER (a friend accepted my invite — detected in refresh) → receives the seed I PICKED + a
+  //    "[friend] accepted, you got [seed]" message.
+  //  • INVITEE (I added via code/link → accepted) → a POPUP to CHOOSE one of the 6 seeds for myself,
+  //    then a "plant it in My Garden" message. (The invitee does NOT get the inviter's pick.)
+  let _suppressInviterCelebrate = false;   // true while *I* am the one adding (I'm the invitee, not the inviter)
+  function _grantSecretSeed(seedId){
+    if (!seedId) return;
+    if (!state.ownedSecretSeeds || typeof state.ownedSecretSeeds !== 'object') state.ownedSecretSeeds = {};
+    state.ownedSecretSeeds[seedId] = true;
+    try { if (typeof saveState === 'function') saveState(); } catch (_) {}
+  }
+  function _gardenGotoConfirm(t, m, y){
     try {
-      if (typeof customConfirm === 'function') {
-        customConfirm(c.t, c.m, { yesLabel: c.y, hideNo: true }).then(ok => { if (ok && ok !== 'remote') _openGardenFromFriends(); });
-      } else if (typeof _memoToast === 'function') { _memoToast(c.t + ' ' + c.m.replace(/\n/g, ' ')); }
+      if (typeof customConfirm === 'function') customConfirm(t, m, { yesLabel: y, hideNo: true }).then(ok => { if (ok && ok !== 'remote') _openGardenFromFriends(); });
+      else if (typeof _memoToast === 'function') _memoToast(t + ' ' + String(m).replace(/\n/g, ' '));
     } catch (_) {}
+  }
+  function _inviterReceived(friendName){
+    const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+    const seedId = state.lastInvitedSeed;
+    let seedName = '';
+    if (seedId) { _grantSecretSeed(seedId); const s = SECRET_SEEDS.find(x => x.id === seedId); if (s) seedName = _seedLoc(s).name; }
+    const fallNm = { ko:'친구', en:'A friend', zh:'朋友', ja:'友達', es:'Un amigo', fr:'Un ami' }[L] || 'A friend';
+    const nm = friendName || fallNm;
+    const T = {
+      ko:{t:'🎉 '+nm+'님이 초대에 응했어요!', m:(seedName?('비밀씨앗 "'+seedName+'"을(를) 받았어요.'):'비밀씨앗을 받았어요.')+'\nMy Garden에서 심어보세요.', y:'정원으로 가기'},
+      en:{t:'🎉 '+nm+' accepted your invite!', m:(seedName?('You received the secret seed "'+seedName+'".'):'You received a secret seed.')+'\nPlant it in My Garden.', y:'Open My Garden'},
+      zh:{t:'🎉 '+nm+' 接受了你的邀请！', m:(seedName?('你获得了秘密种子“'+seedName+'”。'):'你获得了一颗秘密种子。')+'\n去“我的花园”种下它吧。', y:'打开我的花园'},
+      ja:{t:'🎉 '+nm+'さんが招待に応じました！', m:(seedName?('秘密の種「'+seedName+'」を受け取りました。'):'秘密の種を受け取りました。')+'\nマイガーデンで植えてね。', y:'マイガーデンへ'},
+      es:{t:'🎉 ¡'+nm+' aceptó tu invitación!', m:(seedName?('Recibiste la semilla secreta "'+seedName+'".'):'Recibiste una semilla secreta.')+'\nPlántala en Mi Jardín.', y:'Abrir Mi Jardín'},
+      fr:{t:'🎉 '+nm+' a accepté ton invitation !', m:(seedName?('Tu as reçu la graine secrète « '+seedName+' ».'):'Tu as reçu une graine secrète.')+'\nPlante-la dans Mon Jardin.', y:'Ouvrir Mon Jardin'}
+    };
+    const c = T[L] || T.en; _gardenGotoConfirm(c.t, c.m, c.y);
+  }
+  function _inviteeGranted(s){
+    _grantSecretSeed(s.id);
+    const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+    const nm = _seedLoc(s).name;
+    const T = {
+      ko:{t:'🌱 '+nm+' 씨앗을 받았어요!', m:'My Garden에서 심어 슈퍼파워를 키워보세요.', y:'정원으로 가기'},
+      en:{t:'🌱 You got the '+nm+'!', m:'Plant it in My Garden to grow your superpower.', y:'Open My Garden'},
+      zh:{t:'🌱 你获得了'+nm+'！', m:'去“我的花园”种下它，培养超能力吧。', y:'打开我的花园'},
+      ja:{t:'🌱 '+nm+'を手に入れた！', m:'マイガーデンで植えてスーパーパワーを育てよう。', y:'マイガーデンへ'},
+      es:{t:'🌱 ¡Conseguiste '+nm+'!', m:'Plántala en Mi Jardín para cultivar tu superpoder.', y:'Abrir Mi Jardín'},
+      fr:{t:'🌱 Tu as eu '+nm+' !', m:'Plante-la dans Mon Jardin pour cultiver ton superpouvoir.', y:'Ouvrir Mon Jardin'}
+    };
+    const c = T[L] || T.en; _gardenGotoConfirm(c.t, c.m, c.y);
+  }
+  function _inviteeChooseSeed(){
+    try { _closeAddSheet(); } catch (_) {}
+    const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+    const TT = {
+      ko:{t:'🎁 비밀씨앗을 하나 받으세요!', s:'친구가 됐어요. 마음에 드는 씨앗을 골라 정원에 심어보세요.'},
+      en:{t:'🎁 Pick your secret seed!', s:"You're now friends. Choose a seed you like and plant it in your garden."},
+      zh:{t:'🎁 领取一颗秘密种子！', s:'你们成为好友啦。选一颗喜欢的种子，种到花园里吧。'},
+      ja:{t:'🎁 秘密の種を1つ受け取ろう！', s:'友達になりました。好きな種を選んで庭に植えてね。'},
+      es:{t:'🎁 ¡Elige tu semilla secreta!', s:'Ya sois amigos. Elige una semilla y plántala en tu jardín.'},
+      fr:{t:'🎁 Choisis ta graine secrète !', s:'Vous êtes amis. Choisis une graine et plante-la dans ton jardin.'}
+    };
+    const tt = TT[L] || TT.en;
+    const ov = document.createElement('div'); ov.className = 'fas-choose-overlay';
+    ov.innerHTML = '<div class="fas-choose-card"><h3 class="fas-title">'+tt.t+'</h3><p class="fas-sub">'+tt.s+'</p><div class="fas-seed-grid" id="fas-choose-grid"></div></div>';
+    document.body.appendChild(ov);
+    const g = ov.querySelector('#fas-choose-grid');
+    SECRET_SEEDS.forEach(s => {
+      const Ls = _seedLoc(s);
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'fas-seed';
+      b.innerHTML = '<div class="fas-seed-img"><img src="items/secret-seed-'+s.id+'.png" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><span class="fas-seed-emoji">'+s.emoji+'</span></div>'+
+        '<div class="fas-seed-nm">'+_esc(Ls.name)+'</div><div class="fas-seed-pw">'+_esc(Ls.power)+'</div>';
+      b.addEventListener('click', () => { try { ov.remove(); } catch (_) {} _inviteeGranted(s); });
+      g.appendChild(b);
+    });
   }
   async function refresh(){
     if (!signedIn()) { _renderSignedOut(); _badge(0); return; }
     try {
       const d = await rpc('focus_friends_list');
       _friends = (d && d.friends) || [];
-      // (user) Track the accepted-friend count: gates the My Garden secret seeds AND drives the
-      // one-time "you've got a friend → secret seeds unlocked" celebration the moment it goes up.
+      // (user) Detect a NEWLY-accepted friend → I'm the INVITER → I receive the seed I picked.
+      // (When *I* added someone via code/link, _suppressInviterCelebrate is set so the invitee popup
+      // handles it instead.) Baseline on the first run so existing friends never trigger a popup.
       try {
-        state.friendCount = _friends.filter(f => f.status === 'accepted').length;
-        if (state.friendCountSeen == null) { state.friendCountSeen = state.friendCount; }   // baseline: no popup for already-existing friends
-        else if (state.friendCount > state.friendCountSeen) { state.friendCountSeen = state.friendCount; _friendCelebrate(); }
+        const accepted = _friends.filter(f => f.status === 'accepted');
+        state.friendCount = accepted.length;
+        const keyOf = f => String(f.friendship_id || f.other_id || f.nickname || '');
+        const curKeys = accepted.map(keyOf);
+        if (!Array.isArray(state.seenFriendIds)) {
+          state.seenFriendIds = curKeys;                          // baseline — no popup for already-existing friends
+        } else {
+          const fresh = accepted.filter(f => state.seenFriendIds.indexOf(keyOf(f)) === -1);
+          state.seenFriendIds = curKeys;
+          if (fresh.length && !_suppressInviterCelebrate) { _inviterReceived(fresh[0].nickname || ''); }
+        }
         if (typeof saveState === 'function') saveState();
       } catch (_) {}
       if (d && d.me && d.me.friend_code) { _myCode = d.me.friend_code; if ($('fr-mycode')) $('fr-mycode').textContent = _myCode; }
@@ -29698,7 +29789,12 @@ const Friends = (function(){
         ? (r && r.error === 'no_such_code' ? 'No such code.' : (r && r.error==='self' ? 'That’s your own code.' : 'Could not send.'))
         : (r.status === 'accepted' ? 'Friend added!' : (r.status === 'already' ? 'Already friends.' : 'Request sent.'));
       if (stEl) stEl.textContent = msg;
-      if (r && r.ok) refresh();
+      if (r && r.ok) {
+        const _acc = (r.status === 'accepted');
+        if (_acc) _suppressInviterCelebrate = true;   // I'm the invitee — the choose-seed popup handles this, not the inviter msg
+        try { await refresh(); } catch (_) {}
+        if (_acc) { _suppressInviterCelebrate = false; _inviteeChooseSeed(); }
+      }
       return r;
     } catch (e) { if (stEl) stEl.textContent = '✗ ' + (e.message || 'Failed (deploy supabase-friends.sql first?)'); return null; }
   }
@@ -29734,6 +29830,8 @@ const Friends = (function(){
       const m = (location.search || '').match(/[?&]addfriend=([^&]+)/);
       if (!m) return;
       const code = decodeURIComponent(m[1]);
+      // Capture the inviter's chosen secret seed (invite-link &seed=ID) for Phase 2 gifting; harmless now.
+      try { const sm = (location.search || '').match(/[?&]seed=([^&]+)/); if (sm) { state.pendingInviteSeed = decodeURIComponent(sm[1]); if (typeof saveState === 'function') saveState(); } } catch(_){}
       // clean the URL so a refresh doesn't re-add
       try { history.replaceState(null, '', location.pathname + location.hash); } catch(_){}
       if (!code) return;
@@ -29930,16 +30028,24 @@ const Friends = (function(){
   // 6 "secret seeds" — wanted object/talent, each granting a fun superpower (focus / friends / money).
   // Images: items/secret-seed-<id>.png (GPT-generated; emoji fallback until they exist).
   const SECRET_SEEDS = [
-    { id:'lantern',   emoji:'🏮', ko:{name:'집중 등불씨',     power:'딥포커스 빔'},        en:{name:'Focus Lantern',  power:'Deep-Focus Beam'} },
-    { id:'chatter',   emoji:'🌸', ko:{name:'수다꽃씨',       power:'아이스브레이커 꽃가루'}, en:{name:'Chatterbloom',  power:'Icebreaker Pollen'} },
-    { id:'coin',      emoji:'🪙', ko:{name:'금화나무씨',     power:'복리 개화'},          en:{name:'Coin Sprout',    power:'Compound Bloom'} },
-    { id:'hourglass', emoji:'⏳', ko:{name:'모래시계 알뿌리', power:'1시간 늘리기'},        en:{name:'Hourglass Bulb', power:'Stretch an Hour'} },
-    { id:'pepper',    emoji:'🌶️', ko:{name:'용기고추씨',     power:'첫걸음 스파크'},       en:{name:'Courage Pepper', power:'First-Step Spark'} },
-    { id:'mushroom',  emoji:'🍄', ko:{name:'아이디어버섯씨', power:'유레카 포자'},        en:{name:'Idea Mushroom',  power:'Eureka Spores'} }
+    { id:'lantern',   emoji:'🏮', ko:{name:'집중 등불씨',power:'딥포커스 빔'}, en:{name:'Focus Lantern',power:'Deep-Focus Beam'}, zh:{name:'专注灯笼',power:'深度专注光束'}, ja:{name:'集中ランタン',power:'ディープフォーカスビーム'}, es:{name:'Farol de Enfoque',power:'Rayo de Concentración'}, fr:{name:'Lanterne de Focus',power:'Rayon Hyperfocus'} },
+    { id:'chatter',   emoji:'🌸', ko:{name:'수다꽃씨',power:'아이스브레이커 꽃가루'}, en:{name:'Chatterbloom',power:'Icebreaker Pollen'}, zh:{name:'畅聊花',power:'破冰花粉'}, ja:{name:'おしゃべりフラワー',power:'アイスブレイク花粉'}, es:{name:'Florcharla',power:'Polen Rompehielos'}, fr:{name:'Fleur Bavarde',power:'Pollen Brise-glace'} },
+    { id:'coin',      emoji:'🪙', ko:{name:'금화나무씨',power:'복리 개화'}, en:{name:'Coin Sprout',power:'Compound Bloom'}, zh:{name:'金币芽',power:'复利绽放'}, ja:{name:'コインスプラウト',power:'複利の花'}, es:{name:'Brote Moneda',power:'Floración Compuesta'}, fr:{name:'Pousse Dorée',power:'Floraison Composée'} },
+    { id:'hourglass', emoji:'⏳', ko:{name:'모래시계 알뿌리',power:'1시간 늘리기'}, en:{name:'Hourglass Bulb',power:'Stretch an Hour'}, zh:{name:'沙漏球茎',power:'时间延展'}, ja:{name:'砂時計バルブ',power:'1時間のばし'}, es:{name:'Bulbo Reloj',power:'Estira una Hora'}, fr:{name:'Bulbe Sablier',power:'Étire une Heure'} },
+    { id:'pepper',    emoji:'🌶️', ko:{name:'용기고추씨',power:'첫걸음 스파크'}, en:{name:'Courage Pepper',power:'First-Step Spark'}, zh:{name:'勇气辣椒',power:'第一步火花'}, ja:{name:'勇気ペッパー',power:'最初の一歩スパーク'}, es:{name:'Pimiento Valiente',power:'Chispa del Primer Paso'}, fr:{name:'Piment Courage',power:'Étincelle du Premier Pas'} },
+    { id:'mushroom',  emoji:'🍄', ko:{name:'아이디어버섯씨',power:'유레카 포자'}, en:{name:'Idea Mushroom',power:'Eureka Spores'}, zh:{name:'灵感蘑菇',power:'尤里卡孢子'}, ja:{name:'アイデアマッシュルーム',power:'ひらめき胞子'}, es:{name:'Hongo de Ideas',power:'Esporas Eureka'}, fr:{name:'Champignon à Idées',power:'Spores Eurêka'} }
   ];
   let _selSeed = null;
+  let _scanStop = null;   // teardown for an active QR-scan camera overlay (if any)
   function _seedLoc(s){ const loc=(typeof bidoroLocale==='function')?bidoroLocale():'en'; return s[loc]||s.en; }
   function _fasShow(view){ const sh=$('fr-add-sheet'); if(!sh) return; sh.querySelectorAll('.fas-view').forEach(v=>v.classList.toggle('hidden', v.dataset.view!==view)); }
+  // Float the chosen seed in the hero's cupped hands (glow + bob); null clears it.
+  function _fasSetHeroSeed(id){
+    const wrap=document.querySelector('#fr-add-sheet .fas-hero-wrap'); const img=$('fas-hero-seed');
+    if(!wrap||!img) return;
+    if(id){ img.src='items/secret-seed-'+id+'.png'; wrap.classList.add('has-seed'); }
+    else { img.removeAttribute('src'); wrap.classList.remove('has-seed'); }
+  }
   function _fasBuildSeeds(){
     const g=$('fas-seed-grid'); if(!g) return; g.innerHTML='';
     SECRET_SEEDS.forEach(s=>{
@@ -29947,27 +30053,96 @@ const Friends = (function(){
       const t=document.createElement('button'); t.type='button'; t.className='fas-seed'; t.dataset.id=s.id;
       t.innerHTML='<div class="fas-seed-img"><img src="items/secret-seed-'+s.id+'.png" alt="" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'"><span class="fas-seed-emoji">'+s.emoji+'</span></div>'+
         '<div class="fas-seed-nm">'+_esc(L.name)+'</div><div class="fas-seed-pw">'+_esc(L.power)+'</div>';
-      t.addEventListener('click',()=>{ _selSeed=s.id; g.querySelectorAll('.fas-seed').forEach(x=>x.classList.toggle('sel',x===t)); if($('fas-send')) $('fas-send').disabled=false; });
+      t.addEventListener('click',()=>{ _selSeed=s.id; g.querySelectorAll('.fas-seed').forEach(x=>x.classList.toggle('sel',x===t)); if($('fas-send')) $('fas-send').disabled=false; _fasSetHeroSeed(s.id); });
       g.appendChild(t);
     });
   }
-  function _openAddSheet(){ _selSeed=null; _fasBuildSeeds(); _fasShow('home'); if($('fas-send')) $('fas-send').disabled=true; if($('fas-code-status')) $('fas-code-status').textContent=''; if($('fr-mycode')) $('fr-mycode').textContent=(_myCode||'—'); _showModal('fr-add-sheet'); }
-  function _closeAddSheet(){ _hideModal('fr-add-sheet'); }
+  function _openAddSheet(){ _selSeed=null; _fasBuildSeeds(); _fasSetHeroSeed(null); _fasShow('home'); if($('fas-send')) $('fas-send').disabled=true; if($('fas-code-status')) $('fas-code-status').textContent=''; if($('fr-mycode')) $('fr-mycode').textContent=(_myCode||'—'); _showModal('fr-add-sheet'); }
+  function _closeAddSheet(){ try { if (_scanStop) _scanStop(); } catch(_){} _hideModal('fr-add-sheet'); }
   function _sendInvitation(){
     const s=SECRET_SEEDS.find(x=>x.id===_selSeed); if(!s) return;
     const L=_seedLoc(s); const code=(_myCode&&_myCode!=='—')?_myCode:'';
+    // Remember the seed I picked — when my friend joins, I receive THIS one (the friend chooses their own).
+    try { state.lastInvitedSeed = s.id; if (typeof saveState === 'function') saveState(); } catch(_){}
     const url='https://bidoro.app/?addfriend='+encodeURIComponent(code)+'&seed='+encodeURIComponent(s.id);
     const loc=(typeof bidoroLocale==='function')?bidoroLocale():'en';
     const msg=(loc==='ko')
-      ? ('Bidoro에서 같이 집중해요! 너를 위해 비밀씨앗 "'+L.name+'"을(를) 골라뒀어 🌱 이 링크로 시작하면 우리 둘 다 보상을 받아요!\n'+url)
-      : ('Let’s focus together on Bidoro! I picked the secret seed "'+L.name+'" just for you 🌱 Start here and we both get rewarded!\n'+url);
+      ? ('Bidoro에서 같이 집중해요 🌱 이 링크로 시작하면 비밀씨앗을 골라 정원에 심을 수 있어요. 친구 코드: '+code+'\n'+url)
+      : ('Let’s focus together on Bidoro 🌱 Start with this link to pick a secret seed for your garden. Friend code: '+code+'\n'+url);
     if (navigator.share) { navigator.share({ text: msg, url }).catch(()=>{}); }
     else { try { navigator.clipboard.writeText(msg); } catch(_){} try { if(typeof _memoToast==='function') _memoToast(loc==='ko'?'초대 메시지를 복사했어요!':'Invitation copied!'); } catch(_){} }
   }
+  // A scanned QR string (a bidoro.app/?addfriend= URL or a raw code) → add the friend.
+  function _scanApplyCode(raw){
+    if (!raw) return;
+    let code = String(raw);
+    const m = code.match(/[?&]addfriend=([^&]+)/i);
+    if (m) code = decodeURIComponent(m[1]);
+    code = code.trim().toUpperCase();
+    if (!code) return;
+    try { _closeAddSheet(); } catch(_){}
+    try { addCode(code, null); } catch(_){}   // → refresh → invitee chooses a seed
+  }
+  // Native (iOS app) camera scanner bridge — opens the real camera; resolves to the QR string or null.
+  function _nativeScanQR(){
+    return new Promise((resolve) => {
+      const mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroScanQR;
+      if (!mh) { resolve(null); return; }
+      const reqId = 'scan_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+      window.__bidoroScanCbs = window.__bidoroScanCbs || {};
+      if (!window.__bidoroScanResult) window.__bidoroScanResult = function(id, payload){ const cb = window.__bidoroScanCbs[id]; if (cb) { delete window.__bidoroScanCbs[id]; cb(payload); } };
+      let settled = false;
+      window.__bidoroScanCbs[reqId] = (payload) => { if (settled) return; settled = true; resolve(payload && payload.ok ? (payload.value || null) : null); };
+      try { mh.postMessage({ action: 'scan', reqId }); } catch(_) { resolve(null); }
+    });
+  }
   function _fasScan(){
-    // Phase 1: camera scan lands in Phase 2 (it ties into web sign-up). Guide the user meanwhile.
-    const loc=(typeof bidoroLocale==='function')?bidoroLocale():'en';
-    try { if(typeof _memoToast==='function') _memoToast(loc==='ko'?'카메라 스캔은 곧 추가돼요 — 우선 코드를 입력하거나 내 QR을 보여주세요.':'Camera scan is coming soon — enter a code or show your QR for now.'); } catch(_){}
+    // iOS app: use the NATIVE camera scanner (WKWebView can't decode QR in-app).
+    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroScanQR) {
+      _nativeScanQR().then(raw => { if (raw) _scanApplyCode(raw); });
+      return;
+    }
+    const loc = (typeof bidoroLocale==='function')?bidoroLocale():'en';
+    const T = {
+      ko:{ no:'이 기기는 앱 내 스캔을 지원하지 않아요. 폰 기본 카메라로 친구의 QR을 비추면 자동으로 열려요 — 또는 코드를 입력하세요.',
+           deny:'카메라 권한이 필요해요. 허용하거나 코드를 입력해 주세요.', hint:'친구의 QR 코드를 사각형 안에 맞춰 주세요', cancel:'취소' },
+      en:{ no:"In-app scan isn’t supported here. Point your phone’s Camera at your friend’s QR to open it — or enter a code.",
+           deny:'Camera permission is needed. Allow it, or enter a code.', hint:'Line up your friend’s QR inside the frame', cancel:'Cancel' },
+      zh:{ no:'此设备不支持应用内扫描。用手机相机对准好友二维码即可打开，或输入代码。', deny:'需要相机权限。请允许或输入代码。', hint:'把好友的二维码对准方框', cancel:'取消' },
+      ja:{ no:'この端末はアプリ内スキャン非対応です。標準カメラで友達のQRを写すと開きます — またはコード入力を。', deny:'カメラの許可が必要です。許可するかコードを入力してください。', hint:'友達のQRコードを枠に合わせてね', cancel:'キャンセル' },
+      es:{ no:'El escaneo en la app no está disponible aquí. Apunta la cámara del móvil al QR de tu amigo, o introduce un código.', deny:'Se necesita permiso de cámara. Permítelo o introduce un código.', hint:'Encuadra el QR de tu amigo', cancel:'Cancelar' },
+      fr:{ no:'Le scan dans l’app n’est pas pris en charge ici. Vise le QR de ton ami avec l’appareil photo, ou saisis un code.', deny:'L’accès à la caméra est requis. Autorise-le ou saisis un code.', hint:'Aligne le QR de ton ami dans le cadre', cancel:'Annuler' }
+    };
+    const t = T[loc] || T.en;
+    const hasCam = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    const hasDet = (typeof window.BarcodeDetector === 'function');
+    // No in-app decoder (iOS WKWebView/Safari have no BarcodeDetector) → guide to the native camera /
+    // code entry. The QR encodes a bidoro.app/?addfriend= link the phone's Camera opens directly.
+    if (!hasCam || !hasDet) { try { if(typeof _memoToast==='function') _memoToast(t.no); } catch(_){} _fasShow('code'); try{ var ci=$('fas-code-input'); if(ci) ci.focus(); }catch(_){} return; }
+    const ov = document.createElement('div'); ov.className = 'fas-scan-overlay';
+    ov.innerHTML = '<video class="fas-scan-video" playsinline muted></video><div class="fas-scan-frame"></div>'
+      + '<div class="fas-scan-hint">' + t.hint + '</div><button type="button" class="fas-scan-cancel">' + t.cancel + '</button>';
+    document.body.appendChild(ov);
+    const video = ov.querySelector('.fas-scan-video');
+    let stopped = false, raf = 0, stream = null;
+    const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+    function stop(){ if (stopped) return; stopped = true; _scanStop = null;
+      try { if (raf) cancelAnimationFrame(raf); } catch(_){}
+      try { if (stream) stream.getTracks().forEach(tr => tr.stop()); } catch(_){}
+      try { ov.remove(); } catch(_){}
+    }
+    _scanStop = stop;
+    ov.querySelector('.fas-scan-cancel').addEventListener('click', stop);
+    function onCode(raw){ if (!raw) return; stop(); _scanApplyCode(raw); }
+    async function tick(){
+      if (stopped) return;
+      try { const codes = await detector.detect(video); if (codes && codes.length) { onCode(codes[0].rawValue); return; } } catch(_){}
+      raf = requestAnimationFrame(tick);
+    }
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(s => { if (stopped) { s.getTracks().forEach(tr => tr.stop()); return; } stream = s; video.srcObject = s;
+        video.play().then(() => { raf = requestAnimationFrame(tick); }).catch(() => { raf = requestAnimationFrame(tick); }); })
+      .catch(() => { try { if(typeof _memoToast==='function') _memoToast(t.deny); } catch(_){} stop(); _fasShow('code'); });
   }
   // ---- wiring ----
   function _wire(){
@@ -40590,13 +40765,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       "The Olive Branch": { face:"People", price:420, unlock:["Welcome Mat Mushroom"], files:["olive_1.png","olive_2.png","olive_3.png","olive_4.png","olive_5.png"] },
       "The Reunion Cat": { face:"People", price:2600, unlock:["The Olive Branch"], files:["cat_1.png","cat_2.png","cat_3.png","cat_4.png","cat_5.png","cat_6.png"] },
       "The Lantern of Gathered Hearts": { face:"People", price:18000, unlock:["The Reunion Cat","The Olive Branch"], files:["lantern_1.png","lantern_2.png","lantern_3.png","lantern_4.png","lantern_5.png","lantern_6.png","lantern_7.png"] },
-      // (user) Secret-seed FRIEND rewards — locked (silhouette) until you add a friend; then free to plant. seed → grown.
-      "Focus Lantern":  { face:"Mind",          price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] },
-      "Chatterbloom":   { face:"People",        price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] },
-      "Coin Sprout":    { face:"Money",         price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] },
-      "Hourglass Bulb": { face:"Study / Work",  price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] },
-      "Courage Pepper": { face:"Growth",        price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] },
-      "Idea Mushroom":  { face:"Joy",           price:0, unlock:[], friendLock:true, files:["1_seed.png","2_grown.png"] }
+      // (user) Secret-seed FRIEND rewards — a specific seed is OWNED when received (invite a friend → you
+      // get the one you picked; accept an invite → you choose one). Locked (grown silhouette) until owned.
+      "Focus Lantern":  { face:"Mind",          price:0, unlock:[], friendLock:true, seedId:'lantern',   files:["1_seed.png","2_grown.png"] },
+      "Chatterbloom":   { face:"People",        price:0, unlock:[], friendLock:true, seedId:'chatter',   files:["1_seed.png","2_grown.png"] },
+      "Coin Sprout":    { face:"Money",         price:0, unlock:[], friendLock:true, seedId:'coin',      files:["1_seed.png","2_grown.png"] },
+      "Hourglass Bulb": { face:"Study / Work",  price:0, unlock:[], friendLock:true, seedId:'hourglass', files:["1_seed.png","2_grown.png"] },
+      "Courage Pepper": { face:"Growth",        price:0, unlock:[], friendLock:true, seedId:'pepper',    files:["1_seed.png","2_grown.png"] },
+      "Idea Mushroom":  { face:"Joy",           price:0, unlock:[], friendLock:true, seedId:'mushroom',  files:["1_seed.png","2_grown.png"] }
     };
     const FACE_ORDER = ['Mind','Body','Joy','Money','Growth','Study / Work','People'];
     // Per-item COPY: c = seed concern (shown on select), m = per-stage messages (the "…" bubble).
@@ -40663,22 +40839,22 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     function gardenOwned(){ if (!state.gardenOwned || typeof state.gardenOwned !== 'object') state.gardenOwned = {}; return state.gardenOwned; }
     function isItemOwned(id){ return !!gardenOwned()[id]; }
     function markItemOwned(id){ if (id && id !== 'clover') { gardenOwned()[id] = true; } }
-    // (user) friend-reward seeds: locked until the user has ≥1 accepted friend (state.friendCount).
-    function _gardenHasFriend(){ return ((state && +state.friendCount) || 0) > 0; }
+    // (user) friend-reward seeds: a SPECIFIC seed is OWNED once received (state.ownedSecretSeeds[seedId]).
+    function _ownsSecretSeed(seedId){ return !!(state && state.ownedSecretSeeds && state.ownedSecretSeeds[seedId]); }
     function isItemUnlocked(id){ const d = shopDef(id); if (!d) return true;
-      if (d.friendLock && !_gardenHasFriend()) return false;
+      if (d.friendLock) return _ownsSecretSeed(d.seedId);
       return (d.unlock || []).every(p => isItemOwned(p)); }
     function unlockText(id){
       const d = shopDef(id);
       const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
-      if (d && d.friendLock && !_gardenHasFriend()) {
+      if (d && d.friendLock && !_ownsSecretSeed(d.seedId)) {
         switch (L) {
-          case 'ko': return '친구를 추가하면 열려요.';
-          case 'zh': return '添加好友后解锁。';
-          case 'ja': return '友達を追加すると解放されます。';
-          case 'es': return 'Se desbloquea al añadir un amigo.';
-          case 'fr': return 'Débloqué en ajoutant un ami.';
-          default:   return 'Unlock by adding a friend.';
+          case 'ko': return '친구를 초대하거나 초대를 받으면 받을 수 있어요.';
+          case 'zh': return '邀请好友或接受邀请即可获得。';
+          case 'ja': return '友達を招待するか招待を受けると手に入ります。';
+          case 'es': return 'Consíguela invitando a un amigo o aceptando una invitación.';
+          case 'fr': return 'Obtiens-la en invitant un ami ou en acceptant une invitation.';
+          default:   return 'Get it by inviting a friend or accepting an invite.';
         }
       }
       if (!d || !d.unlock || !d.unlock.length) {
