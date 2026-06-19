@@ -11885,7 +11885,7 @@ async function _pollMemoSocial() {
 (function wireMemoSocialPolling(){
   // First pass shortly after boot, then every 90s + whenever the tab regains focus.
   setTimeout(() => { try { _pollMemoSocial(); } catch (_) {} }, 4000);
-  setInterval(() => { try { _pollMemoSocial(); } catch (_) {} }, 90000);
+  setInterval(() => { if (!document.hidden) { try { _pollMemoSocial(); } catch (_) {} } }, 90000);   // (egress) skip when backgrounded
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { try { _pollMemoSocial(); } catch (_) {} } });
 })();
 
@@ -12465,6 +12465,9 @@ async function pollCloudForUpdates() {
   // (or kept iCloud-only) — otherwise the poll would pull the linked account's
   // data into the currently-signed-in account.
   if (typeof _webSyncBlocked === 'function' && _webSyncBlocked()) return;
+  // (egress) Don't poll a backgrounded tab/app — nobody's looking. Returning to the foreground
+  // resets the throttle (visibilitychange below) so the next tick pulls immediately.
+  if (document.hidden) return;
   // While a confirm dialog (Yes/No popup) is showing, drop the throttle to
   // ~1s so an answer from another device dismisses this dialog quickly.
   // Also accelerate when we know a remote dialog is pending so the local
@@ -30247,8 +30250,10 @@ const Friends = (function(){
   function openList(){ _wire(); syncProfile(true); refresh(); fetchNotes(); fetchNotices(); applyPendingAdd(); }
   try { _wire(); } catch (_) {}   // wire once at init (static elements exist) so the detail page works on first open
   try { _consumeAddParam(); } catch (_) {}   // handle a scanned-QR ?addfriend=CODE deep link
-  // background: keep profile + badge + friend notes fresh while signed in
-  setInterval(() => { if (signedIn()) { syncProfile(false); refresh(); fetchNotes(); fetchNotices(); } }, 30000);
+  // (egress) Keep profile + badge + friend notes fresh while signed in — but ONLY while the app is
+  // visible (no point polling a backgrounded tab/app) and at a calmer 60s cadence. Returning to the
+  // foreground refreshes immediately via the visibilitychange handler below.
+  setInterval(() => { if (signedIn() && !document.hidden) { syncProfile(false); refresh(); fetchNotes(); fetchNotices(); } }, 60000);
   document.addEventListener('visibilitychange', () => { if (!document.hidden && signedIn()) { syncProfile(true); refresh(); fetchNotes(); fetchNotices(); } });
   setTimeout(() => { if (signedIn()) { fetchNotes(); fetchNotices(); applyPendingAdd(); } }, 3000);   // initial load + apply any pending QR add
   return { openList, refresh, syncProfile, openDetail, fetchNotes, setNote, addCode, applyPendingAdd, friendNotes: () => (window._friendNotes||[]) };
@@ -35118,7 +35123,7 @@ function closeFocusFullscreen() {
     try { if (state.sharedMemo) pushSharedMemoToCloud(); } catch (_) {}
     cycle();
   }, 1500);
-  setInterval(cycle, 600000);   // re-pull others every 10 min
+  setInterval(() => { if (!document.hidden) cycle(); }, 600000);   // re-pull others every 10 min (skip when backgrounded)
 })();
 
 showPage(state.currentPage || 'focus');
