@@ -2502,6 +2502,8 @@
 
   /* Login modal styling — compact, fits without scroll */
   .login-modal-content { width: 400px; max-width: 92vw; padding: 18px 20px; }
+  .login-invite-note { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: .9rem; font-weight: 600; line-height: 1.4; text-align: center; }
+  @media (prefers-color-scheme: dark) { .login-invite-note { background: #0b2c22; border-color: #14543f; color: #6ee7b7; } }
   /* Top-align the login modal (the shared .modal vertically centres its
      content). On iOS, when the keyboard slides up the WebView shrinks and a
      centred modal RE-CENTRES — that mid-focus jump makes iOS dismiss the
@@ -9777,6 +9779,7 @@
 <div class="modal hidden" id="login-modal" aria-hidden="true">
   <div class="modal-backdrop"></div>
   <div class="modal-content login-modal-content">
+    <div id="login-invite-note" class="login-invite-note" style="display:none;"></div>
     <h3 style="margin: 0 0 8px;">Welcome to Bidoro</h3>
     <!-- Feature list removed so the popup is short enough to sit above the
          iOS keyboard. The full feature walkthrough is still reachable via
@@ -11292,8 +11295,10 @@ function updateAuthUI(user) {
     // Show the login modal unless the user is in "Try it" guest mode OR is in
     // the native app (iPhone/iPad sync via iCloud — no sign-up window there).
     if (loginModal) {
-      if (bidoroIsNativeApp() || isGuestMode()) loginModal.classList.add('hidden');
-      else                                      loginModal.classList.remove('hidden');
+      // A pending friend-invite (arrived via QR / invite link) forces the sign-up prompt even in
+      // guest mode — they came to JOIN someone. (Still dismissable.) Never auto-show in the native app.
+      if (bidoroIsNativeApp() || (isGuestMode() && !window._bidoroPendingInvite)) loginModal.classList.add('hidden');
+      else                                                                        loginModal.classList.remove('hidden');
     }
     // Auth nudge banner: browser only (native users don't need an account).
     if (setupBanner) {
@@ -29713,7 +29718,8 @@ const Friends = (function(){
     } catch (_) { /* SQL not deployed yet → leave UI as-is */ }
   }
   function _pendingCount(){
-    return _friends.filter(f => (f.status==='pending' && !f.requested_by_me) || f.incoming_share_req).length;
+    // Friend requests removed (adds are instant) → the badge only flags incoming SHARING requests.
+    return _friends.filter(f => f.incoming_share_req).length;
   }
   // Publish the friends currently focusing (name + quadrant colour) so the home hero
   // card can show "[friend] is focusing now". Re-renders the hero on change.
@@ -29753,14 +29759,10 @@ const Friends = (function(){
       const nm = document.createElement('div'); nm.className = 'fb-name'; nm.textContent = f.nickname || 'Friend';
       const st = document.createElement('div'); st.className = 'fb-status';
       const acts = document.createElement('div'); acts.className = 'fb-actions';
-      if (f.status === 'pending' && !f.requested_by_me) {
-        st.textContent = 'wants to be friends';
-        const yes = _btn('Accept','primary', () => _respondFriend(f.friendship_id, true));
-        const no  = _btn('Decline','', () => _respondFriend(f.friendship_id, false));
-        acts.appendChild(no); acts.appendChild(yes);
-      } else if (f.status === 'pending') {
-        st.textContent = 'request sent'; const tag = document.createElement('span'); tag.className='help'; tag.textContent='Pending'; acts.appendChild(tag);
-      } else {
+      // (user) Friend requests are gone — adding via a code/link makes you friends INSTANTLY, so
+      // every entry here is already a friend. No Accept/Decline / pending state. (Sharing requests
+      // — a separate feature for viewing a friend's timeline/balance — stay.)
+      {
         if (f.focusing) {
           st.textContent = '● ' + tr('Focusing now'); st.classList.add('focusing');
           // (user) tint the "Focusing now" dot+text with the colour of the quadrant
@@ -29785,21 +29787,20 @@ const Friends = (function(){
     if (stEl) stEl.textContent = 'Sending…';
     try {
       // Using someone's shared code/link = accepting their invite → INSTANT friend (no approval).
-      // Fall back to the legacy pending-request RPC if focus_invite_accept isn't deployed yet.
-      let r, instant = true;
-      try { r = await rpc('focus_invite_accept', { p_code: code }); }
-      catch (e1) { instant = false; r = await rpc('focus_friend_add', { p_code: code, p_message: null }); }
+      // (No pending-request fallback: friend requests were removed, so a pending row would be a
+      //  dead-end. If focus_invite_accept isn't deployed yet this throws → clean error below.)
+      const r = await rpc('focus_invite_accept', { p_code: code });
       const ok = !!(r && r.ok);
       const already = ok && r.status === 'already';
       if (stEl) stEl.textContent = !ok
         ? (r && r.error === 'no_such_code' ? 'No such code.' : (r && r.error==='self' ? 'That’s your own code.' : 'Could not add.'))
-        : (already ? 'Already friends.' : (instant ? 'Friend added!' : 'Request sent.'));
+        : (already ? 'Already friends.' : 'Friend added!');
       if (ok) {
         _suppressInviterCelebrate = true;   // I'm the invitee — the invite/seed popup handles this, not the inviter msg
         try { await refresh(); } catch (_) {}
         _suppressInviterCelebrate = false;
-        // Instant accept (real invite) → "[name] invited you" → pick a secret seed. (Skip if already friends.)
-        if (!already && (instant || r.status === 'accepted')) _inviteeInvited(r.inviter_nickname || '');
+        // Real invite accepted → "[name] invited you" → pick a secret seed. (Skip if already friends.)
+        if (!already) _inviteeInvited(r.inviter_nickname || '');
       }
       return r;
     } catch (e) { if (stEl) stEl.textContent = '✗ ' + (e.message || 'Failed (deploy supabase-friends.sql first?)'); return null; }
@@ -29864,17 +29865,34 @@ const Friends = (function(){
         // Already a member → accept the invite right away (addCode shows "[name] invited you" + seed).
         addCode(code, null);
       } else {
-        // Fresh visitor opened the invite link → remember it and surface the sign-up modal so that,
-        // the moment they join, the invite auto-applies (SIGNED_IN → applyPendingAdd).
+        // Fresh visitor opened the invite link / scanned a QR → remember it and surface the sign-up
+        // modal (with an invite banner) so they know WHY they're joining; the moment they sign up the
+        // invite auto-applies (SIGNED_IN → applyPendingAdd → instant friend + seed).
         _pendingAdd = code;
-        try { const lm = document.getElementById('login-modal'); if (lm && !bidoroIsNativeApp()) lm.classList.remove('hidden'); } catch(_){}
+        try { window._bidoroPendingInvite = true; } catch(_){}   // forces the sign-up modal even in guest mode
+        try {
+          const lm = document.getElementById('login-modal');
+          if (lm && !bidoroIsNativeApp()) {
+            const note = document.getElementById('login-invite-note');
+            if (note) {
+              const L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+              note.textContent = ({
+                ko:'🎁 친구가 Bidoro로 초대했어요! 가입하면 바로 친구가 되고 비밀씨앗을 받아요.',
+                en:'🎁 A friend invited you to Bidoro! Sign up and you’re instantly friends — plus a secret seed.',
+                zh:'🎁 朋友邀请你加入 Bidoro！注册后立即成为好友，还能获得秘密种子。',
+                ja:'🎁 友達がBidoroに招待しました！登録するとすぐ友達になり、秘密の種ももらえます。',
+                es:'🎁 ¡Un amigo te invitó a Bidoro! Regístrate y seréis amigos al instante, con semilla secreta.',
+                fr:'🎁 Un ami t’a invité sur Bidoro ! Inscris-toi et vous êtes amis aussitôt, avec une graine secrète.'
+              })[L] || '🎁 A friend invited you to Bidoro! Sign up and you’re instantly friends — plus a secret seed.';
+              note.style.display = '';
+            }
+            lm.classList.remove('hidden');
+          }
+        } catch(_){}
       }
     } catch(_){}
   }
-  function applyPendingAdd(){ if (_pendingAdd && signedIn()) { const c=_pendingAdd; _pendingAdd=null; addCode(c, null); } }
-  async function _respondFriend(fid, accept){
-    try { await rpc('focus_friend_respond', { p_friendship_id: fid, p_accept: accept }); refresh(); } catch(_){}
-  }
+  function applyPendingAdd(){ if (_pendingAdd && signedIn()) { const c=_pendingAdd; _pendingAdd=null; try { window._bidoroPendingInvite=false; } catch(_){} addCode(c, null); } }
   // ---- detail ----
   function openDetail(f){ _cur = f; _curTab = 'timeline'; showPage('friendDetail'); _scrollTop();
     if ($('fd-name')) $('fd-name').textContent = f.nickname || 'Friend';

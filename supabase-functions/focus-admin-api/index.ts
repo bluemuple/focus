@@ -107,6 +107,20 @@ Deno.serve(async (req) => {
       users.sort((a, b2) => String(b2.created_at || "").localeCompare(String(a.created_at || "")));
       return json({ ok: true, users });
     }
+    if (action === "deleteUser") {
+      // Admin removes a member: wipe their per-account rows, then delete the auth account.
+      const uid = String(b.id || "");
+      if (!uid) return json({ ok: false, error: "no id" }, 400);
+      // friendships first (focus_share_requests cascades off friendship_id on delete).
+      try { await sb.from("focus_friendships").delete().eq("user_a", uid); } catch (_) {}
+      try { await sb.from("focus_friendships").delete().eq("user_b", uid); } catch (_) {}
+      try { await sb.from("focus_profiles").delete().eq("user_id", uid); } catch (_) {}
+      try { await sb.from("focus_shared_memos").delete().eq("user_id", uid); } catch (_) {}
+      try { await sb.from("focus_memo_comments").delete().eq("user_id", uid); } catch (_) {}
+      const { error } = await sb.auth.admin.deleteUser(uid);
+      if (error) return json({ ok: false, error: error.message });
+      return json({ ok: true });
+    }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }
     if (action === "deleteComment") { await sb.from("focus_memo_comments").delete().eq("id", b.id);    return json({ ok: true }); }
     if (action === "addComment") {
