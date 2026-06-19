@@ -26,7 +26,13 @@
      to refetch instead of holding the stale tab icon for days. -->
 <link rel="icon" type="image/png" href="images/focus/icon_web.png?v=1">
 <link rel="shortcut icon" type="image/png" href="images/focus/icon_web.png?v=1">
-<title>Bidoro — Bid on your time</title>
+<title>Bidoro — Focus timer, task matrix & Google Calendar sync</title>
+<!-- (Google OAuth verification) Describe the app's purpose for crawlers / reviewers. -->
+<meta name="description" content="Bidoro is a personal focus and time-management app: plan your day on a visual time gauge, prioritize tasks with the urgent/important (Eisenhower) matrix, run Pomodoro focus sessions, and optionally sync with Google Calendar.">
+<meta property="og:title" content="Bidoro — Focus timer, task matrix & Google Calendar sync">
+<meta property="og:description" content="Plan your day on a visual time gauge, prioritize with the Eisenhower matrix, run Pomodoro sessions, and optionally sync your Google Calendar.">
+<meta property="og:url" content="https://bidoro.app/">
+<meta property="og:type" content="website">
 <!-- Apply the saved theme BEFORE first paint (no flash of the default theme).
      Sets <html data-theme="..."> which the :root[data-theme] token blocks read. -->
 <script>
@@ -5877,7 +5883,10 @@
     }
     /* The wide gauge: its px height (locked-H − grid) is set by drawTimeArea;
        it stays a scrollable viewport (base .time-area has overflow-y:auto). */
-    body.tt-flip #time-area { min-height: 110px; }
+    /* (user) NO floor — the gauge collapses to 0 so the section can shrink to the 2×2
+       (and beyond, clipping the matrix). A min-height here caused the gauge to snap
+       up ~5px when the drag pushed past it. */
+    body.tt-flip #time-area { min-height: 0; }
     body.tt-flip #time-resize-handle { display: none; }   /* per-panel handle hidden — the split handle re-appears at the card bottom (rules below) */
     /* Full-width handle that sits at the bottom of the MERGED Time &
        Tasks container. Spans both grid columns so it visually anchors
@@ -5895,6 +5904,9 @@
       grid-column: 1 / -1;          /* span both columns */
       background: var(--button-bg);
       border-top: 1px solid var(--card-border);
+      /* (user) only the TOP divider — the wrap's card border already draws left/right/bottom,
+         so the base .time-resize-handle's l/r/b borders would double it into a 2px line. */
+      border-left: 0; border-right: 0; border-bottom: 0;
       border-radius: 0;             /* wrapper already clips to outer radius */
     }
     /* Two stacked grab-bars (looks like '=') — 50 % of the original size
@@ -5928,6 +5940,7 @@
       grid-column: 1 / -1;
       background: var(--button-bg);
       border-top: 1px solid var(--card-border);
+      border-left: 0; border-right: 0; border-bottom: 0;   /* (user) avoid the doubled 2px line vs the wrap border */
       border-radius: 0;
     }
     body.tt-flip .split-resize-handle::before { width: 18px; height: 2px; }
@@ -5935,6 +5948,20 @@
       content: ''; width: 18px; height: 2px; background: #9ca3af; border-radius: 1px;
     }
     body.tt-flip .split-resize-handle:active::after { background: #4b5563; }
+    /* (user) PAGE DOTS in the handle centre. Normally the grab bars ('=') show; right after a
+       swipe the handle briefly shows 2 dots (current pane filled) as a "2 pages" indicator,
+       then fades back to the bars. The dots layer is absolutely centred over the bars. */
+    .trh-dots { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%);
+      align-items: center; gap: 7px; pointer-events: none; }
+    .trh-dots i { width: 6px; height: 6px; border-radius: 50%; background: #cbd5e1; transition: background .2s ease; }
+    .split-resize-handle { position: relative; }
+    /* while showing dots: hide the '=' bars, show the dots */
+    .split-resize-handle.trh-show-dots::before,
+    .split-resize-handle.trh-show-dots::after { opacity: 0 !important; }
+    .split-resize-handle.trh-show-dots .trh-dots { display: flex; }
+    /* current pane → filled dot. left dot = Time & Tasks (split), right dot = Matrix (flip). */
+    body.tt-split .split-resize-handle.trh-show-dots .trh-dots i:first-child,
+    body.tt-flip  .split-resize-handle.trh-show-dots .trh-dots i:last-child { background: #6b7280; }
     /* Without the resize handle, the gauge needs its own bottom border
        so it doesn't look unfinished. Match the existing border-top look. */
     body.tt-split #time-panel .time-area {
@@ -8383,12 +8410,28 @@
   /* (user) bottom-right Matrix hint (tap/swipe → 2×2 view). Only on phone-portrait split. */
   .tt-matrix-hint { display:none; }
   body.tt-split:not(.tt-flip):not(.tt-show-actions):not(.tt-adding) .tt-matrix-hint {
-    display:inline-flex; align-items:center; gap:3px; position:absolute; right:10px; bottom:20px; z-index:6;
+    display:inline-flex; align-items:center; gap:3px; position:absolute; right:10px; bottom:23px; z-index:6;
     background:transparent; border:none; padding:2px 4px; cursor:pointer;
     color:var(--text-muted,#9ca3af); font-size:.82rem; font-weight:700; -webkit-tap-highlight-color:transparent; }
   .tt-matrix-hint.tmh-hidden { display:none !important; }
   .tt-matrix-hint:active { transform:scale(.94); }
   #time-tasks-wrap { position:relative; }
+  /* (user) Finger-following swipe CAROUSEL (phone portrait): during a horizontal swipe
+     the live pane and a frozen snapshot of the OTHER pane sit side by side in a flex
+     track with a 15px gap, translated with the finger. The track is only present during
+     the gesture; #time-tasks-wrap is reparented into it and restored on release. */
+  .tt-track { display:flex; align-items:flex-start; gap:15px; will-change:transform; }
+  .tt-track > * { flex:0 0 auto; }
+  .tt-ghost { position:relative; overflow:hidden; pointer-events:none; }
+  .tt-ghost * { animation:none !important; }
+  /* (user) The grey handle sits FLUSH at the very bottom of the Matrix section — no
+     gap below it — and its two bottom corners round to match the section card (the
+     wrap's overflow:hidden + border-radius:8px clip the flush handle's bottom corners). */
+  body.tt-flip #time-tasks-wrap { padding-bottom: 0; box-sizing: border-box; }
+  /* (user) In Matrix mode the gauge's BOTTOM edge must reach the handle (its bottom
+     edge shouldn't show as a separate line). #time-panel's 8px bottom padding was
+     leaving a visible gap between the gauge box and the handle — drop it in flip. */
+  body.tt-flip #time-panel { padding-bottom: 0; }
   /* (user, web PC) gauge drag-selection rectangle + multi-selected block outline. */
   .tg-selrect { position: absolute; z-index: 40; pointer-events: none; border-radius: 4px;
     background: rgba(100,116,139,.16); border: 1px solid rgba(100,116,139,.65); }
@@ -9025,7 +9068,7 @@
             <rect x="8.25" y="8.25" width="4.5" height="4.5" rx="0.8" fill="none" stroke="currentColor" stroke-width="1.4"/>
           </svg><span class="tmh-arrow" aria-hidden="true">→</span>
         </button>
-        <div class="time-resize-handle split-resize-handle" id="time-resize-handle-split" title="Drag to resize the Time &amp; Tasks area"></div>
+        <div class="time-resize-handle split-resize-handle" id="time-resize-handle-split" title="Drag to resize the Time &amp; Tasks area"><span class="trh-dots" aria-hidden="true"><i></i><i></i></span></div>
         </div><!-- /.time-tasks-wrap -->
 
         <!-- ===== 7-side rainbow bucket =====
@@ -9562,6 +9605,18 @@
   <!-- Static footer — always present so the home page carries a visible link to the
        privacy policy (required for Google OAuth / Calendar API verification). -->
   <footer class="app-footer" style="padding:18px 16px 28px;text-align:center;font-size:13px;line-height:1.6;color:var(--text-muted,#6b7280);">
+    <!-- (Google OAuth verification) Plain-English description of what the app does + why it uses
+         Google Calendar, always visible on the homepage regardless of UI language. translate="no"
+         keeps the runtime i18n engine from rewriting it. -->
+    <section class="app-about" translate="no" style="max-width:580px;margin:0 auto 16px;text-align:center;">
+      <h2 style="font-size:15px;font-weight:700;color:var(--text-main,#1f2937);margin:0 0 6px;">About Bidoro</h2>
+      <p style="margin:0;">
+        <strong>Bidoro</strong> is a personal focus and time-management app. Plan your day on a visual
+        time gauge, prioritize tasks with the urgent / important (Eisenhower) matrix, and run Pomodoro
+        focus sessions. You can optionally connect your <strong>Google Calendar</strong> so your
+        calendar events and the tasks you schedule in Bidoro stay in sync across the two.
+      </p>
+    </section>
     <a href="https://bidoro.app/privacy.html" style="color:var(--accent,#3aa776);text-decoration:underline;">Privacy Policy</a>
     <span aria-hidden="true" style="margin:0 6px;opacity:.5;">·</span>
     <a href="mailto:ebsmoon@gmail.com" style="color:var(--accent,#3aa776);text-decoration:underline;">Contact</a>
@@ -18371,6 +18426,7 @@ function renderFocusMatrix() {
   // destroy it mid-edit. Skip while one is open; the add flow re-renders on commit/cancel
   // (after removing the .mca, so this guard passes then).
   if (root && root.querySelector('.mca')) return;
+  window._ttOverheadCache = {};   // matrix is being rebuilt → the cached gauge overhead may have changed
   try { window._openSwipeRow = null; } catch (_) {}   // (#19) rows are rebuilt → drop any open-reveal reference
   try { if (typeof _renderGtdChip === 'function') _renderGtdChip(); } catch (_) {}   // keep the GTD "h:mm left" chip live
   // Shuffle + Edit appear only once at least one task exists.
@@ -19102,13 +19158,22 @@ function renderFocusMatrix() {
   }
   // (user) Re-balance any wrapped cell hints into 2 word-broken lines (top fewer words). Deferred so
   // the cells have their real width laid out before measuring.
-  try { requestAnimationFrame(() => { try { root.querySelectorAll('.cell-hint').forEach(_layoutCellHint); } catch (_) {} }); } catch (_) {}
-  // In split mode, the tasks list determines the gauge viewport height.
-  // Defer to the next frame so the browser has finished laying out the
-  // matrix DOM we just appended — otherwise offsetHeight reads as 0.
-  if (state.focusSplitView && typeof drawTimeArea === 'function') {
-    requestAnimationFrame(() => { try { drawTimeArea(); } catch (_) {} });
-  }
+  // Lay out the cell coaching-text hints, THEN re-draw the gauge (BOTH panes, deferred to the
+  // next frame so the just-appended matrix DOM + the hint text are settled). Without the flip
+  // re-draw, the Matrix gauge's natural-overhead was measured against the pre-settle 2×2 height
+  // → the gauge filled ~16px short → the handle floated above the section bottom right after a
+  // swipe, then the 1s tick corrected it ("handle drops a moment later"). Re-fill here instead.
+  try {
+    requestAnimationFrame(() => {
+      try { root.querySelectorAll('.cell-hint').forEach(_layoutCellHint); } catch (_) {}
+      // The 2×2 is NOW settled (hint text laid out). The overhead measured by the FIRST draw
+      // (during the slide, pre-settle) was cached ~16px too big → the gauge filled short and the
+      // handle floated above the section bottom. Invalidate the cache so this re-fill RE-MEASURES
+      // against the settled 2×2 → exact fill, handle flush. (Still once per rebuild, not per-render.)
+      try { window._ttOverheadCache = {}; } catch (_) {}
+      try { if (typeof drawTimeArea === 'function' && !window._gaugeBusy) drawTimeArea(); } catch (_) {}
+    });
+  } catch (_) {}
 }
 /* Re-collect every task row from the 4 per-quadrant cells into ONE flat list
    ordered by the global `ord` (incomplete) / completedAt (done → bottom). Row
@@ -21060,12 +21125,14 @@ function drawTimeArea() {
     const prev = state.timeArea || {};
     let dur = (prev.bottomOffsetMs && prev.topOffsetMs)
       ? prev.bottomOffsetMs - prev.topOffsetMs
-      : 3 * 3600 * 1000;
+      : 4 * 3600 * 1000;   // (user) default time gauge window = 4 hours
     if (dur < TIME_MIN_MS) dur = TIME_MIN_MS;
     if (dur > TIME_MAX_MS) dur = TIME_MAX_MS;
     state.timeArea = { durationMs: dur, _needsScroll: true };
   }
   let durMs = state.timeArea.durationMs;
+  // (user) one-time migration: the old 3-hour default → 4 hours, so the gauge opens at 4h.
+  if (durMs === 3 * 3600 * 1000) durMs = 4 * 3600 * 1000;
   if (durMs < TIME_MIN_MS) durMs = TIME_MIN_MS;
   if (durMs > TIME_MAX_MS) durMs = TIME_MAX_MS;
   state.timeArea.durationMs = durMs;
@@ -21107,10 +21174,9 @@ function drawTimeArea() {
     }
     // User-dragged duration (from the split-mode handle). Capped at MAX.
     const userDurMs = state.timeArea.durationMs || 0;
-    // Hard MINIMUM of 3 hours when dragging the handle UP — the gauge must
-    // always show at least a 3-hour window even if the task list (matrix
-    // floor) is shorter. So the floor is max(matrix-bottom, 3h).
-    const SPLIT_MIN_MS = 3 * 3600 * 1000;
+    // Hard MINIMUM of 4 hours (user default) — the gauge always shows at least a
+    // 4-hour window even if the task list (matrix floor) is shorter. floor = max(matrix-bottom, 4h).
+    const SPLIT_MIN_MS = 4 * 3600 * 1000;
     let exactDurMs = Math.max(floorDurMs, userDurMs, SPLIT_MIN_MS);
     if (exactDurMs > TIME_MAX_MS) exactDurMs = TIME_MAX_MS;
     if (exactDurMs > 0) renderDurMs = exactDurMs;
@@ -21148,24 +21214,63 @@ function drawTimeArea() {
     viewportPx = _fvGaugeH;   // height owned by CSS flex; just align the math
   } else if (document.body.classList.contains('tt-flip')) {
     const _wrap = document.getElementById('time-tasks-wrap');
-    const _tp   = document.getElementById('tasks-panel');
-    const _lockedH = window._ttLockedH || (_wrap ? _wrap.offsetHeight : 0);
-    const _gridH   = _tp ? _tp.offsetHeight : 0;
-    let _gh = _lockedH - _gridH - 8;            // 8 = #time-panel bottom padding
-    // Cap the 2×2-mode gauge at a 3-hour window (it was stretching to fill ALL
-    // remaining space below the grid, which got far too tall). 3 h × 60 px/h.
-    const _max3h = 3 * TIME_PX_PER_HOUR;
-    if (_gh > _max3h) _gh = _max3h;
-    if (!(_gh > 110)) _gh = 110;                // always leave a usable gauge
-    // User override — the 2×2 bottom resize handle stores its dragged gauge height
-    // in state.timeArea.flipGaugeH. When set it WINS over the derived height, so the
-    // gauge keeps the size the user dragged it to (clamped 110px … 6 h).
-    if (state.timeArea && +state.timeArea.flipGaugeH > 0) {
-      _gh = Math.max(110, Math.min(6 * TIME_PX_PER_HOUR, +state.timeArea.flipGaugeH));
+    const _tp   = document.getElementById('tasks-panel');   // the 2×2 matrix container
+    // The 2×2 always renders at its NATURAL height (no clip-into-matrix anymore) — clear
+    // any leftover clip sizing so offsetHeight is the full grid.
+    if (_tp) { _tp.style.height = ''; _tp.style.overflow = ''; _tp.style.boxSizing = ''; }
+    const _lockedH = +window._ttLockedH || 0;   // 0 = no equal-height lock yet
+    // EXACT non-gauge OVERHEAD: measure the wrap at its NATURAL height (minHeight cleared)
+    // minus the current gauge. This captures the 2×2 + handle + ALL gaps/borders/padding, so
+    // the fill makes the section == lock EXACTLY (enumerating grid+handle missed a couple px →
+    // the Matrix rendered ~2px over the lock → the bucket below dropped 2px on T&T→Matrix).
+    // CACHE the overhead (structural — only changes on matrix rebuild; cleared by
+    // renderFocusMatrix). Per-render measurement (clear/restore minHeight every draw) thrashed
+    // layout on rapid redraws (running timer) → gauge oscillated + handle flickered.
+    window._ttOverheadCache = window._ttOverheadCache || {};
+    let _overhead = window._ttOverheadCache.flip;
+    if (_overhead == null) {
+      const _savedMin = _wrap ? _wrap.style.minHeight : '';
+      if (_wrap) _wrap.style.minHeight = '';
+      const _curAreaH = area.getBoundingClientRect().height;
+      const _natWrap  = _wrap ? _wrap.getBoundingClientRect().height : 0;
+      if (_wrap) _wrap.style.minHeight = _savedMin;
+      _overhead = Math.max(0, Math.round(_natWrap - _curAreaH));
+      window._ttOverheadCache.flip = _overhead;
     }
-    area.style.height = Math.round(_gh) + 'px';
+    // Cache the Matrix's minimum SECTION height (all 4 cells visible, gauge collapsed) = the
+    // non-gauge overhead, for the shared-min / carry clamp.
+    window._ttMatrixNatH = _overhead;
+    const _ghFloor = Math.max(0, _ttGlobalMinH() - _overhead);
+    const _maxFlip = 8 * TIME_PX_PER_HOUR;
+    // The equal-height LOCK is the single source of truth when present → FILL the gauge to it
+    // (section == locked, gauge flush to the handle). flipGaugeH / floor only apply with NO lock.
+    let _gh;
+    if (_lockedH > 0) {
+      _gh = _lockedH - _overhead;
+    } else if (state.timeArea && +state.timeArea.flipGaugeH > 0) {
+      _gh = +state.timeArea.flipGaugeH;
+    } else {
+      _gh = _ghFloor;
+    }
+    _gh = Math.max(_ghFloor, Math.min(_maxFlip, _gh));
+    // (user) While a resize-handle drag owns the gauge (_gaugeBusy), DON'T re-set its height
+    // here — a stray redraw mid-hold recomputed _ghFloor with ±2px rounding (re-caching
+    // matrixNat each call), bouncing the gauge 1↔3px so the handle drifted (the on-device
+    // aΔ:1↔3 oscillation). The drag sets the height directly; this re-fills once busy clears.
+    if (!window._gaugeBusy) {
+      area.style.height = Math.round(_gh) + 'px';
+      // When the gauge is fully collapsed, hide its 1px border (top + rounded top corners)
+      // so the top edge doesn't linger as a line stuck to the handle. Toggle the COLOR
+      // (transparent), NOT border:none (that shifts the box 1px). Restore when it has height.
+      area.style.borderColor = (Math.round(_gh) <= 0) ? 'transparent' : '';
+    }
   } else {
-    area.style.height = viewportPx + 'px';
+    if (!window._gaugeBusy) area.style.height = viewportPx + 'px';
+    area.style.borderColor = '';   // restore the gauge border colour (flip-collapse may have cleared it)
+    // Clear any matrix-clip inline sizing left over from Matrix (flip) mode so the
+    // task-list column lays out normally in split / other layouts.
+    const _tpc = document.getElementById('tasks-panel');
+    if (_tpc) { _tpc.style.height = ''; _tpc.style.overflow = ''; _tpc.style.boxSizing = ''; }
   }
   const _contentPxH = _timeContentPxH();        // = 2880 × zoom
   content.style.height = _contentPxH + 'px';
@@ -22085,6 +22190,18 @@ function drawTimeArea() {
   _fillHomeTimeArea(viewportPx);
 }
 
+/* (user) SHARED minimum height for the two swipe panes (Time & Tasks ↔ Matrix). The two
+   panes have different natural minimums — T&T floors at a 4h gauge, the Matrix floors at
+   "all 4 cells visible, gauge collapsed". If they differ, dragging one pane's handle to
+   its min leaves the OTHER pane's handle at a different height after the slide. So both
+   panes share ONE minimum = the Matrix's "all 4 cells visible, gauge collapsed" height
+   (user's choice). The 2×2 can't render shorter than that, and the T&T gauge fills to the
+   same height (a touch over 4h). Cached (stably — the 2×2 height doesn't ratchet) by the
+   flip render / flip drag-start. 0 until the Matrix has been measured once. */
+function _ttGlobalMinH() {
+  return +window._ttMatrixNatH || 0;
+}
+
 /* See #3: grow the Time & Tasks gauge to push the bucket section down to the
    bottom of the screen on the PHONE home when there are no task bars — fills the
    empty space under the short content. Idempotent: resets to the natural layout,
@@ -22093,66 +22210,70 @@ function drawTimeArea() {
 function _fillHomeTimeArea(viewportPx) {
   let tp = null, area = null;
   try {
-    tp           = document.getElementById('time-panel');
-    area         = document.getElementById('time-area');
-    const bucket = document.getElementById('bucket-section');
-    const fp     = document.getElementById('focus-page');
-    const main   = document.querySelector('main');
-    if (!tp || !area || !bucket || !fp || !main) return;
-    // (user) While the no-task +Add picker is open, RE-PIN the gauge to the height it had at rest
-    // (stored in _fillHomeTimeArea._rest). The add handler clears the pinned heights and the
-    // picker's own height (q-list vs duration carousel) would otherwise re-drive this fill, making
-    // the gauge jump shorter/taller as you step through Add → pick a quadrant. Re-applying the
-    // resting height every call holds the gauge perfectly steady through the whole add flow.
-    if (window.matchMedia('(max-width: 700px)').matches
-        && document.body.classList.contains('tt-split')
-        && document.body.classList.contains('tt-adding')
-        && !document.body.classList.contains('tt-has-tasks')) {
-      const rest = _fillHomeTimeArea._rest;
-      if (rest && rest.area) {
-        area.style.transition = 'none';
-        tp.style.height = rest.tp || '';
-        area.style.height = rest.area;
-      }
-      return;
-    }
-    const apply = window.matchMedia('(max-width: 700px)').matches
-      && fp.offsetParent !== null
+    tp   = document.getElementById('time-panel');
+    area = document.getElementById('time-area');
+    if (!tp || !area) return;
+    const splitPhone = window.matchMedia('(max-width: 700px)').matches
       && document.body.classList.contains('tt-split')
       && !document.body.classList.contains('tt-flip')
-      && !document.body.classList.contains('fv-active')
-      && !document.body.classList.contains('tt-has-tasks');
-    if (!apply) {
-      // Not the phone no-task home: drop our overrides + restore the normal
-      // .28s height glide (used when task bars are added / removed).
-      if (tp.style.height) tp.style.height = '';
-      if (area.style.transition) area.style.transition = '';
-      return;
-    }
-    // The gauge carries a `.28s height` transition in split mode. Suppress it so
-    // the reset-to-natural → measure → re-stretch below is exact (no mid-animation
-    // contamination) and the final height lands in ONE shot — otherwise the per-
-    // second redraw and this fill fight across the animation and leave a gap.
+      && !document.body.classList.contains('fv-active');
+    if (!splitPhone) { if (tp.style.height) tp.style.height = ''; if (area.style.transition) area.style.transition = ''; return; }
+    // (user) While a RESIZE-handle drag is in progress it owns the gauge height (sets it
+    // directly each move) and flags window._gaugeBusy. Don't re-fill here or we fight it: a
+    // stray redraw mid-drag would recompute to the OLD lock and drift the handle down ~0.2s
+    // after it pins at the minimum (the reported micro-drift). The drag's onUp re-fills once
+    // _gaugeBusy clears.
+    if (window._gaugeBusy) return;
+    // (user) Default = a 4h window on first open (viewportPx). Once the wrap is locked to
+    // the equal-height of the two swipe panes (window._ttLockedH), the gauge FILLS so its
+    // bottom edge sits a small gap above the handle (handle stays at the section bottom).
+    // The fill can be SHORTER than 4h too (when the Matrix pane is dragged collapsed-short).
     area.style.transition = 'none';
-    const hasNat = typeof viewportPx === 'number' && viewportPx > 0;
-    if (hasNat) area.style.height = viewportPx + 'px';   // reset gauge to natural
-    tp.style.height = '';                                  // reset the grid row to natural
-    // Target = main scroller's content-box bottom minus a small margin, so the
-    // bucket clears any bottom safe-area padding and the page never scrolls.
-    const mr     = main.getBoundingClientRect();
-    const padB   = parseFloat(getComputedStyle(main).paddingBottom) || 0;
-    const target = mr.bottom - padB - 8;   // (user) slightly taller resting gauge (was −14), still no scroll
-    const slack  = target - bucket.getBoundingClientRect().bottom;   // exact natural read
-    if (slack > 10) {                              // only when there's real dead space
-      const naturalAreaH = hasNat ? viewportPx : area.getBoundingClientRect().height;
-      tp.style.height   = Math.round(tp.getBoundingClientRect().height + slack) + 'px'; // grow row
-      area.style.height = Math.round(naturalAreaH + slack) + 'px';   // gauge fills the row
+    const wrap   = document.getElementById('time-tasks-wrap');
+    const head   = wrap && wrap.querySelector('.time-head');
+    const handle = document.getElementById('time-resize-handle-split');
+    // #time-panel is border-box with 8px padding all round. Setting area.height == tp.height
+    // made the gauge OVERFLOW the panel by the padding → its bottom edge spilled 8px onto
+    // the handle (the "first-open overlap"). Fix: only size the GAUGE (area); leave tp auto
+    // so it sizes to gauge + its own padding. The gauge box then sits a consistent ~8px
+    // (the panel's bottom padding) above the handle — same on first open and after a drag.
+    // OVERHEAD = everything in the section that ISN'T the gauge box: the header, the
+    // ~6px header↔gauge gap, the handle, borders, and the panel padding. Measure it
+    // directly (overhead = wrap − gauge; it's INDEPENDENT of the gauge height) so the
+    // fill is EXACT → section == locked. (Enumerating head+handle+padding missed the
+    // header↔gauge gap, so the gauge over-filled ~8px and the handle dropped on release.)
+    // overhead = wrap − gauge, but measured against the wrap's NATURAL height (minHeight
+    // cleared). If we used the locked height, a tall lock (Matrix dragged taller) would make
+    // overhead absorb the empty gap → h stays at 4h, the gauge never fills, and the handle
+    // detaches above the section bottom (the reported "handle up, section bottom unchanged").
+    // CACHE the overhead: it's STRUCTURAL (header/handle/padding) and independent of the gauge
+    // height, so it only changes when the matrix is rebuilt (task add/remove → renderFocusMatrix
+    // clears the cache). Measuring it per-render (clear/restore minHeight every drawTimeArea)
+    // thrashed layout when redraws fired rapidly (running timer) → the gauge area oscillated and
+    // the handle flickered. Measure once, reuse.
+    window._ttOverheadCache = window._ttOverheadCache || {};
+    let overhead = window._ttOverheadCache.split;
+    if (overhead == null) {
+      const curArea = area.getBoundingClientRect().height;
+      const _savedMin = wrap ? wrap.style.minHeight : '';
+      if (wrap) wrap.style.minHeight = '';
+      const curWrap = wrap ? wrap.getBoundingClientRect().height : 0;
+      if (wrap) wrap.style.minHeight = _savedMin;
+      overhead = Math.max(0, Math.round(curWrap - curArea));
+      window._ttOverheadCache.split = overhead;
     }
-    // Remember this resting (no-task, not-adding) gauge height so the +Add flow can re-pin to it.
-    _fillHomeTimeArea._rest = { tp: tp.style.height, area: area.style.height };
-    // Transition stays off while filled (nothing animates in the resting no-task
-    // state); it's restored on the !apply branch the moment a task bar appears.
-  } catch (_) { try { if (tp && tp.style.height) tp.style.height = ''; } catch (__) {} }
+    const locked = +window._ttLockedH || 0;
+    let h;
+    if (locked > 0) {
+      h = locked - overhead;
+    } else {
+      // First open, no equal-height lock yet: the default window (4h) from viewportPx.
+      h = (typeof viewportPx === 'number' && viewportPx > 0) ? viewportPx : Math.round(area.getBoundingClientRect().height);
+    }
+    if (h < 0) h = 0;
+    tp.style.height   = '';        // auto → tp = gauge + padding (no overflow onto the handle)
+    area.style.height = h + 'px';
+  } catch (_) {}
 }
 
 /* Compact duration label for time-block-dur (e.g. "35m" / "1h" / "1h30m") */
@@ -23337,6 +23458,20 @@ function openEventModal(existing, opts) {
     const _frozenScroll = _areaEl ? _areaEl.scrollTop : 0;
     if (_areaEl) { _areaEl.style.overflow = 'hidden'; _areaEl.scrollTop = _frozenScroll; }
     window._gaugeBusy = true;   // pause the 1 s gauge tick so it can't fight the drag
+    // (user) FREE the equal-height lock for the duration of the drag. The lock
+    // (#time-tasks-wrap minHeight + window._ttLockedH) pins the wrap to a FIXED
+    // height so both swipe panes match. If it stays set while the handle drags,
+    // the wrap can't follow the gauge: shrinking leaves the wrap tall (handle
+    // detaches / a gap opens), growing fights the fill (a top margin appears).
+    // So drop it now and let the wrap track the gauge+handle 1:1; onUp recomputes
+    // the lock from the FINAL dragged height (so both panes resize together).
+    try {
+      const _w0 = document.getElementById('time-tasks-wrap');
+      if (_w0 && window.matchMedia('(max-width:700px)').matches) {
+        _w0.style.minHeight = '';
+        window._ttLockedH = 0;
+      }
+    } catch (_) {}
     // SPLIT-mode floor (matrix bottom) measured ONCE here, at drag start. The
     // task list can't change mid-drag so this floor is constant — but the old
     // code re-ran a full drawTimeArea() every move, which re-measured
@@ -23369,7 +23504,39 @@ function openEventModal(existing, opts) {
     // sub-pixel rounding), making the gauge jump 1 px the instant you grab the
     // handle. Seeding lets the dead-band swallow that initial rounding delta.
     let _committedH = (_areaEl ? Math.round(_areaEl.getBoundingClientRect().height) : -1);
-    const _startFlipH = _committedH;   // immutable seed for the 2×2 px-height drag
+    let _startFlipH = _committedH;   // seed for the 2×2 drag scalar
+    // (user) FLIP drag setup. The gauge grows below the 2×2 (floor … 8h). Both swipe
+    // panes share ONE minimum height, so the Matrix gauge can't shrink below the floor
+    // that keeps the section at the shared minimum (= 0 when the Matrix is the smaller
+    // pane → all cells visible, gauge gone; > 0 when T&T's 4h min is taller).
+    let _flipGaugeFloor = 0, _splitGaugeFloor = 0;
+    if (_isFlip) {
+      const _mEl = document.getElementById('tasks-panel');
+      let _natGrid = 0;
+      if (_mEl) {
+        const _sH = _mEl.style.height, _sO = _mEl.style.overflow;
+        _mEl.style.height = ''; _mEl.style.overflow = '';
+        _natGrid = _mEl.offsetHeight;   // natural 2×2 height (all cells)
+        _mEl.style.height = _sH; _mEl.style.overflow = _sO;
+      }
+      const _hEl = document.getElementById('time-resize-handle-split');
+      const _matrixMin = _natGrid + (_hEl ? _hEl.offsetHeight : 0);   // section, gauge collapsed
+      window._ttMatrixNatH = _matrixMin;                              // refresh the shared-min cache
+      _flipGaugeFloor = Math.max(0, _ttGlobalMinH() - _matrixMin);
+      // Seed from the CURRENTLY-RENDERED gauge height (_committedH = area's real height at grab),
+      // NOT the saved flipGaugeH. The lock-fill can collapse the gauge to ~0 while flipGaugeH still
+      // holds an old value (e.g. 85) → seeding from it made the gauge JUMP to that value on the
+      // first drag move ("핸들이 손가락보다 더 아래로 튀듯이 내려감"). The rendered height is what
+      // the user sees, so the drag continues smoothly from there.
+      _startFlipH = (_committedH > 0 ? _committedH : 0);
+      _committedH = _startFlipH;
+    } else {
+      // Split: floor the gauge so the section can't shrink below the SHARED minimum
+      // (so it matches the Matrix pane's min → no snap on release, equal after slide).
+      const _w = document.getElementById('time-tasks-wrap');
+      const _ovh = (_w && _areaEl) ? Math.max(0, Math.round(_w.getBoundingClientRect().height - _areaEl.getBoundingClientRect().height)) : 0;
+      _splitGaugeFloor = Math.max(0, _ttGlobalMinH() - _ovh);
+    }
     let _lastY = startY;
     function _commit(clientY, force) {
       _lastY = clientY;
@@ -23377,13 +23544,22 @@ function openEventModal(existing, opts) {
       // 2×2 mode: drag the gauge's pixel height directly (110px … 6h), persisted as
       // flipGaugeH so drawTimeArea keeps it. Same scroll-pin dance as the split path.
       if (_isFlip) {
-        let h = Math.round(_startFlipH + dy);
-        h = Math.max(110, Math.min(6 * 60, h));
-        if (force || _committedH < 0 || Math.abs(h - _committedH) >= DEADBAND_PX) {
-          _committedH = h;
+        // Drag the gauge's pixel height directly (floor … 8h). The floor keeps the
+        // section at the shared minimum (so both swipe panes stay equal).
+        let gaugeH = Math.round(_startFlipH + dy);
+        gaugeH = Math.max(_flipGaugeFloor, Math.min(8 * 60, gaugeH));
+        if (force || Math.abs(gaugeH - _committedH) >= DEADBAND_PX) {
+          _committedH = gaugeH;
           if (!state.timeArea) state.timeArea = {};
-          state.timeArea.flipGaugeH = h;
-          if (_areaEl) { _areaEl.style.height = h + 'px'; _areaEl.scrollTop = _frozenScroll; }
+          state.timeArea.flipGaugeH = gaugeH;
+          state.timeArea.flipMatrixClipPx = 0;
+          if (_areaEl) {
+            _areaEl.style.height = gaugeH + 'px';
+            // Live border-colour toggle so the outline appears/vanishes WITH the finger
+            // (not 0.1 s later on the next drawTimeArea). transparent = invisible, stable box.
+            _areaEl.style.borderColor = gaugeH <= 0 ? 'transparent' : '';
+            _areaEl.scrollTop = _frozenScroll;
+          }
         } else if (_areaEl && _areaEl.scrollTop !== _frozenScroll) {
           _areaEl.scrollTop = _frozenScroll;
         }
@@ -23395,6 +23571,8 @@ function openEventModal(existing, opts) {
       let h = Math.round((renderDur / HOUR) * PX_PER_HOUR);
       // Don't let an up-drag shrink below the no-task fill height — release would just snap back up to it.
       if (_fillFloorPx > 0 && h < _fillFloorPx) h = _fillFloorPx;
+      // Don't shrink below the SHARED minimum (keeps both swipe panes equal; no snap on release).
+      if (_splitGaugeFloor > 0 && h < _splitGaugeFloor) h = _splitGaugeFloor;
       if (force || _committedH < 0 || Math.abs(h - _committedH) >= DEADBAND_PX) {
         _committedH = h;
         state.timeArea.durationMs = newDur;
@@ -23472,6 +23650,31 @@ function openEventModal(existing, opts) {
       saveState();
       if (typeof markSettingsChanged === 'function') markSettingsChanged();
       if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
+      // (user) Keep BOTH swipe panes the same height: after resizing this pane, record
+      // its new natural height and re-lock the wrap to the MAX of the two panes — so the
+      // OTHER pane (e.g. the 2×2's below-gauge) grows by the same amount automatically.
+      try {
+        const _w = document.getElementById('time-tasks-wrap');
+        if (_w && window.matchMedia('(max-width:700px)').matches) {
+          // Measure the pane at the height the handle was just dragged to (lock
+          // already cleared at drag start, so this is the true content height).
+          _w.style.minHeight = ''; void _w.offsetHeight;
+          // Lock BOTH panes to the dragged height — not max(both). The user wants
+          // resizing one pane to resize the other by the SAME amount, including
+          // SHRINKING (drag the handle up → the other pane gets shorter too). A
+          // max() would only ever grow and would refuse to shrink (the old
+          // detach: handle moves up but the section bottom stays at the stale max).
+          // Clamp to the SHARED minimum so the OTHER pane (which has the same min) can
+          // always render at exactly this height → both panes stay equal after a slide.
+          const _h = Math.max(_w.offsetHeight, _ttGlobalMinH());
+          if (_h > 0) {
+            window._ttPaneH = { split: _h, flip: _h };
+            window._ttLockedH = _h;
+            _w.style.minHeight = _h + 'px';
+            if (typeof drawTimeArea === 'function') drawTimeArea();
+          }
+        }
+      } catch (_) {}
     }
     function mMove(ev) { onMove(ev.clientY); }
     function mUp()     { onUp(); }
@@ -27130,6 +27333,12 @@ window.trf = trf;
 const _I18N_ATTRS = ['placeholder','title','aria-label','alt'];
 function _i18nNode(node) {
   if (!node) return;
+  // (Google OAuth verification) Honor translate="no" / [data-no-i18n] so the homepage's
+  // English "About Bidoro" purpose blurb stays English in EVERY locale (reviewers may use any).
+  try {
+    const _host = (node.nodeType === 3) ? node.parentElement : node;
+    if (_host && _host.closest && _host.closest('[translate="no"], [data-no-i18n]')) return;
+  } catch (_) {}
   if (node.nodeType === 3) {                                  // text node
     // Always translate FROM the stored English source (so ko→fr→en switches work; a
     // node already in Korean has no English to match without this).
@@ -30335,7 +30544,7 @@ document.addEventListener('visibilitychange', () => {
   setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch (_) {} }, 350);
 });
 let _ttFlipBusy = false;
-function flipTimeTasks(toBack) {
+function flipTimeTasks(toBack, swipeDir) {
   toBack = !!toBack;
   if (_ttFlipBusy || !!state.ttFlipped === toBack) return;
   const wrap = document.getElementById('time-tasks-wrap');
@@ -30358,10 +30567,13 @@ function flipTimeTasks(toBack) {
   try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {}
   const H = wrap.offsetHeight;            // remember the height BEFORE sliding
   const HALF = 200;
-  // (user) SLIDE (not flip): the section slides sideways. To Matrix → current pane
-  // slides OUT left, the new pane slides IN from the right; back to T&T → the reverse.
-  // Clip horizontal overflow on the parent so the off-screen pane doesn't show / scroll.
-  const outX = toBack ? -100 : 100, inFromX = toBack ? 100 : -100;
+  // (user) SLIDE (not flip): the section slides sideways. The slide DIRECTION follows
+  // the swipe when one is given (swipeDir>0 = finger moved right → content slides right);
+  // otherwise default by destination (to Matrix → out-left). Clip parent overflow so the
+  // off-screen pane doesn't show / scroll.
+  let outX, inFromX;
+  if (swipeDir === 1 || swipeDir === -1) { outX = swipeDir * 100; inFromX = -outX; }
+  else { outX = toBack ? -100 : 100; inFromX = toBack ? 100 : -100; }
   const _par = wrap.parentElement, _parOvf = _par ? _par.style.overflowX : '';
   if (_par) _par.style.overflowX = 'hidden';
   // 1) current pane slides out
@@ -30373,14 +30585,16 @@ function flipTimeTasks(toBack) {
     applyTtState();
     try { saveState(); } catch (_) {}
     if (typeof renderFocusMatrix === 'function') renderFocusMatrix();
-    // Remember the captured (front) height. drawTimeArea sizes the back gauge
-    // to (lockedH − grid − padding), which makes the wrap settle to EXACTLY
-    // the front height naturally — no fragile inline min-height. If the grid
-    // alone is taller than the front, the gauge falls back to a 110px floor
-    // (the wrap grows rather than clipping the gauge).
-    window._ttLockedH = toBack ? H : 0;
-    wrap.style.height = ''; wrap.style.minHeight = '';
-    if (typeof drawTimeArea === 'function') drawTimeArea();
+    // (user) CARRY the height across the swipe: the destination renders at the SAME height
+    // the source pane was just at (so the section + the bucket below don't jump). Using
+    // max(both naturals) made the destination jump to its OWN natural — e.g. Matrix (short
+    // 2×2) → T&T (tall 5.6h durMs) grew the section. We keep H (the source height) and only
+    // clamp UP to the shared minimum (the 2×2 can't render shorter than that).
+    const _carry = Math.max(H || 0, _ttGlobalMinH());
+    window._ttLockedH = _carry;
+    wrap.style.height = '';
+    wrap.style.minHeight = _carry > 0 ? (_carry + 'px') : '';
+    if (typeof drawTimeArea === 'function') drawTimeArea();   // destination fills its gauge to the carried height
     // 3) place the new pane off-screen on the opposite side, then slide it in
     wrap.style.transition = 'none';
     wrap.style.transform = 'translateX(' + inFromX + '%)';
@@ -30400,36 +30614,118 @@ function flipTimeTasks(toBack) {
       try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
       try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
       _ttFlipBusy = false;
+      try { _ttShowPageDots(); } catch (_) {}   // brief "2 pages" dots in the handle, then back to bars
     }, HALF + 40);
   }, HALF + 10);
 }
-// (user) Swipe the Time&Tasks section sideways to switch panes (phone portrait):
-// swipe LEFT → Matrix (+ gauge below); swipe RIGHT → back to Time & Tasks. The
-// flip is gone — this triggers the horizontal SLIDE in flipTimeTasks.
+// (user) Briefly swap the handle's grab-bars for 2 page-dots (current pane filled) right after
+// a pane switch — an iPhone-home-style "there are 2 pages" hint that fades back to the bars.
+let _ttDotsTimer = 0;
+function _ttShowPageDots() {
+  const h = document.getElementById('time-resize-handle-split');
+  if (!h || !(window.matchMedia && window.matchMedia('(max-width:700px)').matches)) return;
+  h.classList.add('trh-show-dots');
+  clearTimeout(_ttDotsTimer);
+  _ttDotsTimer = setTimeout(function () { try { h.classList.remove('trh-show-dots'); } catch (_) {} }, 1500);
+}
+// (user) Swipe the Time & Tasks section sideways to switch panes (phone portrait): a
+// horizontal swipe toggles to the OTHER pane via the proven flipTimeTasks SLIDE (current pane
+// slides out, the other slides in). RELIABLE on device. A true simultaneous finger-following
+// PEEK (snapshot of the off-screen pane in a flex track) was attempted across several variants;
+// the snapshot/clone CAN render (the empty-gauge was a getComputedStyle().cssText==="" bug,
+// fixed via per-prop freeze), but the carousel kept hitting DEVICE-ONLY bugs (stuck swipe after
+// one commit; section-height jump on landing because T&T-4h vs Matrix-min differ) that don't
+// reproduce in preview (synthetic touch != iOS touch). Reverted to the reliable slide.
+// (user) The section FOLLOWS the finger during a horizontal swipe (translateX with the touch;
+// hold → it stops with you). On release: past threshold → hand off to the proven flipTimeTasks
+// SLIDE (which animates the current pane the rest of the way out from the finger position, swaps,
+// and slides the other in); below → snap back. NO snapshot/peek (that kept breaking on device) —
+// just the live pane following the finger, so it's reliable.
 (function wireTtSwipe(){
   const wrap = document.getElementById('time-tasks-wrap'); if (!wrap) return;
-  let sx = 0, sy = 0, tracking = false, decided = false, horiz = false;
+  let sx = 0, sy = 0, tracking = false, decided = false, horiz = false, dragging = false;
+  let par = null, parOvf = '', paneW = 0;
+  function startDrag() {
+    dragging = true; par = wrap.parentElement; parOvf = par ? par.style.overflowX : '';
+    if (par) par.style.overflowX = 'hidden';
+    paneW = wrap.offsetWidth || 320;
+    wrap.style.transition = 'none';
+  }
+  function snapBack() {
+    wrap.style.transition = 'transform 180ms cubic-bezier(.4,0,.2,1)';
+    wrap.style.transform = 'translateX(0)';
+    setTimeout(function(){ try { wrap.style.transition = ''; wrap.style.transform = ''; } catch (_) {} }, 200);
+  }
   wrap.addEventListener('touchstart', (e) => {
     if (window.matchMedia && window.matchMedia('(min-width:701px)').matches) return;     // phone portrait only
     if (document.body.classList.contains('tt-adding') || document.body.classList.contains('tt-show-actions')) return;
+    if (document.body.classList.contains('fv-active')) return;
+    if (_ttFlipBusy) return;
     if (!e.touches || e.touches.length !== 1) return;
-    // don't hijack swipes that begin on an interactive / draggable control
     if (e.target.closest && e.target.closest('button, a, input, textarea, select, .tg-block, .time-block, .task-row, .mca, .sg-btn, .time-resize-handle')) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true; decided = false; horiz = false;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true; decided = false; horiz = false; dragging = false;
   }, { passive: true });
   wrap.addEventListener('touchmove', (e) => {
     if (!tracking || !e.touches || !e.touches.length) return;
     const dx = e.touches[0].clientX - sx, dy = e.touches[0].clientY - sy;
-    if (!decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) { decided = true; horiz = Math.abs(dx) > Math.abs(dy) * 1.4; }
-  }, { passive: true });
-  wrap.addEventListener('touchend', (e) => {
+    if (!decided && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+      decided = true; horiz = Math.abs(dx) > Math.abs(dy) * 1.4;
+      if (horiz) startDrag();
+    }
+    if (dragging) {
+      e.preventDefault();   // block vertical scroll while horizontally dragging
+      let tx = dx; if (tx > paneW) tx = paneW; if (tx < -paneW) tx = -paneW;   // clamp so it can't fling off
+      wrap.style.transform = 'translateX(' + tx + 'px)';
+    }
+  }, { passive: false });
+  function onEnd(e) {
     if (!tracking) return; tracking = false;
-    const t = e.changedTouches && e.changedTouches[0]; if (!t || !horiz) return;
-    const dx = t.clientX - sx, dy = t.clientY - sy;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
-    if (dx < 0) { if (!state.ttFlipped) flipTimeTasks(true); }     // left → Matrix
-    else        { if (state.ttFlipped)  flipTimeTasks(false); }    // right → Time & Tasks
-  }, { passive: true });
+    if (!dragging) return;
+    if (par) par.style.overflowX = parOvf;
+    const t = e.changedTouches && e.changedTouches[0];
+    const dx = t ? t.clientX - sx : 0, dy = t ? t.clientY - sy : 0;
+    dragging = false;
+    if (Math.abs(dx) >= 55 && Math.abs(dx) >= Math.abs(dy)) {
+      // commit: flipTimeTasks animates from the current finger position out, swaps, slides the other in
+      flipTimeTasks(!state.ttFlipped, dx < 0 ? -1 : 1);
+    } else {
+      snapBack();
+    }
+  }
+  wrap.addEventListener('touchend', onEnd, { passive: true });
+  wrap.addEventListener('touchcancel', (e) => { if (dragging) { if (par) par.style.overflowX = parOvf; dragging = false; snapBack(); } tracking = false; }, { passive: true });
+})();
+/* ===== TEMP DEBUG PANEL — remove after diagnosing the min-hold handle drift. =====
+   Live readout (top-right) so the user can report exact numbers on-device: gauge/section
+   heights, the lock, _gaugeBusy, durationMs/flipGaugeH, + a timestamped log of every gauge-
+   height CHANGE (the drift shows up here as a value changing ~0.2s after you stop moving). */
+(function _ttDebugPanel(){
+  if (!(window.matchMedia && window.matchMedia('(max-width:700px)').matches)) return;
+  const p = document.createElement('div');
+  p.id = '__ttdbg';
+  p.style.cssText = 'position:fixed;top:96px;right:6px;z-index:2147483647;background:rgba(0,0,0,.82);color:#3f6;font:10px/1.35 ui-monospace,monospace;padding:5px 7px;border-radius:6px;white-space:pre;pointer-events:none;max-width:62vw;';
+  function mount(){ if (document.body) document.body.appendChild(p); else setTimeout(mount, 200); }
+  mount();
+  let lastA = -1; const log = [];
+  const t0 = (window.performance && performance.now) ? performance.now() : 0;
+  const now = () => (window.performance && performance.now) ? performance.now() : 0;
+  setInterval(function(){
+    const area = document.getElementById('time-area');
+    const wrap = document.getElementById('time-tasks-wrap');
+    const h = document.getElementById('time-resize-handle-split');
+    if (!area || !wrap) return;
+    const aH = Math.round(area.getBoundingClientRect().height);
+    const wH = Math.round(wrap.getBoundingClientRect().height);
+    const hTop = h ? Math.round(h.getBoundingClientRect().top) : 0;
+    if (aH !== lastA) { log.push(((now()-t0)/1000).toFixed(2) + ':' + aH); while (log.length > 7) log.shift(); lastA = aH; }
+    const ta = state.timeArea || {};
+    p.textContent =
+      (document.body.classList.contains('tt-flip') ? 'MATRIX' : 'T&T') +
+      '  area:' + aH + '  wrap:' + wH + '\n' +
+      'h.top:' + hTop + '  lock:' + Math.round(+window._ttLockedH || 0) + '  busy:' + (window._gaugeBusy ? 1 : 0) + '\n' +
+      'dur:' + Math.round((+ta.durationMs || 0) / 60000) + 'm  flip:' + Math.round(+ta.flipGaugeH || 0) + '\n' +
+      'aΔ: ' + log.join(' ');
+  }, 50);
 })();
 // FRONT button (2×2 grid icon, "Time & Tasks" header) → flip to the Tasks face.
 const _splitViewBtn = document.getElementById('split-view-toggle');
