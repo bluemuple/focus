@@ -11223,6 +11223,24 @@ let _currentAuthEmail = null;
 function getEffectiveUserId() {
   return _currentAuthUserId || state.sbUserId || 'me';
 }
+// Turn raw Supabase auth errors into friendly, localized text. The email-send rate limit (a low
+// hourly cap on confirmation emails) is the common one — tell the user to retry in ~1 hour, in their
+// language, instead of the bare English "email rate limit exceeded".
+function _authErrorMessage(error) {
+  const raw = (error && (error.message || error.error_description || error.msg || '')) || '';
+  const loc = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+  if (/rate limit|over_email_send|too many request|429/i.test(raw)) {
+    return ({
+      ko: '가입 요청이 잠시 제한됐어요 (이메일 발송 한도). 약 1시간 뒤에 다시 시도해 주세요.',
+      en: 'Sign-up is briefly rate-limited (email send cap). Please try again in about 1 hour.',
+      zh: '注册暂时受限（邮件发送已达上限）。请约 1 小时后再试。',
+      ja: '登録が一時的に制限されています（メール送信の上限）。約1時間後にもう一度お試しください。',
+      es: 'Registro limitado temporalmente (límite de envío de correos). Vuelve a intentarlo en ~1 hora.',
+      fr: 'Inscription temporairement limitée (limite d’envoi d’e-mails). Réessaie dans environ 1 heure.'
+    })[loc] || 'Sign-up is briefly rate-limited (email send cap). Please try again in about 1 hour.';
+  }
+  return raw;
+}
 async function authSignUp(email, password, meta) {
   const sb = await getSupabaseClient();
   if (!sb) throw new Error('Configure Project URL and anon key first.');
@@ -11231,14 +11249,14 @@ async function authSignUp(email, password, meta) {
     ? { email, password, options: { data: meta } }
     : { email, password };
   const { data, error } = await sb.auth.signUp(payload);
-  if (error) throw error;
+  if (error) throw new Error(_authErrorMessage(error));
   return data.user;
 }
 async function authSignIn(email, password) {
   const sb = await getSupabaseClient();
   if (!sb) throw new Error('Configure Project URL and anon key first.');
   const { data, error } = await sb.auth.signInWithPassword({ email, password });
-  if (error) throw error;
+  if (error) throw new Error(_authErrorMessage(error));
   return data.user;
 }
 async function authSignOut() {
