@@ -8478,13 +8478,19 @@
      Edit on the left, "h:mm left" pinned right; the No room/Prioritize/Shuffle row
      only appears in Edit (or +Add) mode, creating space between header and gauge. */
   .time-head #time-toggle.th-now-btn { display:inline-flex; align-items:center; justify-content:center;
-    width:24px; height:24px; padding:0; border-radius:999px; border:1px solid var(--card-border,#e5e7eb);
-    /* (user) match the Edit chip's HEIGHT (~24px) + use the SAME colour as the Edit label
+    width:27px; height:27px; padding:0; border-radius:999px; border:1px solid var(--card-border,#e5e7eb);
+    /* (user) match the Edit chip's HEIGHT (~27px) + use the SAME colour as the Edit label
        (var(--text-muted)) so the ◉ circle tints identically in every theme incl. dark. */
     background:var(--button-bg,#f3f4f6); color:var(--text-muted,#6b7280); cursor:pointer; font-size:0; flex:0 0 auto; }
-  .time-head #time-toggle.th-now-btn svg { width:13px; height:13px; }   /* shrink the circle to fit the smaller button */
+  .time-head #time-toggle.th-now-btn svg { width:14px; height:14px; }   /* shrink the circle to fit the button */
   .time-head #time-toggle.th-now-btn:active { transform:scale(.92); }
   .time-head .th-row1 { justify-content:flex-start; }
+  /* (user) Tighten the +Add header row (◉ · Repeat · Due · Memo · h:mm) so the GTD "h:mm" chip
+     stays INSIDE the panel instead of spilling off the right edge. */
+  body.tt-adding .time-head .th-row1 { gap: 4px; }
+  body.tt-adding .time-head .th-row1 .hd-labeled { gap: 3px; padding: 5px 6px; }
+  body.tt-adding .time-head .th-row1 .hd-labeled .hd-ic { width: 13px; height: 13px; }
+  body.tt-adding .time-head .th-row1 > .gtd-chip { margin-left: auto; }
   .time-head .th-row1 #gtd-chip, .time-head .th-row1 #rep-range-chip { margin-left:auto; }
   body:not(.tt-show-actions):not(.tt-adding) .time-head .th-row2 { display:none; }
   body:not(.tt-show-actions) #prioritize-toggle { display:none; }
@@ -9006,7 +9012,7 @@
                 </button>
                 <button class="hd-chip hd-labeled due-toggle" id="due-toggle" type="button"
                         title="Set a due date" aria-label="Set a due date" style="touch-action:manipulation;">
-                  <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg><span class="hd-lbl">Due date</span>
+                  <svg class="hd-ic" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg><span class="hd-lbl">Due</span>
                 </button>
                 <button class="hd-chip hd-labeled note-toggle" id="note-toggle" type="button"
                         title="Add a memo" aria-label="Add a task memo" style="touch-action:manipulation;">
@@ -18679,17 +18685,20 @@ function renderFocusMatrix() {
     // list). Empty cells keep +Add right under the title (nothing to sit below). `.tasks-first`
     // stops .tasks from flex-growing so the +Add hugs the last row instead of floating at the
     // cell's bottom edge.
+    // (user) The "how to handle this quadrant" hint shows in EVERY cell (empty or not) — it is NOT
+    // dropped just because a task was added. It's pinned to the cell BOTTOM; a later layout pass hides
+    // it only once the +Add button (which slides down as tasks fill the cell) overlaps it.
+    const _hint = (typeof _cellHintFor === 'function') ? _cellHintFor(q) : '';
+    const _hintHtml = _hint ? `<div class="cell-hint"></div>` : '';
     if (taskCount > 0) {
       cell.classList.add('tasks-first');
-      cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div><button class="add-task" data-q="${q}">+ Add</button>`;
+      cell.innerHTML = `<h4>${titles[q]}</h4><div class="tasks"></div><button class="add-task" data-q="${q}">+ Add</button>${_hintHtml}`;
     } else {
-      // (user) empty cell → a short "how to handle this quadrant" hint under the title (only when on).
-      const _hint = (typeof _cellHintFor === 'function') ? _cellHintFor(q) : '';
-      const _hintHtml = _hint ? `<div class="cell-hint"></div>` : '';
-      // (user) hint pinned to the BOTTOM of the cell, right-aligned, bold + very faint (watermark).
       cell.innerHTML = `<h4>${titles[q]}</h4><button class="add-task" data-q="${q}">+ Add</button><div class="tasks"></div>${_hintHtml}`;
+    }
+    {
       const _hEl = cell.querySelector('.cell-hint');
-      if (_hEl) {
+      if (_hEl && _hint) {
         _hEl.setAttribute('data-hint', _hint);   // raw text (used to re-balance into 2 lines)
         _hEl.textContent = _hint;                 // textContent → no HTML injection
         // Same quadrant hue, VERY faint (bold + light per user).
@@ -19358,6 +19367,26 @@ function renderFocusMatrix() {
   if (_isFlatListMode() && typeof _flattenMatrixToFlatList === 'function') {
     _flattenMatrixToFlatList(root);
   }
+  // (user) The matrix coaching phrase ("Tackle it now." etc.) is NOT dropped when a task is added —
+  // it stays until the +Add button (sliding down with the task list) OVERLAPS it. Measured with
+  // offsetTop/offsetHeight (transform-independent → unaffected by the 2×2 flip) and run SYNCHRONOUSLY
+  // (rAF is throttled when the tab/app is backgrounded). setTimeout re-checks cover late layout/flip.
+  if (!window._runCellHintOverlap) {
+    window._runCellHintOverlap = function () {
+      try {
+        document.querySelectorAll('#focus-matrix .focus-cell').forEach(function (cell) {
+          var hint = cell.querySelector('.cell-hint'); if (!hint) return;
+          hint.style.visibility = '';
+          var add = cell.querySelector('.add-task'); if (!add) return;
+          if (hint.offsetHeight > 0 && add.offsetHeight > 0 &&
+              (add.offsetTop + add.offsetHeight) > (hint.offsetTop - 2)) hint.style.visibility = 'hidden';
+        });
+      } catch (_) {}
+    };
+  }
+  try { window._runCellHintOverlap(); } catch (_) {}
+  setTimeout(window._runCellHintOverlap, 160);
+  setTimeout(window._runCellHintOverlap, 480);   // after the 2×2 flip settles
   // (user) Re-balance any wrapped cell hints into 2 word-broken lines (top fewer words). Deferred so
   // the cells have their real width laid out before measuring.
   // Lay out the cell coaching-text hints, THEN re-draw the gauge (BOTH panes, deferred to the
@@ -19368,6 +19397,7 @@ function renderFocusMatrix() {
   try {
     requestAnimationFrame(() => {
       try { root.querySelectorAll('.cell-hint').forEach(_layoutCellHint); } catch (_) {}
+      try { if (window._runCellHintOverlap) window._runCellHintOverlap(); } catch (_) {}   // re-check once the 2×2 has settled
       // The 2×2 is NOW settled (hint text laid out). The overhead measured by the FIRST draw
       // (during the slide, pre-settle) was cached ~16px too big → the gauge filled short and the
       // handle floated above the section bottom. Invalidate the cache so this re-fill RE-MEASURES
