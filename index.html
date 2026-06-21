@@ -608,6 +608,10 @@
   #bucket-section.b3d-active #b3d-scene .b3d-wall[data-i] { touch-action: none; }
   #bucket-section.b3d-active #bucket-svg { opacity: 0; }
   #b3d-world { position: absolute; left: 50%; top: 50%; width: 0; height: 0; transform-style: preserve-3d; transform: rotateX(-6deg); }
+  /* (user) Smooth view glide when a bucket side is selected / deselected (idle ⇄ selected
+     framing). Only ON during that toggle (added for ~0.6s) so live rotate-drag / pour stay snappy. */
+  #b3d-scene.b3d-anim { transition: perspective .58s cubic-bezier(.4,0,.2,1); }
+  #b3d-scene.b3d-anim #b3d-world { transition: transform .58s cubic-bezier(.4,0,.2,1); }
   .b3d-wall { position: absolute; transform-style: preserve-3d; border: 1px solid rgba(255,255,255,.5); box-shadow: inset 0 0 18px rgba(255,255,255,.25); backface-visibility: hidden; }
   .b3d-floor, .b3d-rim { position: absolute; }
   .b3d-face-title { position: absolute; left: 3%; right: 3%; text-align: center; font-weight: 800; white-space: pre-line; letter-spacing: -.02em; pointer-events: none; backface-visibility: hidden; }
@@ -2045,6 +2049,26 @@
     overflow: hidden; touch-action: none;
   }
   .water-field { position: absolute; left: 50%; top: 50%; width: 0; height: 0; will-change: transform; }
+  /* (user) Garden minimap — top-left of the field. A 15×15 grid: land tiles = black silhouette,
+     planted items = grey, empty = transparent. Hidden until you pan far (>300px); fades out 3s
+     after movement stops; tap → recenter. Square; height never exceeds the centre bucket. */
+  .garden-minimap {
+    position: absolute; top: 14px; left: 14px; z-index: 30;
+    width: min(30vw, 132px); height: min(30vw, 132px); padding: 5px; box-sizing: border-box;
+    background: rgba(255,255,255,.72); border: 1px solid rgba(0,0,0,.12);
+    border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    display: grid; gap: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+    grid-template-columns: repeat(15, 1fr); grid-template-rows: repeat(15, 1fr);
+    opacity: 1; transition: opacity .35s ease;
+  }
+  .garden-minimap.hidden { display: none; }
+  .garden-minimap.mm-fade { opacity: 0; pointer-events: none; }
+  .garden-minimap .mm-cell { width: 100%; height: 100%; align-self: stretch; }
+  .garden-minimap .mm-cell.mm-land  { background: rgba(17,24,39,.92); }                    /* land tile = black */
+  .garden-minimap .mm-cell.mm-plant { background: rgba(120,120,120,.95); border-radius: 50%; transform: scale(.82); }  /* planted = grey */
+  .garden-minimap .mm-cell.mm-here  { outline: 1.5px solid var(--accent,#2563EB); outline-offset: -1.5px; border-radius: 2px; }  /* the cell at the viewport centre */
+  :root[data-theme="solarized"] .garden-minimap { background: rgba(7,54,66,.82); border-color: rgba(255,255,255,.14); }
+  :root[data-theme="solarized"] .garden-minimap .mm-cell.mm-land { background: rgba(238,232,213,.9); }   /* dark theme: light silhouette on the dark panel */
   .wg-cell { position: absolute; pointer-events: none; }   /* empty-cell diamond outline */
   .wg-tile { position: absolute; pointer-events: none; }    /* placed earth tile */
   /* Transparent diamond-shaped tap target over a whole cell while watering — the clip-path
@@ -4124,14 +4148,22 @@
   /* (첨부2) Take5 — a sky-blue pill next to the Session badge, shown only while a
      "keep going" extension is running; tap = start a 5-min break now. */
   .focus-card .fc-take5 {
+    /* (user) Match the Session capsule next to it: LIGHTER fill + an outline + the SAME
+       height (same font-size / weight / padding). The sky palette mirrors Session's rose. */
+    align-self: flex-start;
     display: inline-flex; align-items: center; gap: 4px;
-    font-size: .76rem; font-weight: 700; line-height: 1;
-    color: #075985; background: #7DD3FC; border: none;
-    border-radius: 999px; padding: 4px 11px; cursor: pointer;
+    font-size: .82rem; font-weight: 800; line-height: 1;
+    color: #0369A1; background: #E0F2FE; border: 1px solid #BAE6FD;
+    border-radius: 999px; padding: 4px 12px; cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
   .focus-card .fc-take5.hidden { display: none; }
   .focus-card .fc-take5:active { transform: scale(.94); }
+  /* (user) Dark mode: Take 5 uses a TRANSLUCENT sky tint (same low brightness as the Session
+     capsule's quadrant-accent tint next to it) instead of the bright light fill. */
+  :root[data-theme="solarized"] .focus-card .fc-take5 {
+    background: rgba(56,189,248,.16); border-color: rgba(56,189,248,.5); color: #7DD3FC;
+  }
   /* Big live ring — light track + the task-colour REMAINING arc; a knob marks the
      elapsed edge (NO dot at the 12-o'clock start); mm:ss + a pause button sit inside. */
   .focus-card .fc-ring-wrap { position: relative; flex: 0 0 auto; width: 108px; height: 108px; }
@@ -5394,8 +5426,11 @@
      Row 2 (the Matrix/Shuffle/Edit buttons). */
   .time-head { display: flex; flex-direction: row; align-items: center; gap: 10px; padding: 2px 0; }
   .time-head .th-main { display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; min-width: 0; }
-  /* Row 1: title LEFT + GTD chip RIGHT, vertically centred together on one line. */
-  .time-head .th-row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  /* Row 1: title LEFT + GTD chip RIGHT, vertically centred together on one line.
+     (user) Fixed min-height = the Edit/◉ chip height (27px) so the row DOESN'T change height
+     when +Add hides ◉/Edit and swaps in the slightly-shorter Repeat/Due/Memo chips — that height
+     change was nudging the whole gauge up ~2px on Add and back down on Cancel. */
+  .time-head .th-row1 { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 27px; }
   .time-head #time-toggle { margin: 0; white-space: nowrap; font-size: 1.5rem; font-weight: 800; cursor: default; }
   .time-head .th-row1 > .gtd-chip { flex: 0 0 auto; }   /* chip never shrinks */
   /* Row 2: action buttons (Matrix / Shuffle / Edit) + Undo/Redo (edit mode only). */
@@ -5816,6 +5851,7 @@
       grid-template-columns: 50% 50%;
       gap: 0;                        /* zero gap → looks like one box */
       align-items: stretch;          /* both columns share row height */
+      align-content: start;
       /* Outer chrome lives on the WRAPPER, not the individual panels —
          that way the border draws all four sides of the merged container
          (previously only the left side had it, because tasks-panel had
@@ -5839,12 +5875,14 @@
       border-radius: 0;
       box-shadow: none;
       margin: 0;
-      padding: 8px;
+      /* (user) Small top padding so the gap between the header buttons and the gauge / +Add below
+         is tight and matches the section-top↔buttons gap. */
+      padding: 2px 8px 8px;
       min-width: 0;   /* let the 50% tracks hold; nowrap content clips to ellipsis */
     }
     /* Merged header spans BOTH grid columns (gauge + task bars) as a full-width
        row at the top of the bordered container, with the title dead-center. */
-    body.tt-split .time-head { grid-column: 1 / -1; padding: 8px 10px 0; }
+    body.tt-split .time-head { grid-column: 1 / -1; padding: 7px 10px 0; }
     /* Hide the entire Tasks h3 (incl. matrix-view-toggle) in split mode.
        The merged container's single header lives in #time-toggle now. */
     body.tt-split #tasks-panel > .focus-tasks-title { display: none; }
@@ -7378,13 +7416,12 @@
     pointer-events: none;
   }
   .tg-block-name {
-    /* Centered both vertically and horizontally inside the block.
-       top:50% + translateY centers vertically; left/right + text-align centers
-       horizontally; nowrap + ellipsis truncates long names cleanly. */
+    /* (user) Unified: LEFT-aligned, vertically centred, +2px left margin (8px),
+       the "slightly large" font — same on plan + overrun blocks, every device. */
     position: absolute;
-    top: 50%; left: 6px; right: 6px;
+    top: 50%; left: 8px; right: 6px;
     transform: translateY(-50%);
-    text-align: center;
+    text-align: left;
     font-size: 11px; font-weight: 700; color: #1f2937;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     pointer-events: none; z-index: 1;
@@ -7395,9 +7432,9 @@
   /* (user) The block's task title is ALWAYS centered — even on short blocks, on every device/mode.
      The small duration label is hidden on short blocks so the centered name never collides with it. */
   .tg-block.short .tg-block-name {
-    left: 6px; right: 6px;
-    text-align: center;
-    font-size: 10px;
+    left: 8px; right: 6px;
+    text-align: left;
+    font-size: 11px;
   }
   .tg-block.short .tg-block-dur { display: none; }
   .tg-block-rt, .tg-block-rb {
@@ -7743,12 +7780,13 @@
     pointer-events: none; z-index: 1;
   }
   .time-block-name {
-    /* Centered both vertically and horizontally inside the block. Same
-       treatment as .tg-block-name. */
+    /* (user) Task name unified across every device/mode: LEFT-aligned, vertically
+       centred, +2px left margin (8px), and the "slightly large" font (13px) — same
+       look on plan blocks AND on color-coded / overrun blocks. */
     position: absolute;
-    top: 50%; left: 6px; right: 6px;
+    top: 50%; left: 8px; right: 6px;
     transform: translateY(-50%);
-    text-align: center;
+    text-align: left;
     font-size: 13px;     /* +2 pt vs PC for mobile readability */
     font-weight: 700; color: #1f2937;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -7788,14 +7826,24 @@
      overlap when centred + bottom-right. Switch to a SIDE-BY-SIDE layout:
      name on the left (truncates with ellipsis), duration vertically
      centred on the right. Name font shrinks so the row stays legible. */
-  /* (user) Task title ALWAYS centered, even on short blocks — duration label hidden on short blocks
-     so the centered name doesn't collide with it. */
+  /* (user) Task title unified — LEFT-aligned + the larger font even on short blocks
+     (matches the full-size blocks); duration label hidden on short blocks so the name
+     doesn't collide with it (overrun arms force it back on, see .time-block-ext below). */
   .time-block.short .time-block-name {
-    left: 6px; right: 6px;
-    text-align: center;
-    font-size: 10px;
+    left: 8px; right: 6px;
+    text-align: left;
+    font-size: 13px;
   }
   .time-block.short .time-block-dur { display: none; }
+  /* Overrun arm: ALWAYS show the growing duration label (even if the arm is "short"),
+     and hide the parent plan block's static label so only ONE growing total shows. */
+  .time-block.time-block-ext .time-block-dur,
+  .tg-block.tg-block-ext .tg-block-dur { display: block !important; }
+  /* Overrun arm duration STACKED on 2 lines (1h / 30m) so it fits the thin 1/3 column.
+     bottom-anchored, so the 2nd line grows UP from the block bottom. */
+  .time-block-dur.tb-dur-stacked, .tg-block-dur.tb-dur-stacked { text-align: right; line-height: 1.02; }
+  .time-block.ext-parent-seam .time-block-dur,
+  .tg-block.ext-parent-seam .tg-block-dur { display: none !important; }
   /* ▲▼ arrows — visible ONLY when block is selected.
      ▲ sits at top-LEFT, ▼ at bottom-RIGHT (diagonal placement). Each button
      keeps the same edge distance (3 px from side, 15 px from top/bottom).
@@ -8462,7 +8510,15 @@
      as one connected hexagon; the jutting silhouette itself is the "this is overtime" cue. The seam
      borders are removed on both sides so there's no dividing line between them. */
   .time-block.ext-seam, .tg-block.ext-seam { border-top: none; }
-  .time-block.ext-parent-seam, .tg-block.ext-parent-seam { border-bottom: none; }
+  /* Plan block that has an extension below: bottom-RIGHT corner SQUARE so the plan continues
+     SEAMLESSLY into the 1/3 overrun arm on the right; bottom-LEFT keeps its rounded corner so it
+     reads as SEPARATE from the planned block (e.g. BOB) sitting in the left 2/3. The grey seam
+     line between the plan and the arm is removed (::after below) → they read as one block. */
+  .time-block.ext-parent-seam, .tg-block.ext-parent-seam {
+    border-bottom: none;
+    border-bottom-right-radius: 0;
+  }
+  .time-block.ext-parent-seam::after, .tg-block.ext-parent-seam::after { content: none !important; }
   /* Home hero: "[friend] is focusing now" line under the left text. */
   .fc-friends { margin-top: 6px; font-size: .82rem; font-weight: 700; line-height: 1.35; color: var(--text-muted, #6b7280); }
   .fc-friends .ff-nm { font-weight: 800; }
@@ -8485,8 +8541,11 @@
   .time-head #time-toggle.th-now-btn svg { width:14px; height:14px; }   /* shrink the circle to fit the button */
   .time-head #time-toggle.th-now-btn:active { transform:scale(.92); }
   .time-head .th-row1 { justify-content:flex-start; }
-  /* (user) Tighten the +Add header row (◉ · Repeat · Due · Memo · h:mm) so the GTD "h:mm" chip
-     stays INSIDE the panel instead of spilling off the right edge. */
+  /* (user) During a +Add the header row becomes  Repeat · Due · Memo  (left) … GTD (right).
+     HIDE the ◉ scroll-to-now button to free room so the chips fit and the GTD chip keeps its
+     normal right-edge position (margin-left:auto) instead of being shoved further right. */
+  body.tt-adding .time-head #time-toggle.th-now-btn { display: none !important; }
+  /* Tighten the +Add header chips so Repeat · Due · Memo · GTD all fit on one row. */
   body.tt-adding .time-head .th-row1 { gap: 4px; }
   body.tt-adding .time-head .th-row1 .hd-labeled { gap: 3px; padding: 5px 6px; }
   body.tt-adding .time-head .th-row1 .hd-labeled .hd-ic { width: 13px; height: 13px; }
@@ -10274,8 +10333,10 @@
              border: 1px solid var(--line); border-radius: 6px; font: inherit;
              resize: vertical; min-height: 80px;"
       placeholder="Note, thought, or mini-diary (max 150 chars)"></textarea>
-    <div style="display:flex; justify-content:space-between; align-items:center; margin: 6px 0 8px;">
-      <span class="help" id="note-modal-counter" style="font-size:.75rem;">0 / 150</span>
+    <!-- (user) char counter: small, at the input's bottom-RIGHT, on its own line so it never
+         overlaps the typed text. -->
+    <div style="display:flex; justify-content:flex-end; align-items:center; margin: 2px 2px 8px;">
+      <span class="help" id="note-modal-counter" style="font-size:.68rem; opacity:.7;">0 / 150</span>
     </div>
     <!-- Optional bucket-pillar picker — shown only when opts.showPillar (Edit task).
          7 face-coloured numbered circles, default none; tapping one tags the task to
@@ -10293,7 +10354,6 @@
     <!-- Optional due date (opts.showDueDate, Edit task) — a tappable row that opens the
          shared due-date picker; shows the chosen deadline or "Set due date". -->
     <div id="note-modal-due" style="display:none; margin: 0 0 12px;">
-      <div class="help" style="font-size:.75rem; margin: 0 0 6px;">Due date (optional)</div>
       <button type="button" class="nm-due-btn" id="note-modal-due-btn">
         <span class="nm-due-ic"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="8" y1="2.5" x2="8" y2="6"/><line x1="16" y1="2.5" x2="16" y2="6"/></svg></span>
         <span class="nm-due-tx" id="note-modal-due-tx">Set due date</span>
@@ -10413,6 +10473,9 @@
       <div class="water-field-vp" id="water-field-vp">
         <div class="water-field" id="water-field"></div>
       </div>
+      <!-- (user) Minimap (top-left). Hidden until you pan far; tap → recenter. Land tiles = black
+           silhouettes, planted items = grey, empty = transparent. -->
+      <button class="garden-minimap hidden" id="garden-minimap" type="button" aria-label="Garden minimap — tap to recenter"></button>
     </div>
     <div class="water-fx" id="water-fx"></div>
   </div>
@@ -12021,6 +12084,10 @@ function _buildSettingsPayload(ts, versionsForPush) {
     watch_log: state.watchLog || [],
     session_state: {
       activeTimer:             state.activeTimer || null,
+      // (user) SYNCED idempotency key: the phase-boundary that was already answered (on ANY
+      // device). Other devices read this and suppress / close a popup for that boundary so a
+      // transition/recovery popup answered on one device never re-pops on another.
+      answeredBoundary:        +_answeredPhaseConfirmBoundary || 0,
       pomodoroSessionsInCycle: state.pomodoroSessionsInCycle || 0,
       timeSegments:            state.timeSegments || [],
       sessionStartMs:          state.sessionStartMs || null,
@@ -12367,13 +12434,16 @@ function applyRemoteSettings(remote) {
   // ---- Session state (timer, segments, day-rollover, scoreLog, motivational pick) ----
   if (remote.session_state && typeof remote.session_state === 'object') {
     const ss = remote.session_state;
+    // (user) Merge the SYNCED answered-boundary FIRST (take the latest answer across devices) so
+    // the stale-echo guard + the popup mirror below both see "this boundary is already answered".
+    if (+ss.answeredBoundary > _answeredPhaseConfirmBoundary) _answeredPhaseConfirmBoundary = +ss.answeredBoundary;
     if ('activeTimer' in ss) {
       const _inc = ss.activeTimer || null;
       const _incB = _inc ? ((+_inc.phaseStartedAt || +_inc.startedAt) + (+_inc.phaseDurationMs || 0)) : 0;
-      // Drop a stale echo of a phase-confirm we already answered here (the other device
-      // pushing the same pending dialog a few seconds late) → keep our local timer so the
-      // answer sticks and the dialog doesn't re-pop. Any other timer update applies normally.
-      if (_inc && _inc.pendingPhaseConfirm && _incB && _incB === _answeredPhaseConfirmBoundary) {
+      // Drop a stale echo of a phase-confirm already answered (here OR on another device — the
+      // boundary is at/before the synced answered mark) → keep our local timer so the answer
+      // sticks and the dialog doesn't re-pop. Any other timer update applies normally.
+      if (_inc && _inc.pendingPhaseConfirm && _incB && _incB <= _answeredPhaseConfirmBoundary) {
         /* ignore — keep local activeTimer */
       } else {
         state.activeTimer = _inc;
@@ -12451,15 +12521,21 @@ function applyRemoteSettings(remote) {
    - Remote popup was answered (pendingPhaseConfirm false) but we still have
      a local popup open → close ours since the answer arrived from elsewhere. */
 function syncPhaseConfirmDialogAcrossDevices() {
-  const cur = !!(state.activeTimer && state.activeTimer.pendingPhaseConfirm);
+  const at = state.activeTimer;
+  // The pending popup's boundary. If it's at/before the synced answered mark, the popup was
+  // ALREADY answered (here or on another device) → never (re-)show it; close any open one.
+  const b = at ? ((+at.phaseStartedAt || +at.startedAt) + (+at.phaseDurationMs || 0)) : 0;
+  const answeredAlready = (b && b <= _answeredPhaseConfirmBoundary);
+  const cur = !!(at && at.pendingPhaseConfirm) && !answeredAlready;
   if (cur) {
-    // Remote says a popup is pending. Open ours if it isn't already open.
+    // Genuinely-unanswered popup → open ours if it isn't already open.
     if (!_openConfirmCloser && typeof showPomoPhaseConfirm === 'function') {
       try { showPomoPhaseConfirm(); } catch (_) {}
     }
   } else {
-    // Remote says no popup is pending. If we still have one open locally
-    // (because the user answered on another device), force-close it.
+    // No popup, OR it was answered (here / elsewhere): clear the stale local flag and force-close
+    // any dialog still open so it can't be answered twice or linger.
+    if (answeredAlready && at && at.pendingPhaseConfirm) at.pendingPhaseConfirm = false;
     if (_openConfirmCloser) {
       try { _openConfirmCloser('remote'); } catch (_) {}
     }
@@ -16368,6 +16444,7 @@ function openNoteEditor(initialText, opts) {
     }
     titleEl.textContent = opts.title || 'Note';
     subEl.textContent   = opts.subtitle || '';
+    subEl.style.display = opts.subtitle ? '' : 'none';   // (user) hide the description row entirely when empty
     textEl.value        = initialText || '';
     if (maxLen > 0) textEl.setAttribute('maxlength', String(maxLen));
     else            textEl.removeAttribute('maxlength');
@@ -19387,6 +19464,11 @@ function renderFocusMatrix() {
   try { window._runCellHintOverlap(); } catch (_) {}
   setTimeout(window._runCellHintOverlap, 160);
   setTimeout(window._runCellHintOverlap, 480);   // after the 2×2 flip settles
+  // (user) Re-check the Matrix-switch (⊞→) hint vs the +Add button — hide it the instant the
+  // growing task list pushes +Add down into it. Same sync + settle-delay pattern as the cell hints.
+  try { if (window._updateMatrixHint) window._updateMatrixHint(); } catch (_) {}
+  setTimeout(function(){ try { if (window._updateMatrixHint) window._updateMatrixHint(); } catch (_) {} }, 180);
+  setTimeout(function(){ try { if (window._updateMatrixHint) window._updateMatrixHint(); } catch (_) {} }, 500);
   // (user) Re-balance any wrapped cell hints into 2 word-broken lines (top fewer words). Deferred so
   // the cells have their real width laid out before measuring.
   // Lay out the cell coaching-text hints, THEN re-draw the gauge (BOTH panes, deferred to the
@@ -19444,7 +19526,7 @@ async function editTaskNameFromFocus(q, i) {
   // longer surfaced from this popup.
   const v = await openNoteEditor(task.text || '', {
     title: 'Edit task',
-    subtitle: 'Click Delete to remove this task.',
+    subtitle: '',
     maxLength: 200,
     singleLine: true,                                  // task names are one line
     showPillar: true,                                  // + bucket-pillar picker
@@ -19738,6 +19820,7 @@ function startPomodoro(q, i) {
     phaseDurationMs: POMO_WORK_MS,
     focusStreakStart: now,    // start of the current UNBROKEN focus run (resets after a real break) — for the 45-min check-in
     keepGoingCount: 0,        // consecutive "Keep going" rounds → ring shade depth
+    extStartedAt: null,       // actual-extension count-up anchor (set on first keep-going)
     paused: false,
     pausedAt: null,
     totalPausedMs: 0
@@ -19895,6 +19978,7 @@ function switchPomodoroTaskWithinWindow(q, i) {
   at.phaseDurationMs = (typeof POMO_WORK_MS !== 'undefined') ? POMO_WORK_MS : 25 * 60 * 1000;
   at.focusStreakStart = now;
   at.keepGoingCount = 0;
+  at.extStartedAt = null;
   at.startedAt = now;
   at.totalPausedMs = 0;
   at.paused = false;
@@ -20295,7 +20379,18 @@ async function _show45Checkin() {
   // Never stack on / duplicate a transition dialog, and stay silent in Auto mode.
   if (state.pomodoroAuto || _openConfirmCloser || at.pendingPhaseConfirm || at.pendingKgConflict) return;
   try { notify('45 minutes of focus', 'Doing okay?', { noToast: true }); } catch (_) {}
-  const ans = await customConfirm("You've focused 45 minutes.", 'Nice work — keep going, or take a break?', { yesLabel: 'Keep going', noLabel: 'Take a break' });
+  // (user) Theme/task-colour the buttons (was using the default dark-navy/white) so this
+  // check-in matches the work-end popup: "Keep going" = the task colour, "Take a break" = sky.
+  const _isDarkTheme = (document.documentElement.getAttribute('data-theme') === 'solarized');
+  const _break = _isDarkTheme
+    ? { bg: '#0E4A57', fg: '#38BDF8', border: '#38BDF8' }
+    : { bg: '#fff', fg: '#0EA5E9', border: '#0EA5E9' };
+  const _focus = {
+    bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(at.q, at.idx) : '#111827'),
+    fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(at.q, at.idx) : '#fff')
+  };
+  const ans = await customConfirm("You've focused 45 minutes.", 'Nice work — keep going, or take a break?',
+    { yesLabel: 'Keep going', noLabel: 'Take a break', yesColor: _focus, noColor: _break });
   const at2 = state.activeTimer;
   if (!at2 || at2.type !== 'pomodoro') return;
   if (ans === false) {
@@ -20321,6 +20416,11 @@ function _syncPhaseToBlock(at) {
     const isWork = (at.phase === 'work');
     for (const b of (state.scheduledBlocks || [])) {
       if (!b || b.kind === 'tracker') continue;
+      // (user) Follow ONLY the ACTIVE task's own block. Otherwise, when blocks overlap at the
+      // now-line (e.g. a long plan sitting over the short one you're actually running), the phase
+      // would sync to the WRONG/longer block → its boundary never lands at the running task's
+      // planned end → the "keep going / next task" popup never fires.
+      if (b.q !== at.q || b.taskIdx !== at.idx) continue;
       if (Array.isArray(b.taskSegs) && b.taskSegs.length) continue;   // skip combined multi-task blocks
       const bs = +b.startMs, be = +b.endMs;
       if (!(bs <= now && now < be)) continue;                          // not the block under the now-line
@@ -20570,6 +20670,7 @@ async function showPomoPhaseConfirm() {
     // reset the ring shade so the next work session starts at the base colour.
     _settleKeepGoing();
     at2.keepGoingCount = 0;
+    at2.extStartedAt = null;   // extension over → count-up anchor cleared
     // NEW (per user spec):  popup-wait time is NOT counted into the pomodoro
     // session. Each phase paints colour for its DEFAULT duration only; if the
     // user answers late, the previous block ends at its phase boundary and a
@@ -20692,6 +20793,9 @@ async function showPomoPhaseConfirm() {
     if (state.pomodoroSessionsInCycle > 3) state.pomodoroSessionsInCycle = 0;
     const _resumeMs = Date.now();
     const _phaseBoundary = (+at2.phaseStartedAt || +at2.startedAt) + (+at2.phaseDurationMs || 0);
+    // (user) The actual-extension timer counts UP from the moment the plan ended — set once
+    // on the FIRST keep-going so it stays continuous (0:00 → …) across every round.
+    if (!at2.extStartedAt) at2.extStartedAt = _phaseBoundary;
     at2.keepGoingCount = (+at2.keepGoingCount || 0) + 1;   // ring deepens one step
     if (typeof at2.q === 'string' && typeof at2.idx === 'number'
         && Array.isArray(state.scheduledBlocks)) {
@@ -20721,7 +20825,10 @@ async function showPomoPhaseConfirm() {
         }
         if (oldBlock && oldBlock._actualExt) {
           // Already extending → keep growing the SAME extension block (don't spawn a 2nd).
-          oldBlock.activeAt    = _resumeMs;
+          // (user) Choosing "Keep going" credits the WHOLE popup-wait gap as worked time:
+          // the new open segment starts at the phase boundary (NOT _resumeMs), so the time
+          // you didn't answer (screen off) is color-coded too.
+          oldBlock.activeAt    = _phaseBoundary;
           oldBlock.activeBreakAt = null;
           oldBlock.activeEndMs = null;
           oldBlock._extending  = true;
@@ -20740,7 +20847,9 @@ async function showPomoPhaseConfirm() {
             taskName:     (oldBlock && oldBlock.taskName) || (t && t.text) || '',
             startMs:      _phaseBoundary,        // begins where the plan ended → visually connected
             endMs:        _resumeMs + 1000,
-            activeAt:     _resumeMs,
+            // (user) activeAt = the boundary (NOT _resumeMs) → "Keep going" color-codes the
+            // unanswered popup-wait gap as continued work on this task.
+            activeAt:     _phaseBoundary,
             activeBreakAt:null,
             activeEndMs:  null,
             _actualExt:   true,                  // right-column overrun block
@@ -21611,6 +21720,13 @@ function drawTimeArea() {
   // the left 2/3. Collect those ranges once so the loop can shift overlapping plans.
   const _extRanges = _renderBlocks.filter(x => x && x._actualExt &&
     !(window._previewBlock && x === window._previewBlock));
+  // Shared 1/3-split geometry (px) so the ARM clip and the shifted planned block
+  // reference the SAME width → the plan's top-right corner puzzle-fits the armpit
+  // (a tight 4 px gap, matching the 5 px corner radii).
+  const _blkW = (blocksEl.clientWidth || 0);
+  const _extW = _blkW - 45 - 11;
+  const _armLeftPx = 45 + _extW * 0.66 + 2;                       // arm left edge from container-left
+  const _planRightInset = Math.max(0, Math.round(_blkW - _armLeftPx + 4));
   _renderBlocks.forEach(b => {
     if (b.endMs <= contentTopMs || b.startMs >= contentBotMs) return;
     const tPx = Math.max(0, msToPx(b.startMs));
@@ -21652,18 +21768,16 @@ function drawTimeArea() {
           if (_confMs == null || c < _confMs) _confMs = c;
         }
       }
-      if (_confMs == null) {
-        /* free below → keep FULL width (the plan simply grew taller, seamlessly) */
-      } else if (_confMs <= b.startMs + 1) {
-        div.style.left = 'calc(66% + 2px)';                       // planned block from the top → right 1/3
-      } else {
-        // full width down to the conflict, then right 1/3 → ㄱ / hexagon via clip-path
-        const _cy = Math.max(0, Math.min(100, (_confMs - b.startMs) / (b.endMs - b.startMs) * 100));
-        div.style.clipPath = 'polygon(0 0, 100% 0, 100% 100%, 66% 100%, 66% ' + _cy + '%, 0 ' + _cy + '%)';
-      }
+      // Rounded ㄱ outline (one connected block, filleted shoulder + armpit + bottom).
+      const _exH = bPx - tPx;
+      const _cyPx = (_confMs == null) ? null
+        : Math.max(0, Math.min(_exH, msToPx(_confMs) - tPx));
+      div._extArm = (_confMs != null);                 // dur label stacks on 2 lines only in the 1/3 arm
+      const _cp = _extClipPath(_extW, _exH, _cyPx, 0.66, 2, 5);
+      if (_cp) div.style.clipPath = _cp;
     } else if (_extRanges.length && _extRanges.some(x => x !== b &&
         b.startMs < x.endMs && b.endMs > x.startMs)) {
-      div.style.right = 'calc(34% + 2px)';
+      div.style.right = _planRightInset + 'px';                  // align right edge to the arm (puzzle fit)
     }
     // Parent of an extension (same task, ext starts where this block ends) → drop the bottom border
     // so parent + ext read as ONE connected ㄱ shape (no dividing line).
@@ -21807,13 +21921,20 @@ function drawTimeArea() {
     // rate-coloured fill, and fully-past blocks (endMs ≤ now) get nothing.
     if (b.kind !== 'tracker' && !isBreakBox && !b._combine) {
       const _blockH2  = b.endMs - b.startMs;
-      const _futStart = Math.max(b.startMs, now);
+      // (user) A PLANNED block the now-line passed WITHOUT working it (e.g. BOB, sat under a
+      // task that overran it) keeps its LEFT theme-colour fingernail for the WHOLE block — it's
+      // still a planned-not-done task, not gone. A block being worked keeps the future-only
+      // sliver (the worked part above already has its full fill).
+      const _hasWork = (b.activeAt != null) || (Array.isArray(b.workedSegments) && b.workedSegments.length > 0);
+      const _futStart = _hasWork ? Math.max(b.startMs, now) : b.startMs;
       if (_blockH2 > 0 && b.endMs > _futStart) {
         const edge = document.createElement('div');
         edge.className = 'time-block-edge';
         edge.style.top    = ((_futStart - b.startMs) / _blockH2 * 100) + '%';
         edge.style.height = ((b.endMs   - _futStart ) / _blockH2 * 100) + '%';
-        edge.style.background = bidoroTaskBg(b.q, b.taskIdx);   // left sliver = task-bar colour
+        // (user) When the block is in a BREAK (e.g. an extension's 5-min break tail), the future
+        // sliver is SKY — so the break portion shows a sky fingernail, then fills sky as now passes.
+        edge.style.background = (b.activeBreakAt != null) ? _breakColor() : bidoroTaskBg(b.q, b.taskIdx);
         div.appendChild(edge);
       }
     }
@@ -21849,7 +21970,32 @@ function drawTimeArea() {
 
     const durEl = document.createElement('div');
     durEl.className = 'time-block-dur';
-    durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
+    if (b._actualExt) {
+      // (user) Overrun arm: the duration GROWS (planned + extension) and rides the bottom of
+      // the 1/3 arm. Total = from the parent plan's start (so 30m planned + 1m over → "31m").
+      const _par = _renderBlocks.find(p => p && !p._actualExt && !p._preview &&
+        p.q === b.q && p.taskIdx === b.taskIdx && Math.abs(p.endMs - b.startMs) < 1000);
+      const _exStart = _par ? _par.startMs : b.startMs;
+      // A 5-min break tail (Take 5 during the extension) → its own "5m" label at the very bottom,
+      // and the work-extension duration lifted to sit just ABOVE it.
+      const _bkStart = (b.activeBreakAt != null) ? +b.activeBreakAt
+        : (Array.isArray(b.breakSegments) && b.breakSegments.length ? Math.min.apply(null, b.breakSegments.map(s => +s.startMs)) : null);
+      const _hasBreak = (_bkStart != null && _bkStart > _exStart && _bkStart < b.endMs);
+      const _totMs = (_hasBreak ? _bkStart : b.endMs) - _exStart;   // work-extension dur (excludes the break)
+      if (div._extArm) { durEl.classList.add('tb-dur-stacked'); durEl.innerHTML = fmtTimeBlockDurStacked(_totMs); }
+      else durEl.textContent = fmtTimeBlockDur(_totMs);
+      if (_hasBreak) {
+        const _blockH = (b.endMs - b.startMs) || 1;
+        const _bkPct = ((b.endMs - _bkStart) / _blockH) * 100;
+        durEl.style.bottom = 'calc(' + _bkPct.toFixed(1) + '% + 2px)';   // sit above the break tail
+        const bkEl = document.createElement('div');
+        bkEl.className = 'time-block-dur';                                // right-aligned "5m" at the very bottom
+        bkEl.textContent = fmtTimeBlockDur(b.endMs - _bkStart);
+        div.appendChild(bkEl);
+      }
+    } else {
+      durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
+    }
     div.appendChild(durEl);
 
     /* ▲▼ Nudge buttons — adjust bottom edge ±5 min per tap. Positioned just
@@ -22449,6 +22595,9 @@ function drawTimeArea() {
      height set above; re-applies every redraw (the per-second ticker resets it).
      `viewportPx` = the natural (un-stretched) gauge height it should reset to. */
   _fillHomeTimeArea(viewportPx);
+  // (user) Keep the Matrix-switch (⊞→) hint hidden while the task list / gauge resize pushes
+  // the +Add button down onto it (the resize handle redraws here without renderFocusMatrix).
+  try { if (window._updateMatrixHint) window._updateMatrixHint(); } catch (_) {}
 }
 
 /* (user) SHARED minimum height for the two swipe panes (Time & Tasks ↔ Matrix). The two
@@ -22530,6 +22679,24 @@ function _fillHomeTimeArea(viewportPx) {
     } else {
       // First open, no equal-height lock yet: the default window (4h) from viewportPx.
       h = (typeof viewportPx === 'number' && viewportPx > 0) ? viewportPx : Math.round(area.getBoundingClientRect().height);
+      // (user) Extend the gauge DOWN so its bottom edge lines up with the +Add button's bottom
+      // (the tasks column's last element), and CACHE that height. While a +Add is open
+      // (body.tt-adding) the +Add animates out / is replaced by the picker, so DON'T re-measure
+      // it (that made the gauge chase the moving handle down then snap back) — reuse the cached
+      // height so the gauge stays put across Add ⇄ Cancel.
+      try {
+        if (!document.body.classList.contains('tt-adding')) {
+          const _add = document.getElementById('master-add-task');
+          if (_add && !_add.classList.contains('mab-out')) {
+            const _ar = _add.getBoundingClientRect();
+            const _areaTop = area.getBoundingClientRect().top;
+            if (_ar.height > 0 && _ar.bottom > _areaTop) {
+              window._ttAlignedH = Math.round(_ar.bottom - _areaTop);
+            }
+          }
+        }
+        if (window._ttAlignedH > h) h = window._ttAlignedH;
+      } catch (_) {}
     }
     if (h < 0) h = 0;
     tp.style.height   = '';        // auto → tp = gauge + padding (no overflow onto the handle)
@@ -22543,6 +22710,68 @@ function fmtTimeBlockDur(ms) {
   if (min < 60) return min + 'm';
   const h = Math.floor(min / 60), m = min % 60;
   return m ? `${h}h${m}m` : `${h}h`;
+}
+
+/* (user) Duration for the actual-extension ARM (the narrow 1/3 block): when it has BOTH
+   hours and minutes, STACK them on two lines (e.g. 1h30m → "1h" / "30m") so they fit the
+   thin column. Hours-only / minutes-only stay one line. Returns innerHTML. */
+function fmtTimeBlockDurStacked(ms) {
+  const min = Math.max(0, Math.round(ms / 60000));
+  if (min < 60) return min + 'm';
+  const h = Math.floor(min / 60), m = min % 60;
+  return m ? (h + 'h<br>' + m + 'm') : (h + 'h');
+}
+
+/* (user) ㄱ-shape (hexagon) actual-extension clip outline — with ROUNDED corners.
+   Returns a `clip-path: path(...)` string (pixel coords) for an `_actualExt` block so
+   the plan + overrun read as ONE connected block whose ARM (right `armFrac`) drops past
+   a planned block sitting below. Corners are filleted (radius `r`):
+     • the combined block's BOTTOM corners are rounded,
+     • the "shoulder" where it steps in to the arm is rounded (convex),
+     • the "armpit" (the concave angle facing the planned block on its left) is rounded
+       with the SAME radius so the planned block's top-right corner puzzle-fits into it.
+   `cyPx` = pixel Y (from the block top) where the arm begins (a planned block sits below);
+   null → no conflict (full-width, just rounded bottom corners, square top = seam above). */
+function _extClipPath(W, H, cyPx, armFrac, gapPx, r) {
+  r = r || 5;
+  if (!(W > 0) || !(H > 0)) return '';
+  const f = (n) => (Math.round(n * 10) / 10);
+  const armLeft = Math.min(W - r * 2, Math.max(r * 2, W * armFrac + (gapPx || 0)));
+  // No planned block below → seamless full-width block: square top (seam), rounded bottom.
+  if (cyPx == null) {
+    return 'path("M0,0 L' + f(W) + ',0 L' + f(W) + ',' + f(H - r) +
+      ' A' + r + ',' + r + ' 0 0 1 ' + f(W - r) + ',' + f(H) +
+      ' L' + f(r) + ',' + f(H) + ' A' + r + ',' + r + ' 0 0 1 0,' + f(H - r) + ' Z")';
+  }
+  // Too short to carve a ㄱ cleanly → fall back to a full-width rounded-bottom rect.
+  if (H < 3 * r) {
+    return 'path("M0,0 L' + f(W) + ',0 L' + f(W) + ',' + f(H - r) +
+      ' A' + r + ',' + r + ' 0 0 1 ' + f(W - r) + ',' + f(H) +
+      ' L' + f(r) + ',' + f(H) + ' A' + r + ',' + r + ' 0 0 1 0,' + f(H - r) + ' Z")';
+  }
+  let cy = Math.max(0, Math.min(H - 2 * r, cyPx));
+  if (cy <= 0.5) {
+    // Arm hangs straight from the plan above (the planned block, e.g. BOB, sits at the seam):
+    // top-RIGHT square (continues the plan block above seamlessly), top-LEFT a CONCAVE armpit
+    // (so BOB's rounded top-right corner puzzle-fits into it), both bottom corners rounded.
+    return 'path("M' + f(armLeft + r) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H - r) +
+      ' A' + r + ',' + r + ' 0 0 1 ' + f(W - r) + ',' + f(H) +
+      ' L' + f(armLeft + r) + ',' + f(H) + ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +
+      ' L' + f(armLeft) + ',' + r + ' A' + r + ',' + r + ' 0 0 0 ' + f(armLeft + r) + ',0 Z")';
+  }
+  cy = Math.max(r, cy);
+  // ㄱ silhouette (clockwise): full-width head down to `cy`, then the right arm.
+  return 'path("M0,0' +
+    ' L' + f(W) + ',0' +                                              // top edge
+    ' L' + f(W) + ',' + f(H - r) +                                    // arm right edge
+    ' A' + r + ',' + r + ' 0 0 1 ' + f(W - r) + ',' + f(H) +          // arm bottom-right (convex)
+    ' L' + f(armLeft + r) + ',' + f(H) +                             // arm bottom edge
+    ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +    // arm bottom-left (convex)
+    ' L' + f(armLeft) + ',' + f(cy + r) +                            // arm inner-left edge up
+    ' A' + r + ',' + r + ' 0 0 0 ' + f(armLeft - r) + ',' + f(cy) +   // ARMPIT (concave)
+    ' L' + f(r) + ',' + f(cy) +                                       // head bottom edge
+    ' A' + r + ',' + r + ' 0 0 1 0,' + f(cy - r) +                    // head bottom-left (convex)
+    ' L0,0 Z")';
 }
 
 /* Trim scheduled gauge blocks for a finished task:
@@ -24457,6 +24686,16 @@ const Q_TASK_DARK = {
 function qTaskDark(q) { return (Q_TASK_DARK[q] || Q_TASK_DARK.q4)[0]; }   // uniform per quadrant
 /* Is the dark (solarized) theme active? */
 function bidoroDarkTheme() { return document.documentElement.getAttribute('data-theme') === 'solarized'; }
+/* The current THEME accent (`--accent` per data-theme) as a #RRGGBB string — used by the
+   actual-extension count-up timer so its ring/timer/badge match the theme, not a quadrant. */
+function _bidoroThemeAccent() {
+  try {
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) return v;
+    if (v) return v;
+  } catch (_) {}
+  return '#2563EB';
+}
 /* Idle "no task" art: dark theme uses the transparent-background dark variant. */
 function noTaskArtSrc() { return bidoroDarkTheme() ? 'no-task-dark.png?v=1' : 'no-task.png?v=1'; }
 /* Theme-aware task colours used by BOTH the task bars and the gauge blocks:
@@ -24532,17 +24771,25 @@ function focusQuadAccent(q) {
    block — so the focus ring STRICTLY follows the gauge block, not merely at.q.
    Falls back to the active timer's quadrant when no task block spans `now`. */
 function _focusBlockQAt(at, now) {
-  let q = at ? at.q : null;
+  const q = at ? at.q : null;
   try {
     const blocks = state.scheduledBlocks || [];
+    // 1) The ACTIVE combined block → follow the now-line into its current sub-task colour.
     for (const b of blocks) {
       if (!b || b.isBreak || b.kind === 'tracker') continue;
-      if (Array.isArray(b.taskSegs) && b.taskSegs.length) {
-        for (const sg of b.taskSegs) {
-          if (typeof sg.q === 'string' && (+sg.startMs) <= now && now < (+sg.endMs)) return sg.q;
-        }
-      } else if (typeof b.q === 'string' && (+b.startMs) <= now && now < (+b.endMs)) {
-        return b.q;
+      if (!(Array.isArray(b.taskSegs) && b.taskSegs.length)) continue;
+      if (!(at && b.taskSegs.some(sg => sg.q === at.q && sg.taskIdx === at.idx))) continue;   // only the active combined block
+      for (const sg of b.taskSegs) {
+        if (typeof sg.q === 'string' && (+sg.startMs) <= now && now < (+sg.endMs)) return sg.q;
+      }
+    }
+    // 2) The ACTIVE task's OWN block under the now-line. (Never follow a DIFFERENT task's
+    //    overlapping plan block — that caused the "hero shows the wrong task" desync.)
+    if (at) {
+      for (const b of blocks) {
+        if (!b || b.isBreak || b.kind === 'tracker') continue;
+        if (Array.isArray(b.taskSegs) && b.taskSegs.length) continue;
+        if (b.q === at.q && b.taskIdx === at.idx && (+b.startMs) <= now && now < (+b.endMs)) return b.q;
       }
     }
   } catch (_) {}
@@ -24555,15 +24802,24 @@ function _focusBlockQAt(at, now) {
 function _focusBlockTaskAt(at, now) {
   try {
     const blocks = state.scheduledBlocks || [];
+    // 1) The ACTIVE combined block → follow the now-line into its current sub-task.
     for (const b of blocks) {
       if (!b || b.isBreak || b.kind === 'tracker') continue;
-      if (Array.isArray(b.taskSegs) && b.taskSegs.length) {
-        for (const sg of b.taskSegs) {
-          if (typeof sg.q === 'string' && typeof sg.taskIdx === 'number' && (+sg.startMs) <= now && now < (+sg.endMs))
-            return { q: sg.q, idx: sg.taskIdx, name: sg.taskName };
-        }
-      } else if (typeof b.q === 'string' && typeof b.taskIdx === 'number' && (+b.startMs) <= now && now < (+b.endMs)) {
-        return { q: b.q, idx: b.taskIdx, name: b.taskName };
+      if (!(Array.isArray(b.taskSegs) && b.taskSegs.length)) continue;
+      if (!(at && b.taskSegs.some(sg => sg.q === at.q && sg.taskIdx === at.idx))) continue;   // only the active combined block
+      for (const sg of b.taskSegs) {
+        if (typeof sg.q === 'string' && typeof sg.taskIdx === 'number' && (+sg.startMs) <= now && now < (+sg.endMs))
+          return { q: sg.q, idx: sg.taskIdx, name: sg.taskName };
+      }
+    }
+    // 2) The ACTIVE task's OWN block under the now-line. Never switch the header to a
+    //    DIFFERENT task's overlapping plan block (the "hero shows wrong task" desync).
+    if (at) {
+      for (const b of blocks) {
+        if (!b || b.isBreak || b.kind === 'tracker') continue;
+        if (Array.isArray(b.taskSegs) && b.taskSegs.length) continue;
+        if (b.q === at.q && b.taskIdx === at.idx && (+b.startMs) <= now && now < (+b.endMs))
+          return { q: b.q, idx: b.taskIdx, name: b.taskName };
       }
     }
   } catch (_) {}
@@ -24771,12 +25027,21 @@ function _takeFiveBreak() {
   const now = Date.now();
   _settleKeepGoing();
   at.keepGoingCount = 0;
+  at.extStartedAt = null;   // extension over (Take 5) → count-up anchor cleared
   if (Array.isArray(state.scheduledBlocks) && typeof at.q === 'string' && typeof at.idx === 'number') {
     let blk = state.scheduledBlocks.find(b => b.q === at.q && b.taskIdx === at.idx && (b.activeAt != null || b.activeBreakAt != null) && !b.activeEndMs);
     if (!blk) { let best = Infinity; for (const b of state.scheduledBlocks) { if (b.q !== at.q || b.taskIdx !== at.idx) continue; const d = Math.abs(b.endMs - now); if (d < best) { blk = b; best = d; } } }
     if (blk) {
       if (blk.activeAt != null) { if (!Array.isArray(blk.workedSegments)) blk.workedSegments = []; blk.workedSegments.push({ startMs: blk.activeAt, endMs: now }); blk.activeAt = null; }
-      if (blk._combine && (+blk.endMs) > now + 60000) {
+      if (blk._actualExt) {
+        // (user) Break during an EXTENSION → keep the SAME 1/3 arm (no separate block): open a
+        // break segment and extend the arm by 5 min (sky-blue LEFT fingernail + full sky as the
+        // now-line passes). The work-extension stays above; the break is a fixed 5-min tail.
+        blk.activeBreakAt = now;
+        blk.activeEndMs = null;
+        if ((+blk.endMs) < now + POMO_SHORT_MS) blk.endMs = now + POMO_SHORT_MS;
+        blk._extending = false;            // the 5-min break is fixed — _growKeepGoing must not track it
+      } else if (blk._combine && (+blk.endMs) > now + 60000) {
         blk.activeBreakAt = now;                       // open the break INSIDE the same block
         blk.activeEndMs = null;
       } else {
@@ -25978,6 +26243,9 @@ function renderImDoing() {
     // ONE quadrant accent for the WHOLE header (ring/timer/pause/play/badge) —
     // STRICTLY the quadrant of the gauge task block under the now-line (4 colours),
     // NOT the per-task/segment shade. Break stays sky-blue so it reads apart.
+    // (user) During the actual extension ("keep going") the ring stays the TASK's quadrant
+    // colour (e.g. q1 = rose) so it MATCHES the pink task — only the timer becomes count-UP.
+    const _extended = (at.phase === 'work' && (+at.keepGoingCount || 0) > 0);
     const accent = (at.phase === 'work') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : '#38BDF8';
     const _ac6 = /^#[0-9a-f]{6}$/i.test(accent);
     // Badge — PER TASK, today (matched by name, robust across reorder/delete):
@@ -26002,7 +26270,6 @@ function renderImDoing() {
     // (첨부2) Take5 pill — visible only while a "keep going" work extension is running.
     const _t5 = document.getElementById('fc-take5');
     if (_t5) {
-      const _extended = (at.phase === 'work' && (+at.keepGoingCount || 0) > 0);
       _t5.classList.toggle('hidden', !_extended);
       if (_extended) {
         _t5.textContent = (typeof tr === 'function') ? tr('Take 5') : 'Take 5';
@@ -26035,16 +26302,33 @@ function renderImDoing() {
         : '<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor"/></svg>';
     }
     try { if (typeof _syncPhaseToBlock === 'function') _syncPhaseToBlock(at); } catch (_) {}   // (user) ring/countdown follow the gauge block under the now-line (live on resize)
-    const remMs = (typeof getPomodoroRemainingMs === 'function') ? getPomodoroRemainingMs() : 0;
-    setLeft(fmtMMSS(remMs));
-    // Live ring: red (amber in last 2 min) on work, sky-blue on break.
-    const phaseDur = (+at.phaseDurationMs) || (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
-    const fracElapsed = phaseDur > 0 ? Math.max(0, Math.min(1, 1 - remMs / phaseDur)) : 0;
-    // Ring = ONE solid arc in the quadrant accent (work) / sky-blue (break). The
-    // arc, knob, track, timer text and pause/play button all derive from this
-    // single segment colour inside setPomo, so the whole ring matches the badge.
-    const ringSegs = [{ endFrac: 1, color: accent }];
-    setPomo(fracElapsed, ringSegs);
+    const _leftEl = document.getElementById('fc-left');
+    if (_extended) {
+      // (user) "q1처럼" — still SERIOUS work (name/Session/Take 5 stay), but past the plan the
+      // timer is a count-UP stopwatch from 0:00 (continuous across keep-going rounds). The ring
+      // keeps the TASK's quadrant colour (matches the task bar) and fills over each 25-min lap.
+      const _ref = at.paused ? (at.pausedAt || Date.now()) : Date.now();
+      const _extStart = (+at.extStartedAt) || (+at.phaseStartedAt) || _ref;
+      const _elapsed = Math.max(0, _ref - _extStart);
+      const _txt = _fmtUptimer(_elapsed);
+      setLeft(_txt);
+      if (_leftEl) _leftEl.style.fontSize = (_txt.length >= 8) ? '0.95rem' : (_txt.length >= 7 ? '1.1rem' : '');
+      const LAP = (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
+      const _frac = LAP > 0 ? ((_elapsed % LAP) / LAP) : 0;
+      setPomo(_frac, [{ endFrac: 1, color: accent }]);
+    } else {
+      if (_leftEl) _leftEl.style.fontSize = '';
+      const remMs = (typeof getPomodoroRemainingMs === 'function') ? getPomodoroRemainingMs() : 0;
+      setLeft(fmtMMSS(remMs));
+      // Live ring: red (amber in last 2 min) on work, sky-blue on break.
+      const phaseDur = (+at.phaseDurationMs) || (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
+      const fracElapsed = phaseDur > 0 ? Math.max(0, Math.min(1, 1 - remMs / phaseDur)) : 0;
+      // Ring = ONE solid arc in the quadrant accent (work) / sky-blue (break). The
+      // arc, knob, track, timer text and pause/play button all derive from this
+      // single segment colour inside setPomo, so the whole ring matches the badge.
+      const ringSegs = [{ endFrac: 1, color: accent }];
+      setPomo(fracElapsed, ringSegs);
+    }
   } else {
     // q4 (Not important · Not urgent) — a gentle UP-TIMER ring (no countdown). The label
     // rotates a duration-toned, non-nagging message; the ring fills + darkens per 25-min
@@ -30686,7 +30970,16 @@ function maybeShowRecoveryPrompt() {
   if (Date.now() - phaseEnd < 30 * 60 * 1000) return false;   // recent → let the normal flow handle it
   at.pendingPhaseConfirm = true;                  // freeze so tickPomodoro doesn't also act
   saveState();
-  showRecoveryPrompt(at, phaseEnd);
+  // (user) Use the SAME clear "Welcome back 👋 — the screen was off for {X} — did you keep working
+  // on {task}?" dialog as the suspend/wake path (shows the elapsed off-time + a task-coloured
+  // "Yes, I did" button), instead of the old confusing "Looks like time passed / I finished it ·
+  // I kept working" prompt. Yes → credits the off-time + keeps working; No → planned-only.
+  const _nm = (state.tasks[at.q] && state.tasks[at.q][at.idx] && state.tasks[at.q][at.idx].text) || 'your task';
+  if (typeof window.__reopenDidYouDoIt === 'function') {
+    window.__reopenDidYouDoIt({ q: at.q, idx: at.idx, name: _nm }, phaseEnd, phaseEnd);
+  } else {
+    showRecoveryPrompt(at, phaseEnd);             // fallback (the suspend dialog wasn't wired)
+  }
   return true;
 }
 // Defer past the initial render + likely cloud-sync settle, then check once.
@@ -31305,7 +31598,9 @@ function _updateMatrixHint() {
   try {
     const hr = h.getBoundingClientRect();
     if (hr.width > 0 && hr.height > 0) {
-      document.querySelectorAll('#focus-matrix .add-task').forEach(a => {
+      // The +Add lives in the matrix cells (#focus-matrix .add-task) AND, in split T&T, as the
+      // single master button (#master-add-task). Hide the hint the instant EITHER overlaps it.
+      document.querySelectorAll('#focus-matrix .add-task, #master-add-task').forEach(a => {
         const ar = a.getBoundingClientRect();
         if (ar.width > 0 && ar.height > 0 &&
             hr.left < ar.right && hr.right > ar.left && hr.top < ar.bottom && hr.bottom > ar.top) overlap = true;
@@ -31910,6 +32205,8 @@ if (_editToggle) {
     });
     if (_spawn.length && Array.isArray(state.scheduledBlocks)) state.scheduledBlocks.push(..._spawn);
     const at = state.activeTimer;
+    // (user) Record the answered boundary (synced) so this recovery popup can't re-pop on another device.
+    try { const _bb = (+planEndMs || +capMs || 0); if (_bb > _answeredPhaseConfirmBoundary) _answeredPhaseConfirmBoundary = _bb; } catch (_) {}
     if (at && at.type === 'pomodoro' && at.q === task.q && at.idx === task.idx) { at.pendingPhaseConfirm = false; state.activeTimer = null; }
     try { _settleKeepGoing(); } catch (_) {}
     try { saveState(); } catch (_) {}
@@ -31922,8 +32219,10 @@ if (_editToggle) {
   }
   // No → planned only: cap at the plan end (boundary), no extension credited.
   function _rewind(task, boundaryMs){ _settleRecovery(task, boundaryMs, boundaryMs); }
-  // Yes, I did → extension to now: plan block stays, overrun → right-column ext block.
-  function _keep(task, boundaryMs){ _settleRecovery(task, Date.now(), boundaryMs); }
+  // Yes, I did → credit the WHOLE off-period as worked AND keep timing LIVE (same as the
+  // <10-min silent path): the plan stays, the overrun is ONE live `_actualExt` 1/3-arm that
+  // ran straight down through the off-time and keeps growing — NOT a finalized/stopped block.
+  function _keep(task, boundaryMs){ _autoContinue(task, boundaryMs); }
   // Screen off < 10 min → no question: assume you kept working, extend to now, and
   // keep timing (a fresh work phase from now). Deep Focus only — other modes still ask.
   function _autoContinue(task, boundaryMs){
@@ -31960,6 +32259,7 @@ if (_editToggle) {
       ext.activeEndMs = (cap >= now) ? null : cap;
       ext.endMs = Math.max(cap, now);
     }
+    try { if (+boundaryMs > _answeredPhaseConfirmBoundary) _answeredPhaseConfirmBoundary = +boundaryMs; } catch (_) {}   // (user) synced answered mark → no re-pop elsewhere
     const at = state.activeTimer;
     if (at && at.type === 'pomodoro' && at.q === task.q && at.idx === task.idx) {
       at.pendingPhaseConfirm = false;
@@ -32005,7 +32305,13 @@ if (_editToggle) {
       const _yb = ov.querySelector('.reopen-ask-yes');
       if (_yb) { _yb.style.background = _yc.bg; _yb.style.borderColor = _yc.bg; _yb.style.color = _yc.fg; }
       const _nb = ov.querySelector('.reopen-ask-no');
-      if (_nb) { _nb.style.background = '#fff'; _nb.style.borderColor = 'var(--card-border,#d1d5db)'; _nb.style.color = 'var(--text-main,#374151)'; }
+      if (_nb) {
+        // (user) Dark-mode: a dark surface instead of glaring white (matches the theme).
+        const _dk = document.documentElement.getAttribute('data-theme') === 'solarized';
+        _nb.style.background = _dk ? 'var(--surface-2,#0E4A57)' : '#fff';
+        _nb.style.borderColor = 'var(--card-border,#d1d5db)';
+        _nb.style.color = 'var(--text-main,#374151)';
+      }
     } catch (_) {}
     const close = () => { try { ov.remove(); } catch (_) {} _open = false; };
     ov.querySelector('.reopen-ask-yes').addEventListener('click', () => { _keep(task, boundaryMs); close(); });   // extension to now
@@ -32307,7 +32613,7 @@ function _syncDueChip(){
   const btn = document.getElementById('due-toggle'); if (!btn) return;
   const lbl = btn.querySelector('.hd-lbl');
   btn.classList.toggle('has-set', !!_addDueDate);
-  if (lbl) lbl.textContent = _addDueDate ? _fmtDueChip(_addDueDate) : 'Due date';
+  if (lbl) lbl.textContent = _addDueDate ? _fmtDueChip(_addDueDate) : 'Due';
 }
 /* Shared due-date picker: quick chips (Today/Tomorrow/Next week) + a mini month
    calendar. open(currentKey, onCommit) → onCommit(newKey | null) on Done/Clear. */
@@ -36187,6 +36493,12 @@ setInterval(() => {
 
     // Deep Focus actual-extension blocks → right 1/3; the plans they overran → left 2/3.
     const _extRangesW = blocks.filter(x => x && x._actualExt);
+    // Shared 1/3-split geometry (px) so the ARM clip and the shifted planned block use the
+    // SAME width → the plan's top-right corner puzzle-fits the armpit (tight 4 px gap).
+    const _blkWW = (gaugeInner ? gaugeInner.clientWidth : 0);
+    const _extWW = _blkWW - 50 - 4;
+    const _armLeftPxW = 50 + _extWW * 0.66 + 2;
+    const _planRightInsetW = Math.max(0, Math.round(_blkWW - _armLeftPxW + 4));
 
     blocks.forEach((b, idx) => {
       if (b.endMs <= topMs || b.startMs >= bottomMs) return;
@@ -36228,17 +36540,17 @@ setInterval(() => {
             if (_confMs == null || c < _confMs) _confMs = c;
           }
         }
-        if (_confMs == null) {
-          /* free below → keep FULL width */
-        } else if (_confMs <= b.startMs + 1) {
-          div.style.left = 'calc(66% + 2px)';
-        } else {
-          const _cy = Math.max(0, Math.min(100, (_confMs - b.startMs) / (b.endMs - b.startMs) * 100));
-          div.style.clipPath = 'polygon(0 0, 100% 0, 100% 100%, 66% 100%, 66% ' + _cy + '%, 0 ' + _cy + '%)';
-        }
+        // Rounded ㄱ outline (one connected block, filleted shoulder + armpit + bottom).
+        const _exH = (gaugeInner ? gaugeInner.clientHeight : 0) * htPct / 100;
+        const _span = (b.endMs - b.startMs) || 1;
+        const _cyPx = (_confMs == null) ? null
+          : Math.max(0, Math.min(_exH, (_confMs - b.startMs) / _span * _exH));
+        div._extArm = (_confMs != null);               // dur label stacks on 2 lines only in the 1/3 arm
+        const _cp = _extClipPath(_extWW, _exH, _cyPx, 0.66, 2, 5);
+        if (_cp) div.style.clipPath = _cp;
       } else if (_extRangesW.length && _extRangesW.some(x => x !== b &&
           b.startMs < x.endMs && b.endMs > x.startMs)) {
-        div.style.right = 'calc(34% + 2px)';
+        div.style.right = _planRightInsetW + 'px';                // align right edge to the arm (puzzle fit)
       }
       // Parent of an extension → drop the bottom border so parent + ext read as ONE ㄱ shape.
       if (!b._actualExt && _extRangesW.length && _extRangesW.some(x =>
@@ -36354,7 +36666,16 @@ setInterval(() => {
       /* -- Duration watermark (centred, 70 % of block height) -- */
       const durEl = document.createElement('div');
       durEl.className = 'tg-block-dur';
-      durEl.textContent = fmtDur(b.endMs - b.startMs);
+      if (b._actualExt) {
+        // (user) Overrun arm: GROWING duration (planned + extension) at the bottom of the 1/3 arm.
+        const _par = blocks.find(p => p && !p._actualExt && !p._preview &&
+          p.q === b.q && p.taskIdx === b.taskIdx && Math.abs(p.endMs - b.startMs) < 1000);
+        const _totMs = b.endMs - (_par ? _par.startMs : b.startMs);
+        if (div._extArm) { durEl.classList.add('tb-dur-stacked'); durEl.innerHTML = fmtTimeBlockDurStacked(_totMs); }
+        else durEl.textContent = fmtDur(_totMs);
+      } else {
+        durEl.textContent = fmtDur(b.endMs - b.startMs);
+      }
       durEl.style.fontSize = durFontSize(htPct);
       div.appendChild(durEl);
 
@@ -38084,9 +38405,18 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     R_BOT = R_TOP = Math.max(40, Math.min(140, +v.R || 78));
     H = Math.max(50, Math.min(220, +v.H || 116));
     wallT = (v.wallT != null) ? Math.max(0, Math.min(18, +v.wallT)) : 3;
-    tilt = (v.tilt != null) ? Math.max(0, Math.min(75, +v.tilt)) : 6;
-    persp = Math.max(120, Math.min(800, +v.persp || 194));
-    viewAbove = !!v.viewAbove;
+    // (user) The HOME bucket has TWO framings: IDLE (no side selected) = a fixed view from BELOW
+    // (24° tilt, 229px perspective); SELECTED (a side is picked) = the configured Settings view.
+    // The +Add side-panel and the watering full-screen always use the configured view.
+    const _isHome = scene && !scene.classList.contains('b3d-in-panel')
+      && !(scene.closest && scene.closest('.water-bucket-host'));
+    if (_isHome && heightSel === -1) {
+      tilt = 24; persp = 229; viewAbove = false;
+    } else {
+      tilt = (v.tilt != null) ? Math.max(0, Math.min(75, +v.tilt)) : 6;
+      persp = Math.max(120, Math.min(800, +v.persp || 194));
+      viewAbove = !!v.viewAbove;
+    }
     if (scene) scene.style.perspective = persp + 'px';
   }
   let heights = Array.from({ length: N }, () => 1), waterLvl = 0.42, heightSel = -1;
@@ -38181,13 +38511,14 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // colour (a deep shade of the face hue + white text), NEVER red (red is reserved
       // for the timeline's current-time line).
       if (sel && !_ip) {
-        const ph = Math.max(7, Math.min(12, tf * 0.82));
+        // (user) Smaller pill, nudged UP so it sits above the side title (doesn't cover it).
+        const ph = Math.max(6, Math.min(10, tf * 0.70));
         const pill = document.createElement('div'); pill.className = 'b3d-face-badge'; pill.textContent = lvl + '/10';
         pill.style.height = ph.toFixed(1) + 'px';
         pill.style.fontSize = (ph * 0.70).toFixed(1) + 'px';
         pill.style.lineHeight = ph.toFixed(1) + 'px';
-        pill.style.padding = '0 ' + Math.max(2, ph * 0.34).toFixed(1) + 'px';
-        pill.style.top = Math.max(1, Math.round(top0 - ph * 0.10)) + 'px';
+        pill.style.padding = '0 ' + Math.max(2, ph * 0.30).toFixed(1) + 'px';
+        pill.style.top = Math.max(0, Math.round(top0 - ph * 0.75)) + 'px';
         pill.style.background = shade(COLORS[i % COLORS.length], 0.46);   // deep area hue; white text passes WCAG AA (≥5.5:1) on all 7 colours
         pill.style.color = '#fff';
         el.appendChild(pill);
@@ -38246,6 +38577,17 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   function apply(){
     const pourT = pourTilt ? 'rotateX(' + (-pourTilt) + 'deg) ' : '';   // forward pour tips toward the viewer (OUTERMOST = screen-space, after the spin)
     world.style.transform = pourT + 'rotateX(' + (viewAbove ? tilt : -tilt) + 'deg) rotateY(' + spin + 'deg)';
+  }
+  // (user) Glide the view between the IDLE and SELECTED framings (select / deselect a side).
+  // Enables the CSS transition for ~0.64s, re-applies the view now, then clears it so live
+  // rotate-drag and pour stay instant.
+  let _viewAnimTimer = 0;
+  function _animView(){
+    if (!scene) return;
+    scene.classList.add('b3d-anim');
+    try { _applyView(); apply(); } catch (_) {}
+    if (_viewAnimTimer) clearTimeout(_viewAnimTimer);
+    _viewAnimTimer = setTimeout(function () { if (scene) scene.classList.remove('b3d-anim'); _viewAnimTimer = 0; }, 640);
   }
   /* LIVE MIRROR — poll state.bucket each frame (the SVG module owns the state + the
      15 public fns + interaction; this just reflects it visually). Water mode → add
@@ -38375,7 +38717,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         _drag.mode = (!_ipDrag && _drag.i >= 0 && vertical && (_drag.i === heightSel || _drag.fromDesc)) ? 'adjust' : 'rotate';
         if (_drag.mode === 'adjust' && _drag.fromDesc && heightSel !== _drag.i) { heightSel = _drag.i; _selClass(); }
       }
-      if (_drag.mode === 'rotate') { spin = _drag.spin0 + dx * 0.55; apply(); return; }
+      if (_drag.mode === 'rotate') { if (scene) scene.classList.remove('b3d-anim'); spin = _drag.spin0 + dx * 0.55; apply(); return; }
       const lvl = Math.max(1, Math.min(10, Math.round((_drag.h0 - dy / H) * 10)));   // up = higher level
       if (lvl !== _drag.lvl) { try { if (window.bidoroHaptic) window.bidoroHaptic('light'); } catch (_) {} _emitSel2(_drag.i, lvl); }   // haptic + live coaching update per level step
       _drag.lvl = lvl; heights[_drag.i] = lvl / 10;
@@ -38393,7 +38735,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
           if (scene.classList.contains('b3d-in-panel')) {                       // +Add panel: tap TOGGLES — re-tapping the selected face DESELECTS it (→ no area / None)
             heightSel = (heightSel === _drag.i) ? -1 : _drag.i; build();
             try { if (window.__mcavPickPillar) window.__mcavPickPillar(heightSel); } catch (_) {}
-          } else { heightSel = (heightSel === _drag.i) ? -1 : _drag.i; _selClass(); build(); }   // home: tap → toggle select
+          } else { heightSel = (heightSel === _drag.i) ? -1 : _drag.i; _selClass(); build(); _animView(); }   // home: tap → toggle select (glide idle⇄selected view)
         }
         else if (_drag.mode === 'adjust' && _drag.i >= 0 && _drag.lvl) {
           try { if (window.bidoroBucketSetPillarLevel) window.bidoroBucketSetPillarLevel(_drag.i, _drag.lvl); } catch (_) {}
@@ -38454,7 +38796,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
   };
   /* Clear any selected wall on the 3D home bucket (the watering full-screen calls
      this on enter so a face picked at home doesn't stay highlighted inside it). */
-  window.bidoroBucket3DDeselect = function () { if (heightSel !== -1) { heightSel = -1; _selClass(); build(); } };
+  window.bidoroBucket3DDeselect = function () { if (heightSel !== -1) { heightSel = -1; _selClass(); build(); _animView(); } };
   /* Rotate the home bucket so face `frac` (FRACTIONAL pillar index 0..N-1) faces the
      front — the +Add side picker calls this as you slide so the bucket turns live.
      null/NaN = leave the current rotation (used for the "None" item). */
@@ -40899,7 +41241,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     };
     function selectedTileType(){ return TILE_TYPES[state.selectedTileType] ? state.selectedTileType : 'soil'; }
     function tileTypePrice(){ return TILE_TYPES[selectedTileType()].price; }
-    const RANGE = 5;                                          // field extends ±5 cells
+    const RANGE = 7;                                          // (user) field extends ±7 cells → a 15×15 grid
     // Iso geometry FROM earth.png: top-face diamond 325×250 inside a 362×319 image,
     // diamond centre ≈ image centre. Scaled to the current 264px display.
     const TILE_W = 264, TILE_H = TILE_W * (319 / 362);
@@ -41079,9 +41421,18 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     // 2.4× (close-up). The bucket/droplets live OUTSIDE the field, so their cell alignment
     // multiplies the cell offset by gardenZoom (see _alignBucketToCell + the droplet target).
     let gardenZoom = 1; const GZ_MIN = 0.6, GZ_MAX = 2.4;
+    function clampPan() {
+      // (user) Don't slide past the 15×15 grid bounds. Cell centres span ±2·RANGE·O on each axis;
+      // bringing the extreme cell to the viewport centre needs that much pan (×zoom) — clamp there.
+      const maxX = 2 * RANGE * OX * gardenZoom, maxY = 2 * RANGE * OY * gardenZoom;
+      if (panX >  maxX) panX =  maxX; else if (panX < -maxX) panX = -maxX;
+      if (panY >  maxY) panY =  maxY; else if (panY < -maxY) panY = -maxY;
+    }
     function applyPan() {
+      clampPan();
       if (fieldEl) fieldEl.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + gardenZoom + ')';
       if (_bucketTracking && _pourCell) _alignBucketToCell(_pourCell.r, _pourCell.c, false);   // bucket follows its tile as the field pans
+      try { _miniOnPan(); } catch (_) {}   // (user) reveal / refresh the minimap while panning far
     }
     function cellXY(r, c) { return { x: (c - r) * OX, y: (c + r) * OY }; }
     function tileSrc(r, c) {                                   // per-tile image by its .tt type; legacy/untyped → earth.png
@@ -41636,8 +41987,60 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       }, { passive: false });
       vpEl.addEventListener('mousedown', (e) => { panBegin(e.clientX, e.clientY); const mm = (ev) => panTo(ev.clientX, ev.clientY); const mu = () => { panStop(); window.removeEventListener('mousemove', mm); window.removeEventListener('mouseup', mu); }; window.addEventListener('mousemove', mm); window.addEventListener('mouseup', mu); });
     }
-    function enterBuild() { buildOn = true;  viewPour.classList.add('hidden');  viewBuild.classList.remove('hidden'); panX = 0; panY = 0; gardenZoom = 1; applyPan(); }
-    function exitBuild()  { buildOn = false; buildMode = false; plantMode = false; sellMode = false; viewBuild.classList.add('hidden'); viewPour.classList.remove('hidden'); earthSlot.classList.remove('active'); if (seedSlot) seedSlot.classList.remove('active'); if (trowelSlot) trowelSlot.classList.remove('active'); if (confirmEl) confirmEl.classList.add('hidden'); pendingCell = null; pendingSeed = null; }
+    // ── (user) Minimap: a 15×15 silhouette map, top-left. Hidden until you pan >300px from
+    //    centre; fades 3s after movement stops; tap → glide the pan back to centre. Land tiles =
+    //    black, planted items = grey, empty = transparent; the square never exceeds the bucket. ──
+    const miniEl = document.getElementById('garden-minimap');
+    let _miniHideTO = 0, _miniRAF = 0;
+    function _miniCenterCell() {                       // which (r,c) sits at the viewport centre now
+      const cx = -panX / (gardenZoom || 1), cy = -panY / (gardenZoom || 1);
+      const a = cx / OX, b = cy / OY;                  // cellXY: x=(c−r)·OX, y=(c+r)·OY
+      return { r: Math.round((b - a) / 2), c: Math.round((b + a) / 2) };
+    }
+    function renderMinimap() {
+      if (!miniEl) return;
+      miniEl.innerHTML = '';
+      const _cell = (r, c, cls) => {
+        if (Math.abs(r) > RANGE || Math.abs(c) > RANGE) return;
+        const d = document.createElement('div');
+        d.className = 'mm-cell ' + cls;
+        d.style.gridRow = String(r + RANGE + 1);      // r ∈ −RANGE..RANGE → 1..(2·RANGE+1)
+        d.style.gridColumn = String(c + RANGE + 1);
+        miniEl.appendChild(d);
+      };
+      gardenTiles().forEach(t => _cell(t.r, t.c, 'mm-land'));    // land tile → black silhouette
+      gardenSeeds().forEach(s => _cell(s.r, s.c, 'mm-plant'));   // planted item → grey
+      const here = _miniCenterCell(); _cell(here.r, here.c, 'mm-here');   // where you're looking
+      try {                                            // cap the square to the centre bucket's height
+        const host = document.getElementById('water-bucket-host');
+        const bh = host ? Math.round(host.getBoundingClientRect().height) : 0;
+        if (bh > 40) { const sz = Math.min(132, bh); miniEl.style.width = sz + 'px'; miniEl.style.height = sz + 'px'; }
+      } catch (_) {}
+    }
+    function _miniShow() {
+      if (!miniEl) return;
+      miniEl.classList.remove('hidden', 'mm-fade');
+      renderMinimap();
+      if (_miniHideTO) clearTimeout(_miniHideTO);
+      _miniHideTO = setTimeout(() => { if (miniEl) miniEl.classList.add('mm-fade'); }, 3000);   // fade out 3s after the last move
+    }
+    function _miniOnPan() { if (Math.hypot(panX, panY) > 300) _miniShow(); }   // reveal once panned far
+    function _miniHideNow() { if (miniEl) { miniEl.classList.add('hidden'); } if (_miniHideTO) { clearTimeout(_miniHideTO); _miniHideTO = 0; } }
+    function _miniRecenter() {
+      cancelInertia();
+      if (_miniRAF) cancelAnimationFrame(_miniRAF);
+      const x0 = panX, y0 = panY, t0 = performance.now(), DUR = 360, ease = p => 1 - Math.pow(1 - p, 3);
+      const step = () => {
+        const p = Math.min(1, (performance.now() - t0) / DUR), k = ease(p);
+        panX = x0 * (1 - k); panY = y0 * (1 - k); applyPan();
+        if (p < 1) _miniRAF = requestAnimationFrame(step); else { _miniRAF = 0; panX = 0; panY = 0; applyPan(); }
+      };
+      _miniRAF = requestAnimationFrame(step);
+    }
+    if (miniEl) miniEl.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _miniRecenter(); });
+
+    function enterBuild() { buildOn = true;  viewPour.classList.add('hidden');  viewBuild.classList.remove('hidden'); panX = 0; panY = 0; gardenZoom = 1; applyPan(); _miniHideNow(); }
+    function exitBuild()  { buildOn = false; buildMode = false; plantMode = false; sellMode = false; viewBuild.classList.add('hidden'); viewPour.classList.remove('hidden'); earthSlot.classList.remove('active'); if (seedSlot) seedSlot.classList.remove('active'); if (trowelSlot) trowelSlot.classList.remove('active'); if (confirmEl) confirmEl.classList.add('hidden'); pendingCell = null; pendingSeed = null; _miniHideNow(); }
     function plantSeed() {
       if (!pendingSeed) return;
       const cell = pendingSeed; pendingSeed = null;
