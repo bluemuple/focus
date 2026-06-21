@@ -2054,9 +2054,9 @@
      after movement stops; tap → recenter. Square; height never exceeds the centre bucket. */
   .garden-minimap {
     position: absolute; top: 14px; left: 14px; z-index: 30;
-    width: min(30vw, 132px); height: min(30vw, 132px); padding: 5px; box-sizing: border-box;
-    background: rgba(255,255,255,.72); border: 1px solid rgba(0,0,0,.12);
-    border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.18);
+    width: calc(min(30vw, 132px) - 10px); height: calc(min(30vw, 132px) - 10px); padding: 5px; box-sizing: border-box;   /* (user) −10px per side */
+    background: rgba(255,255,255,.2); border: 1px solid #fff;
+    border-radius: 10px;
     display: grid; gap: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
     grid-template-columns: repeat(15, 1fr); grid-template-rows: repeat(15, 1fr);
     opacity: 1; transition: opacity .35s ease;
@@ -3192,6 +3192,11 @@
       display: inline-flex; flex-direction: column; align-items: flex-end; justify-content: center;
       flex: 0 0 auto; text-align: right; gap: 1px;
     }
+    /* (user) iPhone-portrait 2×2 matrix: let the name fill the bar so the
+       play/pause circle right-aligns to the bar's far edge instead of tucking
+       in just after a short name. (The name <input> otherwise keeps its default
+       intrinsic width via flex:0 1 auto, leaving dead space on the right.) */
+    body.tt-flip #focus-matrix .task-row .task-text { flex: 1 1 auto; }
   }
   /* Pillar tag dot (set via the +Add pillar picker) — small colour circle = the bucket face. */
   .task-row .task-pillar-dot { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 1px solid rgba(0,0,0,.22); margin: 0 1px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
@@ -4532,6 +4537,21 @@
   body.scrolled-now .topbar-now, body.garden-peek .topbar-now {
     position: static; opacity: 1; max-width: 55vw;   /* in-flow + right-anchored (col 3); cap so a long name can't eat the quote */
   }
+  /* (user) When there's NO active task the "Now focusing" overlay would just read
+     "No task" — pointless. So whenever body.tb-no-task is set (renderImDoing's idle
+     branch) keep the FULL button cluster (hamburger / home / calendar / always-on)
+     visible and suppress the now-overlay, even while scrolled / in the garden peek. */
+  body.tb-no-task.scrolled-now nav.tabs,
+  body.tb-no-task.garden-peek nav.tabs { gap: 4px; }
+  body.tb-no-task.scrolled-now nav.tabs > button,
+  body.tb-no-task.garden-peek nav.tabs > button {
+    opacity: 1; pointer-events: auto;
+    width: 32px; min-width: 32px; padding: 0; border-width: 1px; overflow: visible;
+  }
+  body.tb-no-task.scrolled-now .topbar-now,
+  body.tb-no-task.garden-peek .topbar-now {
+    position: absolute; opacity: 0; pointer-events: none; max-width: 0;
+  }
 
   /* ===== Money card (stock-price style) ===== */
   .money-card {
@@ -5005,7 +5025,9 @@
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
   /* (user) Empty-cell hint — slightly darker than the cell wash, low-key. Colour/opacity set in JS
      per quadrant hue. Left/right padding so it doesn't hug the cell edges. */
-  .focus-cell .cell-hint { margin-top: auto; padding: 6px 4px 0; font-size: 1.15rem; font-weight: 800; line-height: 1.3; text-align: right; word-break: keep-all; overflow-wrap: normal; }
+  /* (user) Sit RIGHT BELOW the +Add (no big gap) instead of bottom-pinned (margin-top:auto). The
+     font auto-shrinks to ≤2 lines in _layoutCellHint. */
+  .focus-cell .cell-hint { margin-top: 1px; padding: 0 4px 0; font-size: 1.15rem; font-weight: 800; line-height: 1.25; text-align: right; word-break: keep-all; overflow-wrap: normal; }
   /* When the cell HAS tasks the +Add moves below the list (DOM-reordered). Stop .tasks from
      flex-growing so the button hugs the last row instead of being pushed to the cell's bottom
      edge; give the button a small top margin (its bottom margin is now the cell padding). */
@@ -7505,15 +7527,20 @@
        title, and +Add button height — so all four quadrants line up whether
        or not they hold a task (no compression for empty ones). */
     .focus-cell.is-empty {
-      min-height: 0;
+      min-height: 132px;        /* (user) keep a roomy cell so the bottom hint has space */
       padding: 10px;            /* = base .focus-cell (was 6px 10px) */
     }
-    .focus-cell.is-empty h4 { margin: -5px 0 4px; font-size: .68rem; }
+    .focus-cell.is-empty h4 { margin: -5px 0 1px; font-size: .68rem; }   /* (user) no gap title↔+Add */
     .focus-cell.is-empty .add-task {
       padding: 5px 8px;         /* = base .add-task (was 3px 8px) */
       font-size: .8rem;
     }
-    .focus-cell.is-empty .tasks { min-height: 0; }
+    .focus-cell.is-empty .tasks { min-height: 0; flex: 0 0 auto; display: none; }
+    /* (user) +Add hugs the title at the TOP (no gap); the coaching hint drops to the
+       cell BOTTOM (margin-top:auto eats the slack between them). When the cell is tall
+       the hint font then grows to fill the room (see _layoutCellHint's larger sizes). */
+    .focus-cell.is-empty .add-task { margin-top: 0; margin-bottom: 0; }
+    .focus-cell.is-empty .cell-hint { margin-top: auto; }
   }
 
   /* =========================================================================
@@ -18680,29 +18707,55 @@ function _layoutCellHint(el) {
   try {
     const text = el.getAttribute('data-hint') || el.textContent || '';
     if (!text) return;
-    el.textContent = text;
-    const avail = el.clientWidth;          // CONSTRAINED width (read BEFORE nowrap, which lets it grow)
-    const fits = (str) => { el.textContent = str; el.style.whiteSpace = 'nowrap'; const w = el.scrollWidth; el.style.whiteSpace = ''; return w <= avail + 1; };
-    if (fits(text)) { el.textContent = text; return; }   // one line → leave it
     const words = text.split(/\s+/).filter(Boolean);
-    if (words.length < 2) { el.textContent = text; return; }
-    // Pick a WORD-boundary split into 2 lines that each fit one line. Prefer the most balanced split
-    // where the TOP line has FEWER words than the bottom; if none fits with top<bottom, take any
-    // 2-line split that fits (so it never spills to a 3rd line); else fall back to natural wrap.
-    let topFewer = -1, balanced = -1, balScore = Infinity;
-    for (let k = 1; k < words.length; k++) {
-      const top = words.slice(0, k).join(' '), bot = words.slice(k).join(' ');
-      if (!(fits(top) && fits(bot))) continue;          // both halves must fit one line each
-      const diff = Math.abs(k - (words.length - k));
-      if (k < words.length - k) topFewer = k;           // largest k that keeps top < bottom (most balanced top-fewer)
-      if (diff < balScore) { balScore = diff; balanced = k; }   // most balanced fit (fallback for narrow cells)
+    el.style.whiteSpace = '';                 // natural wrap
+    // Actual RENDERED line count (measurement-based — reliable at any width / font).
+    const lineCount = () => {
+      const cs = getComputedStyle(el);
+      const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) * 1.25) || 18;
+      const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0);
+      return (el.scrollHeight - pad) / lh;
+    };
+    const applySplit = (k) => {
+      el.textContent = '';
+      el.appendChild(document.createTextNode(words.slice(0, k).join(' ')));
+      el.appendChild(document.createElement('br'));
+      el.appendChild(document.createTextNode(words.slice(k).join(' ')));
+    };
+    // Most-balanced word split (prefer the TOP line to have fewer words).
+    const balancedK = () => {
+      let topFewer = -1, balanced = -1, balScore = Infinity;
+      for (let k = 1; k < words.length; k++) {
+        const diff = Math.abs(k - (words.length - k));
+        if (k < words.length - k && diff < balScore) { balScore = diff; topFewer = k; }
+      }
+      if (topFewer >= 0) return topFewer;
+      for (let k = 1; k < words.length; k++) { const diff = Math.abs(k - (words.length - k)); if (diff < balScore) { balScore = diff; balanced = k; } }
+      return balanced;
+    };
+    // (user) PREFER ONE line — shrink the font until the whole hint fits on a single line
+    // (largest size that fits wins). Only if it can't fit one line even at the smallest size
+    // fall back to a balanced 2-line split (never 3+ lines).
+    const SIZES = [1.4, 1.3, 1.2, 1.15, 1.06, 0.98, 0.9, 0.84, 0.78, 0.72, 0.66, 0.6];   // rem, biggest-that-fits first
+    for (let s = 0; s < SIZES.length; s++) {
+      el.style.fontSize = SIZES[s] + 'rem';
+      el.textContent = text;
+      if (lineCount() <= 1.4) return;                    // fits ONE line at this size → done
     }
-    const k = (topFewer >= 0) ? topFewer : balanced;
-    el.textContent = '';
-    if (k < 0) { el.textContent = text; return; }       // can't fit 2 lines → natural wrap
-    el.appendChild(document.createTextNode(words.slice(0, k).join(' ')));
-    el.appendChild(document.createElement('br'));
-    el.appendChild(document.createTextNode(words.slice(k).join(' ')));
+    // Couldn't fit one line at any size → smallest font, balanced 2-line split (fallback).
+    const k = (words.length >= 2) ? balancedK() : -1;
+    el.style.fontSize = SIZES[SIZES.length - 1] + 'rem';
+    if (k > 0) applySplit(k); else el.textContent = text;
+  } catch (_) {}
+}
+// (user) Unify ALL q1‒q4 cell hints to the SMALLEST of their individually-fitted font sizes,
+// so the four coaching phrases read at one consistent size (the longest phrase sets it).
+function _unifyCellHintFonts(root) {
+  try {
+    const hints = (root || document).querySelectorAll('#focus-matrix .cell-hint');
+    let min = Infinity;
+    hints.forEach((h) => { if (!h.textContent) return; const fs = parseFloat(getComputedStyle(h).fontSize); if (fs && fs < min) min = fs; });
+    if (min !== Infinity) hints.forEach((h) => { if (h.textContent) h.style.fontSize = min + 'px'; });
   } catch (_) {}
 }
 function renderFocusMatrix() {
@@ -19461,6 +19514,11 @@ function renderFocusMatrix() {
       } catch (_) {}
     };
   }
+  // Lay the hints out (font-shrink to fit) SYNCHRONOUSLY before the overlap check, so they're at
+  // their final small size when visibility is decided — the rAF pass below is throttled when the
+  // tab/app is backgrounded, which otherwise left tall un-shrunk hints that the overlap check hid.
+  try { root.querySelectorAll('.cell-hint').forEach(_layoutCellHint); } catch (_) {}
+  try { _unifyCellHintFonts(root); } catch (_) {}
   try { window._runCellHintOverlap(); } catch (_) {}
   setTimeout(window._runCellHintOverlap, 160);
   setTimeout(window._runCellHintOverlap, 480);   // after the 2×2 flip settles
@@ -19479,6 +19537,7 @@ function renderFocusMatrix() {
   try {
     requestAnimationFrame(() => {
       try { root.querySelectorAll('.cell-hint').forEach(_layoutCellHint); } catch (_) {}
+      try { _unifyCellHintFonts(root); } catch (_) {}
       try { if (window._runCellHintOverlap) window._runCellHintOverlap(); } catch (_) {}   // re-check once the 2×2 has settled
       // The 2×2 is NOW settled (hint text laid out). The overhead measured by the FIRST draw
       // (during the slide, pre-settle) was cached ~16px too big → the gauge filled short and the
@@ -20724,12 +20783,24 @@ async function showPomoPhaseConfirm() {
         // left, keep it as ONE block — open the next phase INSIDE it and cap the
         // phase to the block's remaining span. No trim, no finalize, no spawned
         // break block. Otherwise close it normally.
+        const _sameTask = (oldBlock.q === at2.q && oldBlock.taskIdx === at2.idx);
         if (oldBlock._combine && oldBlock.endMs > _resumeMs + 60000) {
           _combineCont = true;
           if (nextPhase === 'work') oldBlock.activeAt = _resumeMs;
           else oldBlock.activeBreakAt = _resumeMs;
           nextDurMs = Math.max(60000, Math.min(nextDurMs, oldBlock.endMs - _resumeMs));
+        } else if (_sameTask) {
+          // (user) The next phase is the SAME task → keep it as ONE block, no separate break /
+          // work block. A break becomes a sky-blue tail at this block's bottom (square top, only
+          // the colour marks the work↔break boundary); resuming work continues in the same block
+          // (colour back to the task colour). Extend the block to fit the next phase.
+          _combineCont = true;
+          if (nextPhase === 'work') oldBlock.activeAt = _resumeMs;
+          else oldBlock.activeBreakAt = _resumeMs;
+          oldBlock.activeEndMs = null;                                              // un-finalize → stays one open block
+          if (oldBlock.endMs < _resumeMs + nextDurMs) oldBlock.endMs = _resumeMs + nextDurMs;
         } else {
+          // Different task next → finalize this block; a NEW block is spawned below.
           if (oldBlock.endMs > _phaseBoundary) oldBlock.endMs = _phaseBoundary;   // truncate to the phase end
           if (!oldBlock.activeEndMs) oldBlock.activeEndMs = _phaseBoundary;        // finalize
         }
@@ -26199,8 +26270,10 @@ function renderImDoing() {
     // GTD is set/shown via the header chip now — no "GTD before" prompt here.
     setName(isPhone ? 'No task' : 'No task in focus');
     setLeft('00:00'); setDot('#9ca3af'); setPomo(null);
+    try { document.body.classList.add('tb-no-task'); } catch (_) {}   // (user) keep the top-bar buttons when idle
     return;
   }
+  try { document.body.classList.remove('tb-no-task'); } catch (_) {}
   // Active task name + quadrant dot. For a pomodoro, follow the task block /
   // taskSeg under the now-line so a combined (multi-task) block shows task1 while
   // the now-line is in task1's slice, then task2 — matching the split ring colour.
@@ -41621,10 +41694,19 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
             const _maxS = itemStages(_pid);
             const st = Math.max(1, Math.min(_maxS, planted.stage || 1));
             { const _earned = 1 + Math.floor((planted.water || 0) / WATER_PER_STAGE); plantFull = (st >= _maxS) || (_earned > st); }
+            // (user) Lower the buried soil image (& seed-drop target) by 15px so it hugs the
+            // tile, but never overlaps the water gauge: keep ≥4px between the soil's bottom edge
+            // and the gauge's top edge (the gauge is centred at p.y + DIAMOND_H·0.12 + 4).
+            const _gaugeH = Math.max(5, Math.round(DIAMOND_W * 0.034));
+            const _gaugeTopY = (p.y + DIAMOND_H * 0.12 + 4) - _gaugeH / 2;
+            const _lowerSoil = (baseCenterY, soilH) => Math.min(baseCenterY + 15, _gaugeTopY - 4 - soilH / 2);
+            const _coverStone = ((gardenTiles().find(t => t.r === r && t.c === c) || {}).tt === 'estate');
+            const _coverH = Math.round(DIAMOND_H * 0.46 * (_coverStone ? 1.5 : 1));
+            const _buriedY = _lowerSoil(p.y - DIAMOND_H * 0.06 - 14, _coverH);
             if (_pid === 'clover' && st === 1) {               // clover buried seed → raised brown mound (darkens when watered)
               const m = document.createElement('div'); m.className = 'wg-mound';
               const mw = Math.round(DIAMOND_W * 0.28);
-              m.style.left = p.x + 'px'; m.style.top = (p.y + DIAMOND_H * 0.01) + 'px';
+              m.style.left = p.x + 'px'; m.style.top = _lowerSoil(p.y + DIAMOND_H * 0.01, Math.round(mw * 0.58)) + 'px';
               m.style.width = mw + 'px'; m.style.height = Math.round(mw * 0.58) + 'px';
               m.style.zIndex = String(z + 2);
               m.style.background = moundGradient((planted.water || 0) / WATER_PER_STAGE);
@@ -41644,7 +41726,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               if (_pid === 'clover') {
                 cl.style.top = (p.y + DIAMOND_H * 0.05 - 14) + 'px';   // (user) raised 14px; clover grows UP from the soil
               } else {
-                cl.style.top = (p.y - DIAMOND_H * 0.06 - 14) + 'px';   // (user) raised 14px; shop item CENTRED on the tile
+                cl.style.top = (st === 1 ? _buriedY : (p.y - DIAMOND_H * 0.06 - 14)) + 'px';   // (user) buried stage-1 item lowered 15px (matches the soil cover)
                 cl.style.transform = 'translate(-50%,-50%)';
               }
               cl.style.zIndex = String(z + 2);
@@ -41688,7 +41770,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               const _covScale = _stone ? 1.5 : 1;   // (user) the brick planter bed is 1.5× the mound
               cov.style.width  = Math.round(DIAMOND_W * 0.50 * _covScale) + 'px';
               cov.style.height = Math.round(DIAMOND_H * 0.46 * _covScale) + 'px';
-              cov.style.left = p.x + 'px'; cov.style.top = (p.y - DIAMOND_H * 0.06 - 14) + 'px';   // = the item's (raised) centre
+              cov.style.left = p.x + 'px'; cov.style.top = _buriedY + 'px';   // (user) lowered 15px, clamped ≥4px above the gauge
               cov.style.zIndex = String(z + 4);                 // sits ON TOP of the (50%) item image
               cov.innerHTML = '<img class="wg-cov-dry" src="' + _dryImg + '" alt="">' +
                               '<img class="wg-cov-wet" src="' + _wetImg + '" alt="" style="opacity:' + wf.toFixed(2) + '">';
@@ -41729,7 +41811,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               const nb = document.createElement('button'); nb.type = 'button'; nb.className = 'wg-newstage';
               nb.textContent = '…';
               nb.style.left = p.x + 'px';
-              nb.style.top  = (p.y - DIAMOND_H * 0.42 - 14) + 'px';
+              nb.style.top  = (p.y - DIAMOND_H * 0.42 - 14 + 25) + 'px';   // (user) naming "…" bubble lowered 25px
               nb.style.zIndex = String(z + 10);
               const _nr = r, _nc = c;
               const ask = async (e) => {
@@ -41849,7 +41931,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
             };
             const sp = document.createElement('img'); sp.className = 'wg-seedspot'; sp.src = itemSeedImg(selectedItem());
             const sh = Math.round(DIAMOND_W * 0.128);          // (user) 2× the preview sparkle so the chosen item reads clearly before buying
-            sp.style.left = p.x + 'px'; sp.style.top = p.y + 'px';
+            sp.style.left = p.x + 'px'; sp.style.top = (p.y + 15) + 'px';   // (user) seed-drop target lowered 15px
             sp.style.height = sh + 'px';
             sp.style.zIndex = String(z + 4);
             sp.addEventListener('touchend', plant, { passive: false });
@@ -42072,7 +42154,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         _commitSeed();
         setTimeout(() => {
           const fly = document.createElement('img'); fly.className = 'wg-seed-fly wg-seed-sink'; fly.src = itemSeedImg(_pit);
-          const _bedY = p.y - DIAMOND_H * 0.06 - 14;            // = the brick-bed centre
+          const _bedY = p.y - DIAMOND_H * 0.06 - 14 + 15;       // (user) = the brick-bed centre, lowered 15px to match the soil cover
           fly.style.left = p.x + 'px'; fly.style.top = _bedY + 'px';
           fly.style.height = Math.round(DIAMOND_W * 0.10) + 'px';
           if (fieldEl) fieldEl.appendChild(fly);
@@ -42099,7 +42181,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // Soil / pasture: the seed image fades in just above the soil centre, drops onto it and
       // fades out, then the planted seed (clover → mound; shop item → soil cover) takes its place.
       const fly = document.createElement('img'); fly.className = 'wg-seed-fly'; fly.src = itemSeedImg(_pit);
-      fly.style.left = p.x + 'px'; fly.style.top = (p.y - DIAMOND_H * 0.05) + 'px';
+      fly.style.left = p.x + 'px'; fly.style.top = (p.y - DIAMOND_H * 0.05 + 15) + 'px';   // (user) seed-drop target lowered 15px
       fly.style.height = Math.round(DIAMOND_W * 0.10) + 'px';   // small seed dropping in
       if (fieldEl) fieldEl.appendChild(fly);
       setTimeout(() => {
