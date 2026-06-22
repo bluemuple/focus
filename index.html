@@ -5404,7 +5404,9 @@
   }
   #gtd-modal .gtd-time-row .btn { flex: 0 0 auto; min-width: 74px; }
   #gtd-modal .gtd-btn-row { display: flex; gap: 8px; }
-  #gtd-modal .gtd-btn-row .btn { flex: 1 1 0; min-width: 0; }
+  /* (user) +30m / +1h / Now: keep each label on ONE line (localized "+30분"/"+1시간"/"지금" are
+     longer) — smaller font + tight padding + nowrap so they never wrap. */
+  #gtd-modal .gtd-btn-row .btn { flex: 1 1 0; min-width: 0; white-space: nowrap; font-size: .82rem; padding-left: 6px; padding-right: 6px; }
   /* Big tappable time display (hero). Tap → toggle the inline picker above it. */
   #gtd-modal .gtd-time-display {
     display: block; width: 100%; text-align: center; background: transparent; border: none;
@@ -8159,11 +8161,11 @@
   .cal-cell.cal-empty { cursor: default; }
   .cal-cell .cal-day { font-size: .92rem; font-weight: 600; line-height: 1; }
   .cal-cell.cal-today .cal-day { color: #fff; }
-  .cal-cell.cal-today { background: #EC4899; }
+  .cal-cell.cal-today { background: #1f2430; }   /* (user) today marker = BLACK (was pink) */
   .cal-cell.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
   .cal-cell.cal-today.cal-sel { box-shadow: inset 0 0 0 2px #fff; }
   .cal-cell:active { background: var(--button-bg, #f3f4f6); }
-  .cal-cell.cal-today:active { background: #db2777; }
+  .cal-cell.cal-today:active { background: #111827; }
   .cal-dots { display: flex; gap: 2px; align-items: center; height: 6px; }
   .cal-dot { width: 5px; height: 5px; border-radius: 50%; background: #9ca3af; }
   .cal-dot-task { background: #3aa776; }
@@ -8254,7 +8256,7 @@
      plain numbers all share the same vertical centre line (otherwise plain numbers top-align and
      today's looks pushed down). */
   .cal-hb-day { min-width: 0; display: flex; align-items: center; justify-content: center; font-size: .56rem; font-weight: 700; color: var(--text-muted, #9ca3af); overflow: hidden; }
-  .cal-hb-day.cal-hb-today { aspect-ratio: 1; background: #EC4899; color: #fff; font-weight: 800; border-radius: 4px; }   /* today = pink square (Month-tab style) */
+  .cal-hb-day.cal-hb-today { aspect-ratio: 1; background: #1f2430; color: #fff; font-weight: 800; border-radius: 4px; }   /* (user) today = BLACK square (was pink) */
   .cal-hb-cell { width: auto; height: auto; aspect-ratio: 1; border-radius: 4px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.14); }
   .cal-hb-cell.rep  { background: rgba(127,127,127,.34); box-shadow: none; }   /* repeat-SET day → grey square */
   .cal-hb-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
@@ -8266,7 +8268,7 @@
   .cal-hbw-daycol { display: flex; flex-direction: column; align-items: center; gap: 5px; }
   .cal-hbw-dow { font-size: .66rem; font-weight: 700; letter-spacing: .03em; color: var(--text-muted, #9ca3af); }
   .cal-hbw-num { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: .9rem; font-weight: 700; color: var(--text-main, #374151); border-radius: 8px; }
-  .cal-hbw-num.cal-hbw-today { background: #EC4899; color: #fff; font-weight: 800; }   /* today = pink square (Month-tab style) */
+  .cal-hbw-num.cal-hbw-today { background: #1f2430; color: #fff; font-weight: 800; }   /* (user) today = BLACK square (was pink) */
   .cal-hbw-task { margin: 0 0 15px; }
   .cal-hbw-name { font-weight: 800; font-size: .92rem; margin-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cal-hbw-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
@@ -8302,7 +8304,7 @@
     #calendar-page .cal-grid-fit .cal-cell { min-height: 0; }
     #calendar-page .cal-cell .cal-day { align-self: flex-start; font-size: .82rem; font-weight: 700; padding: 2px 6px; border-radius: 7px; line-height: 1.15; }
     #calendar-page .cal-cell.cal-today { background: transparent; }
-    #calendar-page .cal-cell.cal-today .cal-day { background: #EC4899; color: #fff; }
+    #calendar-page .cal-cell.cal-today .cal-day { background: #1f2430; color: #fff; }
     #calendar-page .cal-cell.cal-today:active { background: var(--button-bg, #f3f4f6); }
     #calendar-page .cal-cell.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
     #calendar-page .cal-cell.cal-today.cal-sel { box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
@@ -32853,13 +32855,19 @@ try { setInterval(function () { try { _renderGtdChip(); } catch (_) {} }, 30000)
   function _lockHome() {
     const m = document.querySelector('main'); if (!m || _gtdHomeLock) return;
     const y0 = m.scrollTop; const snap = () => { if (m.scrollTop !== y0) m.scrollTop = y0; };
-    _gtdHomeLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap };
+    // Belt-and-suspenders for iOS: block EVERY page-level touch-scroll while the modal is open,
+    // allowing only a touch that lands inside a wheel (so spinning a wheel still works but the
+    // page behind can't scroll — overscroll-behavior:contain alone isn't honoured by WKWebView).
+    const tm = (e) => { if (!(e.target && e.target.closest && e.target.closest('.gtd-wheel'))) { try { e.preventDefault(); } catch (_) {} } };
+    _gtdHomeLock = { m, ov: m.style.overflow, ob: m.style.overscrollBehavior, snap, tm };
     m.style.overflow = 'hidden'; m.style.overscrollBehavior = 'none';
     m.addEventListener('scroll', snap, { passive: true });
+    document.addEventListener('touchmove', tm, { passive: false });
   }
   function _unlockHome() {
     if (!_gtdHomeLock) return; const b = _gtdHomeLock; _gtdHomeLock = null;
     b.m.style.overflow = b.ov; b.m.style.overscrollBehavior = b.ob; b.m.removeEventListener('scroll', b.snap);
+    if (b.tm) document.removeEventListener('touchmove', b.tm);
   }
   function _close() { modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true'); _unlockHome(); }
   window._openGtdPicker = function () {
