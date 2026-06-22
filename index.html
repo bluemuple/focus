@@ -28399,37 +28399,80 @@ window._syncLangPanel = _syncLangPanel;
      complete, start, pause, drain, stopped, wave, resume, long-wave,
      stop1, stop2, stop3
 =========================================================== */
-const _fxCache = {};   // url → HTMLAudioElement (preloaded)
+const _fxCache = {};   // url → HTMLAudioElement (HTML5 fallback only)
 function fxFolderForMode() { return (state.soundMode === 'off') ? null : 'new'; }   // on → audio/effects/new/, off → silent
 /* The sound set lives in audio/effects/new/ (the old loud/soft folders are ignored).
    'start' picks a random start1..start6. Retired cues (pause / drain / stop1-3) are
    silently dropped — only the names below have files. The continuous "watering" pour
    sound is handled separately (bidoroPlayWateringLoop / bidoroStopWateringLoop). */
 const _FX_NEW = { complete:1, resume:1, wave:1, 'long-wave':1, stopped:1 };
+
+/* ---- Sound effects via the WEB AUDIO API (so they MIX over the focus music) ----------------
+   (user) On iOS WKWebView, playing a short effect as a 2nd HTML <audio> element interrupts the
+   focus-music <audio> (they compete for the single media slot) and the music never resumes —
+   iOS blocks the JS .play() retry because it isn't a user gesture. Web Audio buffer playback,
+   by contrast, mixes WITH an HTMLMediaElement instead of pausing it. So we decode each effect
+   once into an AudioBuffer and fire it through a BufferSource — the music keeps playing and the
+   effect is heard simultaneously. HTML <audio> is kept only as a fallback where Web Audio is
+   absent. (Pairs with AppDelegate's AVAudioSession .playback + .mixWithOthers.) */
+const _FX_ALL = ['start1','start2','start3','start4','start5','start6','complete','resume','wave','long-wave','stopped'];
+let _fxCtx = null;
+const _fxBuffers = {};   // url → AudioBuffer (decoded) | 'pending'
+function _ensureFxCtx() {
+  if (_fxCtx) return _fxCtx;
+  try { const AC = window.AudioContext || window.webkitAudioContext; if (AC) _fxCtx = new AC(); } catch (_) { _fxCtx = null; }
+  return _fxCtx;
+}
+function _loadFxBuffer(url) {
+  if (!_fxCtx || _fxBuffers[url] !== undefined) return;   // no ctx, or already loaded/pending
+  _fxBuffers[url] = 'pending';
+  fetch(url).then((r) => r.arrayBuffer()).then((ab) => new Promise((res, rej) => {
+    // callback form of decodeAudioData → works on older Safari too
+    _fxCtx.decodeAudioData(ab, (b) => res(b), (e) => rej(e));
+  })).then((buf) => { _fxBuffers[url] = buf; }).catch(() => { delete _fxBuffers[url]; });
+}
+function _playFxBuffer(url) {
+  const buf = _fxBuffers[url];
+  if (!_fxCtx || !buf || buf === 'pending') return false;
+  try {
+    if (_fxCtx.state === 'suspended') { try { _fxCtx.resume(); } catch (_) {} }
+    const src = _fxCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(_fxCtx.destination);
+    src.start(0);
+    return true;
+  } catch (_) { return false; }
+}
+/* Create + resume the effect AudioContext and decode every effect up-front. iOS requires the
+   resume to happen inside a user gesture, so run this on the first touch/pointer; decoding ahead
+   of time means the very first effect already has its buffer ready (no skipped first sound). */
+let _fxPreloaded = false;
+function _fxUnlockAndPreload() {
+  const ctx = _ensureFxCtx();
+  if (ctx && ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+  if (_fxPreloaded || !ctx) return;
+  _fxPreloaded = true;
+  _FX_ALL.forEach((f) => _loadFxBuffer(`audio/effects/new/${f}.mp3`));
+}
+document.addEventListener('pointerdown', _fxUnlockAndPreload, true);
+document.addEventListener('touchstart', _fxUnlockAndPreload, { capture: true, passive: true });
+
 function playFx(name) {
   if (!name || state.soundMode === 'off') return;
   let file = (name === 'start') ? ('start' + (1 + Math.floor(Math.random() * 6))) : name;
   if (!/^start[1-6]$/.test(file) && !_FX_NEW[file]) return;   // ignore retired cues
   const url = `audio/effects/new/${file}.mp3`;
+  const ctx = _ensureFxCtx();
+  if (ctx) {
+    // Web Audio path — mixes OVER the music (never pauses the music <audio> element).
+    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
+    if (_playFxBuffer(url)) return;          // played, mixed with the music
+    _loadFxBuffer(url);                        // not decoded yet → decode for next time, skip this
+    return;                                    // (skip rather than fall back, so we never pause the music)
+  }
+  // No Web Audio available at all → HTML5 fallback (web/desktop, where music doesn't pause anyway).
   let a = _fxCache[url];
   if (!a) { a = new Audio(url); a.preload = 'auto'; _fxCache[url] = a; }
-  // (user) On iOS the system audio session can PAUSE the focus music while a short effect
-  // plays. Remember whether music was playing and, once the effect FINISHES, resume it — so
-  // the music keeps going after the sound effect instead of staying stopped. (On web/desktop
-  // the music never pauses, so the `paused` check below makes the resume a harmless no-op.)
-  const _musicWasPlaying = !!(_musicState && _musicState.audio && !_musicState.audio.paused);
-  if (_musicWasPlaying) {
-    const _resumeMusic = () => {
-      a.removeEventListener('ended', _resumeMusic);
-      try {
-        if (_musicState.audio && _musicState.audio.paused) {
-          const mp = _musicState.audio.play();
-          if (mp && typeof mp.catch === 'function') mp.catch(() => {});
-        }
-      } catch (_) {}
-    };
-    a.addEventListener('ended', _resumeMusic);
-  }
   try {
     a.currentTime = 0;
     const p = a.play();
