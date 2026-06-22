@@ -144,6 +144,27 @@
     }
   }
 
+  // ---- 5b. Universal Links — friend invite (https://bidoro.app/?addfriend=CODE) ----
+  // When the app is INSTALLED, tapping an invite link opens the app directly (Associated
+  // Domains + the AASA at bidoro.app/.well-known/apple-app-site-association). Capacitor delivers
+  // the URL via the App plugin. We hand it to the web's _consumeAddParam(url) — signed-in →
+  // instant friend; guest → in-app sign-up then auto-add. Same code path as the web landing, so
+  // there's nothing extra to maintain. (No deferred deep link needed: a non-installed friend
+  // completes the add on the web and the app inherits it on next same-account login.)
+  function _handleAddUrl(url) {
+    if (!url || !/[?&]addfriend=/i.test(url)) return;   // ignore non-invite links (gcal callback, etc.)
+    if (typeof window._bidoroConsumeAddParam === 'function') {
+      try { window._bidoroConsumeAddParam(url); } catch (_) {}
+    } else {
+      window.__bidoroPendingAddUrl = url;   // app still booting → index.html drains this when ready
+    }
+  }
+  if (P.App && typeof P.App.addListener === 'function') {
+    try { P.App.addListener('appUrlOpen', (data) => _handleAddUrl(data && data.url)); } catch (_) {}
+    // Cold launch (app was not running when the link was tapped): read the launch URL.
+    try { if (typeof P.App.getLaunchUrl === 'function') P.App.getLaunchUrl().then((r) => { if (r && r.url) _handleAddUrl(r.url); }).catch(() => {}); } catch (_) {}
+  }
+
   // ---- 6. Scroll to top on first paint ----
   // Inside the iOS Capacitor app, force the page back to the TOP after
   // load. WKWebView sometimes restores a previous scroll offset OR ends up

@@ -30548,15 +30548,21 @@ const Friends = (function(){
   }
   // ---- ?addfriend=CODE deep link (from a scanned QR) ----
   let _pendingAdd = null;
-  function _consumeAddParam(){
+  // `src` (optional) = a full URL / query string from a Universal Link (the iOS app opened via
+  // https://bidoro.app/?addfriend=CODE → Capacitor appUrlOpen → ios-shim → here). When omitted we
+  // read the page's own location.search (web visit / scanned-QR landing). Same downstream handling:
+  // signed-in → instant friend; guest → remember + sign-up, then auto-apply on SIGNED_IN.
+  function _consumeAddParam(src){
     try {
-      const m = (location.search || '').match(/[?&]addfriend=([^&]+)/);
+      const fromLocation = !(typeof src === 'string' && src);
+      const q = fromLocation ? (location.search || '') : src;
+      const m = q.match(/[?&]addfriend=([^&]+)/i);
       if (!m) return;
       const code = decodeURIComponent(m[1]);
       // Capture the inviter's chosen secret seed (invite-link &seed=ID) for Phase 2 gifting; harmless now.
-      try { const sm = (location.search || '').match(/[?&]seed=([^&]+)/); if (sm) { state.pendingInviteSeed = decodeURIComponent(sm[1]); if (typeof saveState === 'function') saveState(); } } catch(_){}
-      // clean the URL so a refresh doesn't re-add
-      try { history.replaceState(null, '', location.pathname + location.hash); } catch(_){}
+      try { const sm = q.match(/[?&]seed=([^&]+)/i); if (sm) { state.pendingInviteSeed = decodeURIComponent(sm[1]); if (typeof saveState === 'function') saveState(); } } catch(_){}
+      // clean the URL so a refresh doesn't re-add (only when we read it FROM the page URL).
+      if (fromLocation) { try { history.replaceState(null, '', location.pathname + location.hash); } catch(_){} }
       if (!code) return;
       if (signedIn()) {
         // Already a member → accept the invite right away (addCode shows "[name] invited you" + seed).
@@ -30590,6 +30596,13 @@ const Friends = (function(){
     } catch(_){}
   }
   function applyPendingAdd(){ if (_pendingAdd && signedIn()) { const c=_pendingAdd; _pendingAdd=null; try { window._bidoroPendingInvite=false; } catch(_){} addCode(c, null); } }
+  // Expose so the iOS Universal-Link handler (ios-shim appUrlOpen) can feed it the opened URL.
+  // If the app cold-launched via the link, ios-shim may have stashed the URL before this module
+  // was ready — drain it now.
+  try {
+    window._bidoroConsumeAddParam = _consumeAddParam;
+    if (window.__bidoroPendingAddUrl) { const u = window.__bidoroPendingAddUrl; window.__bidoroPendingAddUrl = null; _consumeAddParam(u); }
+  } catch(_){}
   // ---- detail ----
   function openDetail(f){ _cur = f; _curTab = 'timeline'; showPage('friendDetail'); _scrollTop();
     if ($('fd-name')) $('fd-name').textContent = f.nickname || 'Friend';
