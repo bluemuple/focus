@@ -824,6 +824,17 @@
   #pillars-panel .pillar-edit-dot { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(0,0,0,.18); padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   #pillars-panel .pillar-edit-dot.sel { border-color: var(--text-main, #111827); box-shadow: 0 0 0 2px var(--card-bg, #fff), 0 0 0 4px var(--accent, #2563eb); }
   #pillars-panel .pillar-edit-title { width: 100%; box-sizing: border-box; font: inherit; font-weight: 700; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--card-border); border-radius: 10px; background: var(--surface-2, #fff); color: var(--text-main); }
+  /* (user) name input + circle-ⓘ on one row; the input gives up just enough width for the button. */
+  #pillars-panel .pe-title-row { display: flex; align-items: center; gap: 8px; position: relative; margin-bottom: 10px; }
+  #pillars-panel .pe-title-row .pillar-edit-title { width: auto; flex: 1 1 auto; min-width: 0; margin-bottom: 0; }
+  #pillars-panel .pe-info-btn { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 50%; border: 1.5px solid var(--card-border); background: var(--surface-2, #fff); color: var(--text-muted); font: italic 800 15px/1 Georgia, 'Times New Roman', serif; cursor: pointer; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; }
+  #pillars-panel .pe-info-btn:active { background: var(--button-bg, #f3f4f6); }
+  /* Popup ABOVE the input (scrolls with the page — it lives in flow inside the relative row). */
+  #pillars-panel .pe-info-pop { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 80%; max-width: 460px; box-sizing: border-box; background: var(--surface-2, #fff); border: 1px solid var(--card-border); border-radius: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 30px 10px 10px; z-index: 60; }
+  #pillars-panel .pe-info-pop.hidden { display: none; }
+  #pillars-panel .pe-info-pop img { display: block; width: 100%; height: auto; border-radius: 8px; }
+  #pillars-panel .pe-info-x { position: absolute; top: 6px; right: 8px; width: 26px; height: 26px; border: none; border-radius: 50%; background: rgba(0,0,0,.07); color: var(--text-main); font-size: 14px; line-height: 26px; text-align: center; cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent; }
+  #pillars-panel .pe-info-x:active { background: rgba(0,0,0,.16); }
   /* Description / Direction / Diagnostic tabs (per face). */
   #pillars-panel .pe-tabs { display: flex; gap: 6px; margin: 0 0 7px; flex-wrap: wrap; }
   #pillars-panel .pe-tab { flex: 0 0 auto; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--card-border, #e5e7eb); background: transparent; color: var(--text-muted); font-size: .8rem; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -5060,9 +5071,12 @@
   .focus-cell .add-task:hover { background: rgba(255,255,255,.9); }
   /* (user) Empty-cell hint — slightly darker than the cell wash, low-key. Colour/opacity set in JS
      per quadrant hue. Left/right padding so it doesn't hug the cell edges. */
-  /* (user) Sit RIGHT BELOW the +Add (no big gap) instead of bottom-pinned (margin-top:auto). The
-     font auto-shrinks to ≤2 lines in _layoutCellHint. */
-  .focus-cell .cell-hint { margin-top: 1px; padding: 0 4px 0; font-size: 1.15rem; font-weight: 800; line-height: 1.25; text-align: right; word-break: keep-all; overflow-wrap: normal; }
+  /* (user) Pin the coaching hint to the cell BOTTOM in EVERY quadrant, on EVERY device (iPhone AND
+     iPad/PC — was only mobile, so iPad left q1/q2/q4 hints up near the +Add). Absolute-bottom needs
+     the cell positioned (see .focus-cell { position: relative } below). The font auto-shrinks to one
+     line in _layoutCellHint; the overlap check hides it when a packed task list reaches the bottom. */
+  .focus-cell { position: relative; }
+  .focus-cell .cell-hint { position: absolute; left: 4px; right: 4px; bottom: 8px; margin: 0; padding: 0 4px 0; font-size: 1.15rem; font-weight: 800; line-height: 1.25; text-align: right; word-break: keep-all; overflow-wrap: normal; }
   /* When the cell HAS tasks the +Add moves below the list (DOM-reordered). Stop .tasks from
      flex-growing so the button hugs the last row instead of being pushed to the cell's bottom
      edge; give the button a small top margin (its bottom margin is now the cell padding). */
@@ -9600,16 +9614,26 @@
       <p class="help">Set how many sides and name each one. Description is painted on the bucket; Direction and Diagnostic are the coaching lines shown when you tap that side.</p>
       <div class="bv-row"><label for="bv-faces">Sides</label><button type="button" class="bv-step" id="bv-faces-dec" aria-label="면 하나 줄이기">◀</button><input type="range" id="bv-faces" min="3" max="8" step="1"><button type="button" class="bv-step" id="bv-faces-inc" aria-label="면 하나 늘리기">▶</button><span class="bv-val" id="bv-faces-val"></span></div>
       <div class="pillar-edit-swatches" id="pillar-edit-swatches"></div>
-      <input class="pillar-edit-title" id="pillar-edit-title" type="text" maxlength="16" placeholder="Side name" autocomplete="off">
+      <!-- (user) name input slightly narrower + a circle-ⓘ that pops a looping how-to GIF above it -->
+      <div class="pe-title-row">
+        <input class="pillar-edit-title" id="pillar-edit-title" type="text" maxlength="16" placeholder="Side name" autocomplete="off">
+        <button type="button" class="pe-info-btn" id="pillar-edit-info" aria-label="What are bucket sides?">i</button>
+        <div class="pe-info-pop hidden" id="pillar-edit-pop" role="dialog" aria-hidden="true">
+          <button type="button" class="pe-info-x" id="pillar-edit-pop-x" aria-label="Close">✕</button>
+          <img src="images/explain/bucket sides.gif" alt="How bucket sides work">
+        </div>
+      </div>
       <div class="pe-tabs" id="pillar-edit-tabs" role="tablist">
         <button type="button" class="pe-tab active" data-tab="desc" role="tab" aria-selected="true">Description</button>
         <button type="button" class="pe-tab" data-tab="dir" role="tab" aria-selected="false">Direction</button>
         <button type="button" class="pe-tab" data-tab="diag" role="tab" aria-selected="false">Diagnostic</button>
       </div>
       <p class="help" id="pillar-edit-hint" style="margin:0 0 8px;"></p>
-      <label class="pillar-edit-row"><span>Low (1–3)</span><textarea id="pillar-edit-d1" maxlength="90" rows="2"></textarea></label>
-      <label class="pillar-edit-row"><span>Mid (4–7)</span><textarea id="pillar-edit-d2" maxlength="90" rows="2"></textarea></label>
+      <!-- (user) order reversed → High, Mid, Low (top→bottom). IDs stay d1=Low/d2=Mid/d3=High
+           so the JS that reads/writes by id is unchanged; applies to all 3 tabs (same rows). -->
       <label class="pillar-edit-row"><span>High (8–10)</span><textarea id="pillar-edit-d3" maxlength="90" rows="2"></textarea></label>
+      <label class="pillar-edit-row"><span>Mid (4–7)</span><textarea id="pillar-edit-d2" maxlength="90" rows="2"></textarea></label>
+      <label class="pillar-edit-row"><span>Low (1–3)</span><textarea id="pillar-edit-d1" maxlength="90" rows="2"></textarea></label>
     </div>
     <!-- (Bucket view shape/camera sliders panel removed per request — the 3D bucket
          still uses its saved geometry; wireBucketView/_bucketViewLoad guard the now-
@@ -18750,6 +18774,28 @@ function _pillarEditorLoad() {
   d3.addEventListener('input', () => save('d3'));
   const tabs = document.getElementById('pillar-edit-tabs');
   if (tabs) tabs.querySelectorAll('.pe-tab').forEach(b => b.addEventListener('click', () => { _pillarEditTab = b.dataset.tab || 'desc'; _pillarEditorLoad(); }));
+  // (user) circle-ⓘ next to the side-name input → a looping how-to GIF popup ABOVE the input.
+  // X button or a tap anywhere outside the popup closes it. (The popup lives in flow inside the
+  // relative .pe-title-row, so it scrolls up with the page.) The GIF loops on its own; we just
+  // re-assign src on each open so it restarts from frame 0.
+  const infoBtn = document.getElementById('pillar-edit-info');
+  const infoPop = document.getElementById('pillar-edit-pop');
+  const infoX   = document.getElementById('pillar-edit-pop-x');
+  if (infoBtn && infoPop) {
+    let _outside = null;
+    const closePop = () => {
+      infoPop.classList.add('hidden'); infoPop.setAttribute('aria-hidden', 'true');
+      if (_outside) { document.removeEventListener('pointerdown', _outside, true); _outside = null; }
+    };
+    const openPop = () => {
+      infoPop.classList.remove('hidden'); infoPop.setAttribute('aria-hidden', 'false');
+      try { const img = infoPop.querySelector('img'); if (img) { const s = img.getAttribute('src'); img.src = ''; img.src = s; } } catch (_) {}
+      _outside = (e) => { if (!infoPop.contains(e.target) && e.target !== infoBtn) closePop(); };
+      setTimeout(() => { if (_outside) document.addEventListener('pointerdown', _outside, true); }, 0);
+    };
+    infoBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (infoPop.classList.contains('hidden')) openPop(); else closePop(); });
+    if (infoX) infoX.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closePop(); });
+  }
   // Live swatch count: moving the Sides slider rebuilds the swatches (sides appear /
   // disappear from the right) and reloads the editor for the now-visible selection.
   const faces = document.getElementById('bv-faces');
@@ -21041,11 +21087,13 @@ async function showPomoPhaseConfirm() {
           if (d < best) { oldBlock = b; best = d; }
         }
       }
-      // DEEP FOCUS keep-going model: the plan block stays FIXED at [start, planEnd];
-      // the overrun lives in a SEPARATE `_actualExt` block (right 1/3, a touch darker)
-      // so the blocks you scheduled below never get pushed down. (Pomodoro/Auto never
-      // reach this "keep going" branch, but keep the old grow-down as a safe fallback.)
-      const _deepExt = !state.pomodoroAuto && state.timerTransition === 'gentleAuto';
+      // (user) keep-going model for EVERY popup-based "Keep going" (not just Deep Focus): the plan
+      // block stays FIXED at [start, planEnd] and the overrun lives in a SEPARATE `_actualExt`
+      // block — FULL width while there's free space, narrowing to the RIGHT 1/3 from the point a
+      // planned block sits below it (a connected ㄱ shape, no dividing line) — so the blocks you
+      // scheduled below are NEVER pushed down. Only silent Full Auto (pomodoroAuto) keeps the old
+      // grow-down + cascade (it cascades on its own and never shows this popup).
+      const _deepExt = !state.pomodoroAuto;
       if (_deepExt) {
         // Close the just-finished work segment at the phase boundary (popup-wait isn't painted).
         if (oldBlock && oldBlock.activeAt != null) {
@@ -42398,7 +42446,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
             };
             const sp = document.createElement('img'); sp.className = 'wg-seedspot'; sp.src = itemSeedImg(selectedItem());
             const sh = Math.round(DIAMOND_W * 0.128);          // (user) 2× the preview sparkle so the chosen item reads clearly before buying
-            sp.style.left = p.x + 'px'; sp.style.top = (p.y + 15) + 'px';   // (user) seed-drop target lowered 15px
+            sp.style.left = p.x + 'px'; sp.style.top = (p.y - 30) + 'px';   // (user) seed preview raised 45px (was p.y+15)
             sp.style.height = sh + 'px';
             sp.style.zIndex = String(z + 4);
             sp.addEventListener('touchend', plant, { passive: false });
@@ -42647,7 +42695,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         _commitSeed();
         setTimeout(() => {
           const fly = document.createElement('img'); fly.className = 'wg-seed-fly wg-seed-sink'; fly.src = itemSeedImg(_pit);
-          const _bedY = p.y - DIAMOND_H * 0.06 - 14 + 15;       // (user) = the brick-bed centre, lowered 15px to match the soil cover
+          const _bedY = p.y - DIAMOND_H * 0.06 - 14 - 30;       // (user) brick-bed seed drop raised 45px (was +15)
           fly.style.left = p.x + 'px'; fly.style.top = _bedY + 'px';
           fly.style.height = Math.round(DIAMOND_W * 0.10) + 'px';
           if (fieldEl) fieldEl.appendChild(fly);
@@ -42674,7 +42722,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       // Soil / pasture: the seed image fades in just above the soil centre, drops onto it and
       // fades out, then the planted seed (clover → mound; shop item → soil cover) takes its place.
       const fly = document.createElement('img'); fly.className = 'wg-seed-fly'; fly.src = itemSeedImg(_pit);
-      fly.style.left = p.x + 'px'; fly.style.top = (p.y - DIAMOND_H * 0.05 + 15) + 'px';   // (user) seed-drop target lowered 15px
+      fly.style.left = p.x + 'px'; fly.style.top = (p.y - DIAMOND_H * 0.05 - 30) + 'px';   // (user) seed-drop target+start raised 45px (was +15); the -24px drop start is relative to top, so it rises too
       fly.style.height = Math.round(DIAMOND_W * 0.10) + 'px';   // small seed dropping in
       if (fieldEl) fieldEl.appendChild(fly);
       setTimeout(() => {
