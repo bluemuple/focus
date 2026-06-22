@@ -22866,28 +22866,24 @@ function _fillHomeTimeArea(viewportPx) {
     let h;
     if (locked > 0) {
       h = locked - overhead;
-      // (user 2026-06-22) When the height is CARRIED IN from a TALL 2×2 swipe, the 2×2 face is
-      // taller than the T&T list, so the cached `overhead` (which includes the tasks column being
-      // taller than the gauge) leaves the gauge short → a dead gap opened above the handle and the
-      // handle looked like it "rose" off the section bottom. Grow the gauge to fill the panels row
-      // deterministically — locked minus the STRUCTURAL rows only (header + handle + the panel's own
-      // vertical padding; the wrap grid has gap:0). Derived from `locked` (stable), NOT from a
-      // re-measured area, so it fills exactly to the handle and can't feed back into the lock (no
-      // ratchet). Grow-only, so a tall tasks column still wins.
+      // (user 2026-06-22) Keep the gauge bottom GLUED a small gap above the handle at ALL times —
+      // including while the +Add picker is open (its taller tasks column can change the wrap height)
+      // and right after Cancel. We grow the gauge to the handle's ACTUAL measured position rather
+      // than a `locked`-derived guess (which goes stale whenever the wrap ≠ locked, leaving the
+      // gauge short → the reported shrink-on-Add / shrink-then-grow-on-Cancel flash). This is
+      // idempotent: the panels row is minmax(0,1fr), so the gauge's own height can't push the
+      // handle down — handle.top is fixed by the wrap height, so filling to it never feeds back.
       try {
-        // Everything ABOVE the gauge (header + the header↔gauge gap + panel top padding) is
-        // captured exactly by (gauge top − wrap top) — enumerating head.offsetHeight missed the
-        // ~8px header↔gauge gap and over-filled, ratcheting the lock +8 per swipe. gauge top is
-        // independent of gauge HEIGHT, so this is stable. Subtract the handle + the panel's bottom
-        // padding (the intended small gauge↔handle gap) → gauge fills exactly to the handle, wrap
-        // stays == locked (no ratchet).
         const _tp = document.getElementById('time-panel');
         const _padB = _tp ? (parseFloat(getComputedStyle(_tp).paddingBottom) || 0) : 0;
-        const _aboveGauge = Math.round(area.getBoundingClientRect().top - wrap.getBoundingClientRect().top);
-        // −2px safety so sub-pixel rounding can never make the gauge over-fill (wrap > locked),
-        // which would slowly ratchet the carried height up over many swipes.
-        const _fill = locked - _aboveGauge - (handle ? handle.offsetHeight : 0) - _padB - 2;
-        if (_fill > h) h = _fill;
+        if (handle) {
+          const _hTop = handle.getBoundingClientRect().top;
+          const _aTop = area.getBoundingClientRect().top;
+          if (_hTop > _aTop) {
+            const _fill = Math.round(_hTop - _aTop - _padB);   // gauge bottom lands `_padB` above the handle
+            if (_fill > h) h = _fill;
+          }
+        }
       } catch (_) {}
     } else {
       // First open, no equal-height lock yet: the default window (4h) from viewportPx.
