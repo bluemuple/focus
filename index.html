@@ -13023,7 +13023,7 @@ const _CAL_MONTHS = ['January','February','March','April','May','June','July','A
 function _calRenderMonth() {
   const y = _calState.y, m = _calState.m;
   const title = document.getElementById('cal-title');
-  if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  if (title) title.textContent = _fmtMonthYear(y, m);
   const grid = document.getElementById('cal-grid');
   if (!grid) return;
   const startDow = new Date(y, m, 1).getDay();         // 0=Sun
@@ -13031,7 +13031,7 @@ function _calRenderMonth() {
   const todayKey = _calDateKey(new Date());
   const fm = _calMonthFocusMap();                       // per-day focused + bucket-side minutes (wide cells)
   let html = '';
-  ['S','M','T','W','T','F','S'].forEach(d => html += '<div class="cal-dow">' + d + '</div>');
+  for (let _i = 0; _i < 7; _i++) html += '<div class="cal-dow">' + _dowNarrow(_i) + '</div>';
   for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
   for (let day = 1; day <= daysInMonth; day++) {
     const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
@@ -13144,7 +13144,7 @@ function _calOpenDayPop(key) {
   const pop = document.getElementById('cal-daypop'); if (!pop) return;
   const title = document.getElementById('cal-daypop-title'), body = document.getElementById('cal-daypop-body');
   const d = _calKeyToDate(key);
-  if (title) title.textContent = d ? d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) : key;
+  if (title) title.textContent = d ? d.toLocaleDateString(_localeTag(), { weekday: 'long', month: 'long', day: 'numeric' }) : key;
   const evs = _eventsOnDate(key).sort((a, b) => a.startMs - b.startMs);
   const tks = _calSortDue(_tasksOnDate(key));   // DUE entries lead
   let html = '<div class="cal-sub"><h3>Events</h3></div>';
@@ -13263,9 +13263,10 @@ function _calRenderDayLists() {
     const hh = Math.floor(mins / 60), mm = mins % 60;
     const focusedStr = mins ? (hh ? (hh + 'h ' + (mm ? mm + 'm' : '')).trim() : mm + 'm') : null;
     let bucketStr = '';
-    try { if (typeof window.bidoroBucketWaterRatio === 'function') bucketStr = ' · Bucket ' + Math.round(window.bidoroBucketWaterRatio() * 100) + '%'; } catch (_) {}
+    try { if (typeof window.bidoroBucketWaterRatio === 'function') bucketStr = ' · ' + trf('Bucket {p}%', { p: Math.round(window.bidoroBucketWaterRatio() * 100) }); } catch (_) {}
     const sproutSvg = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#3aa776" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21v-7"/><path d="M12 14c0-3 2.4-5 5.4-5 .2 2.8-2 5-5.4 5z"/><path d="M12 13c0-2.6-2.1-4.4-4.7-4.4C7.1 11 9 13 12 13z"/></svg>';
-    sprout.innerHTML = sproutSvg + '<span>' + (focusedStr ? ('Focused ' + focusedStr) : 'No focus logged') + bucketStr + '</span>';
+    const _focTxt = focusedStr ? trf('Focused {t}', { t: focusedStr }) : tr('No focus logged');
+    sprout.innerHTML = sproutSvg + '<span>' + _focTxt + bucketStr + '</span>';
   }
 }
 function _calRenderAgenda() {
@@ -13278,7 +13279,7 @@ function _calRenderAgenda() {
     const key = _calDateKey(d);
     const evs = _eventsOnDate(key).sort((a, b) => a.startMs - b.startMs), tks = _calSortDue(_tasksOnDate(key));
     if (!evs.length && !tks.length) continue;
-    html += '<div class="cal-agenda-day"><div class="cal-agenda-date">' + d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) + (i === 0 ? '<span class="cal-agenda-today">Today</span>' : '') + '</div>';
+    html += '<div class="cal-agenda-day"><div class="cal-agenda-date">' + d.toLocaleDateString(_localeTag(), { weekday: 'long', month: 'long', day: 'numeric' }) + (i === 0 ? '<span class="cal-agenda-today">Today</span>' : '') + '</div>';
     // DUE tasks lead the day (deadline first), then events, then the rest.
     tks.filter(o => o._due).forEach(o => { html += _calTaskRowHtml(o); });
     evs.forEach(ev => {
@@ -13349,18 +13350,18 @@ function _calRenderRoutine() {
     const gridClip = document.getElementById('cal-rt-grid-clip'); if (gridClip) gridClip.style.display = 'none';   // drop the rings calendar
     const hint = rings.querySelector('.cal-rt-hint'); if (hint) hint.style.display = 'none';
   }
-  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _CAL_MONTHS[_calState.m] + ' ' + _calState.y;
+  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _fmtMonthYear(_calState.y, _calState.m);
   const cat = document.getElementById('cal-rt-category'); if (cat) { cat.style.display = ''; _calRenderCategory(); }
 }
 function _calRenderRings() {
   const y = _calState.y, m = _calState.m;
-  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _fmtMonthYear(y, m);
   const grid = document.getElementById('cal-rt-grid'); if (!grid) return;
   const startDow = new Date(y, m, 1).getDay();
   const dim = new Date(y, m + 1, 0).getDate();
   const todayKey = _calDateKey(new Date());
   let html = '';
-  ['S','M','T','W','T','F','S'].forEach(d => html += '<div class="cal-dow">' + d + '</div>');
+  for (let _i = 0; _i < 7; _i++) html += '<div class="cal-dow">' + _dowNarrow(_i) + '</div>';
   for (let i = 0; i < startDow; i++) html += '<div class="cal-cell cal-empty"></div>';
   for (let day = 1; day <= dim; day++) {
     const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
@@ -13459,7 +13460,7 @@ function _wireCatTooltip(wrap) {
     const set = window._calCatTasks && window._calCatTasks[key] && window._calCatTasks[key][side];
     const tasks = set ? Array.from(set) : [];
     const d = (typeof _calKeyToDate === 'function') ? _calKeyToDate(key) : null;
-    const dl = d ? (_CAL_MONTHS[d.getMonth()].slice(0, 3) + ' ' + d.getDate()) : key;
+    const dl = d ? (_fmtMonShort(d) + ' ' + d.getDate()) : key;
     const t = ensure();
     t.innerHTML = '<div class="cct-head">' + escapeHTML(dl) + ' · ' + escapeHTML(_calSideName(side)) + '</div>' +
       (tasks.length ? '<ul class="cct-list">' + tasks.map(n => '<li>' + escapeHTML(n) + '</li>').join('') + '</ul>' : '<div class="cct-empty">Focused time</div>');
@@ -13514,7 +13515,7 @@ function _calRenderHabit(opts) {
   grid.classList.remove('cal-hb-weekly');
   const y = (opts && opts.y != null) ? opts.y : _calState.y;
   const m = (opts && opts.m != null) ? opts.m : _calState.m;
-  if (title) title.textContent = _CAL_MONTHS[m] + ' ' + y;
+  if (title) title.textContent = _fmtMonthYear(y, m);
   const dim = new Date(y, m + 1, 0).getDate();
   // worked days this month per task name (watchLog pomodoro)
   const workedByName = {};
@@ -13573,7 +13574,7 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
   for (let i = 0; i < 7; i++) days.push(new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i));
   const a = days[0], b = days[6];
   if (title) {
-    const ma = _CAL_MONTHS[a.getMonth()].slice(0, 3), mb = _CAL_MONTHS[b.getMonth()].slice(0, 3);
+    const ma = _fmtMonShort(a), mb = _fmtMonShort(b);
     title.textContent = (a.getMonth() === b.getMonth())
       ? ma + ' ' + a.getDate() + ' – ' + b.getDate()
       : ma + ' ' + a.getDate() + ' – ' + mb + ' ' + b.getDate();
@@ -13590,7 +13591,7 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
   let head = '';
   days.forEach(d => {
     const isToday = _calDateKey(d) === _tdyKey;
-    head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow">' + DOW[d.getDay()] + '</span>'
+    head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow">' + _dowNarrow(d.getDay()) + '</span>'
           + '<span class="cal-hbw-num' + (isToday ? ' cal-hbw-today' : '') + '">' + d.getDate() + '</span></div>';
   });
   let rows = '';
@@ -14692,8 +14693,8 @@ function renderSubscriptions(){
   const lblN = document.createElement('label'); lblN.className = 'nsub-field'; lblN.textContent = 'List Name'; pane.appendChild(lblN);
   const nameInp = document.createElement('input'); nameInp.className = 'nsub-name'; nameInp.maxLength = 40; pane.appendChild(nameInp);
   const _maxL = (typeof state.subsMaxLines === 'number' && state.subsMaxLines > 0) ? state.subsMaxLines : 10;
-  const lblL = document.createElement('label'); lblL.className = 'nsub-field'; lblL.textContent = 'Quotes (one per line, max ' + _maxL + ')'; pane.appendChild(lblL);
-  const linesInp = document.createElement('textarea'); linesInp.className = 'nsub-lines'; linesInp.rows = Math.min(_maxL, 8); linesInp.placeholder = 'One quote per line…'; pane.appendChild(linesInp);
+  const lblL = document.createElement('label'); lblL.className = 'nsub-field'; lblL.textContent = trf('Quotes (one per line, max {n})', { n: _maxL }); pane.appendChild(lblL);
+  const linesInp = document.createElement('textarea'); linesInp.className = 'nsub-lines'; linesInp.rows = Math.min(_maxL, 8); linesInp.placeholder = tr('One quote per line…'); pane.appendChild(linesInp);
   // Enforce the admin cap live — the box can never hold more than _maxL lines.
   linesInp.addEventListener('input', () => { const L = linesInp.value.split('\n'); if (L.length > _maxL) linesInp.value = L.slice(0, _maxL).join('\n'); });
   const submit = document.createElement('button'); submit.type = 'button'; submit.className = 'btn primary nsub-submit'; submit.textContent = 'Submit';
@@ -23757,7 +23758,7 @@ function _renderGtdChip() {
     const h = Math.floor(a / 3600000), m = Math.floor((a % 3600000) / 60000);
     const txt = h + ':' + String(m).padStart(2, '0');   // magnitude — time LEFT, or time OVER once the now-line passes the deadline
     setOn = true; overOn = over;
-    html = '<span class="gtd-head">' + txt + '</span><span class="gtd-for">' + (over ? 'over' : 'left') + '</span>';
+    html = '<span class="gtd-head">' + txt + '</span><span class="gtd-for">' + _gtdWord(over) + '</span>';
   }
   chips.forEach((chip) => {
     chip.classList.toggle('gtd-set', setOn);
@@ -27060,6 +27061,36 @@ function bidoroLocale() {
   }
   return _I18N_LANGS.indexOf(l) >= 0 ? l : 'en';
 }
+// (user) BCP-47 tag for the active app locale → drives toLocaleDateString so month / weekday /
+// date strings follow the in-app Language picker, NOT the device locale (the old `[]` argument
+// used the device's). Falls back to en-US.
+function _localeTag() {
+  return ({ en: 'en-US', ko: 'ko-KR', ja: 'ja-JP', zh: 'zh-CN', es: 'es-ES', fr: 'fr-FR' })[bidoroLocale()] || 'en-US';
+}
+// Localized "Month Year" header: en "June 2026", ko "2026년 6월", ja "2026年6月", zh "2026年6月".
+function _fmtMonthYear(y, m) {
+  try { return new Date(y, m, 1).toLocaleDateString(_localeTag(), { year: 'numeric', month: 'long' }); }
+  catch (_) { return (typeof _CAL_MONTHS !== 'undefined' ? (_CAL_MONTHS[m] || '') : '') + ' ' + y; }
+}
+// Localized SHORT month name (en "Jun", ko "6월", ja "6月") for a Date.
+function _fmtMonShort(d) {
+  try { return d.toLocaleDateString(_localeTag(), { month: 'short' }); }
+  catch (_) { return (typeof _CAL_MONTHS !== 'undefined' ? (_CAL_MONTHS[d.getMonth()] || '').slice(0, 3) : ''); }
+}
+// Localized NARROW weekday letter (en S/M/T…, ko 일/월/화…) for a 0=Sun..6=Sat index.
+function _dowNarrow(dayIdx) {
+  try { return new Date(2023, 0, 1 + (dayIdx % 7)).toLocaleDateString(_localeTag(), { weekday: 'narrow' }); }   // 2023-01-01 was a Sunday
+  catch (_) { return ['S', 'M', 'T', 'W', 'T', 'F', 'S'][dayIdx % 7]; }
+}
+// (user) GTD chip word after h:mm. Localized WITHOUT a global dict entry — the bare words
+// "over"/"left" as dict keys would make the MutationObserver mistranslate other standalone
+// "over"/"left" text nodes. Re-rendered every GTD update so a locale switch refreshes it.
+function _gtdWord(over) {
+  const M = { over: { en: 'over', ko: '지남', zh: '已过', ja: '超過', es: 'pasado', fr: 'dépassé' },
+              left: { en: 'left', ko: '남음', zh: '剩余', ja: '残り', es: 'restante', fr: 'restant' } };
+  const k = over ? 'over' : 'left';
+  return (M[k] && (M[k][bidoroLocale()] || M[k].en)) || k;
+}
 // sym = currency symbol, dec = decimal places, rate = USD→local (game money is USD-based).
 // es → Mexican peso (largest Spanish-speaking population), fr → euro. Rates ~2026-06.
 const _CUR = {
@@ -28093,7 +28124,31 @@ window.trf = trf;
     ja: "ブロックの順番をランダムに並べ替え、ブロック間の空きをなくします。",
     es: "Mezcla aleatoriamente el orden de los bloques y elimina los huecos entre bloques.",
     fr: "Mélange l'ordre des blocs de façon aléatoire et supprime les espaces entre les blocs." },
-  "You got no replies, yet.": { ko: "아직 받은 답글이 없어요.", zh: "你还没有收到回复。", ja: "まだ返信はありません。", es: "Aún no tienes respuestas.", fr: "Vous n'avez pas encore de réponses." }
+  "You got no replies, yet.": { ko: "아직 받은 답글이 없어요.", zh: "你还没有收到回复。", ja: "まだ返信はありません。", es: "Aún no tienes respuestas.", fr: "Vous n'avez pas encore de réponses." },
+  // (user) Settings + Account
+  "Show a short \"how to handle this\" tip in empty matrix cells.": { ko: "빈 매트릭스 칸에 \"이건 이렇게 처리\" 짧은 팁을 보여줘요.", zh: "在空的矩阵格子里显示一句\"该怎么处理\"的小提示。", ja: "空のマトリクスのマスに「これはこう片づける」という短いヒントを表示します。", es: "Muestra un consejo breve de \"cómo abordar esto\" en las celdas vacías de la matriz.", fr: "Affiche un court conseil « comment gérer ceci » dans les cases vides de la matrice." },
+  "(logged in)": { ko: "(로그인됨)", zh: "(已登录)", ja: "(ログイン中)", es: "(con sesión iniciada)", fr: "(connecté)" },
+  "edit": { ko: "편집", zh: "编辑", ja: "編集", es: "editar", fr: "modifier" },
+  "Calendar sync": { ko: "캘린더 동기화", zh: "日历同步", ja: "カレンダー同期", es: "Sincronizar calendario", fr: "Synchro du calendrier" },
+  "Disconnect": { ko: "연결 해제", zh: "断开连接", ja: "連携を解除", es: "Desconectar", fr: "Déconnecter" },
+  "Backups": { ko: "백업", zh: "备份", ja: "バックアップ", es: "Copias", fr: "Sauvegardes" },
+  "✓ Google Calendar connected": { ko: "✓ Google 캘린더 연결됨", zh: "✓ 已连接 Google 日历", ja: "✓ Google カレンダー連携済み", es: "✓ Google Calendar conectado", fr: "✓ Google Agenda connecté" },
+  "✓ Apple Calendar connected": { ko: "✓ Apple 캘린더 연결됨", zh: "✓ 已连接 Apple 日历", ja: "✓ Apple カレンダー連携済み", es: "✓ Apple Calendar conectado", fr: "✓ Apple Agenda connecté" },
+  // (user) Calendar — Month / Schedule / Balance
+  "No focus logged": { ko: "기록된 집중 없음", zh: "暂无专注记录", ja: "集中の記録なし", es: "Sin enfoque registrado", fr: "Aucun focus enregistré" },
+  "Nothing scheduled in the next few weeks.": { ko: "앞으로 몇 주간 예정된 일정이 없어요.", zh: "未来几周没有任何安排。", ja: "今後数週間の予定はありません。", es: "Nada programado en las próximas semanas.", fr: "Rien de prévu dans les prochaines semaines." },
+  "Focused time": { ko: "집중한 시간", zh: "专注时间", ja: "集中した時間", es: "Tiempo de enfoque", fr: "Temps de concentration" },
+  // (user) Always-on screen toggle hint
+  "🔆 Always-on mode": { ko: "🔆 화면 항상 켜기", zh: "🔆 常亮模式", ja: "🔆 常時点灯モード", es: "🔆 Pantalla siempre activa", fr: "🔆 Écran toujours allumé" },
+  "🌙 Screen can sleep again": { ko: "🌙 화면이 다시 꺼질 수 있어요", zh: "🌙 屏幕可以再次休眠", ja: "🌙 画面はまた消灯できます", es: "🌙 La pantalla puede apagarse otra vez", fr: "🌙 L'écran peut de nouveau s'éteindre" },
+  // (user) Notes → Subscriptions (quote editor)
+  "One quote per line. A random one shows in the top bar — re-picked once an hour.": { ko: "한 줄에 한 문구씩. 상단 바에 무작위로 하나가 표시되고 한 시간마다 다시 골라요.", zh: "每行一句。顶栏随机显示一句，每小时重新挑选。", ja: "1行に1フレーズ。上部バーにランダムで1つ表示され、1時間ごとに選び直します。", es: "Una frase por línea. En la barra superior aparece una al azar; se vuelve a elegir cada hora.", fr: "Une citation par ligne. Une au hasard s'affiche dans la barre du haut, renouvelée chaque heure." },
+  "One per line · re-picked hourly": { ko: "한 줄에 하나 · 매시간 다시 선택", zh: "每行一句 · 每小时更新", ja: "1行に1つ · 毎時選び直し", es: "Una por línea · renovada cada hora", fr: "Une par ligne · renouvelée chaque heure" },
+  "One quote per line…": { ko: "한 줄에 한 문구씩…", zh: "每行一句…", ja: "1行に1フレーズ…", es: "Una frase por línea…", fr: "Une citation par ligne…" },
+  // (user) Interpolated (used via trf): the calendar sprout summary + the quotes editor label.
+  "Focused {t}": { ko: "{t} 집중", zh: "已专注 {t}", ja: "{t} 集中", es: "Enfocado {t}", fr: "Concentré {t}" },
+  "Bucket {p}%": { ko: "물통 {p}%", zh: "水桶 {p}%", ja: "バケツ {p}%", es: "Cubo {p}%", fr: "Seau {p}%" },
+  "Quotes (one per line, max {n})": { ko: "문구 (한 줄에 하나, 최대 {n}개)", zh: "语录（每行一句，最多 {n} 句）", ja: "フレーズ（1行に1つ、最大 {n} 個）", es: "Frases (una por línea, máx. {n})", fr: "Citations (une par ligne, max {n})" }
 });
 /* Translations for the interpolated strings above (merged, never clobber existing). */
 (function (x) { for (const k in x) { if (!(k in BIDORO_I18N)) BIDORO_I18N[k] = x[k]; } })({
@@ -28578,7 +28633,7 @@ function buildActivityRow(entry, opts) {
   // Notes view where rows span multiple days. Smaller font than the section
   // header so it reads as metadata, not a heading.
   const datePrefix = (opts.showDate && entry.startedAt)
-    ? `<span class="entry-date">${new Date(entry.startedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span> · `
+    ? `<span class="entry-date">${new Date(entry.startedAt).toLocaleDateString(_localeTag(), { month: 'short', day: 'numeric' })}</span> · `
     : '';
   const timeLine = isPoint
     ? `<span class="time-range" data-act="edit-time">${datePrefix}${fmtTime(entry.startedAt)}</span>`
@@ -29497,7 +29552,7 @@ function renderWeekView() {
   // Week label
   const sunday = days[6];
   if (label) {
-    label.textContent = `${monday.toLocaleDateString([], { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString([], { month:'short', day:'numeric', year:'numeric' })}`;
+    label.textContent = `${monday.toLocaleDateString(_localeTag(), { month:'short', day:'numeric' })} – ${sunday.toLocaleDateString(_localeTag(), { month:'short', day:'numeric', year:'numeric' })}`;
   }
 
   // ---- Activity Notes for the visible week ----
@@ -29630,8 +29685,8 @@ function renderWeekView() {
     const hdr = document.createElement('div');
     hdr.className = 'week-day-header' + (dayKey(d) === todayKey ? ' today' : '');
     hdr.innerHTML = `
-      <div class="wd-name">${d.toLocaleDateString([], { weekday: 'short' })}</div>
-      <div class="wd-date">${d.toLocaleDateString([], { month: 'numeric', day: 'numeric' })}</div>`;
+      <div class="wd-name">${d.toLocaleDateString(_localeTag(), { weekday: 'short' })}</div>
+      <div class="wd-date">${d.toLocaleDateString(_localeTag(), { month: 'numeric', day: 'numeric' })}</div>`;
     grid.appendChild(hdr);
   });
   // Y-axis with hour labels
@@ -30673,7 +30728,7 @@ const Friends = (function(){
   function _renderBalance(body, data){
     if (_fdBalY == null) { const d = new Date(); _fdBalY = d.getFullYear(); _fdBalM = d.getMonth(); }
     const draw = () => {
-      const title = (typeof _CAL_MONTHS !== 'undefined') ? (_CAL_MONTHS[_fdBalM] + ' ' + _fdBalY) : ((_fdBalM + 1) + '/' + _fdBalY);
+      const title = _fmtMonthYear(_fdBalY, _fdBalM);
       body.innerHTML = '<div class="cal-month-head"><button class="cal-nav" id="fd-bal-prev" type="button">' + _CHEV_L + '</button>'
         + '<h2>' + _esc(title) + '</h2><button class="cal-nav" id="fd-bal-next" type="button">' + _CHEV_R + '</button></div>'
         + '<div id="fd-bal-cat" class="cal-rt-category"></div>';
@@ -32073,7 +32128,7 @@ try {
   function sync(){ const on = !!(typeof state !== 'undefined' && state.screenAwake); btn.classList.toggle('is-on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
   function hint(on){
     const el = document.getElementById('motivation-display'); if (!el) return;
-    el.innerHTML = '<span class="mot-awake-hint">' + (on ? '🔆 Always-on mode' : '🌙 Screen can sleep again') + '</span>';
+    el.innerHTML = '<span class="mot-awake-hint">' + tr(on ? '🔆 Always-on mode' : '🌙 Screen can sleep again') + '</span>';
     clearTimeout(el._awakeT);
     el._awakeT = setTimeout(() => { try { if (typeof refreshMotivation === 'function') refreshMotivation(true); } catch (_) {} }, 2600);
   }
@@ -33016,7 +33071,7 @@ const DueDatePicker = (function () {
   let viewY = 0, viewM = 0, sel = null, cb = null;
   const _DOW = ['Su','Mo','Tu','We','Th','Fr','Sa'];
   function renderQuick(){
-    const set = (id, d) => { const el = document.getElementById(id); if (el) el.textContent = d.toLocaleDateString([], { weekday: 'short' }); };
+    const set = (id, d) => { const el = document.getElementById(id); if (el) el.textContent = d.toLocaleDateString(_localeTag(), { weekday: 'short' }); };
     set('dd-q-today', _dueAddDays(0)); set('dd-q-tomorrow', _dueAddDays(1)); set('dd-q-nextweek', _dueAddDays(7));
     if (quick) quick.querySelectorAll('.dd-quick-btn').forEach(b => {
       const q = b.dataset.q, k = _calDateKey(_dueAddDays(q === 'today' ? 0 : q === 'tomorrow' ? 1 : 7));
@@ -36159,8 +36214,8 @@ function renderVersionsList() {
     <div class="versions-head">Backups</div>
     <div class="versions-rows">
       ${list.map(v => {
-        const when = new Date(v.savedAt).toLocaleDateString([], { month: 'short', day: 'numeric' })
-                    + ' ' + new Date(v.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const when = new Date(v.savedAt).toLocaleDateString(_localeTag(), { weekday: 'short', month: 'short', day: 'numeric' })
+                    + ' ' + new Date(v.savedAt).toLocaleTimeString(_localeTag(), { hour: '2-digit', minute: '2-digit' });
         const moneyStr = bidoroCur().sym + _moneyDigits(+v.money || 0);
         return `<button class="version-row" data-id="${escapeHTML(v.id)}" type="button" title="Restore this backup">
           <span class="v-when">${escapeHTML(when)}</span>
