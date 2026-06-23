@@ -1203,6 +1203,13 @@
     overflow: hidden;
   }
   .ff-overlay.hidden { display: none; }
+  /* (user) DARK mode: the full-screen Pomodoro goes dark — task name in light ink, the centre
+     carousel/slide blends into the dark backdrop (the overlay bg + ✕/pause/Auto button vars are
+     set dark by renderFocusFullscreen; the ring + timer keep the task accent). */
+  :root[data-theme="solarized"] .ff-name { color: var(--text-main, #EEE8D5); }
+  :root[data-theme="solarized"] .ff-carousel,
+  :root[data-theme="solarized"] .ff-slide { background: #002B36; }
+  :root[data-theme="solarized"] .ff-add-prompt { color: #93A1A1; }
   .ff-close {
     position: absolute; top: max(16px, env(safe-area-inset-top)); right: 18px;
     width: 42px; height: 42px; border-radius: 999px;
@@ -36204,13 +36211,25 @@ function renderFocusFullscreen() {
   const ffSegs = (at.phase !== 'work')
     ? [{ endFrac: 1, color: '#38BDF8' }]
     : [{ endFrac: 1, color: (typeof focusQuadAccent === 'function') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : pomoRingColor(at.q, at.idx) }];
+  // (user) timer text takes the SAME task accent as the ring (matches the home mini-pomodoro).
+  if (timeEl && ffSegs[0]) timeEl.style.color = ffSegs[0].color;
   // Calm "deep focus" backdrop = the quadrant's pale wash (pale sky on a break) PLUS the
   // soft per-quadrant theming of the ✕ / pause / Auto buttons (fill · ink · border). Light
   // themes only — dark keeps its existing light panel + neutral gray buttons.
   try {
     const _ffOvl = document.getElementById('focus-fullscreen');
     if (_ffOvl) {
-      if (typeof bidoroDarkTheme === 'function' && !bidoroDarkTheme()) {
+      const _dark = (typeof bidoroDarkTheme === 'function') && bidoroDarkTheme();
+      if (_dark) {
+        // (user) DARK mode: the WHOLE full-screen Pomodoro goes dark (was a light panel). The ring
+        // + timer keep the task accent (set below), matching the home mini-pomodoro on dark.
+        _ffOvl.style.background = '#002B36';                 // app dark base
+        _ffOvl.style.setProperty('--ff-fill',   '#0E4A57');  // dark button fill
+        _ffOvl.style.setProperty('--ff-ink',    '#93A1A1');  // light-ish ink
+        _ffOvl.style.setProperty('--ff-border', '#164B56');
+      } else {
+        // Light themes: calm deep-focus backdrop = the quadrant's pale wash (pale sky on a break)
+        // + soft per-quadrant theming of the ✕ / pause / Auto buttons.
         const _isBreak = (at.phase !== 'work');
         const _ft = _isBreak
           ? { chipBg: '#E8F4FB', ffFill: '#EEF3F8', ffInk: '#4A5A6E', ffBorder: '#CBDBE8' }
@@ -36219,10 +36238,6 @@ function renderFocusFullscreen() {
         _ffOvl.style.setProperty('--ff-fill',   _ft.ffFill);
         _ffOvl.style.setProperty('--ff-ink',    _ft.ffInk);
         _ffOvl.style.setProperty('--ff-border', _ft.ffBorder);
-      } else {
-        _ffOvl.style.removeProperty('--ff-fill');
-        _ffOvl.style.removeProperty('--ff-ink');
-        _ffOvl.style.removeProperty('--ff-border');
       }
     }
   } catch (_) {}
