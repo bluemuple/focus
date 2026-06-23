@@ -8390,6 +8390,27 @@
   .cal-hbw-cell { aspect-ratio: 1; border-radius: 8px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.16); }
   .cal-hbw-cell.rep  { background: rgba(127,127,127,.30); box-shadow: none; }   /* repeat-SET day → grey square */
   .cal-hbw-cell.done { box-shadow: none; }                                       /* WORKED day → that task's colour (inline bg) */
+  /* (user) Build/Avoid direction + lapse tracking ----------------------------------------------
+     A filled category-colour square ALWAYS = success. 'lapse' (Avoid only) = a muted ! in a dashed
+     outline (never a fill). The meta line under the name reads "Build · Body" in neutral grey. */
+  .cal-hb-name { display: flex; flex-direction: column; justify-content: center; white-space: normal; line-height: 1.12; }
+  .cal-hbw-name { white-space: normal; }
+  .cal-hb-meta { display: block; font-size: .6rem; font-weight: 700; color: var(--text-muted, #9ca3af); letter-spacing: .01em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cal-hb-cell.lapse, .cal-hbw-cell.lapse { display: flex; align-items: center; justify-content: center; background: transparent; box-shadow: none; border: 1px dashed rgba(180,83,9,.55); color: #b45309; font-weight: 800; box-sizing: border-box; }
+  .cal-hb-cell.lapse  { font-size: .6rem; border-radius: 4px; }
+  .cal-hbw-cell.lapse { font-size: .8rem; border-radius: 8px; }
+  :root[data-theme="solarized"] .cal-hb-cell.lapse, :root[data-theme="solarized"] .cal-hbw-cell.lapse { color: #D9A441; border-color: rgba(217,164,65,.55); }
+  .cal-hb-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 10px 2px 2px; font-size: .62rem; color: var(--text-muted, #9ca3af); }
+  .cal-hb-leg-sw { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; border-radius: 3px; margin-right: 2px; vertical-align: middle; font-size: .56rem; font-weight: 800; line-height: 1; box-sizing: border-box; }
+  .cal-hb-leg-sw.done  { background: #8a8f98; }
+  .cal-hb-leg-sw.rep   { background: rgba(127,127,127,.34); }
+  .cal-hb-leg-sw.lapse { background: transparent; border: 1px dashed rgba(180,83,9,.6); color: #b45309; }
+  :root[data-theme="solarized"] .cal-hb-leg-sw.lapse { border-color: rgba(217,164,65,.6); color: #D9A441; }
+  /* Build/Avoid segmented capsule (add-task Repeat section) — NEUTRAL, no category colours. */
+  .ctm-habittype { margin-top: 12px; }
+  .ht-seg { display: inline-flex; background: var(--surface-2, #eef0f3); border-radius: 999px; padding: 3px; gap: 2px; margin: 4px 0 2px; }
+  .ht-seg-btn { border: none; background: none; padding: 6px 18px; border-radius: 999px; font: inherit; font-size: .85rem; font-weight: 600; color: var(--text-muted, #6b7280); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .ht-seg-btn.sel { background: var(--card-bg, #fff); color: var(--text-main, #111827); font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
   /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
   .routine-toast {
     position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
@@ -13293,7 +13314,7 @@ function _tasksOnDate(key) {               // [{q,idx,task,_repeat?,_due?}] on t
                     (!repEnd || key <= repEnd);
     // (user) A day the user ticked DONE in the Routine grid that ISN'T a scheduled repeat day still
     // shows a completed task bar (duration 0) on that day in Month/Agenda.
-    const extraTick = !onCreated && !repeats && !!(t.repeatDone && t.repeatDone[key]);
+    const extraTick = !onCreated && !repeats && !!(t.repeatDone && t.repeatDone[key] === true);  // success only — a 'lapse' is not a completed bar
     // A due task shows on its DUE day (red "D") AND on its do/created day (normal "T") —
     // two markers across the calendar. On a day that is BOTH, the due marker wins.
     if (isDue) out.push({ q, idx, task: t, _due: true, _key: key });
@@ -13642,7 +13663,7 @@ function _calTaskRowHtml(o) {
   // For a repeat OCCURRENCE the "done" state is PER-DAY (task.repeatDone[key]) — ticking it marks
   // just that day (→ Routine tab). For a normal/due row it's the task's own done flag.
   const done = o._repeat
-    ? !!(o.task && o.task.repeatDone && _rkey && o.task.repeatDone[_rkey])
+    ? !!(o.task && o.task.repeatDone && _rkey && o.task.repeatDone[_rkey] === true)   // success only; 'lapse' ≠ done
     : !!(o.task && o.task.done);
   const _checkSvg = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"/></svg>';
   const _pill = (o.task && typeof o.task.pillar === 'number') ? o.task.pillar : null;
@@ -13725,6 +13746,28 @@ function _calSideColor(side) { return (typeof _pillarSwatchColor === 'function')
 /* Vivid (saturated) side colour for the Balance "Category" filled squares + names. */
 function _calSideColorVivid(side) { return (typeof _PILLAR_COLORS_VIVID !== 'undefined') ? _PILLAR_COLORS_VIVID[side % _PILLAR_COLORS_VIVID.length] : _calSideColor(side); }
 function _calSideName(side) { try { const ft = state.bucket && state.bucket.faceText && state.bucket.faceText[side]; if (ft && ft.title) return ft.title; } catch (_) {} return (typeof _PILLAR_NAMES !== 'undefined' && _PILLAR_NAMES[side]) || ('Side ' + (side + 1)); }
+/* ===== Habit direction + tracking (Build / Avoid) =====
+   habitType = DIRECTION (build = do more · avoid = do less). It is SEPARATE from the bucket-side
+   CATEGORY (Mind/Body/Joy/…), which owns the COLOUR. A filled category-coloured tracking square
+   ALWAYS means success — Build "I did it", Avoid "I avoided it". 'lapse' (Avoid habits only) means
+   the user slipped ("I did the thing I wanted to avoid"); it is shown with a muted ! (never the
+   category fill) and NEVER counts as done. Stored in task.repeatDone[dateKey]:
+     true  = success   ·   'lapse' = lapse   ·   absent = not recorded. */
+function _habitType(t) { return (t && t.habitType === 'avoid') ? 'avoid' : 'build'; }
+function _habitMark(t, key) { const v = t && t.repeatDone && t.repeatDone[key]; if (v === 'lapse') return 'lapse'; if (v) return 'success'; return 'none'; }
+/* The small neutral meta line under a routine name: "Build · Body" / "Avoid · Money". Build/Avoid is
+   NEUTRAL text (direction, not colour); the category name carries the meaning, colour stays on the name. */
+function _habitMetaHtml(t) {
+  const typeLabel = (_habitType(t) === 'avoid') ? tr('Avoid') : tr('Build');
+  const catLabel = (t && t.pillar != null && typeof _calSideName === 'function') ? _calSideName(t.pillar) : '';
+  return '<span class="cal-hb-meta">' + escapeHTML(typeLabel) + (catLabel ? ' · ' + escapeHTML(catLabel) : '') + '</span>';
+}
+/* Subtle Routine legend: filled = success · ! = lapse · empty = not recorded. */
+function _habitLegendHtml() {
+  return '<div class="cal-hb-legend"><span class="cal-hb-leg-sw done"></span>' + tr('Success')
+       + ' · <span class="cal-hb-leg-sw lapse">!</span>' + tr('Lapse')
+       + ' · <span class="cal-hb-leg-sw rep"></span>' + tr('Not recorded') + '</div>';
+}
 function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
   if (!e || e.type !== 'pomodoro') return null;
   if (typeof e.pillar === 'number') return e.pillar;
@@ -13972,17 +14015,22 @@ function _calRenderHabit(opts) {
         const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         const dow = new Date(y, m, day).getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked here or in Month tab
-        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to toggle done
-        if (worked.has(day) || ticked) cells += '<span class="cal-hb-cell done"' + _d + ' style="background:' + col + '"></span>';
-        else if (isRepeat)     cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
-        else                   cells += '<span class="cal-hb-cell"' + _d + '></span>';
+        const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none' — see _habitMark comment
+        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
+        // Filled category-colour square = success (Build did it / Avoid avoided it). A pomodoro that
+        // day also counts as success. 'lapse' (Avoid only) shows a muted ! — never the category fill.
+        if (mark === 'lapse')                            cells += '<span class="cal-hb-cell lapse"' + _d + '>!</span>';
+        else if (mark === 'success' || worked.has(day))  cells += '<span class="cal-hb-cell done"' + _d + ' style="background:' + col + '"></span>';
+        else if (isRepeat)                               cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
+        else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
       }
-      // The task NAME pops in a more saturated colour (vivid bucket-side hue when tagged,
-      // else the darker quadrant text tint) — the pastel square colour was too washed out.
+      // The task NAME pops in a more saturated colour (vivid bucket-side hue when tagged, else the
+      // darker quadrant text tint). Below it, a small neutral meta line: Build/Avoid · Category.
       const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      rows += '<div class="cal-hb-row"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + '</span><div class="cal-hb-cells">' + cells + '</div></div>';
+      const _meta = _habitMetaHtml(t);
+      rows += '<div class="cal-hb-row"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _meta + '</span><div class="cal-hb-cells">' + cells + '</div></div>';
     });
+    rows += _habitLegendHtml();
   }
   grid.style.setProperty('--hb-cols', dim);   // one equal column per day → squares fill the width
   grid.innerHTML = '<div class="cal-hb-scroll"><div class="cal-hb-head-row"><span class="cal-hb-name cal-hb-name-sp"></span><div class="cal-hb-cells cal-hb-days">' + head + '</div></div>' + rows + '</div>';
@@ -14034,17 +14082,19 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
       days.forEach(d => {
         const key = _calDateKey(d), dow = d.getDay();
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const ticked = !!(t.repeatDone && t.repeatDone[key]);   // (user) ticked here or in Month tab
-        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to toggle done
-        if (worked.has(key) || ticked) cells += '<span class="cal-hbw-cell done"' + _d + ' style="background:' + col + '"></span>';
-        else if (isRepeat)    cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
-        else                  cells += '<span class="cal-hbw-cell"' + _d + '></span>';
+        const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none'
+        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
+        if (mark === 'lapse')                            cells += '<span class="cal-hbw-cell lapse"' + _d + '>!</span>';
+        else if (mark === 'success' || worked.has(key))  cells += '<span class="cal-hbw-cell done"' + _d + ' style="background:' + col + '"></span>';
+        else if (isRepeat)                               cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
+        else                                             cells += '<span class="cal-hbw-cell"' + _d + '></span>';
       });
-      // Task NAME in a more saturated colour (vivid bucket-side hue when tagged, else the
-      // darker quadrant text tint) so it stands out above the 7 squares.
+      // Task NAME in a more saturated colour (vivid bucket-side hue when tagged) + a small neutral
+      // meta line (Build/Avoid · Category) so it stands out above the 7 squares.
       const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      rows += '<div class="cal-hbw-task"><div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + '</div><div class="cal-hbw-cells">' + cells + '</div></div>';
+      rows += '<div class="cal-hbw-task"><div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</div><div class="cal-hbw-cells">' + cells + '</div></div>';
     });
+    rows += _habitLegendHtml();
   }
   grid.innerHTML = '<div class="cal-hbw-head">' + head + '</div>' + rows;
 }
@@ -14067,6 +14117,7 @@ function openCalTaskModal() {
   if (!modal || !nameEl || !secEl) return;
   // ----- local picker state -----
   let q = 'q1', pillar = null, repeatStart = null, repeatEnd = null, due = null, note = '', activeSec = null;
+  let habitType = 'build';   // (user) Build/Avoid DIRECTION — only meaningful when Repeat is on (a habit)
   const repeatSet = new Set();
   const QLABEL = { q1: 'Important · Urgent', q2: 'Important · Not urgent', q3: 'Not important · Urgent', q4: 'Not important · Not urgent' };
   nameEl.value = '';
@@ -14134,8 +14185,25 @@ function openCalTaskModal() {
       const sep = document.createElement('span'); sep.className = 'ctm-range-sep'; sep.textContent = '~'; rng.appendChild(sep);
       rng.appendChild(mkDate('end'));
       secEl.appendChild(rng);
-      const cap = document.createElement('div'); cap.className = 'ctm-sec-cap'; cap.textContent = 'Pick weekdays; the date range is optional.';
+      const cap = document.createElement('div'); cap.className = 'ctm-sec-cap'; cap.textContent = tr('Pick weekdays; the date range is optional.');
       secEl.appendChild(cap);
+      // (user) Build/Avoid segmented capsule — only shown here, inside Repeat, because direction only
+      // applies to habits. NEUTRAL styling (no category colours): selected = filled neutral + bold.
+      const htWrap = document.createElement('div'); htWrap.className = 'ctm-habittype';
+      const htLbl = document.createElement('div'); htLbl.className = 'ctm-sec-cap'; htLbl.style.marginTop = '2px'; htLbl.textContent = tr('Habit direction'); htWrap.appendChild(htLbl);
+      const seg = document.createElement('div'); seg.className = 'ht-seg';
+      [['build', tr('Build')], ['avoid', tr('Avoid')]].forEach(pair => {
+        const b = document.createElement('button'); b.type = 'button';
+        b.className = 'ht-seg-btn' + (habitType === pair[0] ? ' sel' : ''); b.textContent = pair[1];
+        b.onclick = () => { habitType = pair[0]; renderSection(); syncChips(); };
+        seg.appendChild(b);
+      });
+      htWrap.appendChild(seg);
+      const htCap = document.createElement('div'); htCap.className = 'ctm-sec-cap';
+      htCap.textContent = (habitType === 'avoid') ? tr('A habit to cut back on — mark the days you avoided it.')
+                                                  : tr('A habit to do more — mark the days you did it.');
+      htWrap.appendChild(htCap);
+      secEl.appendChild(htWrap);
     } else if (activeSec === 'memo') {
       const ta = document.createElement('textarea'); ta.className = 'ctm-memo'; ta.value = note; ta.placeholder = 'Memo (optional)';
       ta.addEventListener('input', () => { note = ta.value; syncChips(); });
@@ -14171,7 +14239,7 @@ function openCalTaskModal() {
       pillar: (pillar != null ? pillar : null),
       createdAt: d.getTime()
     };
-    if (repeatSet.size) { tk.repeat = Array.from(repeatSet).sort((a, b) => a - b); if (repeatStart) tk.repeatStart = repeatStart; if (repeatEnd) tk.repeatEnd = repeatEnd; }
+    if (repeatSet.size) { tk.repeat = Array.from(repeatSet).sort((a, b) => a - b); if (repeatStart) tk.repeatStart = repeatStart; if (repeatEnd) tk.repeatEnd = repeatEnd; tk.habitType = habitType; }  // (user) save Build/Avoid for habits only
     if (due) tk.dueDate = due;
     if (note && note.trim()) tk.note = note.trim();
     state.tasks[q].unshift(tk);
@@ -14660,7 +14728,8 @@ window.bidoroCalSync = bidoroCalSync;
       const day = cb.dataset.day, task = state.tasks[q] && state.tasks[q][idx];
       if (task && day) {
         if (!task.repeatDone || typeof task.repeatDone !== 'object') task.repeatDone = {};
-        if (task.repeatDone[day]) delete task.repeatDone[day]; else task.repeatDone[day] = true;
+        // Checkbox is binary success (=== true so tapping a 'lapse' day sets success, never "checks" a lapse).
+        if (task.repeatDone[day] === true) delete task.repeatDone[day]; else task.repeatDone[day] = true;
         try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
       }
     } else {
@@ -14681,7 +14750,16 @@ window.bidoroCalSync = bidoroCalSync;
     const task = state.tasks[q] && state.tasks[q][idx];
     if (!task || !day) return;
     if (!task.repeatDone || typeof task.repeatDone !== 'object') task.repeatDone = {};
-    if (task.repeatDone[day]) delete task.repeatDone[day]; else task.repeatDone[day] = true;
+    // Build = simple toggle (none ↔ success). Avoid = 3-state tap cycle none → success → lapse → none.
+    // success = true (filled category colour, "I did it" / "I avoided it"); lapse = 'lapse' (Avoid slip).
+    const cur = task.repeatDone[day];
+    if (_habitType(task) === 'avoid') {
+      if (!cur)              task.repeatDone[day] = true;      // none → success (avoided it)
+      else if (cur === true) task.repeatDone[day] = 'lapse';  // success → lapse (did the thing)
+      else                   delete task.repeatDone[day];     // lapse → none
+    } else {
+      if (cur === true) delete task.repeatDone[day]; else task.repeatDone[day] = true;
+    }
     try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
     try { if (typeof renderCalendar === 'function') renderCalendar(); } catch (_) {}
     // Refresh whatever calendar surface is showing (lists / month / agenda / open day popup).
@@ -27823,6 +27901,17 @@ const BIDORO_I18N = {
   "Sleep":{ko:"취침",zh:"睡眠",ja:"睡眠",es:"Dormir",fr:"Dormir"}
 };
 /* i18n-ext (user: anonymous-note rotation) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({"Anonymous":{"ko":"익명글","zh":"匿名","ja":"匿名","es":"Anónimo","fr":"Anonyme"}});
+/* i18n-ext (user: Build/Avoid habits + Routine tracking) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
+"Build":{ko:"늘리기",zh:"养成",ja:"増やす",es:"Crear",fr:"Adopter"},
+"Avoid":{ko:"줄이기",zh:"戒掉",ja:"減らす",es:"Evitar",fr:"Éviter"},
+"Habit direction":{ko:"습관 방향",zh:"习惯方向",ja:"習慣の方向",es:"Tipo de hábito",fr:"Type d'habitude"},
+"A habit to do more — mark the days you did it.":{ko:"더 자주 하고 싶은 습관 — 해낸 날을 표시하세요.",zh:"想多做的习惯 — 标记你做到的日子。",ja:"もっとやりたい習慣 — できた日をタップ。",es:"Un hábito para hacer más: marca los días que lo hiciste.",fr:"Une habitude à faire plus — marque les jours réussis."},
+"A habit to cut back on — mark the days you avoided it.":{ko:"줄이고 싶은 습관 — 참아낸 날을 표시하세요.",zh:"想减少的习惯 — 标记你成功避免的日子。",ja:"減らしたい習慣 — 我慢できた日をタップ。",es:"Un hábito para reducir: marca los días que lo evitaste.",fr:"Une habitude à réduire — marque les jours où tu l'as évitée."},
+"Success":{ko:"성공",zh:"成功",ja:"成功",es:"Logrado",fr:"Réussi"},
+"Lapse":{ko:"실패",zh:"失误",ja:"失敗",es:"Recaída",fr:"Écart"},
+"Not recorded":{ko:"기록 없음",zh:"未记录",ja:"未記録",es:"Sin registro",fr:"Non noté"},
+"Pick weekdays; the date range is optional.":{ko:"요일을 고르세요. 기간은 선택이에요.",zh:"选择星期；日期范围可选。",ja:"曜日を選択。期間は任意です。",es:"Elige los días; el rango de fechas es opcional.",fr:"Choisis les jours ; la période est optionnelle."}
+});
 /* i18n-ext (user: friend/anon reply) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
 "Leave a kind word":{ko:"따뜻한 한마디",zh:"留下暖心一句",ja:"やさしい一言を",es:"Deja unas palabras amables",fr:"Laisse un mot gentil"},
 "A short, encouraging reply can quietly make their day.":{ko:"짧은 응원 한마디가 큰 힘이 돼요.",zh:"一句简短的鼓励也许能温暖他们的一天。",ja:"短い励ましが相手の一日を支えます。",es:"Una respuesta breve y alentadora puede alegrarles el día.",fr:"Un petit mot d'encouragement peut illuminer leur journée."},
