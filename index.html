@@ -16254,6 +16254,14 @@ function taskPlannedReward(t, q) {
   const units = Math.max(0, Math.round(_taskPlannedMs(t) / REWARD_UNIT_MS));
   return units * rate;
 }
+/* (user) +Add preview money = the REAL planned reward for that quadrant + duration
+   (round(dur/5min) × the Q-rate from Settings → Time & Rewards), NOT a flat $5/min.
+   q4 has no reward rate → $0. Mirrors taskPlannedReward but takes raw ms. */
+function _previewBlockReward(b) {
+  if (!b) return 0;
+  const units = Math.max(0, Math.round(((+b.endMs) - (+b.startMs)) / REWARD_UNIT_MS));
+  return units * _rewardRateFor(b.q);
+}
 /* Total ACTUAL focus time recorded for a task (sum of its blocks' worked
    segments + any still-open work session). Breaks excluded. */
 function taskActualWorkedMs(q, i) {
@@ -22080,10 +22088,9 @@ function drawTimeArea() {
     div.className = 'time-block';
     if (b._preview) {
       div.classList.add('preview');
-      // (user) Live MONEY ($5 / minute of duration, whole dollars) shown just BELOW the block at a
-      // CONSTANT size (= the in-block task-name font, set in CSS) — independent of block height.
-      const _durMin   = Math.round((b.endMs - b.startMs) / 60000);   // round seconds → minutes
-      const _moneyTxt = bidoroCur().sym + _moneyDigits(_durMin * 5);  // localized currency / minute, no decimals
+      // (user) Live MONEY = the REAL planned reward for this quadrant + duration (Q-rate × units),
+      // shown just BELOW the block at a CONSTANT size (= the in-block task-name font, set in CSS).
+      const _moneyTxt = bidoroCur().sym + _moneyDigits(_previewBlockReward(b));
       const _bigDur = document.createElement('div');
       _bigDur.className = 'time-block-bigdur';
       _bigDur.textContent = _moneyTxt;
@@ -37150,10 +37157,9 @@ setInterval(() => {
       if (b._preview) {
         div.classList.add('preview');   // transient +Add preview → non-interactive
         // (user) Live green MONEY just BELOW the block as the slider resizes it on the WIDE gauge
-        // (iPad / web / iPhone-landscape) — mirrors the phone-portrait T&T preview ($5 / minute).
+        // (iPad / web / iPhone-landscape) — the REAL planned reward (Q-rate × units), same as phone.
         try {
-          const _durMin   = Math.round((b.endMs - b.startMs) / 60000);
-          const _moneyTxt = bidoroCur().sym + _moneyDigits(_durMin * 5);
+          const _moneyTxt = bidoroCur().sym + _moneyDigits(_previewBlockReward(b));
           const _bigDur = document.createElement('div');
           _bigDur.className = 'tg-block-bigdur';
           _bigDur.textContent = _moneyTxt;
