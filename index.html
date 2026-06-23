@@ -1218,6 +1218,18 @@
     z-index: 20;                 /* above the scene/content so the tap always lands */
   }
   .ff-close:active { background: var(--ff-border, #e5e7eb); transform: scale(.94); }
+  /* (user) Always-on toggle — same size / top / margin as the ✕, but top-LEFT. */
+  .ff-awake {
+    position: absolute; top: max(16px, env(safe-area-inset-top)); left: 18px;
+    width: 42px; height: 42px; border-radius: 999px;
+    border: 1px solid var(--ff-border, transparent); background: var(--ff-fill, #f1f3f5); color: var(--ff-ink, #4b5563);
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+    z-index: 20; -webkit-tap-highlight-color: transparent;
+  }
+  .ff-awake:active { background: var(--ff-border, #e5e7eb); transform: scale(.94); }
+  /* ON = amber "always-on" tint (same as the top-bar screen-awake button). */
+  .ff-awake.is-on { background: #fde68a; border-color: #fbbf24; color: #92400e; }
+  :root[data-theme="solarized"] .ff-awake.is-on { background: #4A3A1A; border-color: #B58900; color: #FCE38A; }
   .ff-name {
     margin-top: 7vh; font-size: 1.5rem; font-weight: 800; color: #111827;
     text-align: center; max-width: 86%;
@@ -10832,6 +10844,10 @@
 </div>
 
 <div class="ff-overlay hidden" id="focus-fullscreen" aria-hidden="true">
+  <!-- Always-on toggle (top-LEFT) — mirrors the ✕ button; reuses the top-bar "keep screen on" icon. -->
+  <button class="ff-awake" id="ff-awake" type="button" aria-label="Keep screen on" aria-pressed="false">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="3" width="9" height="18" rx="2.3"/><line x1="7.5" y1="6" x2="10.5" y2="6"/><line x1="16" y1="9.3" x2="18.6" y2="8.3"/><line x1="16.6" y1="12" x2="19.7" y2="12"/><line x1="16" y1="14.7" x2="18.6" y2="15.7"/></svg>
+  </button>
   <button class="ff-close" id="ff-close" type="button" aria-label="Close timer">
     <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M6 6 L18 18 M18 6 L6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
   </button>
@@ -32530,6 +32546,7 @@ try {
    Pressing it flashes a short explainer in the motivation area. ===== */
 (function wireScreenAwake(){
   const btn = document.getElementById('screen-awake-btn');
+  const ffBtn = document.getElementById('ff-awake');   // (user) same toggle inside the full-screen Pomodoro
   if (!btn) return;
   let _wake = null;
   // Native bridge: the web Wake Lock API does NOT actually hold the screen awake
@@ -32543,7 +32560,7 @@ try {
   }
   async function acquire(){ _nativeIdleTimer(true); try { if (navigator.wakeLock) { _wake = await navigator.wakeLock.request('screen'); _wake.addEventListener('release', () => { _wake = null; }); } } catch (_) {} }
   function release(){ _nativeIdleTimer(false); try { if (_wake) { const w = _wake; _wake = null; w.release(); } } catch (_) {} }
-  function sync(){ const on = !!(typeof state !== 'undefined' && state.screenAwake); btn.classList.toggle('is-on', on); btn.setAttribute('aria-pressed', on ? 'true' : 'false'); }
+  function sync(){ const on = !!(typeof state !== 'undefined' && state.screenAwake); [btn, ffBtn].forEach(b => { if (b) { b.classList.toggle('is-on', on); b.setAttribute('aria-pressed', on ? 'true' : 'false'); } }); }
   function hint(on){
     const el = document.getElementById('motivation-display'); if (!el) return;
     el.innerHTML = '<span class="mot-awake-hint">' + tr(on ? '🔆 Always-on mode' : '🌙 Screen can sleep again') + '</span>';
@@ -32553,14 +32570,16 @@ try {
   document.addEventListener('visibilitychange', () => { try { if (typeof state !== 'undefined' && state.screenAwake && document.visibilityState === 'visible' && !_wake) acquire(); } catch (_) {} });
   try { if (typeof state !== 'undefined' && state.screenAwake) acquire(); } catch (_) {}
   sync();
-  btn.addEventListener('click', (e) => {
+  function toggle(e) {
     e.preventDefault(); e.stopPropagation();
     if (typeof state === 'undefined') return;
     state.screenAwake = !state.screenAwake;
     try { saveState(); } catch (_) {}
     if (state.screenAwake) acquire(); else release();
     sync(); hint(state.screenAwake);
-  });
+  }
+  btn.addEventListener('click', toggle);
+  if (ffBtn) ffBtn.addEventListener('click', toggle);
 })();
 /* "No Space" — close the gaps between the now-line block and the blocks below it,
    keeping their order, then re-chunk into 25-min work / 5-min break (2+ tasks can
