@@ -24180,10 +24180,12 @@ function doShuffleArrange() {
 function doPrioritizeArrange() {
   const keys = _arrangeableTaskKeys();
   if (keys.length < 2) { try { bidoroToast(tr('Add 2+ tasks to prioritize.')); } catch (_) {} return; }
-  const qRank = { q1: 0, q2: 1, q3: 2, q4: 3 };
-  // q1→q2→q3→q4; within the same cell, earlier-added (smaller createdAt) sits higher.
-  keys.sort((a, b) => ((qRank[a.q] != null ? qRank[a.q] : 9) - (qRank[b.q] != null ? qRank[b.q] : 9)) || (a.createdAt - b.createdAt));
-  _applyArrange(keys);
+  // q1→q4 reorder that KEEPS each block's duration (no re-chunk). Same engine as the Edit-row path.
+  if (!_prioritizeCore()) { try { bidoroToast(tr('Add 2+ tasks to prioritize.')); } catch (_) {} return; }
+  try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+  try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch (_) {}
+  try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic('medium'); } catch (_) {}
   state.arrangeMode = 'shuffle';      // next press offers Shuffle again
   _renderShuffleBtn();
 }
@@ -24231,10 +24233,24 @@ function _renderArrangeBtns() {
   });
 }
 function _prioritizeCore() {
-  const keys = _arrangeableTaskKeys(); if (keys.length < 1) return false;
+  // (user) Prioritize = REORDER the future task blocks q1→q4 (then current gauge order) and pack
+  // them contiguously from the now-line, KEEPING each block's own duration. NO 25/5 re-chunk and
+  // NO unifying short (e.g. 10-min) blocks to 30 min — every block's start→end length is preserved.
+  if (!Array.isArray(state.scheduledBlocks)) return false;
+  const now = Date.now(); const all = state.scheduledBlocks;
   const qRank = { q1: 0, q2: 1, q3: 2, q4: 3 };
-  keys.sort((a, b) => (((qRank[a.q] != null ? qRank[a.q] : 9) - (qRank[b.q] != null ? qRank[b.q] : 9)) || (a.createdAt - b.createdAt)));
-  if (typeof _rechunkFutureTasks === 'function') _rechunkFutureTasks(keys.map(o => o.key));
+  let anchor = now;                                          // start packing below any RUNNING block
+  all.forEach(b => { if (b && b.kind !== 'tracker' && b.activeAt != null && b.endMs > now) anchor = Math.max(anchor, b.endMs); });
+  const fut = all.filter(b => b && !b.isBreak && b.kind !== 'tracker' && b.activeAt == null && b.activeEndMs == null && b.endMs > now);
+  if (fut.length < 1) return false;
+  // q1→q2→q3→q4; within the same quadrant, keep the current gauge order (earlier start sits higher).
+  fut.sort((a, b) => ((qRank[a.q] != null ? qRank[a.q] : 9) - (qRank[b.q] != null ? qRank[b.q] : 9)) || (a.startMs - b.startMs));
+  let cursor = anchor;
+  fut.forEach(b => {
+    const delta = cursor - b.startMs;
+    if (delta) { b.startMs += delta; b.endMs += delta; ['taskSegs', 'breakSegments', 'workedSegments'].forEach(k => { if (Array.isArray(b[k])) b[k].forEach(s => { s.startMs += delta; s.endMs += delta; }); }); }
+    cursor = b.endMs;
+  });
   return true;
 }
 // Pack future blocks contiguously from just below the now-line, keeping each box's height
