@@ -720,6 +720,18 @@
   .ntab-dot, .tmd-dot { display: none; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; vertical-align: top; position: relative; top: -1px; margin-left: 3px; flex: 0 0 auto; }
   .ntab.has-reply-dot .ntab-dot { display: inline-block; }
   .tmd-item.has-reply-dot .tmd-dot { display: inline-block; }
+  /* (user) ⚙ Notes-mix tab + weight panel */
+  .ntab.ntab-gear { flex: 0 0 auto; padding: 9px 12px 11px; display: inline-flex; align-items: center; justify-content: center; }
+  #ntab-weights .nw-rows { display: flex; flex-direction: column; gap: 18px; margin: 12px 0 20px; }
+  #ntab-weights .nw-row { display: grid; grid-template-columns: minmax(70px, auto) 40px 1fr 30px; align-items: center; gap: 10px; }
+  #ntab-weights .nw-label { font-weight: 700; color: var(--text-main); font-size: .92rem; white-space: nowrap; }
+  #ntab-weights .nw-pct { font-weight: 800; color: var(--text-main); font-variant-numeric: tabular-nums; text-align: right; }
+  #ntab-weights .nw-slider { width: 100%; accent-color: var(--accent, #2AA198); cursor: pointer; }
+  #ntab-weights .nw-lock { background: none; border: none; font-size: 1.05rem; line-height: 1; padding: 0; cursor: pointer; opacity: .85; -webkit-tap-highlight-color: transparent; }
+  #ntab-weights .nw-lock[aria-pressed="true"] { opacity: 1; }
+  #ntab-weights .nw-btns { display: flex; gap: 10px; }
+  #ntab-weights .nw-btn { flex: 1 1 0; padding: 11px; border-radius: 10px; border: 1px solid var(--card-border); background: var(--surface-2, #fff); color: var(--text-main); font: inherit; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  #ntab-weights .nw-btn:active { background: var(--button-bg, #f3f4f6); }
   /* Black filter capsules (tap to filter the list by tag) */
   .note-filter-row { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 12px; -ms-overflow-style: none; scrollbar-width: none; }
   .note-filter-row::-webkit-scrollbar { display: none; }
@@ -9853,6 +9865,8 @@
         <button class="ntab active" data-ntab="notes" type="button" role="tab">Notes</button>
         <button class="ntab" data-ntab="subs" type="button" role="tab">Subscriptions</button>
         <button class="ntab" data-ntab="replied" type="button" role="tab">Replied<span class="ntab-dot" aria-hidden="true"></span></button>
+        <!-- (user) ⚙ tab — Notes mix (top-bar rotation weights). -->
+        <button class="ntab ntab-gear" data-ntab="weights" type="button" role="tab" aria-label="Notes mix"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </div>
 
       <!-- ============ TAB: NOTES (첨부1) ============ -->
@@ -9884,6 +9898,38 @@
         <div class="nrep-cards" id="nrep-others"></div>
         <h3 class="nrep-head">Replied by Me</h3>
         <div class="nrep-cards" id="nrep-mine"></div>
+      </div>
+
+      <!-- ============ TAB: NOTES MIX (⚙ — top-bar rotation weights) ============
+           Each row: label · percent · slider · lock 🔓/🔒. Sliders interlink to total 100%
+           (moved value fixed; the other unlocked rows share the rest by their existing ratio).
+           These ARE state.noteWeights — the same weights the rotation engine reads. -->
+      <div class="ntab-pane" id="ntab-weights" style="display:none;">
+        <p class="help">How often each kind of note shows in the top bar. Always totals 100%.</p>
+        <div class="nw-rows" id="nw-rows">
+          <div class="nw-row">
+            <span class="nw-label">My Notes</span>
+            <span class="nw-pct" id="nw-pct-self">50%</span>
+            <input type="range" class="nw-slider" id="nw-self" data-w="self" min="0" max="100" step="1" value="50" aria-label="My Notes weight">
+            <button class="nw-lock" id="nw-lock-self" data-w="self" type="button" aria-pressed="false" aria-label="Lock My Notes">🔓</button>
+          </div>
+          <div class="nw-row">
+            <span class="nw-label">Friends' Notes</span>
+            <span class="nw-pct" id="nw-pct-friend">40%</span>
+            <input type="range" class="nw-slider" id="nw-friend" data-w="friend" min="0" max="100" step="1" value="40" aria-label="Friends' Notes weight">
+            <button class="nw-lock" id="nw-lock-friend" data-w="friend" type="button" aria-pressed="false" aria-label="Lock Friends' Notes">🔓</button>
+          </div>
+          <div class="nw-row">
+            <span class="nw-label">People's Notes</span>
+            <span class="nw-pct" id="nw-pct-anon">10%</span>
+            <input type="range" class="nw-slider" id="nw-anon" data-w="anon" min="0" max="100" step="1" value="10" aria-label="People's Notes weight">
+            <button class="nw-lock" id="nw-lock-anon" data-w="anon" type="button" aria-pressed="false" aria-label="Lock People's Notes">🔓</button>
+          </div>
+        </div>
+        <div class="nw-btns">
+          <button class="nw-btn nw-eq" id="nw-eq" type="button">Equalize</button>
+          <button class="nw-btn nw-reset" id="nw-reset" type="button">Reset</button>
+        </div>
       </div>
     </div>
   </section>
@@ -11096,6 +11142,7 @@ const defaultState = () => ({
   motivationalCurrent: null,  // { text, selectedAt, green?, memoId? } (legacy; rotation is now ephemeral)
   // Top-bar rotation weights (self/friend/anon) — edited by the Notes ⚙ panel (Part 2). Default = ROTATION_WEIGHTS.
   noteWeights: { self: 50, friend: 40, anon: 10 },
+  noteWeightLocks: { self: false, friend: false, anon: false },   // 🔒 rows excluded from slider redistribution
   showNotesInFocus: false,    // OFF = self only during focus; ON = conservative FOCUS_ROTATION_WEIGHTS
   // ---- Anonymous "Memo for Sharing" (top-bar quote rotation) ----
   sharedMemo: '',            // my own memo, shared anonymously with other users
@@ -14783,12 +14830,84 @@ function _ensureNoteTags(){
 function switchNoteTab(tab){
   _noteTab = tab;
   document.querySelectorAll('#notes-tabs .ntab').forEach(b => b.classList.toggle('active', b.dataset.ntab === tab));
-  const map = { notes:'ntab-notes', subs:'ntab-subs', replied:'ntab-replied' };
+  const map = { notes:'ntab-notes', subs:'ntab-subs', replied:'ntab-replied', weights:'ntab-weights' };
   Object.keys(map).forEach(k => { const el = document.getElementById(map[k]); if (el) el.style.display = (k === tab) ? '' : 'none'; });
   if (tab === 'notes') renderNotes();
   else if (tab === 'subs') { try { renderSubscriptions(); } catch (_) {} try { _subsFetchApproved(); } catch (_) {} }   // refresh approved lists from cloud
   else if (tab === 'replied') { try { renderReplied(); } catch (_) {} try { _markRepliesSeen(); } catch (_) {} }
+  else if (tab === 'weights') { try { renderWeightsPanel(); } catch (_) {} }
 }
+
+/* ===== Notes ⚙ panel — top-bar rotation weights (Part 2) =====
+   The 3 sliders ARE state.noteWeights (read live by the rotation engine). They always total 100%:
+   the slider you move keeps its value; the other UNLOCKED rows share the remainder by their existing
+   ratio (both 0 → 50/50); 🔒 rows are frozen. Equalize spreads the unlocked rows evenly; Reset →
+   the ROTATION_WEIGHTS default (50/40/10). Integer %, rounding corrected so the sum stays 100. */
+function _nwLocks() { if (!state.noteWeightLocks || typeof state.noteWeightLocks !== 'object') state.noteWeightLocks = { self: false, friend: false, anon: false }; return state.noteWeightLocks; }
+function _nwW() { if (!state.noteWeights || typeof state.noteWeights !== 'object') state.noteWeights = Object.assign({}, ROTATION_WEIGHTS); return state.noteWeights; }
+function renderWeightsPanel() {
+  const w = _nwW(), locks = _nwLocks();
+  ['self', 'friend', 'anon'].forEach(k => {
+    const sl = document.getElementById('nw-' + k), pc = document.getElementById('nw-pct-' + k), lk = document.getElementById('nw-lock-' + k);
+    const v = Math.round(w[k] || 0);
+    if (sl && document.activeElement !== sl) sl.value = String(v);   // don't fight the thumb being dragged
+    else if (sl) sl.value = String(v);
+    if (pc) pc.textContent = v + '%';
+    if (lk) { const on = !!locks[k]; lk.setAttribute('aria-pressed', on ? 'true' : 'false'); lk.textContent = on ? '🔒' : '🔓'; }
+  });
+}
+function _nwIntFix(w, prefer) {
+  ['self', 'friend', 'anon'].forEach(k => w[k] = Math.max(0, Math.round(w[k] || 0)));
+  let diff = 100 - (w.self + w.friend + w.anon);
+  if (diff !== 0) {
+    let pool = (prefer && prefer.length) ? prefer.slice() : ['self', 'friend', 'anon'];
+    let k = pool.reduce((a, b) => (w[b] >= w[a] ? b : a), pool[0]);
+    if (w[k] + diff < 0) k = ['self', 'friend', 'anon'].reduce((a, b) => (w[b] >= w[a] ? b : a), 'self');
+    w[k] = Math.max(0, w[k] + diff);
+    const d2 = 100 - (w.self + w.friend + w.anon); if (d2 !== 0) w.self = Math.max(0, w.self + d2);
+  }
+  return w;
+}
+function _nwApply(movedKey, newVal) {
+  const keys = ['self', 'friend', 'anon'], w = Object.assign({}, _nwW()), locks = _nwLocks();
+  newVal = Math.max(0, Math.min(100, Math.round(newVal)));
+  const others = keys.filter(k => k !== movedKey);
+  const locked = others.filter(k => locks[k]), unlocked = others.filter(k => !locks[k]);
+  const L = locked.reduce((s, k) => s + (w[k] || 0), 0);
+  newVal = Math.min(newVal, 100 - L);                       // locked others + moved can't exceed 100
+  if (!unlocked.length) { w[movedKey] = 100 - L; return _nwIntFix(w, [movedKey]); }   // no give → snap to the only valid value
+  const budget = Math.max(0, 100 - L - newVal), curSum = unlocked.reduce((s, k) => s + (w[k] || 0), 0);
+  w[movedKey] = newVal;
+  if (curSum <= 0) { const each = budget / unlocked.length; unlocked.forEach(k => w[k] = each); }
+  else unlocked.forEach(k => w[k] = budget * ((w[k] || 0) / curSum));   // keep the others' existing ratio
+  return _nwIntFix(w, unlocked);
+}
+function _nwEqualize() {
+  const keys = ['self', 'friend', 'anon'], w = Object.assign({}, _nwW()), locks = _nwLocks();
+  const locked = keys.filter(k => locks[k]), unlocked = keys.filter(k => !locks[k]);
+  const L = locked.reduce((s, k) => s + (w[k] || 0), 0), budget = Math.max(0, 100 - L);
+  if (unlocked.length) { const each = budget / unlocked.length; unlocked.forEach(k => w[k] = each); }
+  return _nwIntFix(w, unlocked.length ? unlocked : keys);
+}
+function _nwCommit(w) {
+  state.noteWeights = w;
+  renderWeightsPanel();
+  try { saveState(); } catch (_) {}
+  try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+}
+(function wireWeightsPanel() {
+  function attach() {
+    ['self', 'friend', 'anon'].forEach(k => {
+      const sl = document.getElementById('nw-' + k);
+      if (sl && !sl._wired) { sl._wired = true; sl.addEventListener('input', () => _nwCommit(_nwApply(k, +sl.value))); }
+      const lk = document.getElementById('nw-lock-' + k);
+      if (lk && !lk._wired) { lk._wired = true; lk.addEventListener('click', () => { const L = _nwLocks(); L[k] = !L[k]; renderWeightsPanel(); try { saveState(); } catch (_) {} }); }
+    });
+    const eq = document.getElementById('nw-eq'); if (eq && !eq._wired) { eq._wired = true; eq.addEventListener('click', () => _nwCommit(_nwEqualize())); }
+    const rs = document.getElementById('nw-reset'); if (rs && !rs._wired) { rs._wired = true; rs.addEventListener('click', () => { state.noteWeightLocks = { self: false, friend: false, anon: false }; _nwCommit(Object.assign({}, ROTATION_WEIGHTS)); }); }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach); else attach();
+})();
 function _addNoteTag(name){
   name = String(name || '').trim().replace(/^#+/, '').replace(/\s+/g, '-').toLowerCase();
   if (!name) return;
