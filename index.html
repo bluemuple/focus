@@ -5618,6 +5618,11 @@
   .repeat-cancel { display: none !important; background: var(--button-bg, #f3f4f6); border-color: var(--card-border, #e5e7eb); color: var(--text-muted, #6b7280); }
   body.tt-repeat-days .repeat-cancel { display: inline-flex !important; }
   .repeat-cancel:hover { background: var(--card-border, #e5e7eb); color: var(--text-main, #374151); }
+  /* (user) Build/Avoid habit segmented capsule — shown ONLY while Repeat is active, next to OK. */
+  .add-habittype { display: none; align-items: center; gap: 2px; background: var(--surface-2, #eef0f3); border-radius: 999px; padding: 2px; }
+  body.tt-repeat-days .add-habittype { display: inline-flex !important; }
+  .add-habittype .aht-btn { border: none; background: none; padding: 5px 11px; border-radius: 999px; font: inherit; font-size: .78rem; font-weight: 600; color: var(--text-muted, #6b7280); cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .add-habittype .aht-btn.sel { background: var(--card-bg, #fff); color: var(--text-main, #111827); font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
   /* In the matrix header the (Start~End) capsule sits next to the weekday row (not far right),
      so drop the wide right-align margin once it's relocated into .ftt-chips. */
   .ftt-chips #rep-range-chip-tasks { margin-left: 0 !important; }
@@ -9337,6 +9342,12 @@
               <!-- repeat-toggle / repeat-cancel / due-toggle / note-toggle relocated to .th-row1 -->
               <button class="hd-chip hd-labeled repeat-cancel" id="repeat-cancel" type="button"
                       title="No repeat" aria-label="Cancel repeat" style="touch-action:manipulation;"><span class="hd-lbl">Cancel</span></button>
+              <!-- (user) Build/Avoid habit direction — shown next to the Repeat "OK" button while Repeat
+                   is active. Both visible; the SELECTED side reads "{X} Habit". Default Build. -->
+              <div class="add-habittype" id="add-habittype" role="group" aria-label="Build or Avoid habit">
+                <button class="aht-btn" id="aht-build" type="button">Build Habit</button>
+                <button class="aht-btn" id="aht-avoid" type="button">Avoid</button>
+              </div>
               <!-- No Space (edit-mode only) → pull the now-line block + everything below it together
                    (remove the gaps) and re-chunk into 25-min work / 5-min break. Icon = two arrows
                    pressing toward a centre line (compress). -->
@@ -13765,7 +13776,7 @@ function _habitMetaHtml(t) {
 /* Subtle Routine legend: filled = success · ! = lapse · empty = not recorded. */
 function _habitLegendHtml() {
   return '<div class="cal-hb-legend"><span class="cal-hb-leg-sw done"></span>' + tr('Success')
-       + ' · <span class="cal-hb-leg-sw lapse">!</span>' + tr('Lapse')
+       + ' · <span class="cal-hb-leg-sw lapse">!</span>' + tr('Oops (Lapse)')
        + ' · <span class="cal-hb-leg-sw rep"></span>' + tr('Not recorded') + '</div>';
 }
 function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
@@ -21439,7 +21450,7 @@ async function showPomoPhaseConfirm() {
       // asks; if BOTH are ignored (auto-continued, logged on the block), the THIRD ask flips the
       // 30s countdown onto "Finish now" so an unattended session ends instead of running forever.
       const _ignore = +at.contIgnoreCount || 0;
-      const _finishDefault = (_ignore >= 2);
+      const _finishDefault = true;   // (user) end of plan after a break → Finish now is the default (30s)
       const _black = { bg: '#111827', fg: '#fff', border: '#111827' };
       const _q = _tname ? trf('Keep going on {task}?', { task: _tname }) : tr('Keep going?');
       const _cfOpts = {
@@ -25990,24 +26001,23 @@ async function _showKeepGoingConflict(b, next) {
   const nextName = (next && (next.taskName
                    || (state.tasks[next.q] && state.tasks[next.q][next.taskIdx] && state.tasks[next.q][next.taskIdx].text)))
                    || 'the next task';
-  const title = 'Still going?';
-  const msg   = 'Make room and keep going, or switch?';
-  try { notify(title, msg, { noToast: true }); } catch (_) {}
-  const gentle = (state.timerTransition !== 'manual');     // Gentle Auto auto-switches; Manual waits
-  // Each button is tinted to ITS task's theme accent: Keep going = the current task,
-  // Switch = the next task. Switch is the DEFAULT (right side + 30s countdown) — if you
-  // don't decide, the plan wins and the next task starts.
-  // (user) Both buttons are TASKS → style each like its TASK BAR (task-bar bg + task-bar text):
-  // Keep going = the current task, Switch = the next task.
+  // (user) The "a gap, then a task later" case → make it IDENTICAL to the "another task next, no
+  // break" prompt: title "Keep going on {current}?" with [Next task] (DEFAULT, next-task colour) /
+  // [Keep going] (current-task colour). Switching (Next) is the 30s default — the plan wins.
   const _curQ = (b && b.q) || at.q, _curIdx = (b && b.taskIdx != null) ? b.taskIdx : at.idx;
+  const _curName = (state.tasks[_curQ] && state.tasks[_curQ][_curIdx] && state.tasks[_curQ][_curIdx].text) || '';
   const _taskStyle = (q, idx) => ({
     bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(q, idx) : '#334155'),
     fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(q, idx) : '#fff')
   });
+  const title = _curName ? trf('Keep going on {task}?', { task: _curName }) : tr('Keep going?');
+  const msg   = '';
+  try { notify(tr('Still going?'), tr('Keep going, or move on?'), { noToast: true }); } catch (_) {}
+  const gentle = (state.timerTransition !== 'manual');     // Gentle Auto auto-switches; Manual waits
   const ans = await customConfirm(title, msg, {
-    yesLabel: 'Switch to ' + nextName,                     // DEFAULT (right + countdown)
-    noLabel:  'Keep going',
-    countdownMs: gentle ? 30000 : 0,                       // 30s default = Switch to next
+    yesLabel: tr('Next task'),                             // DEFAULT (right + 30s countdown) → switch to next
+    noLabel:  tr('Keep going'),
+    countdownMs: gentle ? 30000 : 0,                       // 30s default = Next task
     yesColor: (next && typeof next.q === 'string') ? _taskStyle(next.q, next.taskIdx) : { bg: '#185FA5', fg: '#fff' },
     noColor:  _taskStyle(_curQ, _curIdx)
   });
@@ -27984,6 +27994,11 @@ const BIDORO_I18N = {
 "A habit to cut back on — mark the days you avoided it.":{ko:"줄이고 싶은 습관 — 참아낸 날을 표시하세요.",zh:"想减少的习惯 — 标记你成功避免的日子。",ja:"減らしたい習慣 — 我慢できた日をタップ。",es:"Un hábito para reducir: marca los días que lo evitaste.",fr:"Une habitude à réduire — marque les jours où tu l'as évitée."},
 "Success":{ko:"성공",zh:"成功",ja:"成功",es:"Logrado",fr:"Réussi"},
 "Lapse":{ko:"실패",zh:"失误",ja:"失敗",es:"Recaída",fr:"Écart"},
+"Oops (Lapse)":{ko:"해버림",zh:"哎呀 (失误)",ja:"やっちゃった",es:"Ups (recaída)",fr:"Oups (écart)"},
+"Build Habit":{ko:"늘리기 습관",zh:"养成习惯",ja:"増やす習慣",es:"Hábito a crear",fr:"Habitude à adopter"},
+"Avoid Habit":{ko:"줄이기 습관",zh:"戒掉习惯",ja:"減らす習慣",es:"Hábito a evitar",fr:"Habitude à éviter"},
+"Still going?":{ko:"계속하는 중?",zh:"还在继续？",ja:"まだ続ける？",es:"¿Sigues?",fr:"Toujours en cours ?"},
+"Keep going, or move on?":{ko:"계속할까요, 넘어갈까요?",zh:"继续，还是切换？",ja:"続ける？次へ？",es:"¿Seguir o pasar al siguiente?",fr:"Continuer ou passer ?"},
 "Not recorded":{ko:"기록 없음",zh:"未记录",ja:"未記録",es:"Sin registro",fr:"Non noté"},
 "Pick weekdays; the date range is optional.":{ko:"요일을 고르세요. 기간은 선택이에요.",zh:"选择星期；日期范围可选。",ja:"曜日を選択。期間は任意です。",es:"Elige los días; el rango de fechas es opcional.",fr:"Choisis les jours ; la période est optionnelle."}
 });
@@ -33881,6 +33896,7 @@ const _WEEKDAYS = [
   { d: 5, lbl: 'Fri' }, { d: 6, lbl: 'Sat' }, { d: 0, lbl: 'Sun' }
 ];               // display order = Mon → Sun
 let _addRepeatDays = new Set();
+let _addHabitType = 'build';   // (user) Build/Avoid direction for the habit being added (only saved when Repeat is on)
 let _addNoteText = '';   // free-text note typed via the +Add "Note" button → task.note on commit
 /* E2: repeat date WINDOW for the task being added. Both are date keys 'YYYY-MM-DD'.
    null start → defaults to the task's creation day; null end → start + 1 year. */
@@ -34015,6 +34031,20 @@ function _setRepeatChipLabel(open){
   const lbl = rt.querySelector('.hd-lbl'); if (lbl) lbl.textContent = open ? 'OK' : 'Repeat';
   const ic = rt.querySelector('.hd-ic'); if (ic) ic.style.display = open ? 'none' : '';
 }
+/* (user) Build/Avoid toggle next to the Repeat OK button. Both buttons stay visible; the SELECTED
+   side reads "{X} Habit" (e.g. Build selected → "Build Habit" / "Avoid"). Direction only, no colour. */
+function _syncHabitTypeToggle(){
+  const bb = document.getElementById('aht-build'), ab = document.getElementById('aht-avoid');
+  const isAvoid = (_addHabitType === 'avoid');
+  if (bb){ bb.textContent = isAvoid ? tr('Build') : tr('Build Habit'); bb.classList.toggle('sel', !isAvoid); }
+  if (ab){ ab.textContent = isAvoid ? tr('Avoid Habit') : tr('Avoid'); ab.classList.toggle('sel', isAvoid); }
+}
+(function wireHabitTypeToggle(){
+  const bb = document.getElementById('aht-build'), ab = document.getElementById('aht-avoid');
+  if (bb) bb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _addHabitType = 'build'; _syncHabitTypeToggle(); });
+  if (ab) ab.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _addHabitType = 'avoid'; _syncHabitTypeToggle(); });
+  _syncHabitTypeToggle();
+})();
 /* Reset the +Add repeat state: clear chosen days, leave repeat-days mode,
    un-highlight the chip, rebuild the (now empty) header weekday row. */
 function _resetAddRepeat() {
@@ -34027,6 +34057,7 @@ function _resetAddRepeat() {
   _setRepeatChipLabel(false);
   const row = document.getElementById('weekday-row');
   if (row) _buildWeekdayButtons(row, _addRepeatDays, _syncAddSetChips);
+  _addHabitType = 'build'; _syncHabitTypeToggle();   // (user) reset Build/Avoid for the next add
   _addNoteText = '';
   const nt = document.getElementById('note-toggle'); if (nt) nt.classList.remove('active');
   _addDueDate = null; _syncDueChip();   // clear the +Add due date
@@ -34072,6 +34103,7 @@ function _cancelRepeat(){
   _setRepeatChipLabel(false);
   const row = document.getElementById('weekday-row');
   if (row) _buildWeekdayButtons(row, _addRepeatDays, _syncAddSetChips);
+  _addHabitType = 'build'; _syncHabitTypeToggle();   // (user) reset Build/Avoid for the next add
   _syncAddSetChips();
 }
 /* +Add "Due date" chip → open the shared date picker; commit sets _addDueDate + repaints
@@ -34977,7 +35009,7 @@ function showQuadrantInput(parent, picker, masterBtn, q) {
     // The Repeat (↻) toggle + its weekday buttons + the Note button live in the
     // header (outside the picker) but ARE part of this add flow — tapping them
     // must NOT do anything here.
-    if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #note-toggle, #due-toggle, #task-note-modal, .rep-range-chip, #repdate-modal, #duedate-modal, .gap-ovl-backdrop')) return;
+    if (e.target && e.target.closest && e.target.closest('#repeat-toggle, #weekday-row, #add-habittype, #note-toggle, #due-toggle, #task-note-modal, .rep-range-chip, #repdate-modal, #duedate-modal, .gap-ovl-backdrop')) return;
     try { if (input && document.activeElement === input) input.blur(); } catch (_) {}
   }
   setTimeout(() => {                              // defer so the OPENING tap doesn't trip it
@@ -35349,7 +35381,7 @@ function showMatrixCellAdd(cell, addBtn, q){
   // Tap outside the picker + relocated chips + popups = CANCEL (the iPhone-portrait spec).
   function onOutside(e){
     if (mca.contains(e.target)) return;
-    if (e.target && e.target.closest && e.target.closest('#focus-tasks-title, #weekday-row, #repeat-toggle, #due-toggle, #note-toggle, .rep-range-chip, #repdate-modal, #duedate-modal, #task-note-modal, .gap-ovl-backdrop')) return;
+    if (e.target && e.target.closest && e.target.closest('#focus-tasks-title, #weekday-row, #add-habittype, #repeat-toggle, #due-toggle, #note-toggle, .rep-range-chip, #repdate-modal, #duedate-modal, #task-note-modal, .gap-ovl-backdrop')) return;
     finish(false);
   }
   setTimeout(()=>{ if (done) return; document.addEventListener('pointerdown', onOutside, true); }, 90);
@@ -35858,6 +35890,7 @@ function _commitDurationTask(q, name) {
   if (_addRepeatDays && _addRepeatDays.size) {
     const tk = state.tasks[q][0];
     tk.repeat = Array.from(_addRepeatDays).sort((a, b) => a - b);
+    tk.habitType = _addHabitType;   // (user) Build/Avoid direction — saved for habits only
     // E2: repeat date window. Only stored when explicitly chosen — an absent start
     // defaults to the creation day, an absent end to start + 1 year (see _tasksOnDate).
     if (_addRepeatStart) tk.repeatStart = _addRepeatStart;
