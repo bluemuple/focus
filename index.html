@@ -196,6 +196,11 @@
      bodies stay a light card (so their dark name text reads on a dark canvas). */
   #time-tasks-wrap { background: var(--card-bg); border-color: var(--card-border); }
   #time-area, #time-content { background: var(--card-bg); }
+  /* (user) While a 2-finger pinch-zoom is active, HIDE the gauge's scroll indicator — we set
+     scrollTop every frame to keep the pinch midpoint anchored, which made the native scrollbar
+     flicker/jump up & down. The class is added on touchstart(2) and removed on pinch end. */
+  #time-area.gauge-pinching, #gauge-col.gauge-pinching { scrollbar-width: none !important; -ms-overflow-style: none !important; }
+  #time-area.gauge-pinching::-webkit-scrollbar, #gauge-col.gauge-pinching::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
   /* ===== Solarized Dark — matrix cells + task bars go dark (light text) ===== */
   :root[data-theme="solarized"] .focus-cell.q1 { background: #4D2A33; }
   :root[data-theme="solarized"] .focus-cell.q2 { background: #4D4026; }
@@ -9620,7 +9625,7 @@
         <button type="button" class="pe-info-btn" id="pillar-edit-info" aria-label="What are bucket sides?">i</button>
         <div class="pe-info-pop hidden" id="pillar-edit-pop" role="dialog" aria-hidden="true">
           <button type="button" class="pe-info-x" id="pillar-edit-pop-x" aria-label="Close">✕</button>
-          <img src="images/explain/bucket sides.gif" alt="How bucket sides work">
+          <img src="images/explain/bucket-sides.gif" alt="How bucket sides work">
         </div>
       </div>
       <div class="pe-tabs" id="pillar-edit-tabs" role="tablist">
@@ -18782,16 +18787,22 @@ function _pillarEditorLoad() {
   const infoPop = document.getElementById('pillar-edit-pop');
   const infoX   = document.getElementById('pillar-edit-pop-x');
   if (infoBtn && infoPop) {
-    let _outside = null;
+    // (user) An outside TAP closes the popup, but an outside SLIDE (scrolling the page) does NOT —
+    // so reading the GIF while scrolling keeps it open. Track pointerdown→up: only a near-stationary
+    // release outside the popup closes it.
+    let _onDown = null, _onUp = null, _pt = null;
     const closePop = () => {
       infoPop.classList.add('hidden'); infoPop.setAttribute('aria-hidden', 'true');
-      if (_outside) { document.removeEventListener('pointerdown', _outside, true); _outside = null; }
+      if (_onDown) document.removeEventListener('pointerdown', _onDown, true);
+      if (_onUp) document.removeEventListener('pointerup', _onUp, true);
+      _onDown = _onUp = _pt = null;
     };
     const openPop = () => {
       infoPop.classList.remove('hidden'); infoPop.setAttribute('aria-hidden', 'false');
       try { const img = infoPop.querySelector('img'); if (img) { const s = img.getAttribute('src'); img.src = ''; img.src = s; } } catch (_) {}
-      _outside = (e) => { if (!infoPop.contains(e.target) && e.target !== infoBtn) closePop(); };
-      setTimeout(() => { if (_outside) document.addEventListener('pointerdown', _outside, true); }, 0);
+      _onDown = (e) => { if (infoPop.contains(e.target) || e.target === infoBtn) { _pt = null; return; } _pt = { x: e.clientX, y: e.clientY }; };
+      _onUp = (e) => { if (!_pt) return; const moved = Math.abs(e.clientX - _pt.x) > 8 || Math.abs(e.clientY - _pt.y) > 8; _pt = null; if (!moved) closePop(); };
+      setTimeout(() => { document.addEventListener('pointerdown', _onDown, true); document.addEventListener('pointerup', _onUp, true); }, 0);
     };
     infoBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (infoPop.classList.contains('hidden')) openPop(); else closePop(); });
     if (infoX) infoX.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closePop(); });
@@ -24567,6 +24578,7 @@ function openEventModal(existing, opts) {
     area.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
         window._timeGaugePinching = true;
+        area.classList.add('gauge-pinching');   // hide the scroll indicator so it can't flicker mid-pinch
         const r = area.getBoundingClientRect();
         const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
         const midOffset = midY - r.top;                  // px below the area's top
@@ -24597,6 +24609,7 @@ function openEventModal(existing, opts) {
       if (!pinch) return;
       if (!e.touches || e.touches.length < 2) {
         pinch = null;
+        area.classList.remove('gauge-pinching');   // restore the scroll indicator
         // Clear the flag on the NEXT tick so the in-flight touchend doesn't
         // immediately re-trigger a block tap/drag from the lifting fingers.
         setTimeout(() => { window._timeGaugePinching = false; }, 0);
@@ -24639,6 +24652,7 @@ function openEventModal(existing, opts) {
       let scrolls = false; try { scrolls = getComputedStyle(col).overflowY === 'auto'; } catch (_) {}
       if (!scrolls || document.body.classList.contains('fv-active')) return;
       window._gaugeColPinching = true;
+      col.classList.add('gauge-pinching');   // hide the scroll indicator so it can't flicker mid-pinch
       const r = col.getBoundingClientRect();
       const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       const midOffset = midY - r.top;                  // px below the column's top
@@ -24666,6 +24680,7 @@ function openEventModal(existing, opts) {
       if (!pinch) return;
       if (!e.touches || e.touches.length < 2) {
         pinch = null;
+        col.classList.remove('gauge-pinching');   // restore the scroll indicator
         setTimeout(() => { window._gaugeColPinching = false; }, 0);
         try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
       }
