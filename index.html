@@ -3529,6 +3529,29 @@
     margin-top: 0;
   }
   .mcf-help { color: #6b7280; font-size: .78rem; }
+  /* (user) ⓘ help button on a Time & Rewards row → a looping GIF popup ABOVE the row box. Mirrors
+     the Bucket Sides ⓘ: sticky-in-flow (scrolls with the page), X / outside-tap closes, slide keeps open. */
+  .money-factors-list li.tr-info-li { position: relative; }
+  .money-factors-list li .tr-info-btn {
+    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; padding: 0;
+    border: 1.5px solid var(--card-border); background: var(--surface-2, #fff); color: var(--text-muted);
+    font: italic 800 12px/1 Georgia, 'Times New Roman', serif; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent;
+  }
+  .money-factors-list li .tr-info-btn:active { background: var(--button-bg, #f3f4f6); }
+  .tr-info-pop {
+    position: absolute; bottom: calc(100% + 8px); left: 0; width: min(80vw, 340px); box-sizing: border-box;
+    background: var(--surface-2, #fff); border: 1px solid var(--card-border); border-radius: 14px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.28); padding: 30px 10px 10px; z-index: 60;
+  }
+  .tr-info-pop.hidden { display: none; }
+  .tr-info-pop img { display: block; width: 100%; height: auto; border-radius: 8px; }
+  .tr-info-x {
+    position: absolute; top: 6px; right: 8px; width: 26px; height: 26px; border: none; border-radius: 50%;
+    background: rgba(0,0,0,.07); color: var(--text-main); font-size: 14px; line-height: 26px; text-align: center;
+    cursor: pointer; padding: 0; -webkit-tap-highlight-color: transparent;
+  }
+  .tr-info-x:active { background: rgba(0,0,0,.16); }
 
   /* ===== Sync activity panel (bottom of Stats) ===== */
   .sync-activity { background: #fafafa; }
@@ -8944,7 +8967,7 @@
              Task/Break/Long break (minutes) drive the gauge color-coding; the long
              break replaces every 4th break. -->
         <ul class="money-factors-list mcf-grid">
-          <li>Task: <span class="mcf-val mcf-neu" data-mcf="taskDurationDefault">25 min</span></li>
+          <li class="tr-info-li">Task: <span class="mcf-val mcf-neu" data-mcf="taskDurationDefault">25 min</span><button type="button" class="tr-info-btn" aria-label="What is task length?">i</button><div class="tr-info-pop hidden" role="dialog" aria-hidden="true"><button type="button" class="tr-info-x" aria-label="Close">✕</button><img src="images/explain/task25.gif" alt="Task length explainer"></div></li>
           <li>Finish task: <span class="mcf-val mcf-pos" data-mcf="finishTask">+$10</span></li>
           <li>Break: <span class="mcf-val mcf-neu" data-mcf="defaultBreakMin">5 min</span></li>
           <li>Long break: <span class="mcf-val mcf-neu" data-mcf="longBreakMin">15 min</span></li>
@@ -8956,7 +8979,7 @@
           <li>Q2 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ2">+$25</span></li>
           <li>Q3 reward /5min: <span class="mcf-val mcf-pos" data-mcf="rewardRateQ3">+$10</span></li>
           <li>Focus /min: <span class="mcf-val mcf-pos" data-mcf="focusDripPerMin">+$0.5</span></li>
-          <li>Early bonus cap: <span class="mcf-val mcf-neu" data-mcf="earlyBonusCapPct">40%</span></li>
+          <li class="tr-info-li">Early bonus cap: <span class="mcf-val mcf-neu" data-mcf="earlyBonusCapPct">40%</span><button type="button" class="tr-info-btn" aria-label="What is the early bonus cap?">i</button><div class="tr-info-pop hidden" role="dialog" aria-hidden="true"><button type="button" class="tr-info-x" aria-label="Close">✕</button><img src="images/explain/finish-early.gif" alt="Finish early explainer"></div></li>
           <li>Late reward floor: <span class="mcf-val mcf-neu" data-mcf="lateMinPct">75%</span></li>
           <li>Allow negative $: <span class="mcf-val mcf-neu" data-mcf="allowNegativeMoney">Off</span></li>
         </ul>
@@ -16465,6 +16488,34 @@ async function editTaskDurationDefault() {
 }
 document.querySelectorAll('#money-factors-panel .mcf-val').forEach(el => {
   el.onclick = () => editMoneyFactor(el.dataset.mcf);
+});
+/* (user) ⓘ help buttons on Time & Rewards rows → looping-GIF popup above the row box. Same UX as
+   the Bucket Sides ⓘ: a near-stationary TAP outside (or the X) closes it; a slide/scroll keeps it
+   open. The popup lives in flow inside the (relative) row, so it scrolls with the page. */
+document.querySelectorAll('#money-factors-panel .tr-info-li').forEach(li => {
+  if (li._infoWired) return;
+  const btn = li.querySelector('.tr-info-btn');
+  const pop = li.querySelector('.tr-info-pop');
+  const xBtn = li.querySelector('.tr-info-x');
+  if (!btn || !pop) return;
+  li._infoWired = true;
+  let onDown = null, onUp = null, pt = null;
+  const close = () => {
+    pop.classList.add('hidden'); pop.setAttribute('aria-hidden', 'true');
+    if (onDown) document.removeEventListener('pointerdown', onDown, true);
+    if (onUp) document.removeEventListener('pointerup', onUp, true);
+    onDown = onUp = pt = null;
+  };
+  const open = () => {
+    document.querySelectorAll('#money-factors-panel .tr-info-pop:not(.hidden)').forEach(p => { if (p !== pop) { p.classList.add('hidden'); p.setAttribute('aria-hidden', 'true'); } });
+    pop.classList.remove('hidden'); pop.setAttribute('aria-hidden', 'false');
+    try { const img = pop.querySelector('img'); if (img) { const s = img.getAttribute('src'); img.src = ''; img.src = s; } } catch (_) {}
+    onDown = (e) => { if (pop.contains(e.target) || e.target === btn) { pt = null; return; } pt = { x: e.clientX, y: e.clientY }; };
+    onUp = (e) => { if (!pt) return; const moved = Math.abs(e.clientX - pt.x) > 8 || Math.abs(e.clientY - pt.y) > 8; pt = null; if (!moved) close(); };
+    setTimeout(() => { document.addEventListener('pointerdown', onDown, true); document.addEventListener('pointerup', onUp, true); }, 0);
+  };
+  btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (pop.classList.contains('hidden')) open(); else close(); });
+  if (xBtn) xBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); close(); });
 });
 
 /* Timer-transition segmented control. Active mode is derived from
