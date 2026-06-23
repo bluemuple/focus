@@ -2628,6 +2628,12 @@
 
   /* Login modal styling — compact, fits without scroll */
   .login-modal-content { width: 400px; max-width: 92vw; padding: 18px 20px; }
+  /* (Google OAuth verification) About-Bidoro blurb inside the login popup. Compact; collapses when
+     the iOS keyboard is open so the sign-in form stays fully visible on small screens (12 mini). */
+  .login-about { margin: 0 0 12px; font-size: .8rem; line-height: 1.5; color: var(--text-muted, #6b7280); }
+  .login-about p { margin: 0 0 6px; }
+  .login-about a { color: var(--accent, #3aa776); text-decoration: underline; font-weight: 600; }
+  body.ios-kb-open .login-about { display: none; }
   .login-invite-note { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: .9rem; font-weight: 600; line-height: 1.4; text-align: center; }
   @media (prefers-color-scheme: dark) { .login-invite-note { background: #0b2c22; border-color: #14543f; color: #6ee7b7; } }
   /* Top-align the login modal (the shared .modal vertically centres its
@@ -10243,18 +10249,9 @@
   <!-- Static footer — always present so the home page carries a visible link to the
        privacy policy (required for Google OAuth / Calendar API verification). -->
   <footer class="app-footer" style="padding:18px 16px 28px;text-align:center;font-size:13px;line-height:1.6;color:var(--text-muted,#6b7280);">
-    <!-- (Google OAuth verification) Plain-English description of what the app does + why it uses
-         Google Calendar, always visible on the homepage regardless of UI language. translate="no"
-         keeps the runtime i18n engine from rewriting it. -->
-    <section class="app-about" translate="no" style="max-width:580px;margin:0 auto 16px;text-align:center;">
-      <h2 style="font-size:15px;font-weight:700;color:var(--text-main,#1f2937);margin:0 0 6px;">About Bidoro</h2>
-      <p style="margin:0;">
-        <strong>Bidoro</strong> is a personal focus and time-management app. Plan your day on a visual
-        time gauge, prioritize tasks with the urgent / important (Eisenhower) matrix, and run Pomodoro
-        focus sessions. You can optionally connect your <strong>Google Calendar</strong> so your
-        calendar events and the tasks you schedule in Bidoro stay in sync across the two.
-      </p>
-    </section>
+    <!-- (Google OAuth verification) The plain-English "About Bidoro" purpose blurb now lives in the
+         login popup (#login-modal .login-about), which auto-shows on landing. The footer keeps the
+         required Privacy Policy + Contact links. -->
     <a href="https://bidoro.app/privacy.html" style="color:var(--accent,#3aa776);text-decoration:underline;">Privacy Policy</a>
     <span aria-hidden="true" style="margin:0 6px;opacity:.5;">·</span>
     <a href="mailto:ebsmoon@gmail.com" style="color:var(--accent,#3aa776);text-decoration:underline;">Contact</a>
@@ -10269,9 +10266,17 @@
   <div class="modal-content login-modal-content">
     <div id="login-invite-note" class="login-invite-note" style="display:none;"></div>
     <h3 style="margin: 0 0 8px;">Welcome to Bidoro</h3>
-    <!-- Feature list removed so the popup is short enough to sit above the
-         iOS keyboard. The full feature walkthrough is still reachable via
-         "In detail →" below the sign-in buttons. -->
+    <!-- (Google OAuth verification) Plain-English purpose of the app + why it uses Google Calendar,
+         shown right on the landing popup. translate="no" keeps the runtime i18n engine from
+         rewriting it. Hidden while the iOS keyboard is open (.login-about) so the sign-in form still
+         fits above the keyboard on small screens like the iPhone 12 mini. -->
+    <section class="login-about" translate="no">
+      <p><strong>Bidoro</strong> is a personal focus &amp; time-management app — plan your day on a
+         visual time gauge, prioritize tasks with the urgent / important (Eisenhower) matrix, and run
+         Pomodoro focus sessions. You can optionally connect your <strong>Google Calendar</strong> so
+         your calendar events and the tasks you schedule in Bidoro stay in sync.</p>
+      <a href="https://bidoro.app/privacy.html">Privacy Policy</a>
+    </section>
     <div class="auth-form">
       <!-- Avatar (emoji) + nickname — used when signing UP. -->
       <div class="login-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
@@ -11820,10 +11825,17 @@ function updateAuthUI(user) {
     // Show the login modal unless the user is in "Try it" guest mode OR is in
     // the native app (iPhone/iPad sync via iCloud — no sign-up window there).
     if (loginModal) {
-      // A pending friend-invite (arrived via QR / invite link) forces the sign-up prompt even in
-      // guest mode — they came to JOIN someone. (Still dismissable.) Never auto-show in the native app.
-      if (bidoroIsNativeApp() || (isGuestMode() && !window._bidoroPendingInvite)) loginModal.classList.add('hidden');
-      else                                                                        loginModal.classList.remove('hidden');
+      // (user) Web: show the welcome / sign-in popup whenever signed out, ONCE PER BROWSER SESSION —
+      // so a fresh visit (e.g. a Google reviewer) always lands on the purpose blurb + sign-in, even if
+      // this device previously chose "Try it". "Try it" / dismiss sets a sessionStorage flag so it
+      // doesn't nag again that session; a new tab/visit shows it again. A pending friend-invite always
+      // forces it. The native app (iPhone/iPad — iCloud sync, no accounts) never shows it.
+      let _loginDismissed = false;
+      try { _loginDismissed = sessionStorage.getItem('bidoroLoginDismissed') === '1'; } catch (_) {}
+      if (bidoroIsNativeApp())               loginModal.classList.add('hidden');
+      else if (window._bidoroPendingInvite)  loginModal.classList.remove('hidden');
+      else if (_loginDismissed)              loginModal.classList.add('hidden');
+      else                                   loginModal.classList.remove('hidden');
     }
     // Auth nudge banner: browser only (native users don't need an account).
     if (setupBanner) {
@@ -31088,6 +31100,7 @@ if (loginSignupBtn) loginSignupBtn.onclick = handleLoginModalSignUp;
 if (loginTryItBtn)  loginTryItBtn.onclick  = () => {
   // Mark as guest, hide the modal, show the persuasive Setup banner.
   setGuestMode(true);
+  try { sessionStorage.setItem('bidoroLoginDismissed', '1'); } catch (_) {}   // don't re-pop this session
   const lm = document.getElementById('login-modal');
   if (lm) lm.classList.add('hidden');
   const banner = document.getElementById('setup-auth-banner');
