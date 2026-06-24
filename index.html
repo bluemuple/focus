@@ -8433,10 +8433,7 @@
   .cal-hb-head2 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
   .cal-hb-head2 .cal-hb-nav { flex: 1 1 auto; min-width: 0; margin: 0; justify-content: center; gap: 4px; }
   .cal-hb-head2 .cal-hb-nav h2 { font-size: 1.02rem; white-space: nowrap; margin: 0; }
-  .cal-hb-mode { display: inline-flex; flex: 0 0 auto; background: var(--surface-2, #eef0f3); border-radius: 999px; padding: 2px; gap: 2px; }
-  .cal-hb-mode-btn { border: none; background: none; padding: 5px 9px; border-radius: 999px; font: inherit; font-size: .72rem; font-weight: 700; color: var(--text-muted, #6b7280); cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
-  .cal-hb-mode-btn.active { background: var(--card-bg, #fff); color: var(--text-main, #111827); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
-  .cal-hb-add { flex: 0 0 auto; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #111827); border-radius: 999px; padding: 6px 11px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .cal-hb-add, .cal-hb-mode-toggle { flex: 0 0 auto; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #111827); border-radius: 999px; padding: 6px 11px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
   .cal-hb-add:hover { background: var(--card-border, #e5e7eb); }
   /* (user) Monthly routine = Balance-style: name + meta heading, then day squares over TWO rows. */
   .cal-hbm-row { margin: 0 0 16px; }
@@ -10089,10 +10086,7 @@
            days the task was worked = that task's colour. Built by _calRenderHabit. -->
       <div id="cal-habit-view" style="display:none;">
         <div class="cal-hb-head2">
-          <div class="cal-hb-mode" id="cal-hb-mode" role="group" aria-label="Weekly or monthly">
-            <button class="cal-hb-mode-btn" data-rmode="weekly" type="button">Weekly</button>
-            <button class="cal-hb-mode-btn" data-rmode="monthly" type="button">Monthly</button>
-          </div>
+          <button class="cal-hb-add cal-hb-mode-toggle" id="cal-hb-mode-toggle" type="button" aria-label="Switch weekly or monthly">Weekly</button>
           <div class="cal-month-head cal-hb-nav">
             <button class="cal-nav" id="cal-hb-prev" type="button" aria-label="Previous"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
             <h2 id="cal-hb-title">Month</h2>
@@ -14026,8 +14020,9 @@ function _startOfWeek(d) {
 function _calRoutineMode() { return state.routineMode || (window.innerWidth <= 700 ? 'weekly' : 'monthly'); }
 function _calHabitWeekly() { return _calRoutineMode() !== 'monthly'; }
 function _calSyncRoutineModeBtns() {
-  const cur = _calRoutineMode();
-  document.querySelectorAll('#cal-hb-mode .cal-hb-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.rmode === cur));
+  // (user) ONE button showing the CURRENT mode; tapping flips it to the other.
+  const b = document.getElementById('cal-hb-mode-toggle'); if (!b) return;
+  b.textContent = (_calRoutineMode() === 'monthly') ? tr('Monthly') : tr('Weekly');
 }
 function _calHabitWeekShift(delta) {
   if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
@@ -14920,11 +14915,10 @@ window.bidoroCalSync = bidoroCalSync;
   if (hbPrev) hbPrev.addEventListener('click', () => _calHabitNav(-1));   // weekly → week step, monthly → month
   if (hbNext) hbNext.addEventListener('click', () => _calHabitNav(1));
   // (user) Routine Weekly/Monthly toggle + +Add (opens the Add-task popup with Repeat pre-selected).
-  const hbMode = document.getElementById('cal-hb-mode');
+  const hbMode = document.getElementById('cal-hb-mode-toggle');
   if (hbMode) hbMode.addEventListener('click', (e) => {
-    const b = e.target && e.target.closest ? e.target.closest('.cal-hb-mode-btn') : null;
-    if (!b) return;
-    state.routineMode = b.dataset.rmode === 'monthly' ? 'monthly' : 'weekly';
+    e.preventDefault(); e.stopPropagation();
+    state.routineMode = (_calRoutineMode() === 'monthly') ? 'weekly' : 'monthly';   // flip to the other mode
     try { saveState(); } catch (_) {}
     _calSyncRoutineModeBtns();
     try { _calRenderHabit(); } catch (_) {}
@@ -28058,6 +28052,8 @@ const BIDORO_I18N = {
 "Build: go to Calendar → Routine and tap days you did it.":{ko:"Build: 캘린더 → 루틴에서 해낸 날을 탭하세요.",zh:"Build：在日历 → 例程中点按你做到的日子。",ja:"Build：カレンダー → ルーティンでできた日をタップ。",es:"Build: en Calendario → Rutina, toca los días que lo hiciste.",fr:"Build : dans Calendrier → Routine, touche les jours réussis."},
 "Avoid: go to Calendar → Routine and tap days you avoided it.":{ko:"Avoid: 캘린더 → 루틴에서 참아낸 날을 탭하세요.",zh:"Avoid：在日历 → 例程中点按你成功避免的日子。",ja:"Avoid：カレンダー → ルーティンで我慢できた日をタップ。",es:"Avoid: en Calendario → Rutina, toca los días que lo evitaste.",fr:"Avoid : dans Calendrier → Routine, touche les jours évités."},
 "Tap again = Oops.":{ko:"다시 탭하면 Oops.",zh:"再点一次 = Oops。",ja:"もう一度タップ = Oops。",es:"Toca otra vez = Oops.",fr:"Encore une fois = Oops."},
+"Weekly":{ko:"주간",zh:"每周",ja:"週間",es:"Semanal",fr:"Hebdo"},
+"Monthly":{ko:"월간",zh:"每月",ja:"月間",es:"Mensual",fr:"Mensuel"},
 "Avoid Habit":{ko:"줄이기 습관",zh:"戒掉习惯",ja:"減らす習慣",es:"Hábito a evitar",fr:"Habitude à éviter"},
 "Build — in Routine, tap each day you did it; the square fills with your category colour.":{ko:"늘리기 — 루틴에서 해낸 날을 탭하면 카테고리 색으로 칸이 채워져요.",zh:"养成 — 在例程中点按你做到的日子，方块会填上你的分类颜色。",ja:"増やす — ルーティンでできた日をタップすると、カテゴリの色でマスが埋まります。",es:"Crear — en Rutina, toca cada día que lo hiciste; la casilla se llena con el color de tu categoría.",fr:"Adopter — dans Routine, touche chaque jour réussi ; la case se remplit de la couleur de ta catégorie."},
 "Avoid — in Routine, tap a day you avoided it (fills your category colour). Tap again to log a slip: Oops (Lapse).":{ko:"줄이기 — 루틴에서 참아낸 날을 탭하면 색으로 채워지고, 한 번 더 탭하면 '해버림'으로 기록돼요.",zh:"戒掉 — 在例程中点按你成功避免的日子（填上分类颜色）。再点一次记录失误：哎呀 (失误)。",ja:"減らす — ルーティンで我慢できた日をタップすると色で埋まり、もう一度タップで「やっちゃった」を記録します。",es:"Evitar — en Rutina, toca un día que lo evitaste (se llena con tu color). Toca otra vez para registrar una recaída: Ups (recaída).",fr:"Éviter — dans Routine, touche un jour où tu l'as évité (couleur de catégorie). Touche encore pour un écart : Oups (écart)."},
