@@ -26422,7 +26422,11 @@ function pomoWindowSegments(at) {
   return _kg > 0 ? _segs.map(s => ({ endFrac: s.endFrac, color: _ringDarken(s.color, _kg) })) : _segs;
 }
 function _pomoWindowSegmentsRaw(at) {
-  const single = [{ endFrac: 1, color: pomoRingColor(at.q, at.idx) }];
+  // (user) Colour each task slice with its QUADRANT accent (focusQuadAccent) — the SAME scheme the
+  // ring/badge use for a single task — so a 2-task combined block (e.g. Fgc[q1] + Fhc[q2]) splits the
+  // ring red→yellow, while a single-task block stays one colour (unchanged from before).
+  const _segColor = (q) => (typeof focusQuadAccent === 'function') ? focusQuadAccent(q) : pomoRingColor(q, 0);
+  const single = [{ endFrac: 1, color: _segColor(at.q) }];
   const phaseStart = (+at.phaseStartedAt) || (+at.startedAt) || 0;
   const phaseDur   = (+at.phaseDurationMs) || 0;
   if (!phaseStart || phaseDur <= 0) return single;
@@ -26446,7 +26450,7 @@ function _pomoWindowSegmentsRaw(at) {
   const segs = [];
   parts.forEach(p => {
     const endFrac = Math.max(0, Math.min(1, (Math.min(p.endMs, phaseEnd) - phaseStart) / phaseDur));
-    const color = pomoRingColor(p.q, p.taskIdx);
+    const color = _segColor(p.q);
     if (segs.length && segs[segs.length - 1].color === color) segs[segs.length - 1].endFrac = endFrac;  // merge same-colour neighbours
     else segs.push({ endFrac, color });
   });
@@ -27914,10 +27918,13 @@ function renderImDoing() {
       // Live ring: red (amber in last 2 min) on work, sky-blue on break.
       const phaseDur = (+at.phaseDurationMs) || (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
       const fracElapsed = phaseDur > 0 ? Math.max(0, Math.min(1, 1 - remMs / phaseDur)) : 0;
-      // Ring = ONE solid arc in the quadrant accent (work) / sky-blue (break). The
-      // arc, knob, track, timer text and pause/play button all derive from this
-      // single segment colour inside setPomo, so the whole ring matches the badge.
-      const ringSegs = [{ endFrac: 1, color: accent }];
+      // Ring = the quadrant accent (work) / sky-blue (break). For a 2-task combined block
+      // (Strict Pomo / No Room → taskSegs) the WORK ring SPLITS by task quadrant accent
+      // (e.g. Fgc red → Fhc yellow) so the moving knob passes each task's colour; a single-task
+      // block stays one arc. Break = one sky-blue arc.
+      const ringSegs = (at.phase === 'work' && typeof pomoWindowSegments === 'function')
+        ? pomoWindowSegments(at)
+        : [{ endFrac: 1, color: accent }];
       setPomo(fracElapsed, ringSegs);
     }
   } else {
@@ -37347,14 +37354,16 @@ function renderFocusFullscreen() {
     timeEl.textContent = String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
   }
   const elapsedFrac = durMs > 0 ? Math.max(0, Math.min(1, 1 - remMs / durMs)) : 0;
-  // ONE solid arc in the active task's quadrant accent (work) / sky-blue (break)
-  // — matches the mini header ring exactly (the user wants the 4 quadrant colours,
-  // not the per-task/segment shade).
+  // Work = the quadrant accent; for a 2-task combined block (Strict Pomo / No Room → taskSegs) the
+  // ring SPLITS by task quadrant accent (e.g. Fgc red → Fhc yellow) and the moving knob passes each
+  // task's colour (the dial loop below already renders multi-segment ffSegs). Break = one sky-blue arc.
+  const _ffWorkAccent = (typeof focusQuadAccent === 'function') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : pomoRingColor(at.q, at.idx);
   const ffSegs = (at.phase !== 'work')
     ? [{ endFrac: 1, color: '#38BDF8' }]
-    : [{ endFrac: 1, color: (typeof focusQuadAccent === 'function') ? focusQuadAccent(_focusBlockQAt(at, Date.now())) : pomoRingColor(at.q, at.idx) }];
-  // (user) timer text takes the SAME task accent as the ring (matches the home mini-pomodoro).
-  if (timeEl && ffSegs[0]) timeEl.style.color = ffSegs[0].color;
+    : ((typeof pomoWindowSegments === 'function') ? pomoWindowSegments(at) : [{ endFrac: 1, color: _ffWorkAccent }]);
+  // (user) timer text follows the CURRENT task's accent (the now-line task), so on a combined block
+  // it shifts red→yellow as the now-line crosses into the 2nd task. Break = sky-blue.
+  if (timeEl) timeEl.style.color = (at.phase !== 'work') ? '#38BDF8' : _ffWorkAccent;
   // Calm "deep focus" backdrop = the quadrant's pale wash (pale sky on a break) PLUS the
   // soft per-quadrant theming of the ✕ / pause / Auto buttons (fill · ink · border). Light
   // themes only — dark keeps its existing light panel + neutral gray buttons.
