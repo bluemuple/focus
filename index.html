@@ -13939,7 +13939,7 @@ function _habitLegendHtml() {
        + '<span class="cal-hb-leg-items"><span class="cal-hb-leg-sw done"></span>' + tr('Success')
        + ' · <span class="cal-hb-leg-sw lapse">!</span>' + tr('Oops (Lapse)')
        + ' · <span class="cal-hb-leg-sw rep"></span>' + tr('Not recorded') + '</span>'
-       + '<button type="button" class="cal-hb-add hb-numtoggle" id="hb-numtoggle">' + (hide ? tr('(show numbers)') : tr('(hide numbers)')) + '</button>'
+       + '<button type="button" class="cal-hb-add hb-numtoggle" id="hb-numtoggle">' + (hide ? tr('show numbers') : tr('hide numbers')) + '</button>'
        + '</div>';
 }
 function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
@@ -28205,8 +28205,8 @@ const BIDORO_I18N = {
 "Already have an account?":{ko:"이미 계정이 있나요?",zh:"已有账户？",ja:"アカウントをお持ちですか？",es:"¿Ya tienes cuenta?",fr:"Vous avez déjà un compte ?"},
 "New to Bidoro?":{ko:"Bidoro가 처음인가요?",zh:"第一次使用 Bidoro？",ja:"Bidoro は初めてですか？",es:"¿Nuevo en Bidoro?",fr:"Nouveau sur Bidoro ?"},
 "Learn more":{ko:"더 알아보기",zh:"了解更多",ja:"詳しく見る",es:"Saber más",fr:"En savoir plus"},
-"(hide numbers)":{ko:"(숫자 숨기기)",zh:"(隐藏数字)",ja:"(数字を隠す)",es:"(ocultar números)",fr:"(masquer les nombres)"},
-"(show numbers)":{ko:"(숫자 보이기)",zh:"(显示数字)",ja:"(数字を表示)",es:"(mostrar números)",fr:"(afficher les nombres)"},
+"hide numbers":{ko:"숫자 숨기기",zh:"隐藏数字",ja:"数字を隠す",es:"ocultar números",fr:"masquer les nombres"},
+"show numbers":{ko:"숫자 보이기",zh:"显示数字",ja:"数字を表示",es:"mostrar números",fr:"afficher les nombres"},
 "🔥 {n} this week!":{ko:"🔥 이번 주 {n}번째!",zh:"🔥 本周第{n}次！",ja:"🔥 今週{n}回目！",es:"🔥 ¡{n} esta semana!",fr:"🔥 {n} cette semaine !"},
 "🔥 {n} this month!":{ko:"🔥 이번 달 {n}번째!",zh:"🔥 本月第{n}次！",ja:"🔥 今月{n}回目！",es:"🔥 ¡{n} este mes!",fr:"🔥 {n} ce mois-ci !"},
 "Avoid Habit":{ko:"줄이기 습관",zh:"戒掉习惯",ja:"減らす習慣",es:"Hábito a evitar",fr:"Habitude à éviter"},
@@ -30872,6 +30872,7 @@ function showMotivationFlash(text, ms) {
 const ROTATION_WEIGHTS       = { self: 50, friend: 40, anon: 10 };   // default (not focusing); also the panel default
 const FOCUS_ROTATION_WEIGHTS = { self: 70, friend: 25, anon: 5  };   // focusing + "show notes in focus" ON
 const MOT_DUR_MS = { self: [6000, 8000], friend: [8000, 10000], anon: [8000, 10000] };   // display range (ms) per type
+const FOCUS_NOTE_MS = 30 * 60 * 1000;   // (user) during q1–q3 focus, hold ONE note for 30 min before rotating
 const MOT_MIN_MS = 3000;     // minimum exposure floor (TODO: tap-to-pause while the user is reading)
 const MOT_FADE_MS = 150;     // fade out / in (~0.3s round trip)
 let _motTimer = null, _motPrevKey = null, _motFriendKnown = null;
@@ -30893,9 +30894,12 @@ function _motPools() {
   return out;
 }
 
-function _motWeights(pools) {
+function _motIsFocusing() {
   const at = state.activeTimer;
-  const focusing = !!(at && at.type === 'pomodoro' && at.phase === 'work' && (at.q === 'q1' || at.q === 'q2' || at.q === 'q3'));
+  return !!(at && at.type === 'pomodoro' && at.phase === 'work' && (at.q === 'q1' || at.q === 'q2' || at.q === 'q3'));
+}
+function _motWeights(pools) {
+  const focusing = _motIsFocusing();
   let w;
   if (focusing) w = state.showNotesInFocus ? Object.assign({}, FOCUS_ROTATION_WEIGHTS) : { self: 100, friend: 0, anon: 0 };
   else { const nw = (state.noteWeights && typeof state.noteWeights === 'object') ? state.noteWeights : ROTATION_WEIGHTS; w = { self: +nw.self || 0, friend: +nw.friend || 0, anon: +nw.anon || 0 }; }
@@ -30966,7 +30970,9 @@ function _motAdvance(ignoreNotice) {
   if (!item) { el.innerHTML = ''; el.classList.remove('is-marquee'); _motPrevKey = null; _motTimer = setTimeout(() => _motAdvance(false), 4000); return; }
   _motPrevKey = item.key;
   _motRender(item);
-  _motTimer = setTimeout(() => _motAdvance(false), Math.max(MOT_MIN_MS, _motDur(item.type)));
+  // (user) During q1–q3 focus, hold each note for 30 min (one note per 30 min); otherwise the normal 6–10s.
+  const _delay = _motIsFocusing() ? FOCUS_NOTE_MS : Math.max(MOT_MIN_MS, _motDur(item.type));
+  _motTimer = setTimeout(() => _motAdvance(false), _delay);
 }
 
 /* Public entry — kept for every existing caller (data changed / notice restore). Repaints now and
