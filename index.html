@@ -14523,7 +14523,10 @@ function openCalTaskModal(opts) {
   const backdrop = document.getElementById('cal-task-backdrop');
   if (!modal || !nameEl || !secEl) return;
   // ----- local picker state -----
-  let q = 'q1', pillar = null, repeatStart = null, repeatEnd = null, due = null, note = '', activeSec = null;
+  // (user) Pre-select the LAST-used bucket side (shared with the matrix +Add via _getLastPillar) so
+  // the side carries across both add surfaces — e.g. pick Joy in the calendar → the next matrix add
+  // opens on Joy too.
+  let q = 'q1', pillar = (typeof _getLastPillar === 'function' ? _getLastPillar() : null), repeatStart = null, repeatEnd = null, due = null, note = '', activeSec = null;
   _addHabitType = 'build';   // (user) shared Build/Avoid direction — reset; the .add-habittype toggle reads/writes it
   const repeatSet = new Set();
   const QLABEL = { q1: 'Important · Urgent', q2: 'Important · Not urgent', q3: 'Not important · Urgent', q4: 'Not important · Not urgent' };
@@ -14533,6 +14536,13 @@ function openCalTaskModal(opts) {
     const set = (id, on) => { const c = document.getElementById(id); if (c) c.classList.toggle('has-set', !!on); };
     set('ctm-chip-matrix', q !== 'q1');            // black once a non-default quadrant is chosen
     set('ctm-chip-sides',  pillar != null);
+    // (user) the Sides chip takes the SELECTED side's own colour (Joy → yellow tone) so the chosen
+    // bucket side reads at a glance; cleared → back to the default chip look.
+    const _sc = document.getElementById('ctm-chip-sides');
+    if (_sc) {
+      const _col = (pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(pillar) : (pillar != null && typeof _calSideColor === 'function' ? _calSideColor(pillar) : '');
+      _sc.style.background = _col || ''; _sc.style.borderColor = _col || ''; _sc.style.color = _col ? '#fff' : '';
+    }
     set('ctm-chip-repeat', repeatSet.size > 0);
     set('ctm-chip-due',    !!due);
     set('ctm-chip-memo',   !!(note && note.trim()));
@@ -14641,6 +14651,7 @@ function openCalTaskModal(opts) {
     if (due) tk.dueDate = due;
     if (note && note.trim()) tk.note = note.trim();
     state.tasks[q].unshift(tk);
+    if (pillar != null && typeof _setLastPillar === 'function') _setLastPillar(pillar);   // (user) remember the side for the next add (shared with the matrix +Add)
     try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
     try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
     close();
@@ -24283,16 +24294,13 @@ function _extClipPath(W, H, cyPx, armFrac, gapPx, r) {
   let cy = Math.max(0, Math.min(H - 2 * r, cyPx));
   if (cy <= 0.5) {
     // (user) ㄱ arm: the RIGHT edge drops STRAIGHT DOWN from the parent — square top-right AND
-    // bottom-right (the ext block's own border-radius is zeroed so these stay crisp, continuous
-    // with the parent's squared bottom-right). The ARMPIT is a smooth CONCAVE "arch" fillet that
-    // opens toward the OUTSIDE (down-left) — gentler than a hard right angle. Bottom-left stays
-    // rounded (radius r).
-    const ar = Math.max(2, Math.min(11, Math.floor((W - armLeft) * 0.6), Math.floor(H * 0.5)));   // armpit arch radius
-    return 'path("M' + f(armLeft + ar) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H) +
+    // bottom-right (the ext block's border-radius is zeroed so these stay crisp, continuous with
+    // the parent's squared bottom-right). The ARMPIT is a SHARP right angle (concave arch cancelled
+    // per user). Only the OUTER bottom-left corner is rounded.
+    return 'path("M' + f(armLeft) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H) +
       ' L' + f(armLeft + r) + ',' + f(H) +
       ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +
-      ' L' + f(armLeft) + ',' + f(ar) +
-      ' A' + ar + ',' + ar + ' 0 0 0 ' + f(armLeft + ar) + ',0 Z")';
+      ' L' + f(armLeft) + ',0 Z")';
   }
   cy = Math.max(r, cy);
   // ㄱ silhouette (clockwise): full-width head down to `cy`, then the right arm.
@@ -35843,10 +35851,19 @@ function showMatrixCellAdd(cell, addBtn, q){
     // The bucket sets the picked area when a face is tapped (see the b3d drag handler).
     // idx < 0 (or null) = the face was DESELECTED → this task gets no area (None). A real
     // selection is REMEMBERED (localStorage via _setLastPillar) so the next +Add opens on it.
+    // (user) Colour the Sides mode button with the SELECTED side's own colour (Joy → yellow) so the
+    // chosen bucket side reads at a glance, like the calendar Sides chip. Cleared → default look.
+    const _mcavSyncSidesBtn = function () {
+      const sb = mca.querySelector('.mcav-mode[data-mode="sides"]');
+      if (!sb) return;
+      const _col = (_pickedPillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(_pickedPillar) : '';
+      sb.style.background = _col || ''; sb.style.borderColor = _col || ''; sb.style.color = _col ? '#fff' : '';
+    };
     window.__mcavPickPillar = function (idx) {
       try {
         if (idx == null || idx < 0) { _pickedPillar = null; }
         else { _pickedPillar = idx; if (typeof _setLastPillar === 'function') _setLastPillar(idx); }
+        _mcavSyncSidesBtn();
       } catch (_) {}
     };
     // Mark the Repeat mode button when a recurrence is configured (days and/or a date range),
@@ -35979,6 +35996,7 @@ function showMatrixCellAdd(cell, addBtn, q){
           if (window.bidoroBucket3DPanelMount) { const used = window.bidoroBucket3DPanelMount(_sec, _di); _pickedPillar = (used != null ? used : _di); }
           else { _sec.appendChild(_buildPillarPicker()); }   // fallback if the 3D bucket isn't ready
         } catch (_) { try { _sec.appendChild(_buildPillarPicker()); } catch (__) {} }
+        try { _mcavSyncSidesBtn(); } catch (_) {}   // (user) tint the Sides button with the picked side's colour
       } else if (mode === 'repeat') {
         // Weekday capsules (Mon–Sun, multi-select, bound to _addRepeatDays) + a wide "Start ~ End"
         // date-range capsule (taps open RepDatePicker via the global .rr-date delegation). No Cancel.
