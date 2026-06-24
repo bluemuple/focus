@@ -8526,6 +8526,8 @@
   .cal-hbs-day { display: flex; align-items: center; justify-content: center; font-size: .6rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
   .cal-hbs-day.sat, .cal-catw-dow.sat, .cal-catw-num.sat { color: #2563eb; }
   .cal-hbs-day.sun, .cal-catw-dow.sun, .cal-catw-num.sun { color: #dc2626; }
+  /* (user) Balance/Routine MONTHLY header — today's number in a BLACK rounded square, white text. */
+  .cal-hbs-day.cal-hbs-today { background: #1f2430; color: #fff !important; font-weight: 800; border-radius: 5px; aspect-ratio: 1; }
   .cal-cats-name .cal-cat-row-head, .cal-hbs-name { margin: 0; }
   /* (user) Balance WEEKLY cards (mirrors Routine weekly): wide → 2 columns. */
   .cal-catw { display: grid; grid-template-columns: 1fr; gap: 6px; }
@@ -8537,6 +8539,24 @@
   .cal-catw-num { font-size: .8rem; font-weight: 700; color: var(--text-main, #374151); }
   .cal-catw-dots { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 4px; }
   .cal-catw-dots .cal-cat-dot { border-radius: 6px; }
+  /* (user) WIDE (iPad-landscape / PC) WEEKLY 2-column layout — shared by Balance + Routine. Each
+     column shows the S–S date header ONCE at the top, then per-item ROWS: a 2-line label
+     (name / count|type) on the LEFT and the 7 day squares on the RIGHT, label height ≈ square height. */
+  .cal-ww2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 46px; padding: 0 16px; align-items: start; }
+  .cal-ww2-col { min-width: 0; }
+  .cal-ww2-head { display: flex; align-items: flex-end; gap: 12px; margin: 0 0 8px; }
+  .cal-ww2-headsp { flex: 0 0 var(--ww2-lbl, 88px); }
+  .cal-ww2-headdays { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 40px)); justify-content: start; gap: 6px; }
+  .cal-ww2-row { display: flex; align-items: center; gap: 12px; margin: 0 0 11px; }
+  .cal-ww2-lbl { flex: 0 0 var(--ww2-lbl, 88px); width: var(--ww2-lbl, 88px); min-width: 0; display: flex; flex-direction: column; justify-content: center; line-height: 1.18; }
+  .cal-ww2-name { font-weight: 800; font-size: .9rem; overflow: hidden; text-overflow: ellipsis; }
+  .cal-ww2-meta { font-size: .76rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
+  .cal-ww2-meta .cal-hb-meta { margin-left: 0; display: inline; }
+  .cal-ww2-cells { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(7, minmax(0, 40px)); justify-content: start; gap: 6px; }
+  .cal-ww2-cells .cal-cat-dot { border-radius: 6px; }
+  /* Routine weekly head Sat/Sun colours (Balance's .cal-catw-* already coloured above). */
+  .cal-hbw-dow.sat, .cal-hbw-num.sat { color: #2563eb; }
+  .cal-hbw-dow.sun, .cal-hbw-num.sun { color: #dc2626; }
   /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
   .routine-toast {
     position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
@@ -14207,14 +14227,23 @@ function _calRenderCategory(opts) {
   const cap = '<p class="cal-cat-cap">' + (weekly ? 'This week — tasks you finished, by bucket side.' : 'This month — tasks you finished, by bucket side.') + '</p>';
   let html;
   if (weekly) {
-    // S–S header per card; wide → 2 columns, narrow → 1 column. (Mirrors the Routine weekly cards.)
     const dowHead = days.map(d => { const dow = d.getDay(), c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : ''; return '<div class="cal-catw-daycol"><span class="cal-catw-dow' + c + '">' + _dowNarrow(dow) + '</span><span class="cal-catw-num' + c + '">' + d.getDate() + '</span></div>'; }).join('');
-    let cards = '';
-    // (user) Narrow (iPhone, 1-col): the weekday/date row appears ONCE at the top, not inside every
-    // side card. Wide 2-col keeps a per-card header (the cards sit side by side).
-    for (let s = 0; s < N; s++) cards += '<div class="cal-catw-card' + (s === lowest ? ' cat-lowest' : '') + '">' + (_wide ? ('<div class="cal-catw-head">' + dowHead + '</div>') : '') + headTag(s) + '<div class="cal-catw-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
-    const topHead = _wide ? '' : ('<div class="cal-catw-head cal-catw-tophead">' + dowHead + '</div>');
-    html = cap + topHead + '<div class="cal-catw' + (_wide ? ' is-2col' : '') + '">' + cards + '</div>';
+    if (_wide) {
+      // (user) iPad-landscape / PC: 2 columns; each shows the S–S header ONCE at the top, then per-side
+      // ROWS — a 2-line label (name / count) on the LEFT + the 7 day squares on the RIGHT.
+      const _lblOf = (s) => '<div class="cal-ww2-lbl"><span class="cal-ww2-name" style="color:' + _calSideColorVivid(s) + '">' + escapeHTML(_calSideName(s)) + (s === lowest ? ' <span class="cat-low-tag">↓</span>' : '') + '</span><span class="cal-ww2-meta">' + counts[s] + '/' + total + '</span></div>';
+      const _rowOf = (s) => '<div class="cal-ww2-row' + (s === lowest ? ' cat-lowest' : '') + '">' + _lblOf(s) + '<div class="cal-ww2-cells">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+      const _headOf = '<div class="cal-ww2-head"><span class="cal-ww2-headsp"></span><div class="cal-ww2-headdays">' + dowHead + '</div></div>';
+      const _half = Math.ceil(N / 2);
+      let _c1 = '', _c2 = '';
+      for (let s = 0; s < N; s++) { if (s < _half) _c1 += _rowOf(s); else _c2 += _rowOf(s); }
+      html = cap + '<div class="cal-ww2"><div class="cal-ww2-col">' + _headOf + _c1 + '</div><div class="cal-ww2-col">' + _headOf + _c2 + '</div></div>';
+    } else {
+      // Narrow (iPhone): the weekday/date row ONCE at the top, then stacked side cards.
+      let cards = '';
+      for (let s = 0; s < N; s++) cards += '<div class="cal-catw-card' + (s === lowest ? ' cat-lowest' : '') + '">' + headTag(s) + '<div class="cal-catw-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+      html = cap + '<div class="cal-catw-head cal-catw-tophead">' + dowHead + '</div><div class="cal-catw">' + cards + '</div>';
+    }
   } else if (_wide) {
     // single-row month + day-number header (Sat blue / Sun red)
     let rows = '';
@@ -14301,7 +14330,13 @@ function _calBalNav(delta) {
 /* Day-number header cells (1..dim) for a single-row month grid; weekends get sat/sun colour classes. */
 function _calMonthDayHeadCells(y, m, dim) {
   let s = '';
-  for (let d = 1; d <= dim; d++) { const dow = new Date(y, m, d).getDay(); const c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : ''; s += '<span class="cal-hbs-day' + c + '">' + d + '</span>'; }
+  const _t = new Date(), _ty = _t.getFullYear(), _tm = _t.getMonth(), _td = _t.getDate();
+  for (let d = 1; d <= dim; d++) {
+    const dow = new Date(y, m, d).getDay();
+    const c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : '';
+    const today = (y === _ty && m === _tm && d === _td) ? ' cal-hbs-today' : '';   // (user) today → black rounded square
+    s += '<span class="cal-hbs-day' + c + today + '">' + d + '</span>';
+  }
   return s;
 }
 function _calHabitWeekShift(delta) {
@@ -14412,9 +14447,10 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
   const DOW = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   let head = '';
   days.forEach(d => {
+    const dow = d.getDay(), c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : '';   // (user) Sat blue / Sun red
     const isToday = _calDateKey(d) === _tdyKey;
-    head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow">' + _dowNarrow(d.getDay()) + '</span>'
-          + '<span class="cal-hbw-num' + (isToday ? ' cal-hbw-today' : '') + '">' + d.getDate() + '</span></div>';
+    head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow' + c + '">' + _dowNarrow(dow) + '</span>'
+          + '<span class="cal-hbw-num' + c + (isToday ? ' cal-hbw-today' : '') + '">' + d.getDate() + '</span></div>';
   });
   if (!tasks.length) {
     grid.innerHTML = '<div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div>';
@@ -14444,16 +14480,24 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
       else                                             cells += '<span class="cal-hbw-cell"' + _d + '></span>';
     });
     const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-    const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + _habitFlameHtml(t) + '</div>';
-    const cellsHtml = '<div class="cal-hbw-cells">' + cells + '</div>';
-    // Wide card carries its own day header (so its squares align under it); phone uses one shared header.
-    blocks.push(_wide
-      ? ('<div class="cal-hbw-card"><div class="cal-hbw-head">' + head + '</div>' + nameHtml + cellsHtml + '</div>')
-      : ('<div class="cal-hbw-task">' + nameHtml + cellsHtml + '</div>'));
+    if (_wide) {
+      // (user) 2-line label (name / type-meta) on the LEFT + 7 squares on the RIGHT.
+      const lbl = '<div class="cal-ww2-lbl"><span class="cal-ww2-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitFlameHtml(t) + '</span><span class="cal-ww2-meta">' + _habitMetaHtml(t) + '</span></div>';
+      blocks.push('<div class="cal-ww2-row">' + lbl + '<div class="cal-ww2-cells">' + cells + '</div></div>');
+    } else {
+      const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + _habitFlameHtml(t) + '</div>';
+      blocks.push('<div class="cal-hbw-task">' + nameHtml + '<div class="cal-hbw-cells">' + cells + '</div></div>');
+    }
   });
-  grid.innerHTML = _wide
-    ? ('<div class="cal-hbw-grid2">' + blocks.join('') + '</div>' + _habitLegendHtml())
-    : ('<div class="cal-hbw-head">' + head + '</div>' + blocks.join('') + _habitLegendHtml());
+  if (_wide) {
+    // 2 columns; each shows the S–S date header ONCE at the top, then the per-routine rows.
+    const _headOf = '<div class="cal-ww2-head"><span class="cal-ww2-headsp"></span><div class="cal-ww2-headdays">' + head + '</div></div>';
+    const _half = Math.ceil(blocks.length / 2);
+    const _c1 = blocks.slice(0, _half).join(''), _c2 = blocks.slice(_half).join('');
+    grid.innerHTML = '<div class="cal-ww2"><div class="cal-ww2-col">' + _headOf + _c1 + '</div><div class="cal-ww2-col">' + _headOf + _c2 + '</div></div>' + _habitLegendHtml();
+  } else {
+    grid.innerHTML = '<div class="cal-hbw-head">' + head + '</div>' + blocks.join('') + _habitLegendHtml();
+  }
 }
 function _calAddTask() {
   if (typeof openCalTaskModal === 'function') openCalTaskModal();
@@ -24318,12 +24362,15 @@ function _offerFinishedEarly(q, i) {
     fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(_nb.q, _nb.taskIdx) : '#fff')
   };
   const _title = tr('Finished early —') + ' ' + mins + tr('m freed');
+  // (user) Button ORDER: [Pull up] on the LEFT, [Keep break (30s)] on the RIGHT. customConfirm
+  // renders no-button left / yes-button right, so Pull = NO (left, pull colour) and Keep = YES
+  // (right, the 30s default). ans===false → pull up; yes / timeout / dismiss → keep the gap.
   customConfirm(_title, '', {
-    yesLabel: tr('Pull up'), noLabel: tr('Keep break'),
-    yesColor: _pullColor,
-    countdownMs: 30000, countdownOn: 'no', countdownAnswer: false   // 30s → keep the gap (default)
+    yesLabel: tr('Keep break'), noLabel: tr('Pull up'),
+    noColor: _pullColor,
+    countdownMs: 30000, countdownOn: 'yes', countdownAnswer: true   // 30s → keep the gap (default)
   }).then((ans) => {
-    if (ans === true) {
+    if (ans === false) {
       // Pull all later blocks earlier by the gap, in time order (reuses the tested pull-up).
       if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
       try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
