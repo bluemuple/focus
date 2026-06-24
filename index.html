@@ -8484,6 +8484,28 @@
   .cal-hbm-row { margin: 0 0 16px; }
   .cal-hbm-head { margin-bottom: 7px; }
   .cal-hbm-cells { display: grid; grid-template-columns: repeat(var(--hbm-cols, 16), minmax(0, 1fr)); gap: 4px; }
+  .cal-hb-head2-sp { flex: 0 0 66px; }   /* mirrors the toggle width so the Balance title stays centred */
+  /* (user) WIDE (iPad landscape) single-row month: a day-number header (Sat blue / Sun red) on top,
+     then one row per habit/side (name on the left, the month's squares aligned under the header). */
+  .cal-hbs-head, .cal-hbs-row, .cal-cats-head, .cal-cats-row { display: flex; align-items: center; gap: 10px; }
+  .cal-hbs-row, .cal-cats-row { padding: 3px 0; }
+  .cal-hbs-name, .cal-hbs-name-sp, .cal-cats-name, .cal-cats-name-sp { flex: 0 0 168px; width: 168px; min-width: 0; }
+  .cal-hbs-days, .cal-hbs-cells { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(var(--hbs-cols, 31), minmax(0, 1fr)); gap: 4px; }
+  .cal-cats-days, .cal-cats-dots { flex: 1 1 auto; min-width: 0; display: grid; grid-template-columns: repeat(var(--cats-cols, 31), minmax(0, 1fr)); gap: 4px; }
+  .cal-hbs-day { display: flex; align-items: center; justify-content: center; font-size: .6rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
+  .cal-hbs-day.sat, .cal-catw-dow.sat, .cal-catw-num.sat { color: #2563eb; }
+  .cal-hbs-day.sun, .cal-catw-dow.sun, .cal-catw-num.sun { color: #dc2626; }
+  .cal-cats-name .cal-cat-row-head, .cal-hbs-name { margin: 0; }
+  /* (user) Balance WEEKLY cards (mirrors Routine weekly): wide → 2 columns. */
+  .cal-catw { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .cal-catw.is-2col { grid-template-columns: 1fr 1fr; gap: 8px 28px; align-items: start; }
+  .cal-catw-card { min-width: 0; margin: 0 0 10px; }
+  .cal-catw-head { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin: 0 0 4px; }
+  .cal-catw-daycol { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .cal-catw-dow { font-size: .62rem; font-weight: 700; color: var(--text-muted, #9ca3af); }
+  .cal-catw-num { font-size: .8rem; font-weight: 700; color: var(--text-main, #374151); }
+  .cal-catw-dots { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 4px; }
+  .cal-catw-dots .cal-cat-dot { border-radius: 6px; }
   /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
   .routine-toast {
     position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
@@ -10119,10 +10141,14 @@
           <button class="cal-rt-btn" data-sub="category" type="button">Category</button>
         </div>
         <div id="cal-rt-rings">
-          <div class="cal-month-head">
-            <button class="cal-nav" id="cal-rt-prev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
-            <h2 id="cal-rt-title">Month</h2>
-            <button class="cal-nav" id="cal-rt-next" type="button" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+          <div class="cal-hb-head2">
+            <button class="cal-hb-add cal-hb-mode-toggle" id="cal-bal-mode-toggle" type="button" aria-label="Switch weekly or monthly">Weekly</button>
+            <div class="cal-month-head cal-hb-nav">
+              <button class="cal-nav" id="cal-rt-prev" type="button" aria-label="Previous"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+              <h2 id="cal-rt-title">Month</h2>
+              <button class="cal-nav" id="cal-rt-next" type="button" aria-label="Next"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+            </div>
+            <span class="cal-hb-head2-sp" aria-hidden="true"></span>
           </div>
           <div class="cal-grid-clip" id="cal-rt-grid-clip"><div class="cal-grid cal-rings-grid" id="cal-rt-grid"></div></div>
           <p class="cal-rt-hint">Each 30 min on a bucket side fills a half-ring (clockwise from 12).</p>
@@ -13993,7 +14019,19 @@ function _calRenderRoutine() {
     const gridClip = document.getElementById('cal-rt-grid-clip'); if (gridClip) gridClip.style.display = 'none';   // drop the rings calendar
     const hint = rings.querySelector('.cal-rt-hint'); if (hint) hint.style.display = 'none';
   }
-  const title = document.getElementById('cal-rt-title'); if (title) title.textContent = _fmtMonthYear(_calState.y, _calState.m);
+  _calSyncBalanceModeBtn();
+  const title = document.getElementById('cal-rt-title');
+  if (title) {
+    if (_calBalanceMode() === 'weekly') {
+      if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+      const a = _habitWeekStart, b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6);
+      title.textContent = (a.getMonth() === b.getMonth())
+        ? (_fmtMonShort(a) + ' ' + a.getDate() + ' – ' + b.getDate())
+        : (_fmtMonShort(a) + ' ' + a.getDate() + ' – ' + _fmtMonShort(b) + ' ' + b.getDate());
+    } else {
+      title.textContent = _fmtMonthYear(_calState.y, _calState.m);
+    }
+  }
   const cat = document.getElementById('cal-rt-category'); if (cat) { cat.style.display = ''; _calRenderCategory(); }
 }
 function _calRenderRings() {
@@ -14030,63 +14068,80 @@ function _calRenderCategory(opts) {
   const m = (opts && opts.m != null) ? opts.m : _calState.m;
   const dim = new Date(y, m + 1, 0).getDate();         // days in THIS month (28/29/30/31)
   const N = _calSideCount();
-  // which sides were active on each day + WHICH tasks fed them (for the hover/tap tooltip)
-  const dayActive = {};                                // 'YYYY-MM-DD' -> Set(side)
-  const dayTasks  = {};                                // 'YYYY-MM-DD' -> { side -> Set(taskName) }
+  // (user) Weekly vs Monthly (state.balanceMode). The rendered DAY LIST drives everything so weekly
+  // can straddle two months. Wide (iPad landscape) lays the month in ONE row with a day-number header
+  // (Sat blue / Sun red) and the weekly view in 2 columns (mirrors the Routine views).
+  const weekly = (opts && 'weekly' in opts) ? opts.weekly : (_calBalanceMode() === 'weekly');
+  const _wide = _calWideMonth();
+  const days = [];
+  if (weekly) {
+    if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+    const ws = (opts && opts.weekStart) || _habitWeekStart;
+    for (let i = 0; i < 7; i++) days.push(new Date(ws.getFullYear(), ws.getMonth(), ws.getDate() + i));
+  } else {
+    for (let d = 1; d <= dim; d++) days.push(new Date(y, m, d));
+  }
+  const dayKeys = days.map(d => _calDateKey(d));
+  const inRange = new Set(dayKeys);
+  // which sides were active on each rendered day + which tasks fed them (for the hover/tap tooltip)
+  const dayActive = {}, dayTasks = {};
   (_wl || []).forEach(e => {
     if (!e || e.type !== 'pomodoro' || typeof e.startedAt !== 'number') return;
-    const d = new Date(e.startedAt);
-    if (d.getFullYear() !== y || d.getMonth() !== m) return;
-    // resolve the bucket side from the entry, falling back to the SUPPLIED tasks
-    // (a friend's, when rendered for them) — not always the user's own.
+    const k = _calDateKey(e.startedAt); if (!inRange.has(k)) return;
     let side = (typeof e.pillar === 'number') ? e.pillar : null;
     if (side == null) { const t = (_tasks[e.q] || [])[e.taskIdx]; side = (t && typeof t.pillar === 'number') ? t.pillar : null; }
     if (side == null || side < 0) return;
-    const k = _calDateKey(e.startedAt);
     (dayActive[k] = dayActive[k] || new Set()).add(side);
     const dt = (dayTasks[k] = dayTasks[k] || {});
     (dt[side] = dt[side] || new Set()).add(((e.name || '') + '').trim() || '(task)');
   });
-  // (user) A COMPLETED task that had a bucket SIDE chosen also fills its day's square for that side —
-  // so ticking it in the Month view colours the matching Balance cell. Keyed by the task's calendar
-  // day (createdAt; falls back to completedAt).
+  // (user) A COMPLETED task that had a bucket SIDE chosen also fills its day's square for that side.
   ['q1', 'q2', 'q3', 'q4'].forEach(q => (_tasks[q] || []).forEach(t => {
     if (!t || !t.done || typeof t.pillar !== 'number' || t.pillar < 0 || t.pillar >= N) return;
     const when = (typeof t.createdAt === 'number') ? t.createdAt : t.completedAt;
     if (typeof when !== 'number') return;
-    const d = new Date(when);
-    if (d.getFullYear() !== y || d.getMonth() !== m) return;
-    const k = _calDateKey(when), side = t.pillar;
+    const k = _calDateKey(when); if (!inRange.has(k)) return;
+    const side = t.pillar;
     (dayActive[k] = dayActive[k] || new Set()).add(side);
     const dt = (dayTasks[k] = dayTasks[k] || {});
     (dt[side] = dt[side] || new Set()).add(((t.text || '') + '').trim() || '(task)');
   }));
   window._calCatTasks = dayTasks;                      // looked up by _wireCatTooltip
-  const dayKey = (day) => y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  const total = days.length;
   const counts = new Array(N).fill(0);
-  for (let day = 1; day <= dim; day++) { const set = dayActive[dayKey(day)]; if (set) set.forEach(s => { if (s < N) counts[s]++; }); }
+  dayKeys.forEach(k => { const set = dayActive[k]; if (set) set.forEach(s => { if (s < N) counts[s]++; }); });
   let lowest = 0; for (let s = 1; s < N; s++) if (counts[s] < counts[lowest]) lowest = s;   // fewest active days
-  // Split each side's day squares over TWO rows (≈half the columns) so the squares are bigger
-  // and easier to read; the grid auto-wraps the remaining days onto row 2.
-  const _catCols = Math.ceil(dim / 2);
-  let html = '<p class="cal-cat-cap">This month — tasks you finished, by bucket side.</p><div class="cal-cat-rows" style="--cat-cols:' + _catCols + '">';
-  for (let s = 0; s < N; s++) {
-    const col = _calSideColorVivid(s), nm = _calSideName(s);   // VIVID so the filled squares + name pop
+  const dotsFor = (s, col, nm) => {
     let dots = '';
-    for (let day = 1; day <= dim; day++) {
-      const k = dayKey(day);
+    dayKeys.forEach(k => {
       const on = dayActive[k] && dayActive[k].has(s);
       dots += on
-        ? ('<span class="cal-cat-dot on" style="background:' + col + '" data-cat="' + k + '|' + s + '" tabindex="0" role="button" aria-label="' + escapeHTML(nm) + ' day ' + day + '"></span>')
+        ? ('<span class="cal-cat-dot on" style="background:' + col + '" data-cat="' + k + '|' + s + '" tabindex="0" role="button" aria-label="' + escapeHTML(nm) + '"></span>')
         : '<span class="cal-cat-dot"></span>';
-    }
-    html += '<div class="cal-cat-row' + (s === lowest ? ' cat-lowest' : '') + '">' +
-      '<div class="cal-cat-row-head"><span class="cal-cat-name" style="color:' + col + '">' + escapeHTML(nm) + '</span>' +
-      (s === lowest ? '<span class="cat-low-tag">↓ lowest</span>' : '') +
-      '<span class="cal-cat-cnt">' + counts[s] + '/' + dim + '</span></div>' +
-      '<div class="cal-cat-dots">' + dots + '</div></div>';
+    });
+    return dots;
+  };
+  const headTag = (s) => '<div class="cal-cat-row-head"><span class="cal-cat-name" style="color:' + _calSideColorVivid(s) + '">' + escapeHTML(_calSideName(s)) + '</span>' + (s === lowest ? '<span class="cat-low-tag">↓ lowest</span>' : '') + '<span class="cal-cat-cnt">' + counts[s] + '/' + total + '</span></div>';
+  const cap = '<p class="cal-cat-cap">' + (weekly ? 'This week — tasks you finished, by bucket side.' : 'This month — tasks you finished, by bucket side.') + '</p>';
+  let html;
+  if (weekly) {
+    // S–S header per card; wide → 2 columns, narrow → 1 column. (Mirrors the Routine weekly cards.)
+    const dowHead = days.map(d => { const dow = d.getDay(), c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : ''; return '<div class="cal-catw-daycol"><span class="cal-catw-dow' + c + '">' + _dowNarrow(dow) + '</span><span class="cal-catw-num' + c + '">' + d.getDate() + '</span></div>'; }).join('');
+    let cards = '';
+    for (let s = 0; s < N; s++) cards += '<div class="cal-catw-card' + (s === lowest ? ' cat-lowest' : '') + '"><div class="cal-catw-head">' + dowHead + '</div>' + headTag(s) + '<div class="cal-catw-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+    html = cap + '<div class="cal-catw' + (_wide ? ' is-2col' : '') + '">' + cards + '</div>';
+  } else if (_wide) {
+    // single-row month + day-number header (Sat blue / Sun red)
+    let rows = '';
+    for (let s = 0; s < N; s++) rows += '<div class="cal-cats-row' + (s === lowest ? ' cat-lowest' : '') + '"><div class="cal-cats-name">' + headTag(s) + '</div><div class="cal-cats-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+    html = cap + '<div class="cal-cats" style="--cats-cols:' + dim + '"><div class="cal-cats-head"><span class="cal-cats-name-sp"></span><div class="cal-cats-days">' + _calMonthDayHeadCells(y, m, dim) + '</div></div>' + rows + '</div>';
+  } else {
+    // narrow month: two-row dots (compact)
+    const _catCols = Math.ceil(dim / 2);
+    let body = '';
+    for (let s = 0; s < N; s++) body += '<div class="cal-cat-row' + (s === lowest ? ' cat-lowest' : '') + '">' + headTag(s) + '<div class="cal-cat-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+    html = cap + '<div class="cal-cat-rows" style="--cat-cols:' + _catCols + '">' + body + '</div>';
   }
-  html += '</div>';
   wrap.innerHTML = html;
   _wireCatTooltip(wrap);
 }
@@ -14142,6 +14197,28 @@ function _calSyncRoutineModeBtns() {
   const b = document.getElementById('cal-hb-mode-toggle'); if (!b) return;
   b.textContent = (_calRoutineMode() === 'monthly') ? tr('Monthly') : tr('Weekly');
 }
+/* (user) Wide = iPad landscape / wide web → the MONTHLY views (Routine + Balance) lay the whole month
+   out in ONE row with a day-number header on top (Sat blue / Sun red). Narrower screens keep the
+   compact two-row layout. */
+function _calWideMonth() { return window.innerWidth >= 1000; }
+function _calBalanceMode() { return state.balanceMode || (window.innerWidth <= 700 ? 'weekly' : 'monthly'); }
+function _calSyncBalanceModeBtn() {
+  const b = document.getElementById('cal-bal-mode-toggle'); if (!b) return;
+  b.textContent = (_calBalanceMode() === 'monthly') ? tr('Monthly') : tr('Weekly');
+}
+function _calBalNav(delta) {
+  if (_calBalanceMode() === 'weekly') {
+    if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
+    _habitWeekStart = new Date(_habitWeekStart.getFullYear(), _habitWeekStart.getMonth(), _habitWeekStart.getDate() + delta * 7);
+    renderCalendar();
+  } else _calMonthShift(delta);
+}
+/* Day-number header cells (1..dim) for a single-row month grid; weekends get sat/sun colour classes. */
+function _calMonthDayHeadCells(y, m, dim) {
+  let s = '';
+  for (let d = 1; d <= dim; d++) { const dow = new Date(y, m, d).getDay(); const c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : ''; s += '<span class="cal-hbs-day' + c + '">' + d + '</span>'; }
+  return s;
+}
 function _calHabitWeekShift(delta) {
   if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
   _habitWeekStart = new Date(_habitWeekStart.getFullYear(), _habitWeekStart.getMonth(), _habitWeekStart.getDate() + delta * 7);
@@ -14178,39 +14255,48 @@ function _calRenderHabit(opts) {
     const nm = ((e.name || '') + '').trim();
     (workedByName[nm] = workedByName[nm] || new Set()).add(d.getDate());
   });
-  let rows = '';
   if (!tasks.length) {
-    rows = '<div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div>';
-  } else {
-    tasks.forEach(({ q, idx, t }) => {
-      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
-      // (user) success squares use the VIVID bucket-side colour (same as Balance) when tagged.
-      const fillCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : col;
-      const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
-      const repStart = t.repeatStart || createdKey;
-      const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
-      const worked = workedByName[(t.text || '').trim()] || new Set();
-      let cells = '', succN = 0; const hideNums = !!state.routineHideNumbers;   // (user) running success count this MONTH (hidden when toggled off)
-      for (let day = 1; day <= dim; day++) {
-        const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
-        const dow = new Date(y, m, day).getDay();
-        const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none' — see _habitMark comment
-        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
-        if (mark === 'lapse')                            cells += '<span class="cal-hb-cell lapse"' + _d + '>!</span>';
-        else if (mark === 'success' || worked.has(day))  { succN++; cells += '<span class="cal-hb-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + (hideNums ? '' : succN) + '</span>'; }
-        else if (isRepeat)                               cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
-        else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
-      }
-      // (user) Monthly = Balance-style: the routine name + "Category · Type" as a heading, then the
-      // month's day squares wrapped over TWO rows (~15-16 each) below it.
-      const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      rows += '<div class="cal-hbm-row"><div class="cal-hbm-head"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span>' + _habitFlameHtml(t) + '</div><div class="cal-hbm-cells">' + cells + '</div></div>';
-    });
-    rows += _habitLegendHtml();
+    grid.innerHTML = '<div class="cal-hbm"><div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div></div>';
+    return;
   }
-  grid.style.setProperty('--hbm-cols', Math.ceil(dim / 2));   // ~15-16 per row → 2 rows = the whole month
-  grid.innerHTML = '<div class="cal-hbm">' + rows + '</div>';
+  // (user) Wide (iPad landscape) → ONE row per habit with a day-number header on top (Sat blue / Sun
+  // red). Narrow → the compact two-row Balance-style block (name heading above the squares).
+  const _wide = _calWideMonth();
+  const hideNums = !!state.routineHideNumbers;
+  let rows = '';
+  tasks.forEach(({ q, idx, t }) => {
+    const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
+    const fillCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : col;   // vivid side colour like Balance
+    const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+    const repStart = t.repeatStart || createdKey;
+    const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
+    const worked = workedByName[(t.text || '').trim()] || new Set();
+    let cells = '', succN = 0;
+    for (let day = 1; day <= dim; day++) {
+      const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+      const dow = new Date(y, m, day).getDay();
+      const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
+      const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none'
+      const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
+      if (mark === 'lapse')                            cells += '<span class="cal-hb-cell lapse"' + _d + '>!</span>';
+      else if (mark === 'success' || worked.has(day))  { succN++; cells += '<span class="cal-hb-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + (hideNums ? '' : succN) + '</span>'; }
+      else if (isRepeat)                               cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
+      else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
+    }
+    const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
+    const nameInner = '<span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span>' + _habitFlameHtml(t);
+    rows += _wide
+      ? ('<div class="cal-hbs-row"><div class="cal-hbs-name">' + nameInner + '</div><div class="cal-hbs-cells">' + cells + '</div></div>')
+      : ('<div class="cal-hbm-row"><div class="cal-hbm-head">' + nameInner + '</div><div class="cal-hbm-cells">' + cells + '</div></div>');
+  });
+  rows += _habitLegendHtml();
+  if (_wide) {
+    grid.style.setProperty('--hbs-cols', dim);
+    grid.innerHTML = '<div class="cal-hbs"><div class="cal-hbs-head"><span class="cal-hbs-name-sp"></span><div class="cal-hbs-days">' + _calMonthDayHeadCells(y, m, dim) + '</div></div>' + rows + '</div>';
+  } else {
+    grid.style.setProperty('--hbm-cols', Math.ceil(dim / 2));
+    grid.innerHTML = '<div class="cal-hbm">' + rows + '</div>';
+  }
 }
 /* iPhone-portrait Routine: ONE week of 7 big squares per repeat task (the 30-col month grid
    is too cramped on a narrow phone). Week-anchored to _habitWeekStart (Sunday); the ◀ ▶
@@ -15044,8 +15130,17 @@ window.bidoroCalSync = bidoroCalSync;
     _calInit(); _calState.routineSub = b.dataset.sub || 'routine'; _calRenderRoutine();
   }));
   const rtPrev = document.getElementById('cal-rt-prev'), rtNext = document.getElementById('cal-rt-next');
-  if (rtPrev) rtPrev.addEventListener('click', () => _calMonthShift(-1));
-  if (rtNext) rtNext.addEventListener('click', () => _calMonthShift(1));
+  if (rtPrev) rtPrev.addEventListener('click', () => _calBalNav(-1));   // Balance: weekly → week step, monthly → month
+  if (rtNext) rtNext.addEventListener('click', () => _calBalNav(1));
+  // (user) Balance Weekly/Monthly toggle (single button, like Routine).
+  const balMode = document.getElementById('cal-bal-mode-toggle');
+  if (balMode) balMode.addEventListener('click', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    state.balanceMode = (_calBalanceMode() === 'monthly') ? 'weekly' : 'monthly';
+    try { saveState(); } catch (_) {}
+    _calSyncBalanceModeBtn();
+    try { _calRenderRoutine(); } catch (_) {}
+  });
   const hbPrev = document.getElementById('cal-hb-prev'), hbNext = document.getElementById('cal-hb-next');
   if (hbPrev) hbPrev.addEventListener('click', () => _calHabitNav(-1));   // weekly → week step, monthly → month
   if (hbNext) hbNext.addEventListener('click', () => _calHabitNav(1));
@@ -29073,6 +29168,7 @@ function _itemThanksMsg(itemId, count){
 /* i18n-ext-5 — Calendar Balance + Routine empty-state strings. */
 (function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
   "This month — tasks you finished, by bucket side.":{ko:"이번 달 — 완료한 작업을 옆면별로.",zh:"本月 — 已完成的任务，按水桶面分类。",ja:"今月 — 完了したタスクを面別に。",es:"Este mes: tareas que terminaste, por cara del cubo.",fr:"Ce mois-ci — tâches terminées, par face du seau."},
+  "This week — tasks you finished, by bucket side.":{ko:"이번 주 — 완료한 작업을 옆면별로.",zh:"本周 — 已完成的任务，按水桶面分类。",ja:"今週 — 完了したタスクを面別に。",es:"Esta semana: tareas que terminaste, por cara del cubo.",fr:"Cette semaine — tâches terminées, par face du seau."},
   "↓ lowest":{ko:"↓ 최저",zh:"↓ 最少",ja:"↓ 最少",es:"↓ mínimo",fr:"↓ min"},
   "No routine tasks yet.":{ko:"반복 작업이 아직 없어요.",zh:"还没有习惯任务。",ja:"まだ繰り返しタスクがありません。",es:"Aún no hay tareas de rutina.",fr:"Pas encore de tâche récurrente."},
   "Turn on Repeat when you add a task, and it shows up here.":{ko:"작업을 추가할 때 ‘반복’을 켜면 여기에 나타나요.",zh:"添加任务时打开「重复」，就会显示在这里。",ja:"タスク追加時に「繰り返し」をオンにすると、ここに表示されます。",es:"Activa Repetir al añadir una tarea y aparecerá aquí.",fr:"Active Répéter en ajoutant une tâche, et elle apparaîtra ici."}
