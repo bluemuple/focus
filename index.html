@@ -9270,19 +9270,24 @@
       </div>
       <!-- Signed-out: sign in straight from Settings (same auth as the welcome
            window — shown by updateAuthUI whenever there's no session). -->
-      <div id="auth-logged-out" class="auth-section auth-form hidden">
-        <p class="help" style="grid-column:1/-1; margin:0;">Sign up to use Bidoro Web on your computer.</p>
-        <!-- Avatar (emoji) + nickname — used when signing UP (mirrors the login modal). -->
-        <div class="login-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
+      <!-- (user) Mode-based, mirrors the login popup: Create your account ⇄ Welcome to Bidoro,
+           toggled by the switch link; one primary button submits the active mode. -->
+      <div id="auth-logged-out" class="auth-section auth-form acct-auth hidden" style="grid-template-columns:1fr;">
+        <h3 id="acct-auth-title" style="grid-column:1/-1; margin:2px 0 6px; text-align:center; font-size:1.06rem; font-weight:800;">Create your account</h3>
+        <!-- Avatar (emoji) + nickname — sign-UP only (hidden in sign-in mode). -->
+        <div class="login-id-row" id="acct-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
           <button type="button" id="acct-signup-avatar" class="login-avatar-btn" title="Choose avatar" aria-label="Choose avatar">👤</button>
           <input type="text" id="acct-signup-nickname" placeholder="Nickname (optional)" maxlength="24" autocomplete="nickname" style="flex:1 1 auto; min-width:0;">
         </div>
-        <input type="email"    id="auth-email"    placeholder="Email"    autocomplete="email">
-        <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
-        <div class="row-flex">
-          <button class="btn primary" id="auth-signin" type="button">Sign in</button>
-          <button class="btn"         id="auth-signup" type="button">Sign up</button>
+        <input type="email" id="auth-email" placeholder="Email" autocomplete="email" style="grid-column:1/-1;">
+        <div class="login-pw-wrap" style="grid-column:1/-1;">
+          <input type="password" id="auth-password" placeholder="Password" autocomplete="current-password">
+          <button type="button" id="acct-pw-eye" class="login-pw-eye" aria-label="Show password" title="Show password">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
         </div>
+        <button class="btn primary login-primary" id="acct-auth-primary" type="button" style="grid-column:1/-1;">Create account</button>
+        <div class="login-switch" style="grid-column:1/-1;"><span id="acct-auth-switch-text">Already have an account?</span> <button class="btn-link" id="acct-auth-switch" type="button">Sign in</button></div>
         <span id="auth-status" class="help" style="grid-column:1/-1;"></span>
       </div>
       <div class="hidden" aria-hidden="true">
@@ -14202,8 +14207,11 @@ function _calRenderCategory(opts) {
     // S–S header per card; wide → 2 columns, narrow → 1 column. (Mirrors the Routine weekly cards.)
     const dowHead = days.map(d => { const dow = d.getDay(), c = dow === 6 ? ' sat' : dow === 0 ? ' sun' : ''; return '<div class="cal-catw-daycol"><span class="cal-catw-dow' + c + '">' + _dowNarrow(dow) + '</span><span class="cal-catw-num' + c + '">' + d.getDate() + '</span></div>'; }).join('');
     let cards = '';
-    for (let s = 0; s < N; s++) cards += '<div class="cal-catw-card' + (s === lowest ? ' cat-lowest' : '') + '"><div class="cal-catw-head">' + dowHead + '</div>' + headTag(s) + '<div class="cal-catw-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
-    html = cap + '<div class="cal-catw' + (_wide ? ' is-2col' : '') + '">' + cards + '</div>';
+    // (user) Narrow (iPhone, 1-col): the weekday/date row appears ONCE at the top, not inside every
+    // side card. Wide 2-col keeps a per-card header (the cards sit side by side).
+    for (let s = 0; s < N; s++) cards += '<div class="cal-catw-card' + (s === lowest ? ' cat-lowest' : '') + '">' + (_wide ? ('<div class="cal-catw-head">' + dowHead + '</div>') : '') + headTag(s) + '<div class="cal-catw-dots">' + dotsFor(s, _calSideColorVivid(s), _calSideName(s)) + '</div></div>';
+    const topHead = _wide ? '' : ('<div class="cal-catw-head cal-catw-tophead">' + dowHead + '</div>');
+    html = cap + topHead + '<div class="cal-catw' + (_wide ? ' is-2col' : '') + '">' + cards + '</div>';
   } else if (_wide) {
     // single-row month + day-number header (Sat blue / Sun red)
     let rows = '';
@@ -31483,10 +31491,38 @@ document.addEventListener('click', (ev) => {
   if (t.closest && t.closest('#auth-signout'))   { handleSignOut();      return; }
   if (t.closest && t.closest('#auth-push-now'))  { handleDeviceToCloud();return; }
 });
-// Allow pressing Enter in either field to sign in
+// (user) Settings → Account signed-out form: mode-based (Create account ⇄ Welcome to Bidoro),
+// mirroring the login popup. Reuses handleSignUp/handleSignIn (auth-email/auth-password/acct-signup-*).
+let _acctAuthMode = 'signup';
+function _acctSetMode(mode) {
+  _acctAuthMode = (mode === 'signin') ? 'signin' : 'signup';
+  const isUp = _acctAuthMode === 'signup';
+  const T = document.getElementById('acct-auth-title'); if (T) T.textContent = isUp ? tr('Create your account') : tr('Welcome to Bidoro');
+  const idr = document.getElementById('acct-id-row'); if (idr) idr.style.display = isUp ? '' : 'none';
+  const pb = document.getElementById('acct-auth-primary'); if (pb) pb.textContent = isUp ? tr('Create account') : tr('Sign in');
+  const swt = document.getElementById('acct-auth-switch-text'); if (swt) swt.textContent = isUp ? tr('Already have an account?') : tr('New to Bidoro?');
+  const sw = document.getElementById('acct-auth-switch'); if (sw) sw.textContent = isUp ? tr('Sign in') : tr('Create account');
+  if (authPasswordInput) authPasswordInput.autocomplete = isUp ? 'new-password' : 'current-password';
+  setAuthStatus('');
+}
+(function wireAcctAuth() {
+  const pb = document.getElementById('acct-auth-primary');
+  const sw = document.getElementById('acct-auth-switch');
+  const eye = document.getElementById('acct-pw-eye');
+  if (pb) pb.onclick = () => { (_acctAuthMode === 'signup' ? handleSignUp : handleSignIn)(); };
+  if (sw) sw.onclick = () => _acctSetMode(_acctAuthMode === 'signup' ? 'signin' : 'signup');
+  if (eye && authPasswordInput) eye.onclick = () => {
+    const show = authPasswordInput.type === 'password';
+    authPasswordInput.type = show ? 'text' : 'password';
+    eye.classList.toggle('on', show);
+    eye.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+  };
+  _acctSetMode('signup');
+})();
+// Allow pressing Enter in either field to submit the active Account auth mode.
 [authEmailInput, authPasswordInput].forEach(el => {
   if (!el) return;
-  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); handleSignIn(); } };
+  el.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); (_acctAuthMode === 'signup' ? handleSignUp : handleSignIn)(); } };
 });
 
 /* Login modal handlers */
