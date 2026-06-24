@@ -8122,6 +8122,9 @@
   /* Overrun arm duration STACKED on 2 lines (1h / 30m) so it fits the thin 1/3 column.
      bottom-anchored, so the 2nd line grows UP from the block bottom. */
   .time-block-dur.tb-dur-stacked, .tg-block-dur.tb-dur-stacked { text-align: right; line-height: 1.02; }
+  /* Full-width grow ext (no block below): elapsed-time label sits BOTTOM-LEFT (the
+     bottom-right corner reads cleaner for the square full-width foot). */
+  .time-block-dur.tb-dur-left, .tg-block-dur.tb-dur-left { left: 8px; right: auto; text-align: left; }
   .time-block.ext-parent-seam .time-block-dur,
   .tg-block.ext-parent-seam .tg-block-dur { display: none !important; }
   /* ▲▼ arrows — visible ONLY when block is selected.
@@ -23265,6 +23268,8 @@ function drawTimeArea() {
       // the pixel Y of that meeting point; null (nothing below) → full width all the way.
       const _cyPx = (_confMs == null) ? null : Math.max(0, _exH * (_confMs - b.startMs) / Math.max(1, b.endMs - b.startMs));
       div._extArm = (_confMs != null);                 // dur label stacks on 2 lines only in the 1/3 arm
+      div._extCyPx = _cyPx;                             // arm-start Y (px) so the dur label can centre in the arm
+      div._extExHPx = _exH;                             // total ext height (px)
       const _cp = _extClipPath(_extW, _exH, _cyPx, 0.66, 2, 5);
       if (_cp) div.style.clipPath = _cp;
     } else if (_extRanges.length && _extRanges.some(x => x !== b &&
@@ -23458,6 +23463,19 @@ function drawTimeArea() {
       nameEl.textContent = b.taskName || b.trackerName || '';
       if (Array.isArray(b.taskSegs) && b.taskSegs.length > 1) nameEl.style.whiteSpace = 'pre-line';   // 2-task combined → name on 2 lines
       if (b.kind !== 'tracker') nameEl.style.setProperty('color', bidoroTaskText(b.q, b.taskIdx), 'important');   // = task-bar text colour
+      // (user) Full-width grow ext (NO block below): the parent + ext read as ONE tall block,
+      // so centre the name across the COMBINED height — it slides DOWN as the ext grows
+      // (instead of staying pinned to the parent's centre).
+      const _fwExt = _extRanges.find(x => x.q === b.q && x.taskIdx === b.taskIdx &&
+        Math.abs(x.startMs - b.endMs) < 1000);
+      if (_fwExt) {
+        const _extHasBelow = _renderBlocks.some(p => p && p !== b && p !== _fwExt &&
+          !p._actualExt && !p._preview && p.startMs < _fwExt.endMs && p.endMs > _fwExt.startMs);
+        if (!_extHasBelow) {
+          const _extPx = Math.max(0, msToPx(_fwExt.endMs) - msToPx(_fwExt.startMs));
+          nameEl.style.top = 'calc(50% + ' + (_extPx / 2).toFixed(1) + 'px)';
+        }
+      }
       div.appendChild(nameEl);
     }
 
@@ -23476,7 +23494,7 @@ function drawTimeArea() {
       const _hasBreak = (_bkStart != null && _bkStart > _exStart && _bkStart < b.endMs);
       const _totMs = (_hasBreak ? _bkStart : b.endMs) - _exStart;   // work-extension dur (excludes the break)
       if (div._extArm) { durEl.classList.add('tb-dur-stacked'); durEl.innerHTML = fmtTimeBlockDurStacked(_totMs); }
-      else durEl.textContent = fmtTimeBlockDur(_totMs);
+      else { durEl.textContent = fmtTimeBlockDur(_totMs); durEl.classList.add('tb-dur-left'); }   // full-width ext → bottom-LEFT
       if (_hasBreak) {
         const _blockH = (b.endMs - b.startMs) || 1;
         const _bkPct = ((b.endMs - _bkStart) / _blockH) * 100;
@@ -23485,6 +23503,14 @@ function drawTimeArea() {
         bkEl.className = 'time-block-dur';                                // right-aligned "5m" at the very bottom
         bkEl.textContent = fmtTimeBlockDur(b.endMs - _bkStart);
         div.appendChild(bkEl);
+      } else if (div._extArm && div._extCyPx != null) {
+        // (user) No break tail: centre the elapsed-time label vertically in the ARM
+        // (cyPx → block bottom) so it uses the FULL right-side height of the ㄱ and never
+        // overlaps the work/break times above or hides under the planned block that meets it.
+        const _armMid = (div._extCyPx + (div._extExHPx || (bPx - tPx))) / 2;
+        durEl.style.top = _armMid.toFixed(1) + 'px';
+        durEl.style.bottom = 'auto';
+        durEl.style.transform = 'translateY(-50%)';
       }
     } else {
       durEl.textContent = fmtTimeBlockDur(b.endMs - b.startMs);
@@ -38585,6 +38611,8 @@ setInterval(() => {
         // (user) full width down to where a planned block meets it below, then the RIGHT-1/3 arm.
         const _cyPx = (_confMs == null) ? null : Math.max(0, _exH * (_confMs - b.startMs) / Math.max(1, b.endMs - b.startMs));
         div._extArm = (_confMs != null);               // dur label stacks on 2 lines only in the 1/3 arm
+        div._extCyPx = _cyPx;                           // arm-start Y (px) so the dur label can centre in the arm
+        div._extExHPx = _exH;                           // total ext height (px)
         const _cp = _extClipPath(_extWW, _exH, _cyPx, 0.66, 2, 5);
         if (_cp) div.style.clipPath = _cp;
       } else if (_extRangesW.length && _extRangesW.some(x => x !== b &&
@@ -38701,6 +38729,19 @@ setInterval(() => {
         nameEl.textContent = b.taskName || b.trackerName || '';
         if (Array.isArray(b.taskSegs) && b.taskSegs.length > 1) nameEl.style.whiteSpace = 'pre-line';   // 2-task combined → name on 2 lines
         if (b.kind !== 'tracker') nameEl.style.setProperty('color', bidoroTaskText(b.q, b.taskIdx), 'important');   // = task-bar text colour
+        // (user) Full-width grow ext (NO block below): parent + ext read as ONE tall block,
+        // so centre the name across the COMBINED height — it slides DOWN as the ext grows.
+        const _fwExt = _extRangesW.find(x => x.q === b.q && x.taskIdx === b.taskIdx &&
+          Math.abs(x.startMs - b.endMs) < 1000);
+        if (_fwExt) {
+          const _extHasBelow = blocks.some(p => p && p !== b && p !== _fwExt &&
+            !p._actualExt && !p._preview && p.startMs < _fwExt.endMs && p.endMs > _fwExt.startMs);
+          if (!_extHasBelow && gaugeInner && gaugeInner.clientHeight) {
+            const _extPct = (_fwExt.endMs - _fwExt.startMs) / (b.endMs - b.startMs) * htPct;  // ext height as % of inner
+            const _extPx = gaugeInner.clientHeight * _extPct / 100;
+            nameEl.style.top = 'calc(50% + ' + (_extPx / 2).toFixed(1) + 'px)';
+          }
+        }
         div.appendChild(nameEl);
       }
 
@@ -38712,8 +38753,19 @@ setInterval(() => {
         const _par = blocks.find(p => p && !p._actualExt && !p._preview &&
           p.q === b.q && p.taskIdx === b.taskIdx && Math.abs(p.endMs - b.startMs) < 1000);
         const _totMs = b.endMs - (_par ? _par.startMs : b.startMs);
-        if (div._extArm) { durEl.classList.add('tb-dur-stacked'); durEl.innerHTML = fmtTimeBlockDurStacked(_totMs); }
-        else durEl.textContent = fmtDur(_totMs);
+        if (div._extArm) {
+          durEl.classList.add('tb-dur-stacked');
+          durEl.innerHTML = fmtTimeBlockDurStacked(_totMs);
+          if (div._extCyPx != null) {
+            // (user) Centre the elapsed label in the ARM (cyPx → bottom) so it uses the
+            // FULL right-side height of the ㄱ — never overlapping the times above or
+            // hiding under the planned block that meets the arm.
+            const _armMid = (div._extCyPx + (div._extExHPx || 0)) / 2;
+            durEl.style.top = _armMid.toFixed(1) + 'px';
+            durEl.style.bottom = 'auto';
+            durEl.style.transform = 'translateY(-50%)';
+          }
+        } else { durEl.textContent = fmtDur(_totMs); durEl.classList.add('tb-dur-left'); }   // full-width ext → bottom-LEFT
       } else {
         durEl.textContent = fmtDur(b.endMs - b.startMs);
       }
