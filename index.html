@@ -13443,6 +13443,9 @@ function showPage(name) {
   // the Settings page at boot) — never shown; legacy 'setup' → focus. Unknown → focus.
   if (name === 'setup') name = 'focus';
   if (!pages[name]) name = 'focus';
+  // Navigating to a DIFFERENT page closes Edit so its floating panel (iPad/web)
+  // doesn't carry over onto the new page. (Staying on 'focus' keeps Edit as-is.)
+  if (name !== 'focus') { try { _exitEditForNav(); } catch (_) {} }
   Object.entries(pages).forEach(([k,id]) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -33366,6 +33369,17 @@ function _syncEditClasses() {
     }
   } catch (_) {}
 }
+/* (user, iPad/web) Leaving the focus page — or covering it with a full-screen view
+   like My Garden or the Pomodoro dial — auto-presses "Edit done" so the floating
+   edit panel doesn't linger over the new screen. Mirrors the close-Edit-on-+Add /
+   on-delete pattern. No-op when not editing. */
+function _exitEditForNav() {
+  if (!state || !state.splitActionsVisible) return;
+  state.splitActionsVisible = false;
+  try { saveState(); } catch (_) {}
+  try { _syncEditClasses(); } catch (_) {}
+}
+window._exitEditForNav = _exitEditForNav;
 function applyTtState() {
   const real = !!state.ttFlipped;
   // Phone landscape forces the 2×2 matrix face regardless of the saved preference;
@@ -37605,6 +37619,7 @@ function openFocusFullscreen() {
   }
   const o = document.getElementById('focus-fullscreen');
   if (!o) return;
+  try { _exitEditForNav(); } catch (_) {}   // the Pomodoro dial covers the gauge → drop Edit + its floating panel
   _ffBuiltForMin = -1;                       // force a fresh dial build
   o.classList.remove('hidden'); o.setAttribute('aria-hidden', 'false');
   document.body.style.overflow = 'hidden';   // no scroll-bleed behind the full-screen view
@@ -43123,6 +43138,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
           }
         } catch (_) {}
       }
+      try { if (typeof _exitEditForNav === 'function') _exitEditForNav(); } catch (_) {}   // My Garden covers the gauge → drop Edit + its floating panel
       overlay.classList.remove('hidden');
       overlay.setAttribute('aria-hidden', 'false');
       document.body.style.overflow = 'hidden';
