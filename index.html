@@ -8899,6 +8899,11 @@
      as one connected hexagon; the jutting silhouette itself is the "this is overtime" cue. The seam
      borders are removed on both sides so there's no dividing line between them. */
   .time-block.ext-seam, .tg-block.ext-seam { border-top: none; }
+  /* (user) The overrun ARM's shape is defined ENTIRELY by its clip-path (square top-right +
+     bottom-right, rounded bottom-left, concave arch armpit). Zero the element's own 5px radius so
+     it can't round the clip's crisp corners (which made the arm's top-right look rounded + the
+     parent's bottom-right look indented). */
+  .time-block.time-block-ext, .tg-block.tg-block-ext { border-radius: 0 !important; }
   /* Plan block that has an extension below: bottom-RIGHT corner SQUARE so the plan continues
      SEAMLESSLY into the 1/3 overrun arm on the right; bottom-LEFT keeps its rounded corner so it
      reads as SEPARATE from the planned block (e.g. BOB) sitting in the left 2/3. The grey seam
@@ -21739,6 +21744,11 @@ function _syncPhaseToBlock(at) {
     const isWork = (at.phase === 'work');
     for (const b of (state.scheduledBlocks || [])) {
       if (!b || b.kind === 'tracker') continue;
+      // (user) NEVER sync the phase to an actual-EXTENSION (keep-going overrun) block. It's a
+      // count-up, not a planned 25/5 block; re-deriving the phase boundary from its growing
+      // segments re-triggered the "keep going / take a break" popup a SECOND time when the
+      // extension ended. The phase clock set at keep-going time is authoritative for the ext.
+      if (b._actualExt) continue;
       // (user) Follow ONLY the ACTIVE task's own block. Otherwise, when blocks overlap at the
       // now-line (e.g. a long plan sitting over the short one you're actually running), the phase
       // would sync to the WRONG/longer block → its boundary never lands at the running task's
@@ -24272,17 +24282,17 @@ function _extClipPath(W, H, cyPx, armFrac, gapPx, r) {
   }
   let cy = Math.max(0, Math.min(H - 2 * r, cyPx));
   if (cy <= 0.5) {
-    // (user) Clean ㄱ: the RIGHT edge drops STRAIGHT DOWN from the parent — square top-right AND
-    // bottom-right (no rounding) — and the ARMPIT is a sharp RIGHT ANGLE: the arm's left edge meets
-    // the parent's bottom edge perpendicularly. Only the OUTER bottom-left corner stays rounded.
-    //   armpit(↖ sharp) ─ top ─ top-right(↗ sharp)
-    //        │                        │
-    //   left edge                 right edge (vertical)
-    //        ╰ rounded bottom-left ─ bottom ─ bottom-right(↘ sharp)
-    return 'path("M' + f(armLeft) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H) +
+    // (user) ㄱ arm: the RIGHT edge drops STRAIGHT DOWN from the parent — square top-right AND
+    // bottom-right (the ext block's own border-radius is zeroed so these stay crisp, continuous
+    // with the parent's squared bottom-right). The ARMPIT is a smooth CONCAVE "arch" fillet that
+    // opens toward the OUTSIDE (down-left) — gentler than a hard right angle. Bottom-left stays
+    // rounded (radius r).
+    const ar = Math.max(2, Math.min(11, Math.floor((W - armLeft) * 0.6), Math.floor(H * 0.5)));   // armpit arch radius
+    return 'path("M' + f(armLeft + ar) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H) +
       ' L' + f(armLeft + r) + ',' + f(H) +
       ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +
-      ' L' + f(armLeft) + ',0 Z")';
+      ' L' + f(armLeft) + ',' + f(ar) +
+      ' A' + ar + ',' + ar + ' 0 0 0 ' + f(armLeft + ar) + ',0 Z")';
   }
   cy = Math.max(r, cy);
   // ㄱ silhouette (clockwise): full-width head down to `cy`, then the right arm.
