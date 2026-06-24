@@ -782,8 +782,14 @@
   .note-tagpick-opt:hover { background: var(--surface-2,#f1f3f5); }
   .note-tagpick-opt .ntpo-check { width: 16px; flex: 0 0 16px; color: var(--accent,#2563eb); }
   .note-actions-row .nar-share, .note-actions-row .nar-del { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; border-radius: 10px; padding: 7px 11px; font: inherit; font-weight: 700; font-size: .8rem; cursor: pointer; border: 1px solid var(--card-border); background: var(--surface-2,#fff); color: var(--text-main); -webkit-tap-highlight-color: transparent; white-space: nowrap; }
-  .note-actions-row .nar-share.shared { background: #374151; border-color: #374151; color: #fff; }
+  .note-actions-row .nar-share.shared { background: #3aa776; border-color: #3aa776; color: #fff; }   /* admin-confirmed → green */
+  .note-actions-row .nar-share.pending { background: #fef3c7; border-color: #f7d57a; color: #92400e; }   /* waiting for admin review */
   .note-actions-row .nar-del { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+  /* Returned banner — the admin sent a shared note back with a message. */
+  .note-returned-banner { margin: 2px 0 8px; margin-left: 30px; border-radius: 10px; border: 1px solid #f7d57a; background: #fffbeb; padding: 8px 12px; }
+  .note-returned-banner .nrb-title { font-weight: 800; font-size: .78rem; color: #92400e; }
+  .note-returned-banner .nrb-msg { font-size: .86rem; color: var(--text-main); margin-top: 3px; line-height: 1.4; white-space: pre-wrap; }
+  @media (prefers-color-scheme: dark) { .note-returned-banner { background: #2a230f; border-color: #5b4a1a; } .note-returned-banner .nrb-title { color: #fcd34d; } }
   .nar-share-wrap { position: relative; flex: 0 0 auto; }
   /* (user) Anchor the bubble to the share button's RIGHT edge so it grows LEFTWARD — its right
      edge stays inside the section (the old left:0 let the wide nowrap bubble spill off-screen).
@@ -12329,13 +12335,100 @@ async function pushSharedMemoToCloud() {
   } catch (e) { console.warn('shared note push failed:', e); return false; }
 }
 
+/* ===== Shared-note MODERATION pipeline (focus_shared_memos.status) =====
+   Pressing Share no longer publishes instantly — it upserts MY one memo row as
+   `pending`, where the admin confirms / returns / trashes it. The app polls the
+   row's status back (see reconcileShareStatus) to drive the button (Share →
+   Pending → Shared), the green icon, and the "returned" banner. All best-effort:
+   if supabase-shared-memos-moderation.sql hasn't run, the upsert falls back to
+   the legacy {client_id, text} shape and the note simply shows as shared. ===== */
+async function pushModerationMemo(noteId, text, emoji) {
+  try {
+    const sb = await getSupabaseClient(); if (!sb) return null;
+    const t = cleanShareText(text); if (!t || containsProfanity(t)) return null;
+    if (!state.shareClientId) { state.shareClientId = genShareClientId(); try { saveState(); } catch (_) {} }
+    const row = { client_id: state.shareClientId, text: t, emoji: (emoji || ''), note_id: String(noteId), status: 'pending', updated_at: new Date().toISOString() };
+    try { const { data: { session } } = await sb.auth.getSession(); if (session && session.user && session.user.id) row.user_id = session.user.id; } catch (_) {}
+    let res = await sb.from(SB_SHARED_TABLE).upsert(row, { onConflict: 'client_id' }).select('id').maybeSingle();
+    if (res.error) {   // new columns (status/note_id/emoji/user_id) not present yet → bare upsert
+      res = await sb.from(SB_SHARED_TABLE).upsert({ client_id: row.client_id, text: row.text }, { onConflict: 'client_id' }).select('id').maybeSingle();
+    }
+    if (res.error) return null;
+    return (res.data && res.data.id != null) ? res.data.id : true;
+  } catch (_) { return null; }
+}
+/* Withdraw (un-share) — the user cancels their own pending/shared/returned note.
+   Removes the moderation row so it leaves every admin list. */
+async function withdrawModerationMemo() {
+  try {
+    const sb = await getSupabaseClient(); if (!sb || !state.shareClientId) return false;
+    const { error } = await sb.from(SB_SHARED_TABLE).delete().eq('client_id', state.shareClientId);
+    return !error;
+  } catch (_) { return false; }
+}
+/* My memo row's current moderation status (+ the admin's return message). null if
+   no row, the table is missing, or the moderation columns aren't added yet. */
+async function fetchMyMemoStatus() {
+  try {
+    const sb = await getSupabaseClient(); if (!sb || !state.shareClientId) return null;
+    const res = await sb.from(SB_SHARED_TABLE).select('id, status, return_message, note_id').eq('client_id', state.shareClientId).maybeSingle();
+    if (res.error) return null;
+    return res.data || null;
+  } catch (_) { return null; }
+}
+/* Reconcile the polled server status onto my local notes: flips the right note to
+   pending / shared / returned, fires a one-time toast on each transition, and
+   publishes/clears the FRIENDS note only once the admin has confirmed sharing. */
+function reconcileShareStatus(row) {
+  try {
+    const notes = state.notes || [];
+    let changed = false;
+    const _clearAll = () => { notes.forEach(n => { if (n && n.shareStatus && n.shareStatus !== 'none') { n.shareStatus = 'none'; n.shared = false; n.returnMessage = ''; changed = true; } }); };
+    const _unpublishFriends = () => { if (state.sharedMemo) { state.sharedMemo = ''; state.sharedMemoEmoji = ''; try { pushSharedMemoToCloud(); } catch (_) {} changed = true; } };
+    if (!row || !row.status || row.status === 'deleted') {
+      if (row && row.status === 'deleted') _memoToast('A shared note was removed by an admin.');
+      _clearAll(); _unpublishFriends();
+    } else {
+      let target = row.note_id ? notes.find(n => n && String(n.id) === String(row.note_id)) : null;
+      if (!target) target = notes.find(n => n && n.shareStatus && n.shareStatus !== 'none');
+      if (target) {
+        state.sharedMemoRowId = row.id;
+        notes.forEach(n => { if (n !== target && n.shareStatus && n.shareStatus !== 'none') { n.shareStatus = 'none'; n.shared = false; n.returnMessage = ''; changed = true; } });
+        if (row.status === 'shared') {
+          if (target.shareStatus !== 'shared') {
+            target.shareStatus = 'shared'; target.shared = true; target.returnMessage = '';
+            state.sharedMemo = target.text; state.sharedMemoEmoji = target.emoji || '';
+            try { pushSharedMemoToCloud(); } catch (_) {}   // NOW publish to friends
+            changed = true; _memoToast('Your note is now shared ✨');
+          }
+        } else if (row.status === 'returned') {
+          if (target.shareStatus !== 'returned' || target.returnMessage !== (row.return_message || '')) {
+            const firstTime = target.shareStatus !== 'returned';
+            target.shareStatus = 'returned'; target.shared = false; target.returnMessage = row.return_message || '';
+            if (state.sharedMemo === target.text) _unpublishFriends();
+            changed = true; if (firstTime) _memoToast('A shared note was sent back to you.');
+          }
+        } else if (row.status === 'pending') {
+          if (target.shareStatus !== 'pending') { target.shareStatus = 'pending'; target.shared = false; target.returnMessage = ''; changed = true; }
+        }
+      }
+    }
+    if (changed) {
+      try { saveState(); } catch (_) {}
+      try { const np = document.getElementById('notes-page'); if (np && np.style.display !== 'none') renderNotes(); } catch (_) {}
+    }
+  } catch (_) {}
+}
+
 /* Pull the latest memos from OTHER users into the local pool. Excludes my own
    row + (defensively) profane text. Hidden ones are filtered at read time. */
 async function fetchSharedMemosFromCloud() {
   try {
     const sb = await getSupabaseClient();
     if (!sb) return false;
-    let res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id, emoji').order('created_at', { ascending: false }).limit(200);
+    // Prefer status+emoji; degrade if those columns aren't in the table yet.
+    let res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id, emoji, status').order('created_at', { ascending: false }).limit(200);
+    if (res.error) res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id, emoji').order('created_at', { ascending: false }).limit(200);
     if (res.error && /emoji/i.test(res.error.message || '')) {   // emoji column not added yet → fall back
       res = await sb.from(SB_SHARED_TABLE).select('id, text, client_id').order('created_at', { ascending: false }).limit(200);
     }
@@ -12344,6 +12437,7 @@ async function fetchSharedMemosFromCloud() {
     const mineId = state.shareClientId;
     _sharedMemoPool = (data || [])
       .filter(r => r && r.client_id !== mineId && r.text && !containsProfanity(r.text))
+      .filter(r => r.status === undefined || r.status === 'shared')   // only admin-confirmed notes rotate publicly (legacy rows w/o status stay visible)
       .map(r => ({ id: r.id, text: cleanShareText(r.text), emoji: (r.emoji || '') }))
       .filter(r => r.text);
     return true;
@@ -12682,6 +12776,8 @@ async function _pollMemoSocial() {
       try { saveState(); } catch (_) {}
       _showHeartNotice();
     }
+    // Moderation status of MY shared note (pending → shared/returned/deleted).
+    try { const _ms = await fetchMyMemoStatus(); reconcileShareStatus(_ms); } catch (_) {}
     // Admin control for me (block-share / block-comment / a message).
     const ctrl = await fetchMyAdminControl();
     state.adminControl = ctrl || null;
@@ -15911,29 +16007,33 @@ function _setNoteShared(id, on){
   if (!_ns || _ns.date !== _today) _ns = { date: _today, count: 0 };
   if (_ns.count >= 3) { _memoToast('You can change note sharing up to 3 times a day.'); renderNotes(); return; }
   _ns.count++; state.noteShareToggles = _ns;
-  _ensureNotes().forEach(n => { if (n.id === id) n.shared = !!on; else if (on) n.shared = false; });   // one shared at a time
-  const shared = state.notes.find(n => n.shared);
-  state.sharedMemo = shared ? shared.text : '';
-  state.sharedMemoEmoji = shared ? (shared.emoji || '') : '';   // the emoji rides along into the top-bar quote
-  // The shared memo is ONE upserted row, so its replies persist across re-shares and
-  // were wrongly showing under whatever note is shared now. Stamp WHEN this note became
-  // shared; only replies created after that count as belonging to it (see fetchRepliesToMyMemo).
-  if (on) { state.sharedAt = Date.now(); _myMemoReplies = []; _noteComments[id] = []; }
-  if (on && _noteBubbleId === id) _noteBubbleId = null;   // sharing dismisses the coach bubble
-  _persistNotes();
-  renderNotes();
-  // Publish/unpublish the memo ROW immediately. The Notes-page Share button used to
-  // only flip local state — it never re-upserted the SB_SHARED_TABLE row — so the
-  // server row + state.sharedMemoRowId went stale until the next app launch. That
-  // made fetchRepliesToMyMemo() read the WRONG/old row: the previous note's reply
-  // kept showing under whatever note was shared, and the server-side AI auto-reply
-  // (which attaches to the CURRENT row) never appeared here. Push now, then poll so
-  // this note's fresh row id + sharedAt drive the reply fetch. (#N-notes-share)
-  try {
-    Promise.resolve(pushSharedMemoToCloud())
-      .then(() => { try { if (typeof _pollMemoSocial === 'function') _pollMemoSocial(); } catch (_) {} })
+  const target = _ensureNotes().find(n => n.id === id);
+  if (!target) { renderNotes(); return; }
+  if (on) {
+    // Request sharing → submit MY note as PENDING for admin review (NOT public yet).
+    // Only this note carries a share state; one share request at a time.
+    _ensureNotes().forEach(n => { n.shareStatus = (n.id === id) ? 'pending' : 'none'; n.shared = false; n.returnMessage = ''; });
+    if (_noteBubbleId === id) _noteBubbleId = null;   // sharing dismisses the coach bubble
+    // Stamp WHEN this note was submitted so only replies created after count as its own.
+    state.sharedAt = Date.now(); _myMemoReplies = []; _noteComments[id] = [];
+    _persistNotes();
+    renderNotes();
+    Promise.resolve(pushModerationMemo(id, target.text, target.emoji))
+      .then(rid => {
+        if (rid && rid !== true) { state.sharedMemoRowId = rid; try { saveState(); } catch (_) {} }
+        _memoToast(rid ? 'Sent to be reviewed ✨' : "Couldn't send — try again later.");
+      })
       .catch(() => {});
-  } catch (_) {}
+  } else {
+    // Withdraw a pending / shared / returned note → clear locally + remove the cloud row.
+    _ensureNotes().forEach(n => { if (n.id === id) { n.shareStatus = 'none'; n.shared = false; n.returnMessage = ''; } });
+    if (state.sharedMemo === target.text) { state.sharedMemo = ''; state.sharedMemoEmoji = ''; }
+    _persistNotes();
+    renderNotes();
+    Promise.resolve(withdrawModerationMemo())
+      .then(() => { try { pushSharedMemoToCloud(); } catch (_) {} })   // clears the friends note too (state.sharedMemo now '')
+      .catch(() => {});
+  }
 }
 function _updateNoteCount(){ const ta = document.getElementById('note-comment'), c = document.getElementById('note-count'); if (ta && c) c.textContent = ta.value.length ? (ta.value.length + ' / 200') : ''; }
 function _noteEmojiBtnSync(){ const eb = document.getElementById('note-emoji-btn'); if (eb){ eb.textContent = _noteEmoji || '?'; eb.classList.toggle('has-emoji', !!_noteEmoji); } }
@@ -16023,6 +16123,14 @@ function renderNotes(){
       n.tags.forEach(t => { const c = document.createElement('span'); c.className = 'ntc'; c.textContent = '#' + t; chips.appendChild(c); });
       list.appendChild(chips);
     }
+    // Returned banner: the admin sent this shared note back with a message.
+    if (n.shareStatus === 'returned' && n.returnMessage) {
+      const rb = document.createElement('div'); rb.className = 'note-returned-banner';
+      const ti = document.createElement('div'); ti.className = 'nrb-title'; ti.textContent = '↩︎ Your shared note was sent back';
+      const ms = document.createElement('div'); ms.className = 'nrb-msg'; ms.textContent = n.returnMessage;
+      rb.appendChild(ti); rb.appendChild(ms);
+      list.appendChild(rb);
+    }
     // Options row (pencil open): [tag dropdown ▼] [Share] [Delete] + the coach bubble.
     if (_notePenId === n.id) {
       const ar = document.createElement('div'); ar.className = 'note-actions-row';
@@ -16045,11 +16153,14 @@ function renderNotes(){
       ar.appendChild(pick);
       // Share (+ coach bubble underneath; 2 dismissals → never shows again).
       const shWrap = document.createElement('div'); shWrap.className = 'nar-share-wrap';
-      const sh = document.createElement('button'); sh.type = 'button'; sh.className = 'nar-share' + (n.shared ? ' shared' : '');
-      sh.innerHTML = _NOTE_ICON_SHARE + '<span>' + (n.shared ? 'Shared' : 'Share') + '</span>';
-      sh.addEventListener('click', () => _setNoteShared(n.id, !n.shared));
+      const _st = n.shareStatus || (n.shared ? 'shared' : 'none');
+      const _active = (_st === 'pending' || _st === 'shared');   // clicking an active button withdraws
+      const sh = document.createElement('button'); sh.type = 'button';
+      sh.className = 'nar-share' + (_st === 'shared' ? ' shared' : '') + (_st === 'pending' ? ' pending' : '');
+      sh.innerHTML = _NOTE_ICON_SHARE + '<span>' + (_st === 'shared' ? 'Shared' : _st === 'pending' ? 'Pending' : 'Share') + '</span>';
+      sh.addEventListener('click', () => _setNoteShared(n.id, !_active));
       shWrap.appendChild(sh);
-      if (!n.shared && (state.noteBubbleDismissCount || 0) < 2) {
+      if (_st === 'none' && (state.noteBubbleDismissCount || 0) < 2) {
         const bub = document.createElement('div'); bub.className = 'note-share-bubble';
         const bt = document.createElement('span'); bt.textContent = 'Share it to get encouraged ✨'; bub.appendChild(bt);
         const bx = document.createElement('button'); bx.type = 'button'; bx.className = 'nsb-x'; bx.textContent = '✕'; bx.setAttribute('aria-label', 'Dismiss'); bub.appendChild(bx);

@@ -27,6 +27,17 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Hard backstop on reply length: at most (note word count + 5) words. Splits on
+// whitespace, so it works for space-separated languages; CJK notes (few spaces)
+// fall back to the 200-char cap at the call site, which is fine.
+function clampReplyLength(reply: string, memo: string): string {
+  const noteWords = memo.trim().split(/\s+/).filter(Boolean).length;
+  const cap = noteWords + 5;
+  const words = reply.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= cap) return reply.trim();
+  return words.slice(0, cap).join(" ").replace(/[,;:]$/, "") + "…";
+}
+
 async function gptReply(memo: string): Promise<string | null> {
   try {
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -42,7 +53,10 @@ async function gptReply(memo: string): Promise<string | null> {
             content:
               "You are a kind stranger replying to a short anonymous note someone shared in a focus app. " +
               "Reply in the SAME language as the note. Be warm, specific, and human — like a real person who " +
-              "happened to read it. 1-2 short sentences, under 200 characters. No emojis unless the note has one. " +
+              "happened to read it. " +
+              "Match the LENGTH of the note: your reply should be about the same number of words as the note, " +
+              "and never more than 5 words longer than it. If the note is one word, reply in a few words. " +
+              "No emojis unless the note has one. " +
               "Never mention being an AI, an assistant, or a model. Just be a friend. " +
               "If the note is gibberish, keyboard-mashing, or has no real meaning, reply with exactly NOREPLY and nothing else.",
           },
@@ -54,7 +68,7 @@ async function gptReply(memo: string): Promise<string | null> {
     const data = await res.json();
     const txt = (data?.choices?.[0]?.message?.content || "").trim();
     if (!txt || /^\s*NOREPLY/i.test(txt)) return null;   // model judged it meaningless
-    return txt.slice(0, 200);
+    return clampReplyLength(txt, memo).slice(0, 200);
   } catch (_) {
     return null;
   }

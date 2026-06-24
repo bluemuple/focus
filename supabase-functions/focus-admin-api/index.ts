@@ -44,8 +44,17 @@ Deno.serve(async (req) => {
     const b = body as any;
 
     if (action === "list") {
-      const { data: memos } = await sb.from("focus_shared_memos")
-        .select("id, client_id, text, emoji, created_at, max_viewers, user_id").order("created_at", { ascending: false }).limit(1000);
+      // Pull the moderation columns (status / return_message / note_id) too; fall
+      // back to the legacy shape if supabase-shared-memos-moderation.sql isn't run yet.
+      let memosRes: any = await sb.from("focus_shared_memos")
+        .select("id, client_id, text, emoji, created_at, max_viewers, user_id, status, return_message, note_id")
+        .order("created_at", { ascending: false }).limit(1000);
+      if (memosRes.error) {
+        memosRes = await sb.from("focus_shared_memos")
+          .select("id, client_id, text, emoji, created_at, max_viewers, user_id")
+          .order("created_at", { ascending: false }).limit(1000);
+      }
+      const memos = memosRes.data;
       const ids = (memos || []).map((m: any) => m.id);
       let comments: any[] = [];
       if (ids.length) {
@@ -122,6 +131,33 @@ Deno.serve(async (req) => {
       return json({ ok: true });
     }
     if (action === "deleteMemo")    { await sb.from("focus_shared_memos").delete().eq("id", b.id);     return json({ ok: true }); }
+    if (action === "setMemoStatus") {
+      // Moderation status machine: pending | shared | returned | deleted.
+      // confirm = shared · stop sharing = pending · trash = deleted · restore = pending.
+      const id = b.id;
+      const status = String(b.status || "");
+      if (id == null || !["pending", "shared", "returned", "deleted"].includes(status)) {
+        return json({ ok: false, error: "id + valid status required" }, 400);
+      }
+      const patch: Record<string, unknown> = { status, updated_at: new Date().toISOString() };
+      if (status === "shared")   patch.confirmed_at = new Date().toISOString();
+      if (status === "deleted")  patch.deleted_at   = new Date().toISOString();
+      if (status !== "returned") patch.return_message = null;   // clear a stale return note when leaving 'returned'
+      const { error } = await sb.from("focus_shared_memos").update(patch).eq("id", id);
+      if (error) return json({ ok: false, error: error.message });
+      return json({ ok: true });
+    }
+    if (action === "returnMemo") {
+      // Send a note back to its author with a message; it lands in the Returned tab.
+      const id = b.id;
+      const msg = String(b.message || "").trim().slice(0, 500);
+      if (id == null || !msg) return json({ ok: false, error: "id + message required" }, 400);
+      const { error } = await sb.from("focus_shared_memos")
+        .update({ status: "returned", return_message: msg, returned_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) return json({ ok: false, error: error.message });
+      return json({ ok: true });
+    }
     if (action === "deleteComment") { await sb.from("focus_memo_comments").delete().eq("id", b.id);    return json({ ok: true }); }
     if (action === "addComment") {
       // Admin replies to a shared note. Inserted as a NORMAL user reply (is_ai

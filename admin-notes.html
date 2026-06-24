@@ -69,6 +69,27 @@
     .members-table tr:hover td { background: rgba(255,255,255,.04); }
   }
   .tag.umsg { background: #fef3c7; color: #92400e; }
+  .tag.st-pending  { background: #fef3c7; color: #92400e; }
+  .tag.st-shared   { background: #d1fae5; color: #047857; }
+  .tag.st-returned { background: #fde68a; color: #92400e; }
+  .tag.st-deleted  { background: #e5e7eb; color: #6b7280; }
+  .st-btn { flex: 0 0 auto; border-radius: 8px; padding: 3px 10px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; margin-right: 6px; border: 1px solid #d1d5db; background: transparent; color: inherit; }
+  .st-btn.st-confirm { border-color: #047857; background: #047857; color: #fff; }
+  .st-btn.st-return  { border-color: #d97706; color: #b45309; }
+  .st-btn.st-return:hover { background: #fffbeb; }
+  .st-btn.st-stop    { border-color: #d1d5db; color: #374151; }
+  .st-btn.st-restore { border-color: #047857; color: #047857; }
+  .ret-msg { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: .88rem; line-height: 1.4; }
+  @media (prefers-color-scheme: dark) {
+    .tag.st-pending { background: #4a3a1a; color: #fcd34d; }
+    .tag.st-shared { background: #0f3a2a; color: #6ee7b7; }
+    .tag.st-returned { background: #4a3a1a; color: #fcd34d; }
+    .tag.st-deleted { background: #1f2937; color: #9ca3af; }
+    .st-btn { border-color: #374151; }
+    .st-btn.st-return { color: #fcd34d; } .st-btn.st-return:hover { background: #2a230f; }
+    .st-btn.st-stop { color: #cbd5e1; } .st-btn.st-restore { color: #6ee7b7; }
+    .ret-msg { background: #2a230f; border-color: #5b4a1a; }
+  }
   .u-frommsg { background: #f3f4f6; border-radius: 8px; padding: 8px 10px; margin-top: 6px; font-size: .9rem; display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
   .u-fm-when { color: #9ca3af; font-size: .72rem; white-space: nowrap; flex: 0 0 auto; }
   @media (prefers-color-scheme: dark) { .u-frommsg { background: #0b0f17; } .tag.umsg { background: #4a3a1a; color: #fcd34d; } }
@@ -187,7 +208,7 @@ const app  = document.getElementById('app');
 const root = document.getElementById('root');
 const bar  = document.getElementById('bar');
 let _token = '';
-let _reportedOnly = false;
+let _statusFilter = 'all';   // all | pending | returned | reported | deleted
 let _memos = [], _byMemo = {}, _controls = {}, _emailByClient = {}, _userMsgsByClient = {};
 
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
@@ -241,37 +262,95 @@ async function load(){
   render();
 }
 
+// status of a memo, defaulting legacy rows (no status column) to 'shared'.
+function memoStatus(m){ return (m && m.status) ? m.status : 'shared'; }
+const STATUS_META = {
+  pending:  { label: 'pending',  cls: 'st-pending'  },
+  shared:   { label: 'shared',   cls: 'st-shared'   },
+  returned: { label: 'returned', cls: 'st-returned' },
+  deleted:  { label: 'deleted',  cls: 'st-deleted'  },
+};
+async function setMemoStatus(id, status){ await callAdmin('setMemoStatus', { id: +id, status: status }); load(); }
+
 function render(){
   const allComments = Object.values(_byMemo).flat();
-  const repMemos = _memos.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
+  const live = _memos.filter(m => memoStatus(m) !== 'deleted');   // everything except the trash
   const repComments = allComments.filter(c => c.reported);
+  const repMemos = live.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
+  const nPending  = _memos.filter(m => memoStatus(m) === 'pending').length;
+  const nReturned = _memos.filter(m => memoStatus(m) === 'returned').length;
+  const nDeleted  = _memos.filter(m => memoStatus(m) === 'deleted').length;
+  const cap = (id, key, label, extra) =>
+    '<button id="' + id + '" class="' + (_statusFilter === key ? 'on' : '') + '">' + label + (extra ? (' ' + extra) : '') + '</button>';
   bar.innerHTML =
-    '<span class="stat"><b>' + _memos.length + '</b> notes</span>' +
+    '<span class="stat"><b>' + live.length + '</b> notes</span>' +
     '<span class="stat"><b>' + allComments.length + '</b> replies</span>' +
     '<span class="stat"><b>' + allComments.filter(c => c.is_ai).length + '</b> ai</span>' +
     '<span class="stat rep"><b>' + (repMemos.length + repComments.length) + '</b> reported</span>' +
-    '<span class="toggle"><button id="t-all" class="' + (!_reportedOnly?'on':'') + '">All</button>' +
-    '<button id="t-rep" class="' + (_reportedOnly?'on':'') + '">Reported</button></span>';
-  document.getElementById('t-all').onclick = () => { _reportedOnly = false; render(); };
-  document.getElementById('t-rep').onclick = () => { _reportedOnly = true; render(); };
+    '<span class="toggle">'
+      + cap('t-all', 'all', 'All')
+      + cap('t-pending', 'pending', 'Pending', nPending ? ('· ' + nPending) : '')
+      + cap('t-ret', 'returned', 'Returned', nReturned ? ('· ' + nReturned) : '')
+      + cap('t-rep', 'reported', 'Reported')
+      + cap('t-del', 'deleted', 'Deleted', nDeleted ? ('· ' + nDeleted) : '')
+    + '</span>';
+  document.getElementById('t-all').onclick     = () => { _statusFilter = 'all';      render(); };
+  document.getElementById('t-pending').onclick = () => { _statusFilter = 'pending';  render(); };
+  document.getElementById('t-ret').onclick     = () => { _statusFilter = 'returned'; render(); };
+  document.getElementById('t-rep').onclick     = () => { _statusFilter = 'reported'; render(); };
+  document.getElementById('t-del').onclick     = () => { _statusFilter = 'deleted';  render(); };
 
-  let list = _memos;
-  if (_reportedOnly) list = _memos.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
-  if (!list.length) { root.innerHTML = '<p class="empty">' + (_reportedOnly ? 'No reported items 🎉' : 'No shared notes yet.') + '</p>'; return; }
+  let list;
+  if      (_statusFilter === 'pending')  list = _memos.filter(m => memoStatus(m) === 'pending');
+  else if (_statusFilter === 'returned') list = _memos.filter(m => memoStatus(m) === 'returned');
+  else if (_statusFilter === 'deleted')  list = _memos.filter(m => memoStatus(m) === 'deleted');
+  else if (_statusFilter === 'reported') list = live.filter(m => (_byMemo[m.id] || []).some(c => c.reported));
+  else                                   list = live;   // 'all' → everything except the trash
+  if (!list.length) {
+    const msg = _statusFilter === 'reported' ? 'No reported items 🎉'
+      : _statusFilter === 'pending' ? 'Nothing waiting for review 🎉'
+      : _statusFilter === 'returned' ? 'No returned notes.'
+      : _statusFilter === 'deleted' ? 'Trash is empty.'
+      : 'No shared notes yet.';
+    root.innerHTML = '<p class="empty">' + msg + '</p>'; return;
+  }
 
   root.innerHTML = '';
   list.forEach(m => {
     const replies = (_byMemo[m.id] || []);
     const flagged = replies.some(c => c.reported);
+    const st = memoStatus(m);
+    const meta = STATUS_META[st] || STATUS_META.shared;
     const card = document.createElement('div'); card.className = 'memo' + (flagged ? ' flagged' : '');
-    let html = '<div class="memo-head"><div class="memo-text">' + (m.emoji ? (esc(m.emoji) + ' ') : '') + esc(m.text) + '</div>'
+    // Status-appropriate action buttons.
+    let acts = '';
+    if (st === 'pending') {
+      acts = '<button class="st-btn st-confirm" data-confirm="' + m.id + '">Confirm</button>'
+           + '<button class="st-btn st-return" data-return="' + m.id + '">Return</button>'
+           + '<button class="del" data-trash="' + m.id + '">Delete</button>';
+    } else if (st === 'shared') {
+      acts = '<button class="st-btn st-stop" data-stop="' + m.id + '">Stop sharing</button>'
+           + '<button class="st-btn st-return" data-return="' + m.id + '">Return</button>'
+           + '<button class="del" data-trash="' + m.id + '">Delete</button>';
+    } else if (st === 'returned') {
+      acts = '<button class="st-btn st-confirm" data-confirm="' + m.id + '">Confirm</button>'
+           + '<button class="del" data-trash="' + m.id + '">Delete</button>';
+    } else if (st === 'deleted') {
+      acts = '<button class="st-btn st-restore" data-restore="' + m.id + '">Restore</button>'
+           + '<button class="del" data-del-memo="' + m.id + '">Delete forever</button>';
+    }
+    let html = '<div class="memo-head"><div class="memo-text">' + (m.emoji ? (esc(m.emoji) + ' ') : '') + esc(m.text)
+      + ' <span class="tag ' + meta.cls + '">' + meta.label + '</span></div>'
       + '<button class="reply-btn" data-reply-memo="' + m.id + '">Reply</button>'
-      + '<button class="del" data-del-memo="' + m.id + '">Delete</button></div>'
+      + acts + '</div>'
       + '<div class="memo-meta">user <button class="userno" data-uid="' + esc(m.client_id) + '">#' + userNo(m.client_id) + '</button>'
       + ctrlBadges(m.client_id)
       + (m.email ? ' · <span class="email">' + esc(m.email) + '</span>' : ' · <span class="anon">anon</span>')
       + ' · shared ' + fmt(m.created_at)
       + (m.max_viewers != null ? (' · max ' + m.max_viewers + ' viewers') : '') + '</div>';
+    if (st === 'returned' && m.return_message) {
+      html += '<div class="ret-msg"><b>↩︎ Returned with:</b> ' + esc(m.return_message) + '</div>';
+    }
     if (replies.length) {
       html += '<ul class="replies">';
       replies.forEach(c => {
@@ -289,8 +368,22 @@ function render(){
     root.appendChild(card);
   });
 
+  root.querySelectorAll('[data-confirm]').forEach(b => b.onclick = async () => {
+    b.disabled = true; try { await setMemoStatus(b.getAttribute('data-confirm'), 'shared'); } catch(e){ alert(e.message); b.disabled = false; }
+  });
+  root.querySelectorAll('[data-stop]').forEach(b => b.onclick = async () => {
+    if (!confirm('Stop sharing this note? It goes back to Pending.')) return;
+    b.disabled = true; try { await setMemoStatus(b.getAttribute('data-stop'), 'pending'); } catch(e){ alert(e.message); b.disabled = false; }
+  });
+  root.querySelectorAll('[data-trash]').forEach(b => b.onclick = async () => {
+    b.disabled = true; try { await setMemoStatus(b.getAttribute('data-trash'), 'deleted'); } catch(e){ alert(e.message); b.disabled = false; }
+  });
+  root.querySelectorAll('[data-restore]').forEach(b => b.onclick = async () => {
+    b.disabled = true; try { await setMemoStatus(b.getAttribute('data-restore'), 'pending'); } catch(e){ alert(e.message); b.disabled = false; }
+  });
+  root.querySelectorAll('[data-return]').forEach(b => b.onclick = () => openReturnPopup(+b.getAttribute('data-return')));
   root.querySelectorAll('[data-del-memo]').forEach(b => b.onclick = async () => {
-    if (!confirm('Delete this note AND all its replies?')) return;
+    if (!confirm('Permanently delete this note AND all its replies? This cannot be undone.')) return;
     b.disabled = true; try { await callAdmin('deleteMemo', { id: +b.getAttribute('data-del-memo') }); } catch(e){ alert(e.message); } load();
   });
   root.querySelectorAll('[data-del-cmt]').forEach(b => b.onclick = async () => {
@@ -315,6 +408,31 @@ function render(){
     inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); doSend(); } };
   });
   root.querySelectorAll('.userno').forEach(b => b.onclick = () => openUserPopup(b.getAttribute('data-uid')));
+}
+
+// Return-a-note popup: write a message to the author; sending moves it to Returned.
+function openReturnPopup(memoId){
+  const m = _memos.find(x => x.id === memoId) || {};
+  const back = document.createElement('div'); back.className = 'u-back';
+  const box = document.createElement('div'); box.className = 'u-box';
+  box.innerHTML =
+    '<h3 class="u-title">Return this note</h3>'
+    + '<p class="u-sub">“' + esc((m.emoji ? (m.emoji + ' ') : '') + (m.text || '')) + '”</p>'
+    + '<p class="u-sub" style="margin-top:10px;">Message to the author (shown under their note):</p>'
+    + '<textarea id="ret-msg" maxlength="500" placeholder="Why it was sent back…"></textarea>'
+    + '<div class="u-actions"><button class="u-cancel">Cancel</button><button class="u-save">Send</button></div>';
+  back.appendChild(box); document.body.appendChild(back);
+  const close = () => { try { back.remove(); } catch(_){} };
+  back.addEventListener('click', e => { if (e.target === back) close(); });
+  box.querySelector('#ret-msg').focus();
+  box.querySelector('.u-cancel').onclick = close;
+  box.querySelector('.u-save').onclick = async () => {
+    const msg = box.querySelector('#ret-msg').value.trim();
+    if (!msg) { box.querySelector('#ret-msg').focus(); return; }
+    const btn = box.querySelector('.u-save'); btn.disabled = true; btn.textContent = 'Sending…';
+    try { await callAdmin('returnMemo', { id: memoId, message: msg }); close(); load(); }
+    catch (e) { btn.disabled = false; btn.textContent = 'Send'; alert(e.message); }
+  };
 }
 
 function openUserPopup(clientId){
