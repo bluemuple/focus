@@ -43838,8 +43838,17 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               const capW = Math.round(DIAMOND_W * 0.16);
               let capY = p.y;
               if (planted) {
-                const _topY = (seedItem(planted) === 'clover' && _st < 2) ? (p.y - DIAMOND_H * 0.05) : (p.y + DIAMOND_H * 0.05 - plantH(planted, _st));
+                const _isClover = seedItem(planted) === 'clover';
+                const _topY = (_isClover && _st < 2) ? (p.y - DIAMOND_H * 0.05) : (p.y + DIAMOND_H * 0.05 - plantH(planted, _st));
                 capY = _topY - DIAMOND_H * 0.06;
+                // (user) A SPROUTED item (stage ≥ 2, not the buried seed) can be tall, which pushed
+                // the green price tag way up above the plant. Instead pin it just ABOVE the "…"
+                // speech bubble (which sits at ~p.y − 0.45·H, mid-upper plant), so the tag + bubble
+                // read as a pair — like the seed mound's tag. Seeds keep their above-the-mound spot.
+                if (!_isClover && _st >= 2) {
+                  const _bubbleCenter = p.y - DIAMOND_H * 0.45 - 6;          // = the new-stage "…" bubble centre
+                  capY = _bubbleCenter - 9.5 - 4 - Math.round(capW * 0.56) / 2;   // capsule bottom ~4px above the 19px bubble
+                }
               }
               cap.style.left = p.x + 'px'; cap.style.top = capY + 'px';
               cap.style.minWidth = capW + 'px'; cap.style.height = Math.round(capW * 0.56) + 'px';
@@ -44115,8 +44124,13 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
        • Grown clover    → SEED_COST + (SEED_COST/10) per stage advanced.
                            e.g. stage-2 sprout = 100 + 10 = $110. */
     function _plantSellValue(seed) {
-      const _pr = itemPrice(seedItem(seed));
+      const _id = seedItem(seed);
       const st = Math.max(1, Math.min(seedMaxStage(seed), (seed && seed.stage) || 1));
+      // (user) Friend-gift plants (friendLock items, base price 0) sell for a FIXED amount:
+      // seed = $500, fully grown = $1000. (Without this they'd sell for $0.)
+      const _def = (typeof shopDef === 'function') ? shopDef(_id) : null;
+      if (_def && _def.friendLock) return (st <= 1) ? 500 : 1000;
+      const _pr = itemPrice(_id);
       if (st <= 1) return Math.round(_pr / 2);                // un-grown seed → half its price
       return Math.round(_pr + (_pr / 10) * (st - 1));         // grown → full + 1/10 per stage advanced
     }
