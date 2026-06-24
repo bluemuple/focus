@@ -29726,6 +29726,14 @@ function playFx(name) {
   if (!name || state.soundMode === 'off') return;
   let file = (name === 'start') ? ('start' + (1 + Math.floor(Math.random() * 6))) : name;
   if (!/^start[1-6]$/.test(file) && !_FX_NEW[file]) return;   // ignore retired cues
+  // (user) NATIVE iOS: play the effect via a native AVAudioPlayer (bidoroAudio handler). It lives
+  // OUTSIDE the WebView's single media slot, so it MIXES over the focus-music <audio> instead of
+  // pausing it (the iOS bug that Web Audio couldn't reliably fix in this WKWebView). Web/desktop
+  // fall through to the Web Audio path below.
+  try {
+    const _mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroAudio;
+    if (_mh) { _mh.postMessage({ action: 'effect', name: file }); return; }
+  } catch (_) {}
   const url = `audio/effects/new/${file}.mp3`;
   const ctx = _ensureFxCtx();
   if (ctx) {
