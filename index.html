@@ -29760,84 +29760,51 @@ function playFx(name) {
     if (p && typeof p.catch === 'function') p.catch(() => {});
   } catch (_) {}
 }
-/* Continuous "watering" sound — loops while the bucket is tilted (pouring) in the
-   watering overlay, stops when it stands back up. Driven by bidoroBucket3DPour. */
+/* (user) Bucket-pour "watering" sound. REWRITTEN to a PLAIN one-shot effect — same path as every
+   other effect. The OLD version built a Web Audio graph (createMediaElementSource → gain) + a
+   continuous loop tied to the pour animation + a 600ms gain fade-out on stop. That graph, created
+   synchronously inside the pour gesture, (1) CUT external app audio (Spotify/YouTube) and (2)
+   stuttered the pour animation a few frames while the AudioContext spun up. The user asked to
+   remove ALL of that (loop / fade / stop-on-animation-end) and treat it like a normal effect.
+   Now: on iOS it goes through the native bidoroAudio player (mixes, never cuts external, no
+   main-thread block); web/desktop play it once via a plain HTMLAudioElement. Driven by
+   bidoroBucket3DPour. */
 let _wateringAudio = null;
-let _wateringStartTimer = null;   // pending 1s-delayed start
-let _wateringFadeRAF = null;      // volume-fade rAF (desktop fallback)
-let _wateringStopTO = null;       // pause-after-fade timer
-let _wateringCtx = null, _wateringGain = null, _wateringSrc = null, _wateringGraphTried = false;
-/* Build the audio element + a Web Audio graph (source → gain → speakers). WHY: on iOS,
-   HTMLMediaElement.volume is READ-ONLY (only the hardware buttons change it), so a volume
-   fade does NOTHING on-device — but a GainNode's gain IS controllable, so we fade that. */
-function _wateringEnsureGraph() {
-  if (!_wateringAudio) { _wateringAudio = new Audio('audio/effects/new/watering-flower.mp3'); _wateringAudio.loop = true; _wateringAudio.preload = 'auto'; }
-  if (_wateringCtx || _wateringGraphTried) return;     // createMediaElementSource may be called only ONCE per element
-  _wateringGraphTried = true;
+let _wateringStartTimer = null;   // pending ~1s-delayed start (bucket spins to face front first)
+function _playWateringOnce() {
+  if (state.soundMode === 'off') return;
+  // NATIVE iOS: route to the native effect player (outside the WebView media slot → mixes, no
+  // external-audio cut, no animation stutter).
   try {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-      _wateringCtx  = new AC();
-      _wateringSrc  = _wateringCtx.createMediaElementSource(_wateringAudio);
-      _wateringGain = _wateringCtx.createGain();
-      _wateringSrc.connect(_wateringGain).connect(_wateringCtx.destination);
-    }
-  } catch (_) { _wateringCtx = null; _wateringGain = null; }
+    const _mh = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroAudio;
+    if (_mh) { _mh.postMessage({ action: 'effect', name: 'watering-flower' }); return; }
+  } catch (_) {}
+  // Web/desktop fallback: a plain one-shot HTMLAudioElement (no loop, no Web Audio graph).
+  try {
+    if (!_wateringAudio) { _wateringAudio = new Audio('audio/effects/new/watering-flower.mp3'); _wateringAudio.preload = 'auto'; }
+    _wateringAudio.loop = false;
+    _wateringAudio.currentTime = 0;
+    const p = _wateringAudio.play();
+    if (p && typeof p.catch === 'function') p.catch(function () {});
+  } catch (_) {}
 }
 function bidoroPlayWateringLoop() {
   if (state.soundMode === 'off') return;
   if (_wateringStartTimer) { clearTimeout(_wateringStartTimer); _wateringStartTimer = null; }
-  if (_wateringFadeRAF) { try { cancelAnimationFrame(_wateringFadeRAF); } catch (_) {} _wateringFadeRAF = null; }
-  if (_wateringStopTO) { clearTimeout(_wateringStopTO); _wateringStopTO = null; }
-  // Build + resume the audio graph NOW, inside the tap gesture (iOS requires the AudioContext
-  // to be resumed within a user gesture; the actual playback is delayed 1s below).
-  _wateringEnsureGraph();
-  if (_wateringCtx && _wateringCtx.state === 'suspended') { try { _wateringCtx.resume(); } catch (_) {} }
-  // Start the loop 1 SECOND AFTER the pour begins (the first ~1s is the bucket spinning to
-  // face front — no water yet). The end is cut by bidoroStopWateringLoop at the same moment.
+  // Delay ~1s so the sound lands when water actually pours (the bucket spins to face front first).
   _wateringStartTimer = setTimeout(function () {
     _wateringStartTimer = null;
-    try {
-      if (_wateringGain && _wateringCtx) {
-        try { _wateringGain.gain.cancelScheduledValues(_wateringCtx.currentTime); _wateringGain.gain.setValueAtTime(1, _wateringCtx.currentTime); } catch (_) {}
-        if (_wateringCtx.state === 'suspended') { try { _wateringCtx.resume(); } catch (_) {} }
-      } else { _wateringAudio.volume = 1; }
-      _wateringAudio.currentTime = 0;
-      const p = _wateringAudio.play();
-      if (p && typeof p.catch === 'function') p.catch(function () {});
-    } catch (_) {}
+    _playWateringOnce();
   }, 1000);
 }
 function bidoroStopWateringLoop(immediate) {
+  // No loop/fade anymore — the sound is a one-shot that plays its natural length (like other
+  // effects). Stop only cancels a pending start (pour aborted within the 1s delay) and, on the
+  // sound-off toggle, halts the web-fallback element.
   if (_wateringStartTimer) { clearTimeout(_wateringStartTimer); _wateringStartTimer = null; }
-  if (!_wateringAudio || _wateringAudio.paused) return;
-  const a = _wateringAudio;
-  if (_wateringFadeRAF) { try { cancelAnimationFrame(_wateringFadeRAF); } catch (_) {} _wateringFadeRAF = null; }
-  if (_wateringStopTO) { clearTimeout(_wateringStopTO); _wateringStopTO = null; }
-  const _hardStop = function () { try { a.pause(); a.currentTime = 0; if (_wateringGain) _wateringGain.gain.value = 1; else a.volume = 1; } catch (_) {} };
-  if (immediate) { _hardStop(); return; }                 // Sound-off toggle → instant stop
-  // FADE OUT ~600ms. Web Audio gain ramp (works on iOS); volume-ramp fallback otherwise.
-  const FADE = 0.6;
-  if (_wateringGain && _wateringCtx) {
-    try {
-      const t = _wateringCtx.currentTime;
-      _wateringGain.gain.cancelScheduledValues(t);
-      _wateringGain.gain.setValueAtTime(Math.max(0.0001, _wateringGain.gain.value || 1), t);
-      _wateringGain.gain.exponentialRampToValueAtTime(0.0001, t + FADE);   // smooth, audible fade
-      _wateringStopTO = setTimeout(_hardStop, FADE * 1000 + 90);
-      return;
-    } catch (_) {}
+  if (immediate && _wateringAudio && !_wateringAudio.paused) {
+    try { _wateringAudio.pause(); _wateringAudio.currentTime = 0; } catch (_) {}
   }
-  const v0 = (typeof a.volume === 'number') ? a.volume : 1;
-  let t0 = null;
-  const step = function (ts) {
-    if (t0 == null) t0 = ts;
-    const k = Math.min(1, (ts - t0) / (FADE * 1000));
-    try { a.volume = Math.max(0, v0 * (1 - k)); } catch (_) {}
-    if (k < 1) { _wateringFadeRAF = requestAnimationFrame(step); }
-    else { _wateringFadeRAF = null; _hardStop(); }
-  };
-  try { _wateringFadeRAF = requestAnimationFrame(step); } catch (_) { _hardStop(); }
 }
 window.bidoroPlayWateringLoop = bidoroPlayWateringLoop;
 window.bidoroStopWateringLoop = bidoroStopWateringLoop;
