@@ -20993,6 +20993,17 @@ function stopActiveTimer(reason /* 'switch'|'pause'|'reset'|'finish' */) {
         b.activeAt = null;
         b.activeEndMs = freezeAt;
       }
+      // (user) An OPEN BREAK segment (e.g. a Take-5 break) interrupted by starting another task:
+      // finalize it at the stop time AND TRIM the block to that point. Without the trim the block
+      // kept its full 5-min length, so the unused remainder (e.g. 3 min) spawned a stray leftover
+      // block below the newly-started task.
+      if (b.activeBreakAt != null && !b.activeEndMs) {
+        if (!Array.isArray(b.breakSegments)) b.breakSegments = [];
+        b.breakSegments.push({ startMs: b.activeBreakAt, endMs: freezeAt });
+        b.activeBreakAt = null;
+        if (b.endMs > freezeAt) b.endMs = freezeAt;   // drop the unused break remainder (no leftover tail)
+        b.activeEndMs = freezeAt;
+      }
     });
     state.activeTimer = null;
     saveState();
