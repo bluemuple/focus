@@ -8429,6 +8429,19 @@
   .ht-seg { display: inline-flex; background: var(--surface-2, #eef0f3); border-radius: 999px; padding: 3px; gap: 2px; margin: 4px 0 2px; }
   .ht-seg-btn { border: none; background: none; padding: 6px 18px; border-radius: 999px; font: inherit; font-size: .85rem; font-weight: 600; color: var(--text-muted, #6b7280); cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .ht-seg-btn.sel { background: var(--card-bg, #fff); color: var(--text-main, #111827); font-weight: 800; box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+  /* (user) Routine header: [Weekly|Monthly] toggle · ‹ title › · +Add. */
+  .cal-hb-head2 { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .cal-hb-head2 .cal-hb-nav { flex: 1 1 auto; min-width: 0; margin: 0; justify-content: center; gap: 4px; }
+  .cal-hb-head2 .cal-hb-nav h2 { font-size: 1.02rem; white-space: nowrap; margin: 0; }
+  .cal-hb-mode { display: inline-flex; flex: 0 0 auto; background: var(--surface-2, #eef0f3); border-radius: 999px; padding: 2px; gap: 2px; }
+  .cal-hb-mode-btn { border: none; background: none; padding: 5px 9px; border-radius: 999px; font: inherit; font-size: .72rem; font-weight: 700; color: var(--text-muted, #6b7280); cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .cal-hb-mode-btn.active { background: var(--card-bg, #fff); color: var(--text-main, #111827); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+  .cal-hb-add { flex: 0 0 auto; border: 1px solid var(--card-border, #e5e7eb); background: var(--button-bg, #f3f4f6); color: var(--text-main, #111827); border-radius: 999px; padding: 6px 11px; font: inherit; font-size: .76rem; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .cal-hb-add:hover { background: var(--card-border, #e5e7eb); }
+  /* (user) Monthly routine = Balance-style: name + meta heading, then day squares over TWO rows. */
+  .cal-hbm-row { margin: 0 0 16px; }
+  .cal-hbm-head { margin-bottom: 7px; }
+  .cal-hbm-cells { display: grid; grid-template-columns: repeat(var(--hbm-cols, 16), minmax(0, 1fr)); gap: 4px; }
   /* "This task is tracked in Routine" toast — black, bottom-right, fades in/out. */
   .routine-toast {
     position: fixed; right: 16px; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); z-index: 9600;
@@ -10075,10 +10088,17 @@
       <!-- Routine (habit-tracker grid): repeat tasks × this month's days. Repeat days = grey square,
            days the task was worked = that task's colour. Built by _calRenderHabit. -->
       <div id="cal-habit-view" style="display:none;">
-        <div class="cal-month-head">
-          <button class="cal-nav" id="cal-hb-prev" type="button" aria-label="Previous month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
-          <h2 id="cal-hb-title">Month</h2>
-          <button class="cal-nav" id="cal-hb-next" type="button" aria-label="Next month"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+        <div class="cal-hb-head2">
+          <div class="cal-hb-mode" id="cal-hb-mode" role="group" aria-label="Weekly or monthly">
+            <button class="cal-hb-mode-btn" data-rmode="weekly" type="button">Weekly</button>
+            <button class="cal-hb-mode-btn" data-rmode="monthly" type="button">Monthly</button>
+          </div>
+          <div class="cal-month-head cal-hb-nav">
+            <button class="cal-nav" id="cal-hb-prev" type="button" aria-label="Previous"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+            <h2 id="cal-hb-title">Month</h2>
+            <button class="cal-nav" id="cal-hb-next" type="button" aria-label="Next"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+          </div>
+          <button class="cal-hb-add" id="cal-hb-add" type="button" aria-label="Add a routine task">+ Add</button>
         </div>
         <div id="cal-hb-grid" class="cal-hb-grid"></div>
       </div>
@@ -14001,7 +14021,14 @@ function _startOfWeek(d) {
   x.setDate(x.getDate() - x.getDay());   // back up to Sunday
   return x;
 }
-function _calHabitWeekly() { return window.innerWidth <= 700; }   // phone portrait → weekly (other devices keep monthly)
+// (user) Weekly/Monthly is now a TOGGLE (state.routineMode). Unset → default by device (phone = weekly,
+// wider = monthly), so existing behaviour holds until the user flips it.
+function _calRoutineMode() { return state.routineMode || (window.innerWidth <= 700 ? 'weekly' : 'monthly'); }
+function _calHabitWeekly() { return _calRoutineMode() !== 'monthly'; }
+function _calSyncRoutineModeBtns() {
+  const cur = _calRoutineMode();
+  document.querySelectorAll('#cal-hb-mode .cal-hb-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.rmode === cur));
+}
 function _calHabitWeekShift(delta) {
   if (!_habitWeekStart) _habitWeekStart = _startOfWeek(new Date());
   _habitWeekStart = new Date(_habitWeekStart.getFullYear(), _habitWeekStart.getMonth(), _habitWeekStart.getDate() + delta * 7);
@@ -14020,7 +14047,8 @@ function _calRenderHabit(opts) {
   ['q1', 'q2', 'q3', 'q4'].forEach(q => (_tasksObj[q] || []).forEach((t, idx) => {
     if (t && Array.isArray(t.repeat) && t.repeat.length) tasks.push({ q, idx, t });
   }));
-  // iPhone portrait → weekly grid (7 big squares); wider devices keep the full-month grid.
+  if (!opts || !opts.target) { try { _calSyncRoutineModeBtns(); } catch (_) {} }   // reflect Weekly/Monthly toggle (own view only)
+  // Weekly (7 big squares) vs Monthly (Balance-style 2-row month) — per the toggle (state.routineMode).
   const _weekly = (opts && 'weekly' in opts) ? opts.weekly : _calHabitWeekly();
   if (_weekly) { _calRenderHabitWeek(grid, title, tasks, { watchLog: _wl, weekStart: (opts && opts.weekStart) }); return; }
   grid.classList.remove('cal-hb-weekly');
@@ -14037,11 +14065,6 @@ function _calRenderHabit(opts) {
     const nm = ((e.name || '') + '').trim();
     (workedByName[nm] = workedByName[nm] || new Set()).add(d.getDate());
   });
-  // day-number header — today gets a pink square (mirrors the Month tab's today highlight)
-  const _tdy = new Date();
-  const _todayDate = (_tdy.getFullYear() === y && _tdy.getMonth() === m) ? _tdy.getDate() : -1;
-  let head = '';
-  for (let day = 1; day <= dim; day++) head += '<span class="cal-hb-day' + (day === _todayDate ? ' cal-hb-today' : '') + '">' + day + '</span>';
   let rows = '';
   if (!tasks.length) {
     rows = '<div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div>';
@@ -14061,23 +14084,20 @@ function _calRenderHabit(opts) {
         const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
         const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none' — see _habitMark comment
         const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
-        // Filled VIVID category-colour square = success (Build did it / Avoid avoided it). A pomodoro
-        // that day also counts as success. 'lapse' (Avoid only) shows a muted ! — never the fill.
         if (mark === 'lapse')                            cells += '<span class="cal-hb-cell lapse"' + _d + '>!</span>';
         else if (mark === 'success' || worked.has(day))  cells += '<span class="cal-hb-cell done"' + _d + ' style="background:' + fillCol + '"></span>';
         else if (isRepeat)                               cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
         else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
       }
-      // The task NAME pops in a more saturated colour (vivid bucket-side hue when tagged, else the
-      // darker quadrant text tint). Below it, a small neutral meta line: Build/Avoid · Category.
+      // (user) Monthly = Balance-style: the routine name + "Category · Type" as a heading, then the
+      // month's day squares wrapped over TWO rows (~15-16 each) below it.
       const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      const _meta = _habitMetaHtml(t);
-      rows += '<div class="cal-hb-row"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _meta + '</span><div class="cal-hb-cells">' + cells + '</div></div>';
+      rows += '<div class="cal-hbm-row"><div class="cal-hbm-head"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span></div><div class="cal-hbm-cells">' + cells + '</div></div>';
     });
     rows += _habitLegendHtml();
   }
-  grid.style.setProperty('--hb-cols', dim);   // one equal column per day → squares fill the width
-  grid.innerHTML = '<div class="cal-hb-scroll"><div class="cal-hb-head-row"><span class="cal-hb-name cal-hb-name-sp"></span><div class="cal-hb-cells cal-hb-days">' + head + '</div></div>' + rows + '</div>';
+  grid.style.setProperty('--hbm-cols', Math.ceil(dim / 2));   // ~15-16 per row → 2 rows = the whole month
+  grid.innerHTML = '<div class="cal-hbm">' + rows + '</div>';
 }
 /* iPhone-portrait Routine: ONE week of 7 big squares per repeat task (the 30-col month grid
    is too cramped on a narrow phone). Week-anchored to _habitWeekStart (Sunday); the ◀ ▶
@@ -14897,8 +14917,20 @@ window.bidoroCalSync = bidoroCalSync;
   if (rtPrev) rtPrev.addEventListener('click', () => _calMonthShift(-1));
   if (rtNext) rtNext.addEventListener('click', () => _calMonthShift(1));
   const hbPrev = document.getElementById('cal-hb-prev'), hbNext = document.getElementById('cal-hb-next');
-  if (hbPrev) hbPrev.addEventListener('click', () => _calHabitNav(-1));   // phone portrait → week step, else month
+  if (hbPrev) hbPrev.addEventListener('click', () => _calHabitNav(-1));   // weekly → week step, monthly → month
   if (hbNext) hbNext.addEventListener('click', () => _calHabitNav(1));
+  // (user) Routine Weekly/Monthly toggle + +Add (opens the Add-task popup with Repeat pre-selected).
+  const hbMode = document.getElementById('cal-hb-mode');
+  if (hbMode) hbMode.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('.cal-hb-mode-btn') : null;
+    if (!b) return;
+    state.routineMode = b.dataset.rmode === 'monthly' ? 'monthly' : 'weekly';
+    try { saveState(); } catch (_) {}
+    _calSyncRoutineModeBtns();
+    try { _calRenderHabit(); } catch (_) {}
+  });
+  const hbAdd = document.getElementById('cal-hb-add');
+  if (hbAdd) hbAdd.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (typeof openCalTaskModal === 'function') openCalTaskModal({ repeatOpen: true }); });
   const rtClip = document.getElementById('cal-rt-grid-clip');
   if (rtClip) {
     let sx = 0, sy = 0, tracking = false;
