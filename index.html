@@ -2659,7 +2659,10 @@
   .login-about { margin: 14px 0 10px; font-size: .82rem; line-height: 1.5; color: var(--text-muted, #6b7280); }
   .login-about p { margin: 0 0 8px; }
   .login-about p:last-child { margin-bottom: 0; }
-  body.ios-kb-open .login-about { display: none; }
+  /* (user) Do NOT collapse the About text when the keyboard opens — the login modal is now
+     bottom-anchored with a fixed keyboard reserve and a scrollable body, so the form already sits
+     above the keyboard. Collapsing it changed the modal's height on focus, which made the popup
+     visibly jump (drop then rise) when you tapped a field. Keeping it = constant height = no jitter. */
   .login-foot { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: .82rem; }
   .login-foot a, .login-foot .btn-link { color: var(--accent, #2563eb); text-decoration: none; font-weight: 600; }
   .login-foot a:hover, .login-foot .btn-link:hover { text-decoration: underline; }
@@ -24225,13 +24228,17 @@ function _extClipPath(W, H, cyPx, armFrac, gapPx, r) {
   }
   let cy = Math.max(0, Math.min(H - 2 * r, cyPx));
   if (cy <= 0.5) {
-    // Arm hangs straight from the plan above (the planned block, e.g. BOB, sits at the seam):
-    // top-RIGHT square (continues the plan block above seamlessly), top-LEFT a CONCAVE armpit
-    // (so BOB's rounded top-right corner puzzle-fits into it), both bottom corners rounded.
-    return 'path("M' + f(armLeft + r) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H - r) +
-      ' A' + r + ',' + r + ' 0 0 1 ' + f(W - r) + ',' + f(H) +
-      ' L' + f(armLeft + r) + ',' + f(H) + ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +
-      ' L' + f(armLeft) + ',' + r + ' A' + r + ',' + r + ' 0 0 0 ' + f(armLeft + r) + ',0 Z")';
+    // (user) Clean ㄱ: the RIGHT edge drops STRAIGHT DOWN from the parent — square top-right AND
+    // bottom-right (no rounding) — and the ARMPIT is a sharp RIGHT ANGLE: the arm's left edge meets
+    // the parent's bottom edge perpendicularly. Only the OUTER bottom-left corner stays rounded.
+    //   armpit(↖ sharp) ─ top ─ top-right(↗ sharp)
+    //        │                        │
+    //   left edge                 right edge (vertical)
+    //        ╰ rounded bottom-left ─ bottom ─ bottom-right(↘ sharp)
+    return 'path("M' + f(armLeft) + ',0 L' + f(W) + ',0 L' + f(W) + ',' + f(H) +
+      ' L' + f(armLeft + r) + ',' + f(H) +
+      ' A' + r + ',' + r + ' 0 0 1 ' + f(armLeft) + ',' + f(H - r) +
+      ' L' + f(armLeft) + ',0 Z")';
   }
   cy = Math.max(r, cy);
   // ㄱ silhouette (clockwise): full-width head down to `cy`, then the right arm.
@@ -24302,19 +24309,28 @@ function _offerFinishedEarly(q, i) {
   const gapMs = next.startMs - now;
   if (gapMs < 60000) return false;                  // <1 min freed → not worth a prompt
   const mins = Math.max(1, Math.round(gapMs / 60000));
-  const msg = tr('Finished early —') + ' ' + mins + tr('m freed');
-  bidoroActionToast(msg, {
-    tag: tr('Early'),
-    actions: [
-      { label: tr('Pull next task up'), primary: true, onClick: () => {
-          // Pull all later blocks earlier by the gap, in time order (reuses the tested pull-up).
-          if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
-          try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
-          try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
-          try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
-      } },
-      { label: tr('Keep it as a break'), onClick: () => {} }   // dismiss = keep the gap (default)
-    ]
+  // (user) Ask via a regular TRANSITION POPUP (customConfirm) — not the black desc-panel toast.
+  // DEFAULT (30s no-answer) = KEEP the free time (don't pull up). The "pull up" button is tinted
+  // with the NEXT block's own theme colour.
+  const _nb = next;
+  const _pullColor = {
+    bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(_nb.q, _nb.taskIdx) : '#2563eb'),
+    fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(_nb.q, _nb.taskIdx) : '#fff')
+  };
+  const _title = tr('Finished early —') + ' ' + mins + tr('m freed');
+  customConfirm(_title, '', {
+    yesLabel: tr('Pull up'), noLabel: tr('Keep break'),
+    yesColor: _pullColor,
+    countdownMs: 30000, countdownOn: 'no', countdownAnswer: false   // 30s → keep the gap (default)
+  }).then((ans) => {
+    if (ans === true) {
+      // Pull all later blocks earlier by the gap, in time order (reuses the tested pull-up).
+      if (typeof _pullUpFutureBlocks === 'function') _pullUpFutureBlocks();
+      try { saveState(); markSettingsChanged(); debouncedPushSettings(); } catch (_) {}
+      try { if (typeof drawGauge === 'function') drawGauge(); } catch (_) {}
+      try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+    }
+    // no / timeout / dismiss → keep the gap (default): do nothing.
   });
   return true;
 }
@@ -28458,6 +28474,7 @@ const BIDORO_I18N = {
   "Sleep":{ko:"취침",zh:"睡眠",ja:"睡眠",es:"Dormir",fr:"Dormir"}
 };
 /* i18n-ext (user: anonymous-note rotation) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({"Anonymous":{"ko":"익명글","zh":"匿名","ja":"匿名","es":"Anónimo","fr":"Anonyme"}});
+/* i18n-ext (user: finished-early popup) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({"Pull up":{"ko":"위로 올리기","zh":"上移","ja":"上に詰める","es":"Subir","fr":"Remonter"},"Keep break":{"ko":"휴식 유지","zh":"保留休息","ja":"休憩のまま","es":"Dejar pausa","fr":"Garder la pause"},"Finished early —":{"ko":"일찍 끝남 —","zh":"提前完成 —","ja":"早く終了 —","es":"Terminado antes —","fr":"Fini en avance —"},"m freed":{"ko":"분 비었어요","zh":"分钟空出","ja":"分空いた","es":"min libres","fr":"min libérées"}});
 /* i18n-ext (user: Build/Avoid habits + Routine tracking) */(function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
 "Build":{ko:"늘리기",zh:"养成",ja:"増やす",es:"Crear",fr:"Adopter"},
 "Avoid":{ko:"줄이기",zh:"戒掉",ja:"減らす",es:"Evitar",fr:"Éviter"},
