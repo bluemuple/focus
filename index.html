@@ -2663,6 +2663,15 @@
   .login-foot { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: .82rem; }
   .login-foot a, .login-foot .btn-link { color: var(--accent, #2563eb); text-decoration: none; font-weight: 600; }
   .login-foot a:hover, .login-foot .btn-link:hover { text-decoration: underline; }
+  /* (user) Compact/dismissable variant — opened from the Friends "Sign up" button: X close, nothing
+     below the "Sign in" switch (no Try it / About / footer), sits lower, taps outside close it. */
+  .lm-x { position: absolute; top: 12px; right: 14px; width: 28px; height: 28px; border: none; background: none; font-size: 1.1rem; line-height: 1; color: var(--text-muted, #6b7280); cursor: pointer; border-radius: 8px; -webkit-tap-highlight-color: transparent; display: none; z-index: 2; }
+  .lm-x:hover { background: var(--surface-2, #f3f4f6); color: var(--text-main, #111827); }
+  #login-modal.lm-compact .lm-x { display: inline-flex; align-items: center; justify-content: center; }
+  #login-modal.lm-compact .login-tryit,
+  #login-modal.lm-compact .login-about,
+  #login-modal.lm-compact .login-foot { display: none !important; }
+  #login-modal.lm-compact .login-modal-content { margin-top: 12vh; }   /* lower on screen */
   .login-invite-note { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; font-size: .9rem; font-weight: 600; line-height: 1.4; text-align: center; }
   @media (prefers-color-scheme: dark) { .login-invite-note { background: #0b2c22; border-color: #14543f; color: #6ee7b7; } }
   /* Top-align the login modal (the shared .modal vertically centres its
@@ -10412,8 +10421,9 @@
 
 <!-- Login modal (shown automatically if not signed in) -->
 <div class="modal hidden" id="login-modal" aria-hidden="true">
-  <div class="modal-backdrop"></div>
+  <div class="modal-backdrop" id="login-backdrop"></div>
   <div class="modal-content login-modal-content">
+    <button class="lm-x" id="login-x" type="button" aria-label="Close">✕</button>
     <div id="login-invite-note" class="login-invite-note" style="display:none;"></div>
     <h3 id="login-title" class="login-title">Create your account</h3>
     <div class="auth-form">
@@ -11984,6 +11994,7 @@ function updateAuthUI(user) {
       // forces it. The native app (iPhone/iPad — iCloud sync, no accounts) never shows it.
       let _loginDismissed = false;
       try { _loginDismissed = sessionStorage.getItem('bidoroLoginDismissed') === '1'; } catch (_) {}
+      loginModal.classList.remove('lm-compact');   // first-access GATE = full version (compact is only the Friends Sign-up popup)
       if (bidoroIsNativeApp())               loginModal.classList.add('hidden');
       else if (window._bidoroPendingInvite)  loginModal.classList.remove('hidden');
       else if (_loginDismissed)              loginModal.classList.add('hidden');
@@ -15442,14 +15453,26 @@ function _nwCommit(w) {
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach); else attach();
 })();
-// (user) Friends page (signed-out) Sign up button → open the Create-account popup.
+// (user) Friends page (signed-out) Sign up button → open the Create-account popup in the COMPACT,
+// dismissable variant (X + outside-tap close, lower, nothing below the "Sign in" switch).
 document.addEventListener('click', function (e) {
   const b = e.target && e.target.closest ? e.target.closest('#fr-signup-btn') : null;
   if (!b) return;
   e.preventDefault(); e.stopPropagation();
   const lm = document.getElementById('login-modal');
-  if (lm) { lm.classList.remove('hidden'); lm.setAttribute('aria-hidden', 'false'); }
+  if (lm) { lm.classList.add('lm-compact'); lm.classList.remove('hidden'); lm.setAttribute('aria-hidden', 'false'); }
   try { if (typeof _loginSetMode === 'function') _loginSetMode('signup'); } catch (_) {}
+});
+// X + outside-tap close the COMPACT login popup (the first-access gate has no X and isn't dismissable).
+function _closeCompactLogin() {
+  const lm = document.getElementById('login-modal'); if (!lm) return;
+  lm.classList.add('hidden'); lm.classList.remove('lm-compact'); lm.setAttribute('aria-hidden', 'true');
+}
+document.addEventListener('click', function (e) {
+  if (!e.target || !e.target.closest) return;
+  if (e.target.closest('#login-x')) { e.preventDefault(); e.stopPropagation(); _closeCompactLogin(); return; }
+  const bd = e.target.closest('#login-backdrop');
+  if (bd && document.getElementById('login-modal').classList.contains('lm-compact')) { e.preventDefault(); _closeCompactLogin(); }
 });
 function _addNoteTag(name){
   name = String(name || '').trim().replace(/^#+/, '').replace(/\s+/g, '-').toLowerCase();
