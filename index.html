@@ -16370,20 +16370,11 @@ async function playMusic(idx) {
     }
     return;
   }
-  // (user) REUSE one <audio> element so it can be routed into the shared Web Audio ctx exactly ONCE
-  // (createMediaElementSource throws on a 2nd call for the same element). Switching tracks just
-  // changes .src — the routing (and the persistent source/gain nodes) survive.
-  let audio = _musicState.audio;
-  if (!audio) {
-    audio = new Audio();
-    audio.preload = 'auto';
-    audio.onpause = syncMusicPlayBtn;
-    audio.onplay  = syncMusicPlayBtn;
-    _musicState.audio = audio;
-  } else {
-    try { audio.pause(); } catch(_){}
-  }
-  // onended reads the CURRENT track index/list, so reassign it each call.
+  if (_musicState.audio) { try { _musicState.audio.pause(); _musicState.audio.src=''; } catch(_){} }
+  // encodeURIComponent so filenames with spaces (e.g. "Morning Story.mp3") work
+  const audio = new Audio(`audio/focus/${encodeURIComponent(list[i])}`);
+  audio.preload = 'auto';
+  _musicState.audio = audio;
   audio.onended = () => {
     if (i === list.length - 1) {
       if (state.focusMusicWrappedOnce) {
@@ -16396,9 +16387,8 @@ async function playMusic(idx) {
       playMusic(i + 1);
     }
   };
-  // encodeURIComponent so filenames with spaces (e.g. "Morning Story.mp3") work
-  audio.src = `audio/focus/${encodeURIComponent(list[i])}`;
-  _routeMusicEl(audio);   // route into the shared ctx so effects MIX over it (never pause it)
+  audio.onpause = syncMusicPlayBtn;
+  audio.onplay  = syncMusicPlayBtn;
   flashTrackTitle();
   try { const p = audio.play(); if (p && p.catch) p.catch(()=>{}); } catch(_){}
   syncMusicPlayBtn();
@@ -29692,7 +29682,6 @@ const _FX_NEW = { complete:1, resume:1, wave:1, 'long-wave':1, stopped:1 };
    absent. (Pairs with AppDelegate's AVAudioSession .playback + .mixWithOthers.) */
 const _FX_ALL = ['start1','start2','start3','start4','start5','start6','complete','resume','wave','long-wave','stopped'];
 let _fxCtx = null;
-let _musicGain = null;   // (user) persistent gain node for the focus music, routed INTO _fxCtx
 const _fxBuffers = {};   // url → AudioBuffer (decoded) | 'pending'
 function _ensureFxCtx() {
   if (_fxCtx) return _fxCtx;
@@ -29716,42 +29705,8 @@ function _playFxBuffer(url) {
     src.buffer = buf;
     src.connect(_fxCtx.destination);
     src.start(0);
-    _duckMusic();                            // dip the music briefly so the effect stands out (never pauses it)
     return true;
   } catch (_) { return false; }
-}
-/* (user) Focus music ↔ effects MIXING (no pause/resume of the music). Both run in the ONE shared
-   _fxCtx: the music <audio> element is routed in via createMediaElementSource (exactly ONCE per
-   element — a 2nd call throws) through a persistent gain node, and effects are BufferSources on the
-   same destination. WHY the old approach failed on iOS: a 2nd HTML <audio> (or a separate Web-Audio
-   activation) competed for the single media slot and PAUSED the music; the JS .play() that tried to
-   resume it isn't a user gesture, so iOS silently refused it → the music never came back. Mixing in
-   one graph removes the pause entirely, so there is nothing to resume. */
-function _musicGainNode() {
-  const ctx = _ensureFxCtx(); if (!ctx) return null;
-  if (!_musicGain) { _musicGain = ctx.createGain(); _musicGain.gain.value = 1; _musicGain.connect(ctx.destination); }
-  return _musicGain;
-}
-function _routeMusicEl(el) {
-  if (!el || el._waRouted) return;                    // route ONCE per element
-  const ctx = _ensureFxCtx(); if (!ctx) return;       // no Web Audio (desktop) → leave as a plain <audio>
-  try {
-    if (ctx.state === 'suspended') { try { ctx.resume(); } catch (_) {} }
-    const g = _musicGainNode(); if (!g) return;
-    const src = ctx.createMediaElementSource(el);
-    src.connect(g);
-    el._waRouted = true; el._waSrc = src;
-  } catch (_) { /* unsupported / already routed → element keeps playing on its own */ }
-}
-function _duckMusic() {
-  const ctx = _fxCtx; if (!ctx || !_musicGain) return;
-  try {
-    const now = ctx.currentTime, g = _musicGain.gain;
-    g.cancelScheduledValues(now);
-    g.setValueAtTime(g.value, now);
-    g.linearRampToValueAtTime(0.5, now + 0.05);       // quick dip
-    g.linearRampToValueAtTime(1.0, now + 0.55);       // back to full
-  } catch (_) {}
 }
 /* Create + resume the effect AudioContext and decode every effect up-front. iOS requires the
    resume to happen inside a user gesture, so run this on the first touch/pointer; decoding ahead
