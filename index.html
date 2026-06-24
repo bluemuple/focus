@@ -10082,7 +10082,7 @@
             </div>
           </div>
           <div class="nw-row">
-            <div class="nw-toprow"><span class="nw-label">Friends' Notes</span></div>
+            <div class="nw-toprow"><span class="nw-label">Friends' Notes <span class="nw-src" translate="no">(✉️ ← 👧🏻)</span></span></div>
             <div class="nw-ctrl">
               <span class="nw-pct" id="nw-pct-friend">40%</span>
               <button class="nw-step" data-w="friend" data-dir="-1" type="button" aria-label="Decrease">◀</button>
@@ -10092,7 +10092,7 @@
             </div>
           </div>
           <div class="nw-row">
-            <div class="nw-toprow"><span class="nw-label">People's Notes</span><button class="nw-info" id="nw-info-anon" type="button" aria-label="About People's Notes">ⓘ</button></div>
+            <div class="nw-toprow"><span class="nw-label">People's Notes <span class="nw-src" translate="no">(✉️ ← 👤)</span></span><button class="nw-info" id="nw-info-anon" type="button" aria-label="About People's Notes">ⓘ</button></div>
             <div class="nw-ctrl">
               <span class="nw-pct" id="nw-pct-anon">10%</span>
               <button class="nw-step" data-w="anon" data-dir="-1" type="button" aria-label="Decrease">◀</button>
@@ -15435,7 +15435,16 @@ function _nwCommit(w) {
       const sl = document.getElementById('nw-' + k);
       if (sl && !sl._wired) { sl._wired = true; sl.addEventListener('input', () => _nwCommit(_nwApply(k, +sl.value))); }
       const lk = document.getElementById('nw-lock-' + k);
-      if (lk && !lk._wired) { lk._wired = true; lk.addEventListener('click', () => { const L = _nwLocks(); L[k] = !L[k]; renderWeightsPanel(); try { saveState(); } catch (_) {} }); }
+      if (lk && !lk._wired) { lk._wired = true; lk.addEventListener('click', () => {
+        const L = _nwLocks(); L[k] = !L[k]; renderWeightsPanel(); try { saveState(); } catch (_) {}
+        // (user) Explain the lock state at bottom-right.
+        try {
+          const _nm = (k === 'self') ? tr('My Notes') : (k === 'friend') ? tr("Friends' Notes") : tr("People's Notes");
+          _showCornerNote(L[k]
+            ? trf("{name} is locked — changing the other sliders won't change how often it shows.", { name: _nm })
+            : trf("{name} is unlocked — it adjusts with the others again.", { name: _nm }), 'right');
+        } catch (_) {}
+      }); }
     });
     const eq = document.getElementById('nw-eq'); if (eq && !eq._wired) { eq._wired = true; eq.addEventListener('click', () => _nwCommit(_nwEqualize())); }
     const rs = document.getElementById('nw-reset'); if (rs && !rs._wired) { rs._wired = true; rs.addEventListener('click', () => { state.noteWeightLocks = { self: false, friend: false, anon: false }; _nwCommit(Object.assign({}, ROTATION_WEIGHTS)); }); }
@@ -27541,7 +27550,7 @@ function renderImDoing() {
   // (red = time remaining → drains to white). fracElapsed null hides it. The
   // topbar overlay ring (#tn-pomo) mirrors the card ring (#fc-pomo).
   // `segs` is a cumulative [{endFrac,color}] list (split ring) — or null to hide.
-  const setPomo = (fracElapsed, segs) => {
+  const setPomo = (fracElapsed, segs, fillUp) => {
     // topbar overlay keeps its small conic ring
     const tn = document.getElementById('tn-pomo');
     if (tn) {
@@ -27568,8 +27577,16 @@ function renderImDoing() {
     const _instant = !!window._fcRingInstant;
     if (_instant) { arc.style.transition = 'none'; knob.style.transition = 'none'; }
     arc.style.stroke = color;
-    arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
-    arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
+    if (fillUp) {
+      // (user) Extension / up-timer ring: starts ALL LIGHT, and the dark arc GROWS as the knob
+      // sweeps (opposite of the normal countdown ring, which starts dark and drains to light).
+      const _fe = Math.max(0, Math.min(1, fracElapsed));
+      arc.style.strokeDasharray  = (_fe * C).toFixed(1) + ' ' + C.toFixed(1);
+      arc.style.strokeDashoffset = '0';
+    } else {
+      arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
+      arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
+    }
     const tr = document.getElementById('fc-ring-track'); if (tr) tr.style.stroke = color;
     // knob at the elapsed edge — ALWAYS shown (from 12 o'clock at the very start) as a
     // white-outlined dot, matching the full-screen dial's indicator (request 2026-06-10).
@@ -27763,7 +27780,7 @@ function renderImDoing() {
       if (_leftEl) _leftEl.style.fontSize = (_txt.length >= 8) ? '0.95rem' : (_txt.length >= 7 ? '1.1rem' : '');
       const LAP = (typeof POMO_WORK_MS !== 'undefined' ? POMO_WORK_MS : 1500000);
       const _frac = LAP > 0 ? ((_elapsed % LAP) / LAP) : 0;
-      setPomo(_frac, [{ endFrac: 1, color: accent }]);
+      setPomo(_frac, [{ endFrac: 1, color: accent }], true);   // (user) extension up-timer → ring FILLS dark (not drains)
     } else {
       if (_leftEl) _leftEl.style.fontSize = '';
       const remMs = (typeof getPomodoroRemainingMs === 'function') ? getPomodoroRemainingMs() : 0;
@@ -28426,6 +28443,11 @@ const BIDORO_I18N = {
 "While focusing, a note stays":{ko:"집중 중 노트 유지 시간",zh:"专注时便签停留",ja:"集中中のノート表示時間",es:"En enfoque, una nota dura",fr:"En focus, une note reste"},
 "When not focusing, a note stays":{ko:"집중 안 할 때 노트 유지 시간",zh:"非专注时便签停留",ja:"集中していない時の表示時間",es:"Sin enfoque, una nota dura",fr:"Hors focus, une note reste"},
 "Notes shared by anonymous people. Only posts an admin has approved appear here.":{ko:"익명의 사람들이 공유한 글이에요. 관리자가 승인한 글만 여기에 떠요.",zh:"匿名用户分享的便签。只有管理员审核通过的才会显示。",ja:"匿名の人が共有したノートです。管理者が承認したものだけ表示されます。",es:"Notas compartidas por personas anónimas. Solo aparecen las aprobadas por un administrador.",fr:"Notes partagées par des inconnus. Seules celles approuvées par un administrateur apparaissent."},
+"My Notes":{ko:"내 노트",zh:"我的便签",ja:"自分のノート",es:"Mis notas",fr:"Mes notes"},
+"Friends' Notes":{ko:"친구의 노트",zh:"好友的便签",ja:"友だちのノート",es:"Notas de amigos",fr:"Notes d'amis"},
+"People's Notes":{ko:"사람들의 노트",zh:"大家的便签",ja:"みんなのノート",es:"Notas de la gente",fr:"Notes des gens"},
+"{name} is locked — changing the other sliders won't change how often it shows.":{ko:"{name}이(가) 잠겼어요 — 다른 슬라이더를 움직여도 이 빈도는 고정돼요.",zh:"{name}已锁定 — 调整其他滑块也不会改变它的出现频率。",ja:"{name}はロック中 — 他のスライダーを動かしても頻度は固定です。",es:"{name} está bloqueado: mover los otros controles no cambia su frecuencia.",fr:"{name} est verrouillé — bouger les autres curseurs ne change pas sa fréquence."},
+"{name} is unlocked — it adjusts with the others again.":{ko:"{name} 잠금 해제 — 다시 다른 항목과 함께 조절돼요.",zh:"{name}已解锁 — 会再次随其他项一起调整。",ja:"{name}のロック解除 — 他と一緒に調整されます。",es:"{name} desbloqueado: vuelve a ajustarse con los demás.",fr:"{name} déverrouillé — il s'ajuste de nouveau avec les autres."},
 "Set {n} min → one note stays for {n} min while you focus.":{ko:"{n}분으로 설정하면 집중하는 동안 노트 1개가 {n}분 유지돼요.",zh:"设为 {n} 分钟 → 专注时一条便签停留 {n} 分钟。",ja:"{n}分に設定 → 集中中はノート1件が{n}分間表示されます。",es:"Pon {n} min → una nota dura {n} min mientras te enfocas.",fr:"Règle {n} min → une note reste {n} min pendant le focus."},
 "Create your account":{ko:"계정 만들기",zh:"创建账户",ja:"アカウント作成",es:"Crea tu cuenta",fr:"Créez votre compte"},
 "Welcome to Bidoro":{ko:"Bidoro에 오신 걸 환영해요",zh:"欢迎使用 Bidoro",ja:"Bidoro へようこそ",es:"Te damos la bienvenida a Bidoro",fr:"Bienvenue sur Bidoro"},
