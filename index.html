@@ -8402,6 +8402,10 @@
   .cal-hbw-num { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: .9rem; font-weight: 700; color: var(--text-main, #374151); border-radius: 8px; }
   .cal-hbw-num.cal-hbw-today { background: #1f2430; color: #fff; font-weight: 800; }   /* (user) today = BLACK square (was pink) */
   .cal-hbw-task { margin: 0 0 15px; }
+  /* (user) Wide (iPad/web) Weekly mode: routine sections in TWO columns, each a self-contained card. */
+  .cal-hb-weekly .cal-hbw-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 28px; align-items: start; }
+  .cal-hb-weekly .cal-hbw-card { min-width: 0; margin: 0 0 14px; }
+  .cal-hb-weekly .cal-hbw-card .cal-hbw-head { margin: 0 0 8px; }
   .cal-hbw-name { font-weight: 800; font-size: .92rem; margin-bottom: 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cal-hbw-cells { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
   .cal-hbw-cell { aspect-ratio: 1; border-radius: 8px; background: transparent; box-shadow: inset 0 0 0 1px rgba(127,127,127,.16); }
@@ -14127,36 +14131,44 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
     head += '<div class="cal-hbw-daycol"><span class="cal-hbw-dow">' + _dowNarrow(d.getDay()) + '</span>'
           + '<span class="cal-hbw-num' + (isToday ? ' cal-hbw-today' : '') + '">' + d.getDate() + '</span></div>';
   });
-  let rows = '';
   if (!tasks.length) {
-    rows = '<div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div>';
-  } else {
-    tasks.forEach(({ q, idx, t }) => {
-      const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
-      const fillCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : col;   // (user) vivid side colour like Balance
-      const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
-      const repStart = t.repeatStart || createdKey;
-      const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
-      const worked = workedByName[(t.text || '').trim()] || new Set();
-      let cells = '';
-      days.forEach(d => {
-        const key = _calDateKey(d), dow = d.getDay();
-        const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
-        const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none'
-        const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
-        if (mark === 'lapse')                            cells += '<span class="cal-hbw-cell lapse"' + _d + '>!</span>';
-        else if (mark === 'success' || worked.has(key))  cells += '<span class="cal-hbw-cell done"' + _d + ' style="background:' + fillCol + '"></span>';
-        else if (isRepeat)                               cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
-        else                                             cells += '<span class="cal-hbw-cell"' + _d + '></span>';
-      });
-      // Task NAME in a more saturated colour (vivid bucket-side hue when tagged) + a small neutral
-      // meta line (Build/Avoid · Category) so it stands out above the 7 squares.
-      const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      rows += '<div class="cal-hbw-task"><div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</div><div class="cal-hbw-cells">' + cells + '</div></div>';
-    });
-    rows += _habitLegendHtml();
+    grid.innerHTML = '<div class="cal-hb-empty">' + tr('No routine tasks yet.') + '<br>' + tr('Turn on Repeat when you add a task, and it shows up here.') + '</div>';
+    return;
   }
-  grid.innerHTML = '<div class="cal-hbw-head">' + head + '</div>' + rows;
+  // (user) Wide screens (iPad / web) in Weekly mode → lay the routine sections out in 2 columns;
+  // each section is self-contained (its OWN day header + name + 7 squares) so it reads like the
+  // iPhone weekly block. Phone stays one column with a single shared day header on top.
+  const _wide = window.innerWidth > 700;
+  const blocks = [];
+  tasks.forEach(({ q, idx, t }) => {
+    const col = (typeof bidoroTaskBg === 'function') ? bidoroTaskBg(q, idx) : '#888';
+    const fillCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : col;   // vivid side colour like Balance
+    const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+    const repStart = t.repeatStart || createdKey;
+    const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
+    const worked = workedByName[(t.text || '').trim()] || new Set();
+    let cells = '';
+    days.forEach(d => {
+      const key = _calDateKey(d), dow = d.getDay();
+      const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
+      const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none'
+      const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
+      if (mark === 'lapse')                            cells += '<span class="cal-hbw-cell lapse"' + _d + '>!</span>';
+      else if (mark === 'success' || worked.has(key))  cells += '<span class="cal-hbw-cell done"' + _d + ' style="background:' + fillCol + '"></span>';
+      else if (isRepeat)                               cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
+      else                                             cells += '<span class="cal-hbw-cell"' + _d + '></span>';
+    });
+    const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
+    const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</div>';
+    const cellsHtml = '<div class="cal-hbw-cells">' + cells + '</div>';
+    // Wide card carries its own day header (so its squares align under it); phone uses one shared header.
+    blocks.push(_wide
+      ? ('<div class="cal-hbw-card"><div class="cal-hbw-head">' + head + '</div>' + nameHtml + cellsHtml + '</div>')
+      : ('<div class="cal-hbw-task">' + nameHtml + cellsHtml + '</div>'));
+  });
+  grid.innerHTML = _wide
+    ? ('<div class="cal-hbw-grid2">' + blocks.join('') + '</div>' + _habitLegendHtml())
+    : ('<div class="cal-hbw-head">' + head + '</div>' + blocks.join('') + _habitLegendHtml());
 }
 function _calAddTask() {
   if (typeof openCalTaskModal === 'function') openCalTaskModal();
