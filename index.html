@@ -10111,18 +10111,18 @@
           <div class="nw-time-row">
             <div class="nw-toprow"><span class="nw-label">While focusing, a note stays</span><button class="nw-info" id="nw-info-focus" type="button" aria-label="About focus note time">ⓘ</button></div>
             <div class="nw-ctrl">
-              <span class="nw-pct nw-min" id="nw-focus-val">10 min</span>
+              <span class="nw-pct nw-min" id="nw-focus-val">30 min</span>
               <button class="nw-step" data-t="focus" data-dir="-1" type="button" aria-label="Decrease">◀</button>
-              <input type="range" class="nw-slider" id="nw-focus-min" min="1" max="60" step="1" value="10" aria-label="Focus note minutes">
+              <input type="range" class="nw-slider" id="nw-focus-min" min="1" max="60" step="1" value="30" aria-label="Focus note minutes">
               <button class="nw-step" data-t="focus" data-dir="1" type="button" aria-label="Increase">▶</button>
             </div>
           </div>
           <div class="nw-time-row">
             <div class="nw-toprow"><span class="nw-label">When not focusing, a note stays</span></div>
             <div class="nw-ctrl">
-              <span class="nw-pct nw-min" id="nw-idle-val">30 min</span>
+              <span class="nw-pct nw-min" id="nw-idle-val">10 min</span>
               <button class="nw-step" data-t="idle" data-dir="-1" type="button" aria-label="Decrease">◀</button>
-              <input type="range" class="nw-slider" id="nw-idle-min" min="1" max="60" step="1" value="30" aria-label="Idle note minutes">
+              <input type="range" class="nw-slider" id="nw-idle-min" min="1" max="60" step="1" value="10" aria-label="Idle note minutes">
               <button class="nw-step" data-t="idle" data-dir="1" type="button" aria-label="Increase">▶</button>
             </div>
           </div>
@@ -11352,8 +11352,8 @@ const defaultState = () => ({
   noteWeights: { self: 50, friend: 40, anon: 10 },
   noteWeightLocks: { self: false, friend: false, anon: false },   // 🔒 rows excluded from slider redistribution
   showNotesInFocus: false,    // OFF = self only during focus; ON = conservative FOCUS_ROTATION_WEIGHTS
-  noteFocusMin: 10,           // (user) minutes ONE top-bar note stays while focusing (q1–q3)
-  noteIdleMin:  30,           // (user) minutes ONE top-bar note stays when not focusing
+  noteFocusMin: 30,           // (user) minutes ONE top-bar note stays while focusing (q1–q3)
+  noteIdleMin:  10,           // (user) minutes ONE top-bar note stays when not focusing
   replyCounts: { date: '', friend: 0, anon: 0 },   // daily reply usage (friend 2/day, anon 1/day; reset at midnight)
   // ---- Anonymous "Memo for Sharing" (top-bar quote rotation) ----
   sharedMemo: '',            // my own memo, shared anonymously with other users
@@ -11742,6 +11742,12 @@ function migrateState() {
   }
   if (!['on','off'].includes(state.soundMode)) state.soundMode = (state.soundMode === 'none') ? 'off' : 'on';   // migrate old loud/soft/none → on/off
   if (typeof state.focusMusicIdx !== 'number') state.focusMusicIdx = 0;
+  // (user) One-shot: note-stay defaults swapped to focus 30 / idle 10. Flip anyone still on the old
+  // 10 / 30 (the keys are <1 day old, so nobody chose those on purpose). Never re-runs.
+  if (!state._noteMinSwapV1) {
+    if (+state.noteFocusMin === 10 && +state.noteIdleMin === 30) { state.noteFocusMin = 30; state.noteIdleMin = 10; }
+    state._noteMinSwapV1 = true;
+  }
   if (typeof state.focusMusicWrappedOnce !== 'boolean') state.focusMusicWrappedOnce = false;
   // Per-task bid amount (used when finishing a task → +$bid; missing → use default)
   // Also pre-mark existing tasks that already have text as "addLogged" so they
@@ -15365,7 +15371,7 @@ function renderWeightsPanel() {
     if (lk) { const on = !!locks[k]; lk.setAttribute('aria-pressed', on ? 'true' : 'false'); lk.textContent = on ? '🔒' : '🔓'; }
   });
   // (user) note-rotation time sliders (minutes).
-  const fm = Math.max(1, +state.noteFocusMin || 10), im = Math.max(1, +state.noteIdleMin || 30);
+  const fm = Math.max(1, +state.noteFocusMin || 30), im = Math.max(1, +state.noteIdleMin || 10);
   const fs = document.getElementById('nw-focus-min'), fv = document.getElementById('nw-focus-val');
   const is = document.getElementById('nw-idle-min'), iv = document.getElementById('nw-idle-val');
   if (fs && document.activeElement !== fs) fs.value = String(fm);
@@ -15444,12 +15450,12 @@ function _nwCommit(w) {
     const is = document.getElementById('nw-idle-min'); if (is && !is._wired) { is._wired = true; is.addEventListener('input', () => _setMin('idle', +is.value)); }
     document.querySelectorAll('#ntab-weights .nw-step[data-t]').forEach(b => { if (b._wired) return; b._wired = true; b.addEventListener('click', () => {
       const which = b.getAttribute('data-t'), dir = +b.getAttribute('data-dir');
-      _setMin(which, (which === 'focus' ? (+state.noteFocusMin || 10) : (+state.noteIdleMin || 30)) + dir);
+      _setMin(which, (which === 'focus' ? (+state.noteFocusMin || 30) : (+state.noteIdleMin || 10)) + dir);
     }); });
-    const td = document.getElementById('nw-time-default'); if (td && !td._wired) { td._wired = true; td.addEventListener('click', () => { state.noteFocusMin = 10; state.noteIdleMin = 30; renderWeightsPanel(); _saveTime(); }); }
+    const td = document.getElementById('nw-time-default'); if (td && !td._wired) { td._wired = true; td.addEventListener('click', () => { state.noteFocusMin = 30; state.noteIdleMin = 10; renderWeightsPanel(); _saveTime(); }); }
     // (user) ⓘ panels — People's Notes (bottom-left), focus-time (bottom-right).
-    const ia = document.getElementById('nw-info-anon'); if (ia && !ia._wired) { ia._wired = true; ia.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _showCornerNote(tr("Notes shared by anonymous people. Only posts an admin has approved appear here."), 'left'); }); }
-    const ifc = document.getElementById('nw-info-focus'); if (ifc && !ifc._wired) { ifc._wired = true; ifc.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _showCornerNote(trf("Set {n} min → one note stays for {n} min while you focus.", { n: Math.max(1, +state.noteFocusMin || 10) }), 'right'); }); }
+    const ia = document.getElementById('nw-info-anon'); if (ia && !ia._wired) { ia._wired = true; ia.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _showCornerNote(tr("Notes shared by anonymous people. Only posts an admin has approved appear here."), 'right'); }); }
+    const ifc = document.getElementById('nw-info-focus'); if (ifc && !ifc._wired) { ifc._wired = true; ifc.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); _showCornerNote(trf("Set {n} min → one note stays for {n} min while you focus.", { n: Math.max(1, +state.noteFocusMin || 30) }), 'right'); }); }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach); else attach();
 })();
@@ -31194,7 +31200,7 @@ function _motAdvance(ignoreNotice) {
   _motRender(item);
   // (user) One note stays for a configurable number of minutes — separate for focus vs idle
   // (Notes → ⚙). Defaults: 10 min focusing, 30 min not focusing.
-  const _mins = _motIsFocusing() ? (+state.noteFocusMin || 10) : (+state.noteIdleMin || 30);
+  const _mins = _motIsFocusing() ? (+state.noteFocusMin || 30) : (+state.noteIdleMin || 10);
   const _delay = Math.max(MOT_MIN_MS, _mins * 60000);
   _motTimer = setTimeout(() => _motAdvance(false), _delay);
 }
