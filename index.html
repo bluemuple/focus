@@ -8436,6 +8436,18 @@
   .cal-hbw-cell.lapse { font-size: 1.6rem; border-radius: 8px; }
   :root[data-theme="solarized"] .cal-hb-cell.lapse, :root[data-theme="solarized"] .cal-hbw-cell.lapse { color: #D9A441; border-color: rgba(217,164,65,.55); }
   .cal-hb-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 10px 2px 2px; font-size: .62rem; color: var(--text-muted, #9ca3af); }
+  .cal-hb-leg-items { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+  /* (user) hide/show-numbers grey toggle, pushed to the right of the legend. */
+  .hb-numtoggle { margin-left: auto; padding: 5px 10px; font-size: .72rem; }
+  /* (user) 🔥 consecutive-streak badge next to the routine name. */
+  .hb-flame { display: inline-block; margin-left: 7px; font-size: .68rem; font-weight: 800; color: #c2410c; background: rgba(234,88,12,.13); border-radius: 999px; padding: 1px 7px; vertical-align: middle; white-space: nowrap; }
+  :root[data-theme="solarized"] .hb-flame { color: #F0A868; background: rgba(240,168,104,.16); }
+  /* (user) milestone burst — expanding ring + 8 sparks, coloured to the square's fill (--bc). */
+  .hb-burst { position: fixed; z-index: 9999; pointer-events: none; }
+  .hb-burst-ring { position: absolute; left: -7px; top: -7px; width: 14px; height: 14px; border-radius: 50%; border: 3px solid var(--bc, #3aa776); animation: hbBurstRing .9s ease-out forwards; }
+  @keyframes hbBurstRing { 0% { transform: scale(.4); opacity: .9; } 100% { transform: scale(7); opacity: 0; } }
+  .hb-spark { position: absolute; left: -3px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--bc, #3aa776); animation: hbSpark .8s ease-out forwards; }
+  @keyframes hbSpark { 0% { transform: rotate(var(--a)) translateX(5px) scale(1); opacity: 1; } 100% { transform: rotate(var(--a)) translateX(38px) scale(.4); opacity: 0; } }
   .cal-hb-leg-sw { display: inline-flex; align-items: center; justify-content: center; width: 12px; height: 12px; border-radius: 3px; margin-right: 2px; vertical-align: middle; font-size: .56rem; font-weight: 800; line-height: 1; box-sizing: border-box; }
   .cal-hb-leg-sw.done  { background: #8a8f98; }
   .cal-hb-leg-sw.rep   { background: rgba(127,127,127,.34); }
@@ -13837,6 +13849,53 @@ function _habitMetaHtml(t) {
   // (user) inline after the name, CATEGORY first then direction: e.g. "Mind · Avoid".
   return '<span class="cal-hb-meta">' + (catLabel ? escapeHTML(catLabel) + ' · ' : '') + escapeHTML(typeLabel) + '</span>';
 }
+/* (user) Current consecutive-success streak: count scheduled (repeat) days back from today that were
+   success. Today is "pending" if scheduled-but-not-yet-done — it doesn't break the run; a PAST missed
+   scheduled day does. Used for the 🔥 flame badge next to the habit name. */
+function _habitStreak(t) {
+  if (!t || !Array.isArray(t.repeat) || !t.repeat.length) return 0;
+  const createdKey = (typeof t.createdAt === 'number') ? _calDateKey(t.createdAt) : null;
+  const repStart = t.repeatStart || createdKey;
+  const todayKey = _calDateKey(new Date());
+  const d = new Date(); d.setHours(12, 0, 0, 0);
+  let streak = 0, guard = 0;
+  while (guard++ < 400) {
+    const key = _calDateKey(d);
+    if (repStart && key < repStart) break;
+    if (t.repeat.indexOf(d.getDay()) >= 0) {                  // a scheduled day
+      if (t.repeatDone && t.repeatDone[key] === true) streak++;
+      else if (key === todayKey) { /* today still pending — skip, don't break */ }
+      else break;                                            // a past miss ends the run
+    }
+    d.setDate(d.getDate() - 1);
+  }
+  return streak;
+}
+/* 🔥 flame badge (consecutive-streak ≥ 2) shown next to the routine name. */
+function _habitFlameHtml(t) {
+  const n = _habitStreak(t);
+  return n >= 2 ? '<span class="hb-flame">🔥 ' + n + '</span>' : '';
+}
+/* (user) Milestone thresholds for the success COUNT this period (week vs month). Hitting one fires a
+   bigger burst + a celebratory toast on top of the normal escalating glow. */
+function _habitMilestones() {
+  return (typeof _calRoutineMode === 'function' && _calRoutineMode() === 'monthly') ? [5, 10, 15, 20, 25, 30] : [3, 5, 7];
+}
+/* One-shot celebration burst (expanding ring + sparks) centred on a square, coloured to its fill. */
+function _hbBurst(cell) {
+  try {
+    const r = cell.getBoundingClientRect();
+    const col = getComputedStyle(cell).backgroundColor || '#3aa776';
+    const host = document.createElement('div'); host.className = 'hb-burst';
+    host.style.left = (r.left + r.width / 2) + 'px'; host.style.top = (r.top + r.height / 2) + 'px';
+    host.style.setProperty('--bc', col);
+    let inner = '<div class="hb-burst-ring"></div>';
+    for (let i = 0; i < 8; i++) inner += '<span class="hb-spark" style="--a:' + (i * 45) + 'deg"></span>';
+    host.innerHTML = inner;
+    document.body.appendChild(host);
+    setTimeout(() => { if (host.parentNode) host.remove(); }, 1000);
+  } catch (_) {}
+}
 /* (user) Reward a routine success: an escalating glow/pop on the just-tapped square — bigger the
    higher the running streak (2nd mild → 3rd stronger → 4th+ strongest) — plus a matching haptic.
    The glow colour matches the square's own (vivid bucket-side) fill. */
@@ -13847,13 +13906,24 @@ function _hbCelebrate(cell, n) {
   cell.classList.remove('hb-glow', 'lvl1', 'lvl2', 'lvl3', 'lvl4');
   void cell.offsetWidth;                          // restart the animation if re-tapped
   cell.classList.add('hb-glow', 'lvl' + lvl);
-  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic(lvl >= 4 ? 'heavy' : lvl >= 3 ? 'medium' : 'light'); } catch (_) {}
+  // (user) Milestone (3/5/7 a week · 5/10/…/30 a month) → a bigger burst + a celebratory toast.
+  const _isMilestone = _habitMilestones().indexOf(n) >= 0;
+  if (_isMilestone) {
+    _hbBurst(cell);
+    const _mo = (typeof _calRoutineMode === 'function' && _calRoutineMode() === 'monthly');
+    try { if (typeof bidoroToast === 'function') bidoroToast(trf(_mo ? '🔥 {n} this month!' : '🔥 {n} this week!', { n: n })); } catch (_) {}
+  }
+  try { if (typeof window.bidoroHaptic === 'function') window.bidoroHaptic((_isMilestone || lvl >= 4) ? 'heavy' : lvl >= 3 ? 'medium' : 'light'); } catch (_) {}
 }
 /* Subtle Routine legend: filled = success · ! = lapse · empty = not recorded. */
 function _habitLegendHtml() {
-  return '<div class="cal-hb-legend"><span class="cal-hb-leg-sw done"></span>' + tr('Success')
+  const hide = !!state.routineHideNumbers;
+  return '<div class="cal-hb-legend">'
+       + '<span class="cal-hb-leg-items"><span class="cal-hb-leg-sw done"></span>' + tr('Success')
        + ' · <span class="cal-hb-leg-sw lapse">!</span>' + tr('Oops (Lapse)')
-       + ' · <span class="cal-hb-leg-sw rep"></span>' + tr('Not recorded') + '</div>';
+       + ' · <span class="cal-hb-leg-sw rep"></span>' + tr('Not recorded') + '</span>'
+       + '<button type="button" class="cal-hb-add hb-numtoggle" id="hb-numtoggle">' + (hide ? tr('(show numbers)') : tr('(hide numbers)')) + '</button>'
+       + '</div>';
 }
 function _calEntrySide(e) {   // bucket side for a watchLog WORK entry, or null
   if (!e || e.type !== 'pomodoro') return null;
@@ -14103,7 +14173,7 @@ function _calRenderHabit(opts) {
       const repStart = t.repeatStart || createdKey;
       const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
       const worked = workedByName[(t.text || '').trim()] || new Set();
-      let cells = '', succN = 0;   // (user) running success count this MONTH → shown in each filled square
+      let cells = '', succN = 0; const hideNums = !!state.routineHideNumbers;   // (user) running success count this MONTH (hidden when toggled off)
       for (let day = 1; day <= dim; day++) {
         const key = y + '-' + String(m + 1).padStart(2, '0') + '-' + String(day).padStart(2, '0');
         const dow = new Date(y, m, day).getDay();
@@ -14111,14 +14181,14 @@ function _calRenderHabit(opts) {
         const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none' — see _habitMark comment
         const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
         if (mark === 'lapse')                            cells += '<span class="cal-hb-cell lapse"' + _d + '>!</span>';
-        else if (mark === 'success' || worked.has(day))  { succN++; cells += '<span class="cal-hb-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + succN + '</span>'; }
+        else if (mark === 'success' || worked.has(day))  { succN++; cells += '<span class="cal-hb-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + (hideNums ? '' : succN) + '</span>'; }
         else if (isRepeat)                               cells += '<span class="cal-hb-cell rep"' + _d + '></span>';
         else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
       }
       // (user) Monthly = Balance-style: the routine name + "Category · Type" as a heading, then the
       // month's day squares wrapped over TWO rows (~15-16 each) below it.
       const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-      rows += '<div class="cal-hbm-row"><div class="cal-hbm-head"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span></div><div class="cal-hbm-cells">' + cells + '</div></div>';
+      rows += '<div class="cal-hbm-row"><div class="cal-hbm-head"><span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span>' + _habitFlameHtml(t) + '</div><div class="cal-hbm-cells">' + cells + '</div></div>';
     });
     rows += _habitLegendHtml();
   }
@@ -14174,19 +14244,19 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
     const repStart = t.repeatStart || createdKey;
     const repEnd = t.repeatEnd || (repStart ? _repDatePlusYear(repStart) : null);
     const worked = workedByName[(t.text || '').trim()] || new Set();
-    let cells = '', succN = 0;   // (user) running success count this WEEK → shown in each filled square
+    let cells = '', succN = 0; const hideNums = !!state.routineHideNumbers;   // (user) running success count this WEEK (hidden when toggled off)
     days.forEach(d => {
       const key = _calDateKey(d), dow = d.getDay();
       const isRepeat = t.repeat.indexOf(dow) >= 0 && repStart && key >= repStart && (!repEnd || key <= repEnd);
       const mark = _habitMark(t, key);   // 'success' | 'lapse' | 'none'
       const _d = ' data-q="' + q + '" data-idx="' + idx + '" data-day="' + key + '"';   // tappable to cycle
       if (mark === 'lapse')                            cells += '<span class="cal-hbw-cell lapse"' + _d + '>!</span>';
-      else if (mark === 'success' || worked.has(key))  { succN++; cells += '<span class="cal-hbw-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + succN + '</span>'; }
+      else if (mark === 'success' || worked.has(key))  { succN++; cells += '<span class="cal-hbw-cell done"' + _d + ' data-succ="' + succN + '" style="background:' + fillCol + '">' + (hideNums ? '' : succN) + '</span>'; }
       else if (isRepeat)                               cells += '<span class="cal-hbw-cell rep"' + _d + '></span>';
       else                                             cells += '<span class="cal-hbw-cell"' + _d + '></span>';
     });
     const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-    const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</div>';
+    const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + _habitFlameHtml(t) + '</div>';
     const cellsHtml = '<div class="cal-hbw-cells">' + cells + '</div>';
     // Wide card carries its own day header (so its squares align under it); phone uses one shared header.
     blocks.push(_wide
@@ -14973,6 +15043,16 @@ window.bidoroCalSync = bidoroCalSync;
   });
   const hbAdd = document.getElementById('cal-hb-add');
   if (hbAdd) hbAdd.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (typeof openCalTaskModal === 'function') openCalTaskModal({ repeatOpen: true }); });
+  // (user) hide/show streak numbers — single grey toggle in the Routine legend (delegated; the legend
+  // re-renders each draw). Persisted in state.routineHideNumbers.
+  document.addEventListener('click', (e) => {
+    const b = e.target && e.target.closest ? e.target.closest('#hb-numtoggle') : null;
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    state.routineHideNumbers = !state.routineHideNumbers;
+    try { saveState(); } catch (_) {}
+    try { if (typeof _calRenderHabit === 'function') _calRenderHabit(); } catch (_) {}
+  });
   const rtClip = document.getElementById('cal-rt-grid-clip');
   if (rtClip) {
     let sx = 0, sy = 0, tracking = false;
@@ -28102,6 +28182,10 @@ const BIDORO_I18N = {
 "Tap again = Oops.":{ko:"다시 탭하면 Oops.",zh:"再点一次 = Oops。",ja:"もう一度タップ = Oops。",es:"Toca otra vez = Oops.",fr:"Encore une fois = Oops."},
 "Weekly":{ko:"주간",zh:"每周",ja:"週間",es:"Semanal",fr:"Hebdo"},
 "Monthly":{ko:"월간",zh:"每月",ja:"月間",es:"Mensual",fr:"Mensuel"},
+"(hide numbers)":{ko:"(숫자 숨기기)",zh:"(隐藏数字)",ja:"(数字を隠す)",es:"(ocultar números)",fr:"(masquer les nombres)"},
+"(show numbers)":{ko:"(숫자 보이기)",zh:"(显示数字)",ja:"(数字を表示)",es:"(mostrar números)",fr:"(afficher les nombres)"},
+"🔥 {n} this week!":{ko:"🔥 이번 주 {n}번째!",zh:"🔥 本周第{n}次！",ja:"🔥 今週{n}回目！",es:"🔥 ¡{n} esta semana!",fr:"🔥 {n} cette semaine !"},
+"🔥 {n} this month!":{ko:"🔥 이번 달 {n}번째!",zh:"🔥 本月第{n}次！",ja:"🔥 今月{n}回目！",es:"🔥 ¡{n} este mes!",fr:"🔥 {n} ce mois-ci !"},
 "Avoid Habit":{ko:"줄이기 습관",zh:"戒掉习惯",ja:"減らす習慣",es:"Hábito a evitar",fr:"Habitude à éviter"},
 "Build — in Routine, tap each day you did it; the square fills with your category colour.":{ko:"늘리기 — 루틴에서 해낸 날을 탭하면 카테고리 색으로 칸이 채워져요.",zh:"养成 — 在例程中点按你做到的日子，方块会填上你的分类颜色。",ja:"増やす — ルーティンでできた日をタップすると、カテゴリの色でマスが埋まります。",es:"Crear — en Rutina, toca cada día que lo hiciste; la casilla se llena con el color de tu categoría.",fr:"Adopter — dans Routine, touche chaque jour réussi ; la case se remplit de la couleur de ta catégorie."},
 "Avoid — in Routine, tap a day you avoided it (fills your category colour). Tap again to log a slip: Oops (Lapse).":{ko:"줄이기 — 루틴에서 참아낸 날을 탭하면 색으로 채워지고, 한 번 더 탭하면 '해버림'으로 기록돼요.",zh:"戒掉 — 在例程中点按你成功避免的日子（填上分类颜色）。再点一次记录失误：哎呀 (失误)。",ja:"減らす — ルーティンで我慢できた日をタップすると色で埋まり、もう一度タップで「やっちゃった」を記録します。",es:"Evitar — en Rutina, toca un día que lo evitaste (se llena con tu color). Toca otra vez para registrar una recaída: Ups (recaída).",fr:"Éviter — dans Routine, touche un jour où tu l'as évité (couleur de catégorie). Touche encore pour un écart : Oups (écart)."},
