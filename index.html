@@ -1894,20 +1894,6 @@
     font-size: .95rem; font-weight: 800; color: #4b5563;
     pointer-events: none; z-index: 30;
   }
-  /* ADMIN buttons (TEMPORARY) — toggled by tapping the money; sits just below it, top-right. */
-  .gb-admin {
-    position: absolute; right: 12px; top: max(44px, calc(env(safe-area-inset-top) + 30px));
-    display: flex; flex-direction: column; align-items: flex-end; gap: 6px; z-index: 40;
-  }
-  .gb-admin.hidden { display: none; }
-  .gb-admin-btn {
-    font-size: .74rem; font-weight: 700; white-space: nowrap;
-    padding: 6px 11px; border-radius: 9px;
-    border: 1px solid rgba(60,70,90,.22); background: rgba(255,255,255,.94); color: #374151;
-    cursor: pointer; -webkit-tap-highlight-color: transparent;
-  }
-  .gb-admin-btn:active { transform: scale(.95); }
-  .gb-admin-btn.on { background: #fde68a; border-color: #f59e0b; color: #7a4f00; }
   .water-bucket-host .bucket-svg { cursor: default; }
   /* Pour icon — overlays the dirt CENTRE, gently pulses (fade in/out). */
   @keyframes water-pour-pulse { 0%,100% { opacity: .4; transform: translate(-50%,-50%) scale(.94); } 50% { opacity: 1; transform: translate(-50%,-50%) scale(1.04); } }
@@ -9272,7 +9258,7 @@
       <div class="panel">
         <h2>Motivational quotes</h2>
         <p class="help">One quote per line. A random one shows in the top bar — re-picked once an hour.</p>
-        <textarea id="motivation-input" rows="6" placeholder="Stay focused.&#10;You can do this.&#10;Keep going."></textarea>
+        <textarea id="motivation-input" rows="6" placeholder="Write one note per line…"></textarea>
       </div>
 
       <div class="panel" id="money-factors-panel">
@@ -11106,7 +11092,7 @@
       style="width: 100%; box-sizing: border-box; padding: 8px 10px;
              border: 1px solid var(--line); border-radius: 6px; font: inherit;
              resize: vertical; min-height: 0; max-height: 30vh;"
-      placeholder="Stay focused.&#10;You can do this."></textarea>
+      placeholder="Write one note per line…"></textarea>
 
     <h3 style="margin: 14px 0 6px;">Memo for Sharing</h3>
     <p class="help" style="margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Shared anonymously; others appear in <span style="color:#059669; font-weight:700;">green</span>.</p>
@@ -11308,6 +11294,49 @@ window.__undoEarlyLoaded = true;
 const STORAGE_KEY = 'concentration-app-v1';
 const STATS_KEY   = 'concentration-stats-v1';
 
+/* (user) Default Notes — 4 per locale: the FIRST invites the user to add their own (they see it in
+   the top-bar quote and can tap it → Notes page), the other 3 are well-known motivational sayings
+   for that country. Replaces the old English-only 'Stay focused. / You can do this. / Keep going.' */
+const _OLD_DEFAULT_MOT = 'Stay focused.\nYou can do this.\nKeep going.';
+function _defaultMotivationalLines() {
+  const byLocale = {
+    en: ['Tap here to add your own note — a little motivation while you focus.',
+         "Where there's a will, there's a way.",
+         'A journey of a thousand miles begins with a single step.',
+         'Little by little, one walks far.'],
+    ko: ['여기를 눌러 나만의 노트를 추가해 보세요 — 집중할 때 힘이 돼요.',
+         '시작이 반이다.',
+         '천 리 길도 한 걸음부터.',
+         '하면 된다.'],
+    zh: ['点这里添加你自己的便签 — 专注时给自己一点鼓励。',
+         '有志者，事竟成。',
+         '千里之行，始于足下。',
+         '不积跬步，无以至千里。'],
+    ja: ['ここをタップして自分のメモを追加 — 集中するときの励みになります。',
+         '継続は力なり。',
+         '千里の道も一歩から。',
+         'なせば成る。'],
+    es: ['Toca aquí para añadir tu propia nota — un poco de ánimo mientras te concentras.',
+         'Querer es poder.',
+         'Poco a poco se anda lejos.',
+         'El que persevera, alcanza.'],
+    fr: ['Touchez ici pour ajouter votre propre note — un peu de motivation pendant que vous vous concentrez.',
+         "Petit à petit, l'oiseau fait son nid.",
+         "Vouloir, c'est pouvoir.",
+         "Rome ne s'est pas faite en un jour."]
+  };
+  // Resolve the locale WITHOUT calling bidoroLocale() — this runs during early defaultState(),
+  // before bidoroLocale()'s _I18N_LANGS const is initialized (would throw a TDZ error).
+  let loc = (typeof state !== 'undefined' && state && state.locale) || 'auto';
+  if (loc === 'auto' || !byLocale[loc]) {
+    let n = 'en';
+    try { n = ((navigator.language || (navigator.languages && navigator.languages[0]) || 'en') + '').toLowerCase(); } catch (_) {}
+    loc = n.indexOf('ko') === 0 ? 'ko' : n.indexOf('zh') === 0 ? 'zh' : n.indexOf('ja') === 0 ? 'ja'
+        : n.indexOf('es') === 0 ? 'es' : n.indexOf('fr') === 0 ? 'fr' : 'en';
+  }
+  return (byLocale[loc] || byLocale.en).join('\n');
+}
+
 const defaultState = () => ({
   currentPage: 'focus',  // last viewed page — restored on refresh
   tasks: { q1: [], q2: [], q3: [], q4: [] },
@@ -11471,7 +11500,7 @@ const defaultState = () => ({
   focusMusicWrappedOnce: false,
   lastSnapshotDate: '',         // YYYY-MM-DD — used to auto-snapshot at midnight
   last3amResetDate: '',         // YYYY-MM-DD — used to clear matrix + time-goals at 3 AM
-  motivationalLines: 'Stay focused.\nYou can do this.\nKeep going.',
+  motivationalLines: _defaultMotivationalLines(),
   motivationalCurrent: null,  // { text, selectedAt, green?, memoId? } (legacy; rotation is now ephemeral)
   // Top-bar rotation weights (self/friend/anon) — edited by the Notes ⚙ panel (Part 2). Default = ROTATION_WEIGHTS.
   noteWeights: { self: 50, friend: 40, anon: 10 },
@@ -11737,7 +11766,12 @@ function migrateState() {
     }
   }
   // Motivational text fields
-  if (state.motivationalLines == null) state.motivationalLines = 'Stay focused.\nYou can do this.\nKeep going.';
+  // (user) New locale-aware default Notes. Migrate users still on the OLD English default (never
+  // customized) to the new set; users who edited their notes keep them untouched.
+  if (state.motivationalLines == null || state.motivationalLines === _OLD_DEFAULT_MOT) {
+    state.motivationalLines = _defaultMotivationalLines();
+    if (Array.isArray(state.notes)) state.notes = null;   // rebuild notes from the new default lines
+  }
   if (state.motivationalCurrent === undefined) state.motivationalCurrent = null;
   // Anonymous shared-memo fields
   if (state.sharedMemo == null) state.sharedMemo = '';
@@ -19105,79 +19139,6 @@ let _globalPomoTickHandle = null;
   });
 })();
 
-/* ===== TEMP (dev / testing) — DRAG THE RED NOW-LINE TO SET "NOW" =====================
-   Grab the red current-time line's time pill (phone gauge #time-now-label OR wide gauge
-   #gauge-line-time) and drag it vertically like the blue GTD line; the dropped time
-   becomes the app's CURRENT TIME (via a Date.now() offset), so screen-off / phase-boundary
-   / recovery flows can be tested without waiting. TAP the pill (no drag) → reset to the
-   real clock. A yellow dashed outline marks that an override is active.
-   ⚠ REMOVE THIS ENTIRE BLOCK + the `window._gaugeWideMap` line in drawGauge before ship. */
-(function devNowLineDrag(){
-  if (!window._bidoroRealNow) {
-    const _real = Date.now.bind(Date);
-    window._bidoroRealNow = _real;
-    window._bidoroNowOffsetMs = 0;
-    Date.now = function(){ return _real() + (window._bidoroNowOffsetMs || 0); };
-  }
-  function _redraw(){
-    try { if (typeof drawTimeArea === 'function') drawTimeArea(); } catch(_){}
-    try { if (typeof drawGauge === 'function') drawGauge(); } catch(_){}
-    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch(_){}
-  }
-  function _mark(){
-    const on = (window._bidoroNowOffsetMs || 0) !== 0;
-    ['time-now-label','gauge-line-time'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.outline = on ? '2px dashed #fde047' : '';
-    });
-  }
-  function _setNow(t){ window._bidoroNowOffsetMs = Math.round(t) - window._bidoroRealNow(); _redraw(); _mark(); }
-  function _reset(){ window._bidoroNowOffsetMs = 0; _redraw(); _mark(); }
-  function _phoneMs(clientY){
-    const cont = document.getElementById('time-content');
-    if (!cont || !_gtdMap) return null;
-    const r = cont.getBoundingClientRect();
-    return _gtdMap.contentTopMs + (clientY - r.top) * _gtdMap.msPerPx;
-  }
-  function _wideMs(clientY){
-    const gi = document.getElementById('gauge-inner'), map = window._gaugeWideMap;
-    if (!gi || !map) return null;
-    const r = gi.getBoundingClientRect();
-    if (r.height <= 0) return null;
-    return map.topMs + ((clientY - r.top) / r.height) * map.total;
-  }
-  function _wire(labelId, msFromY){
-    const lbl = document.getElementById(labelId);
-    if (!lbl || lbl._devNowWired) return;
-    lbl._devNowWired = true;
-    lbl.style.pointerEvents = 'auto';
-    lbl.style.cursor = 'ns-resize';
-    lbl.style.touchAction = 'none';
-    lbl.addEventListener('pointerdown', (e) => {
-      e.preventDefault(); e.stopPropagation();
-      let moved = false; const downY = e.clientY;
-      try { lbl.setPointerCapture(e.pointerId); } catch(_){}
-      const mv = (ev) => {
-        if (Math.abs(ev.clientY - downY) > 3) moved = true;
-        const t = msFromY(ev.clientY);
-        if (t != null) _setNow(Math.round(t / 60000) * 60000);   // snap to 1 min
-      };
-      const up = () => {
-        lbl.removeEventListener('pointermove', mv);
-        lbl.removeEventListener('pointerup', up);
-        lbl.removeEventListener('pointercancel', up);
-        if (!moved) _reset();   // tap (no drag) → real time
-      };
-      lbl.addEventListener('pointermove', mv);
-      lbl.addEventListener('pointerup', up);
-      lbl.addEventListener('pointercancel', up);
-    });
-  }
-  function _wireAll(){ _wire('time-now-label', _phoneMs); _wire('gauge-line-time', _wideMs); }
-  _wireAll();
-  setTimeout(_wireAll, 1500);
-})();
-
 /* iPad / wide web: the matrix +Add inputs in the LOWER cells (q3/q4) sit near the
    bottom of the 2×2 grid, so the on-screen keyboard covers them. On focus, add
    temporary bottom room to the focus page + scroll the input up above the keyboard;
@@ -22799,7 +22760,6 @@ function drawGauge() {
   }
   const bottomMs = topMs + total;
   const pct = (t) => Math.max(0, Math.min(100, ((t - topMs) / total) * 100));
-  window._gaugeWideMap = { topMs: topMs, total: total };   /* TEMP: dev now-line drag */
 
   // ---- Hour grid ----
   gridEl.innerHTML = '';
@@ -44985,30 +44945,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     }
     function _gbCloseAll(){ hideGbMent(); if (_gbOpenCat){ _gbOpenCat = null; renderGardenBar(); } }
     if (vpEl) vpEl.addEventListener('pointerdown', _gbCloseAll);
-
-    /* ===== ADMIN buttons (TEMPORARY — to be removed) =====
-       Tap the money to toggle a small panel: fill water, +$10000, and two image-step
-       buttons (arm one, then tap a planted item to step its image next / previous). */
-    (function setupGardenAdmin(){
-      const moneyEl = document.getElementById('water-money');
-      const ovEl    = document.getElementById('water-overlay');
-      if (!moneyEl || !ovEl || document.getElementById('gb-admin')) return;
-      const panel = document.createElement('div'); panel.id = 'gb-admin'; panel.className = 'gb-admin hidden';
-      const mk = (label, on) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'gb-admin-btn'; b.textContent = label;
-        const act = (e) => { e.preventDefault(); e.stopPropagation(); on(b); };
-        b.addEventListener('click', act); b.addEventListener('touchend', act, { passive:false }); return b; };
-      const bNext = mk('이미지 다음 ▶', () => { _admStage = (_admStage === 'next') ? null : 'next'; syncAdm(); });
-      const bPrev = mk('◀ 이미지 이전', () => { _admStage = (_admStage === 'prev') ? null : 'prev'; syncAdm(); });
-      function syncAdm(){ bNext.classList.toggle('on', _admStage === 'next'); bPrev.classList.toggle('on', _admStage === 'prev'); try { renderField(); } catch (_) {} }
-      panel.appendChild(mk('💧 물 채우기', () => { try { if (window.bidoroBucketAddWater) window.bidoroBucketAddWater(1); } catch (_) {} try { updatePourBtn(); } catch (_) {} }));
-      panel.appendChild(mk('+ $10000', () => { try { applyMoney(10000, 'Admin +$10000', 'admin'); } catch (_) {} try { updateMoney(); } catch (_) {} }));
-      panel.appendChild(bPrev); panel.appendChild(bNext);
-      ovEl.appendChild(panel);
-      moneyEl.style.pointerEvents = 'auto'; moneyEl.style.cursor = 'pointer'; moneyEl.setAttribute('role','button');
-      const toggle = (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.toggle('hidden'); };
-      moneyEl.addEventListener('click', toggle); moneyEl.addEventListener('touchend', toggle, { passive:false });
-      window.__gbAdminReset = () => { _admStage = null; try { bNext.classList.remove('on'); bPrev.classList.remove('on'); } catch (_) {} panel.classList.add('hidden'); };
-    })();
 
     sproutBtn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); open(); });
     // Top-right hamburger (was ✕): close the garden → home, then open the SAME
