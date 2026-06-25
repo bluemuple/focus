@@ -90,7 +90,12 @@
           title: 'Bidoro',
           body,
           schedule: { at: new Date(phaseEnd) },
-          sound: null
+          // (user) Unified notification alarm tone for EVERY Bidoro notification: start4.
+          // iOS notification sounds must be a bundled caf/wav/aiff (mp3 isn't supported), so
+          // start4.mp3 is shipped as start4.caf in the app bundle (see ios/App/App/start4.caf,
+          // added to the App target's Copy Bundle Resources). Plays when the iPhone is in ring
+          // mode + screen-off as the banner fires.
+          sound: 'start4.caf'
         }]
       });
       _scheduledForPhase = phaseEnd;
