@@ -454,25 +454,62 @@
       } catch (_) { return []; }
     }
 
+    // Effective locale (resolves 'auto' via the device language) — self-contained so it
+    // doesn't depend on the app's bidoroLocale().
+    function pickLoc(state) {
+      let l = (state && state.locale) || 'auto';
+      if (l === 'auto') { let n = 'en'; try { n = (navigator.language || 'en').toLowerCase(); } catch (_) {}
+        l = n.indexOf('ko') === 0 ? 'ko' : n.indexOf('zh') === 0 ? 'zh' : n.indexOf('ja') === 0 ? 'ja'
+          : n.indexOf('es') === 0 ? 'es' : n.indexOf('fr') === 0 ? 'fr' : 'en'; }
+      return ['en','ko','zh','ja','es','fr'].indexOf(l) >= 0 ? l : 'en';
+    }
+    // Localized "Session N" / "Break N" for the focus widget — mirrors the app's
+    // _pomoCountsForToday (today's 3 AM rollover, counted per current task).
+    function pomoSessionLabel(state, at, taskTitle) {
+      if (!at) return '';
+      const now = new Date();
+      const cutoff = new Date(now); cutoff.setHours(3, 0, 0, 0);
+      if (now.getTime() < cutoff.getTime()) cutoff.setDate(cutoff.getDate() - 1);
+      const since = cutoff.getTime();
+      let workN = 0, breakN = 0;
+      const log = state.watchLog;
+      if (Array.isArray(log)) for (const e of log) {
+        if (!e) continue;
+        const t = (+e.startedAt) || (+e.endedAt) || 0;
+        if (t < since) continue;
+        if (taskTitle && e.name !== taskTitle) continue;
+        if (e.type === 'pomodoro') workN++;
+        else if (e.type === 'pomodoro-break') breakN++;
+      }
+      const loc = pickLoc(state);
+      if (at.phase === 'work') {
+        const n = workN + 1;
+        return ({ en: 'Session ' + n, ko: '세션 ' + n, zh: '第 ' + n + ' 节', ja: 'セッション ' + n, es: 'Sesión ' + n, fr: 'Séance ' + n })[loc] || ('Session ' + n);
+      }
+      const n = breakN + 1;
+      return ({ en: 'Break ' + n, ko: '휴식 ' + n, zh: '休息 ' + n, ja: '休憩 ' + n, es: 'Descanso ' + n, fr: 'Pause ' + n })[loc] || ('Break ' + n);
+    }
+
     function buildPayload() {
       const state = window.state;
       if (!state) return null;
-      let phase = '', phaseEndMs = 0, paused = false, taskTitle = '';
+      let phase = '', phaseStartMs = 0, phaseEndMs = 0, paused = false, taskTitle = '', sessionLabel = '';
       const at = state.activeTimer;
       if (at && at.type === 'pomodoro' && (at.phase === 'work' || at.phase === 'break')) {
         phase = at.phase;
         paused = !!at.paused;
+        phaseStartMs = (+at.phaseStartedAt || +at.startedAt || 0);
         if (at.pendingPhaseConfirm) {
           phaseEndMs = Date.now();   // boundary reached, awaiting confirm → ~0
         } else {
-          phaseEndMs = (+at.phaseStartedAt || +at.startedAt || 0) +
-                       (+at.phaseDurationMs || 0);
+          phaseEndMs = phaseStartMs + (+at.phaseDurationMs || 0);
         }
         try {
           const arr = state.tasks && state.tasks[at.q];
           const t = arr && arr[at.idx];
           taskTitle = (t && t.text) ? String(t.text).trim() : '';
         } catch (_) {}
+        sessionLabel = pomoSessionLabel(state, at, taskTitle);
       }
       const geo = bucketGeometry(state);
       return {
@@ -489,9 +526,11 @@
           } catch (_) { return 0; }
         })(),
         phase: phase,
+        phaseStartMs: phaseStartMs,
         phaseEndMs: phaseEndMs,
         paused: paused,
         taskTitle: taskTitle,
+        sessionLabel: sessionLabel,
         tasksOpen: openTasks(state),
         tasks: openTaskNames(state),
         blocks: scheduleBlocks(state),
