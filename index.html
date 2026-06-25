@@ -1237,6 +1237,7 @@
     width: 50%; height: 50%;
     display: flex; align-items: center; justify-content: center;
     min-height: 0;
+    transform: translate(6px, 6px);   /* (user) nudge the QR right + down so it sits centred in the white square */
   }
   .qr-art > #qr-canvas-wrap img,
   .qr-art > #qr-canvas-wrap canvas {
@@ -8953,6 +8954,13 @@
     border-bottom-right-radius: 0;
   }
   .time-block.ext-parent-seam::after, .tg-block.ext-parent-seam::after { content: none !important; }
+  /* (user) FULL-WIDTH overrun below (no planned block under it): the parent's BOTH bottom corners go
+     square so its bottom edge runs straight into the full-width extension — no rounded white notch on
+     the bottom-left. The plan + overrun read as ONE block whose bottom edge simply grows downward. */
+  .time-block.ext-parent-full, .tg-block.ext-parent-full {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
   /* Home hero: "[friend] is focusing now" line under the left text. */
   .fc-friends { margin-top: 6px; font-size: .82rem; font-weight: 700; line-height: 1.35; color: var(--text-muted, #6b7280); }
   .fc-friends .ff-nm { font-weight: 800; }
@@ -10466,7 +10474,7 @@
       <div id="qr-art" class="qr-art"><div id="qr-canvas-wrap"></div></div>
       <div style="margin-top:10px;font-weight:700;letter-spacing:.06em;" id="qr-code-text">—</div>
       <div class="actions" style="margin-top:12px;justify-content:center;">
-        <button class="btn" id="qr-close" type="button">Close</button>
+        <button class="btn" id="qr-close" type="button" style="background:#d9a400;border-color:#d9a400;color:#fff;">Close</button>
       </div>
     </div>
   </div>
@@ -23433,9 +23441,16 @@ function drawTimeArea() {
     }
     // Parent of an extension (same task, ext starts where this block ends) → drop the bottom border
     // so parent + ext read as ONE connected ㄱ shape (no dividing line).
-    if (!b._actualExt && _extRanges.length && _extRanges.some(x =>
-        x.q === b.q && x.taskIdx === b.taskIdx && Math.abs(x.startMs - b.endMs) < 1000)) {
-      div.classList.add('ext-parent-seam');
+    if (!b._actualExt && _extRanges.length) {
+      const _myExt = _extRanges.find(x => x.q === b.q && x.taskIdx === b.taskIdx && Math.abs(x.startMs - b.endMs) < 1000);
+      if (_myExt) {
+        div.classList.add('ext-parent-seam');
+        // Full-width overrun (nothing planned sits below the ext) → square the parent's bottom-LEFT too,
+        // so it grows straight down with no rounded notch (one block, bottom edge descending).
+        const _extHasBelow = _renderBlocks.some(p => p && p !== b && p !== _myExt &&
+          !p._actualExt && !p._preview && p.startMs < _myExt.endMs && p.endMs > _myExt.startMs);
+        if (!_extHasBelow) div.classList.add('ext-parent-full');
+      }
     }
 
     // Render one coloured fill per worked / break session. Paused intervals
@@ -38801,9 +38816,15 @@ setInterval(() => {
         div.style.right = _planRightInsetW + 'px';                // align right edge to the arm (puzzle fit)
       }
       // Parent of an extension → drop the bottom border so parent + ext read as ONE ㄱ shape.
-      if (!b._actualExt && _extRangesW.length && _extRangesW.some(x =>
-          x.q === b.q && x.taskIdx === b.taskIdx && Math.abs(x.startMs - b.endMs) < 1000)) {
-        div.classList.add('ext-parent-seam');
+      if (!b._actualExt && _extRangesW.length) {
+        const _myExtW = _extRangesW.find(x => x.q === b.q && x.taskIdx === b.taskIdx && Math.abs(x.startMs - b.endMs) < 1000);
+        if (_myExtW) {
+          div.classList.add('ext-parent-seam');
+          // Full-width overrun (nothing planned below the ext) → square the parent's bottom-LEFT too.
+          const _extHasBelowW = blocks.some(p => p && p !== b && p !== _myExtW &&
+            !p._actualExt && !p._preview && p.startMs < _myExtW.endMs && p.endMs > _myExtW.startMs);
+          if (!_extHasBelowW) div.classList.add('ext-parent-full');
+        }
       }
       div.dataset.bid  = String(b.id);
 
