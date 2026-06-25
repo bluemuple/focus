@@ -12401,6 +12401,20 @@ async function deleteAllStatsFromCloud() {
     if (r2.error) console.warn('Supabase delete error (settings):', r2.error);
   } catch(e) { console.warn('Supabase delete failed:', e); }
 }
+/* (App Store 5.1.1(v)) Fully delete MY account + all my server data — the auth record too,
+   not just the data. Calls the focus-delete-account edge function with my own access token;
+   the function resolves my user id from that token and wipes every per-user table, then
+   removes the auth user. Returns { ok } / { noAccount } / { ok:false, error }. */
+async function deleteMyAccountOnCloud() {
+  try {
+    const sb = await getSupabaseClient(); if (!sb) return { ok: false, error: 'no client' };
+    const { data: { session } } = await sb.auth.getSession();
+    if (!session) return { ok: true, noAccount: true };   // not signed in → no server account to delete
+    const { data, error } = await sb.functions.invoke('focus-delete-account', { body: {} });
+    if (error) return { ok: false, error: (error && error.message) || String(error) };
+    return data || { ok: false, error: 'no response' };
+  } catch (e) { return { ok: false, error: String(e) }; }
+}
 
 /* ===========================================================================
    Anonymous "Memo for Sharing" — a tiny public board surfaced in the top-bar
@@ -16744,14 +16758,20 @@ const _delAcctBtn = document.getElementById('delete-account');
 if (_delAcctBtn) _delAcctBtn.onclick = async () => {
   if (!confirm(
     'Delete account?\n\n' +
-    '• All your data on the cloud will be erased (tasks, activity log, scores, money log, notes…)\n' +
-    '• You will be signed out on this device.\n' +
-    '• Your email is still registered on Supabase Auth — sign in again with the same email to start fresh, or contact the admin to fully remove it.\n\n' +
+    '• Your account and ALL your data (tasks, activity, scores, money, notes, friends, profile) are\n' +
+    '  permanently erased from our servers and from this device.\n' +
+    '• You will be signed out.\n\n' +
     'This cannot be undone.'
   )) return;
-  // 1. Wipe cloud data for this user.
+  // 1. Fully delete the server account (auth record + all per-user data). Falls back to wiping the
+  //    data if the account-delete function isn't reachable, so nothing is left half-done.
+  let serverDeleted = true;
   if (isSbConfigured()) {
-    try { await deleteAllStatsFromCloud(); } catch(_){}
+    try {
+      const r = await deleteMyAccountOnCloud();
+      serverDeleted = !!(r && (r.ok || r.noAccount));
+      if (!serverDeleted) { try { await deleteAllStatsFromCloud(); } catch(_){} }
+    } catch (_) { serverDeleted = false; }
   }
   // 2. Clear local state.
   stats = [];
@@ -16763,10 +16783,12 @@ if (_delAcctBtn) _delAcctBtn.onclick = async () => {
   // 3. Sign out (Supabase auth + UI).
   try { await authSignOut(); } catch(_){}
   updateAuthUI(null);
-  // 4. Re-render & flash a confirmation
+  // 4. Re-render & confirm
   renderAll();
   if (typeof renderStats === 'function') renderStats();
-  alert('Account data erased. You are signed out.');
+  alert(serverDeleted
+    ? 'Your account has been deleted.'
+    : 'Your data was erased and you are signed out. If anything remains, contact ebsmoon@gmail.com.');
 };
 
 /* ===========================================================
