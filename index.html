@@ -8725,8 +8725,20 @@
   .ctm-name-row { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; }
   .ctm-name-row .ctm-name { flex: 1 1 auto; min-width: 0; margin: 0; }
   .ctm-name-row .ctm-add-top { flex: 0 0 auto; white-space: nowrap; }
+  /* (user) Icon picker — a "?" square before the name; tap to open a grid of icons. The chosen
+     icon shows in the Routine tab to the LEFT of the task (nowhere else). */
+  .ctm-emoji { flex: 0 0 auto; width: 40px; height: 40px; padding: 0; border: 1px solid var(--card-border, #e5e7eb); border-radius: 10px; background: var(--surface-2, #f3f4f6); color: var(--text-muted, #9ca3af); font-size: 1.3rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; }
+  .ctm-emoji.has-icon { color: var(--text-main, #111827); border-color: var(--accent, #2563eb); box-shadow: inset 0 0 0 1px var(--accent, #2563eb); background: var(--card-bg, #fff); }
+  .ctm-emoji-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: -4px 0 12px; padding: 10px; border: 1px solid var(--card-border, #e5e7eb); border-radius: 12px; background: var(--surface-2, rgba(127,127,127,.05)); max-height: 224px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .ctm-emoji-grid.hidden { display: none; }
+  .ctm-emoji-grid button { aspect-ratio: 1 / 1; padding: 0; border: 1px solid var(--card-border, #e5e7eb); border-radius: 9px; background: var(--card-bg, #fff); font-size: 1.3rem; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; -webkit-tap-highlight-color: transparent; }
+  .ctm-emoji-grid button.sel { border-color: var(--accent, #2563eb); box-shadow: inset 0 0 0 2px var(--accent, #2563eb); }
+  .cal-hb-icon, .cal-hbw-icon { margin-right: 4px; }
   /* (user) Build/Avoid toggle inline with the Start ~ End range; shown in the Repeat section. */
   .ctm-rep-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  /* (user) "Everyday" — selects all weekdays; pushed to the right, green when all 7 are on. */
+  .ctm-everyday { margin-left: auto; flex: 0 0 auto; padding: 7px 15px; border: 1px solid var(--card-border, #e5e7eb); border-radius: 999px; background: var(--surface-2, #f3f4f6); color: var(--text-muted, #6b7280); font-weight: 700; font-size: .8rem; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .ctm-everyday.active { background: #16a34a; border-color: #16a34a; color: #fff; }
   .ctm-rep-row .ctm-range { margin-top: 0; flex: 1 1 180px; }
   #cal-task-modal .add-habittype { display: inline-flex; }
   .ctm-chips { display: flex; flex-wrap: wrap; gap: 7px; }
@@ -10945,9 +10957,11 @@
   <div class="modal-content ctm-content">
     <button class="ctm-x" id="ctm-x" type="button" aria-label="Close">✕</button>
     <div class="ctm-name-row">
+      <button class="ctm-emoji" id="ctm-emoji" type="button" aria-label="Choose icon">?</button>
       <input type="text" id="ctm-name" class="ctm-name" maxlength="200" autocomplete="off" aria-label="Task name" placeholder="Task name">
       <button class="btn primary ctm-add-top" id="ctm-save" type="button">Add</button>
     </div>
+    <div class="ctm-emoji-grid hidden" id="ctm-emoji-grid" aria-hidden="true"></div>
     <div class="ctm-chips" id="ctm-chips">
       <button type="button" class="ctm-chip" id="ctm-chip-matrix" data-sec="matrix"><span class="ctm-chip-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></svg></span><span>Matrix</span></button>
       <button type="button" class="ctm-chip" id="ctm-chip-sides" data-sec="sides"><span class="ctm-chip-ic"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 C12 3 5 11 5 15.5 A7 7 0 0 0 19 15.5 C19 11 12 3 12 3 Z"/></svg></span><span>Sides</span></button>
@@ -14660,7 +14674,8 @@ function _calRenderHabit(opts) {
       else                                             cells += '<span class="cal-hb-cell"' + _d + '></span>';
     }
     const nameCol = (t.pillar != null && typeof _calSideColorVivid === 'function') ? _calSideColorVivid(t.pillar) : ((typeof bidoroTaskText === 'function') ? bidoroTaskText(q, idx) : col);
-    const nameInner = '<span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span>' + _habitFlameHtml(t);
+    const _icoH = t.icon ? '<span class="cal-hb-icon">' + escapeHTML(t.icon) + '</span>' : '';   // (user) Routine-only icon
+    const nameInner = _icoH + '<span class="cal-hb-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + '</span>' + _habitFlameHtml(t);
     rows += _wide
       ? ('<div class="cal-hbs-row"><div class="cal-hbs-name">' + nameInner + '</div><div class="cal-hbs-cells">' + cells + '</div></div>')
       : ('<div class="cal-hbm-row"><div class="cal-hbm-head">' + nameInner + '</div><div class="cal-hbm-cells">' + cells + '</div></div>');
@@ -14741,7 +14756,8 @@ function _calRenderHabitWeek(grid, title, tasks, opts) {
       const lbl = '<div class="cal-ww2-lbl"><span class="cal-ww2-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitFlameHtml(t) + '</span><span class="cal-ww2-meta">' + _habitMetaHtml(t) + '</span></div>';
       blocks.push('<div class="cal-ww2-row">' + lbl + '<div class="cal-ww2-cells">' + cells + '</div></div>');
     } else {
-      const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + escapeHTML(t.text || '') + _habitMetaHtml(t) + _habitFlameHtml(t) + '</div>';
+      const _icoHw = t.icon ? '<span class="cal-hbw-icon">' + escapeHTML(t.icon) + '</span>' : '';   // (user) Routine-only icon
+      const nameHtml = '<div class="cal-hbw-name" style="color:' + nameCol + '">' + _icoHw + escapeHTML(t.text || '') + _habitMetaHtml(t) + _habitFlameHtml(t) + '</div>';
       blocks.push('<div class="cal-hbw-task">' + nameHtml + '<div class="cal-hbw-cells">' + cells + '</div></div>');
     }
   });
@@ -14763,6 +14779,14 @@ function _calAddTask() {
    and Repeat's Start/End, which open the shared date picker (its own window). On Add, files the
    task into the chosen matrix quadrant (default q1) on the selected calendar day, carrying the
    pillar / repeat days+range / due date / memo, then re-renders the matrix + calendar. */
+// (user) Icon set for the Routine/Calendar add picker. The user-supplied list first, then a
+// few more routine-friendly icons (hygiene, sleep, meals, study, etc.).
+const ROUTINE_ICONS = [
+  '🌅','☀️','🌙','🛏️','🧘','💧','🍋','🥗','☕','📚','✏️','🎧','📝','📖','💻','⏰','✅','🧹','🧺','🪴',
+  '🚶','🏃','🏋️','🚲','🛒','🍳','👨‍👩‍👧‍👦','💰','🌱','🎨',
+  // extras
+  '🪥','🚿','🛁','💊','😴','🍽️','🙏','💪','🎯','📞','🧠','🐶','🎵','🌿','🧴','📅','🎮','🌳','🥤','🧊'
+];
 function openCalTaskModal(opts) {
   opts = opts || {};
   const modal    = document.getElementById('cal-task-modal');
@@ -14780,6 +14804,37 @@ function openCalTaskModal(opts) {
   let q = 'q1', pillar = (typeof _getLastPillar === 'function' ? _getLastPillar() : null), repeatStart = null, repeatEnd = null, due = null, note = '', activeSec = null;
   _addHabitType = 'build';   // (user) shared Build/Avoid direction — reset; the .add-habittype toggle reads/writes it
   const repeatSet = new Set();
+  // ----- (user) icon picker (Routine/Calendar add only — T&T uses a different add) -----
+  let selectedIcon = null;
+  const emojiBtn  = document.getElementById('ctm-emoji');
+  const emojiGrid = document.getElementById('ctm-emoji-grid');
+  function _ctmSyncEmojiBtn() {
+    if (!emojiBtn) return;
+    emojiBtn.textContent = selectedIcon || '?';
+    emojiBtn.classList.toggle('has-icon', !!selectedIcon);
+  }
+  function _ctmBuildEmojiGrid() {
+    if (!emojiGrid) return;
+    emojiGrid.innerHTML = '';
+    ROUTINE_ICONS.forEach((ic) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = ic;
+      b.classList.toggle('sel', ic === selectedIcon);
+      b.onclick = () => {
+        selectedIcon = (selectedIcon === ic) ? null : ic;   // tap the chosen one again to clear
+        _ctmSyncEmojiBtn();
+        emojiGrid.querySelectorAll('button').forEach((x) => x.classList.toggle('sel', x.textContent === selectedIcon));
+        emojiGrid.classList.add('hidden');                  // collapse after a pick
+      };
+      emojiGrid.appendChild(b);
+    });
+  }
+  if (emojiGrid) emojiGrid.classList.add('hidden');
+  if (emojiBtn) emojiBtn.onclick = () => {
+    if (!emojiGrid) return;
+    if (emojiGrid.classList.contains('hidden')) { _ctmBuildEmojiGrid(); emojiGrid.classList.remove('hidden'); }
+    else emojiGrid.classList.add('hidden');
+  };
+  _ctmSyncEmojiBtn();
   const QLABEL = { q1: 'Important · Urgent', q2: 'Important · Not urgent', q3: 'Not important · Urgent', q4: 'Not important · Not urgent' };
   nameEl.value = '';
 
@@ -14831,17 +14886,31 @@ function openCalTaskModal(opts) {
       cap.textContent = pillar != null ? _calSideName(pillar) : 'No bucket side';
       secEl.appendChild(cap);
     } else if (activeSec === 'repeat') {
+      const ALL_DOW = [0, 1, 2, 3, 4, 5, 6];
+      const _allDays = () => ALL_DOW.every(d => repeatSet.has(d));
       const wd = document.createElement('div'); wd.className = 'ctm-weekdays';
-      if (typeof _buildWeekdayButtons === 'function') _buildWeekdayButtons(wd, repeatSet, () => syncChips());
       secEl.appendChild(wd);
-      // (user) One row: the Build/Avoid toggle (shared .add-habittype, green when selected) then the
-      // Start ~ End range. No captions. Tapping the toggle is handled by the global delegation
-      // (updates _addHabitType + the Routine toast); we just rebuild + re-sync afterwards.
+      // (user) One row: the Build/Avoid toggle (shared .add-habittype, green when selected), an
+      // "Everyday" button (selects ALL weekdays; un-selects if any day is later turned off), then the
+      // Start ~ End range. Tapping Build/Avoid is handled by the global delegation; we rebuild after.
       const row = document.createElement('div'); row.className = 'ctm-rep-row';
       const ht = document.createElement('div'); ht.className = 'add-habittype'; ht.setAttribute('role', 'group'); ht.setAttribute('aria-label', 'Build or Avoid habit');
       ht.innerHTML = '<button class="aht-btn" data-aht="build" type="button">Build Habit</button>'
                    + '<button class="aht-btn" data-aht="avoid" type="button">Avoid</button>';
       row.appendChild(ht);
+      // Everyday — selects every weekday; reflects whether all 7 are currently picked.
+      const everyBtn = document.createElement('button'); everyBtn.type = 'button'; everyBtn.className = 'ctm-everyday';
+      everyBtn.textContent = tr('Everyday');
+      const _updEvery = () => everyBtn.classList.toggle('active', _allDays());
+      everyBtn.onclick = () => {
+        if (_allDays()) ALL_DOW.forEach(d => repeatSet.delete(d));
+        else ALL_DOW.forEach(d => repeatSet.add(d));
+        renderSection(); syncChips();
+      };
+      row.appendChild(everyBtn);
+      // Build the weekday buttons LAST so their toggle callback can refresh the Everyday state.
+      if (typeof _buildWeekdayButtons === 'function') _buildWeekdayButtons(wd, repeatSet, () => { _updEvery(); syncChips(); });
+      _updEvery();
       const rng = document.createElement('div'); rng.className = 'ctm-range';
       const mkDate = (which) => {
         const b = document.createElement('button'); b.type = 'button'; b.className = 'ctm-range-btn';
@@ -14879,7 +14948,9 @@ function openCalTaskModal(opts) {
   }
   function close() {
     modal.classList.add('hidden'); modal.setAttribute('aria-hidden', 'true');
+    if (emojiGrid) emojiGrid.classList.add('hidden');
     chipsEl.onclick = null; saveBtn.onclick = null; if (xBtn) xBtn.onclick = null; backdrop.onclick = null;
+    if (emojiBtn) emojiBtn.onclick = null;
   }
   chipsEl.onclick = (e) => { const c = e.target.closest('.ctm-chip'); if (c) setSec(c.dataset.sec); };
   if (xBtn) xBtn.onclick = () => close();   // (user) X (top-right) closes the popup (Cancel removed)
@@ -14901,6 +14972,7 @@ function openCalTaskModal(opts) {
     if (repeatSet.size) { tk.repeat = Array.from(repeatSet).sort((a, b) => a - b); if (repeatStart) tk.repeatStart = repeatStart; if (repeatEnd) tk.repeatEnd = repeatEnd; tk.habitType = _addHabitType; }  // (user) save Build/Avoid for habits only
     if (due) tk.dueDate = due;
     if (note && note.trim()) tk.note = note.trim();
+    if (selectedIcon) tk.icon = selectedIcon;   // (user) Routine-tab icon
     state.tasks[q].unshift(tk);
     if (pillar != null && typeof _setLastPillar === 'function') _setLastPillar(pillar);   // (user) remember the side for the next add (shared with the matrix +Add)
     try { saveState(); markSettingsChanged(); pushSettingsToCloud(); } catch (_) {}
