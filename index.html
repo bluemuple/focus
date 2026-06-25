@@ -32110,6 +32110,12 @@ const Friends = (function(){
   }
   async function refresh(){
     if (!signedIn()) { _renderSignedOut(); _badge(0); return; }
+    // (user) Signed in → flip to the signed-in shell IMMEDIATELY (hide the Sign up CTA + signin note,
+    // show the friends panel), before the list RPC. So logging in from the Friends page's Sign up
+    // popup switches the page in place, even if the RPC is slow / not deployed. _render() repopulates.
+    if ($('fr-signin-note')) $('fr-signin-note').classList.add('hidden');
+    if ($('fr-signup-btn')) $('fr-signup-btn').style.display = 'none';
+    if ($('fr-main')) $('fr-main').style.display = '';
     try {
       const d = await rpc('focus_friends_list');
       _friends = (d && d.friends) || [];
@@ -32903,8 +32909,15 @@ function runDailyChecksAfterSync() {
         // Just signed up/in via an invite link → auto-apply the pending friend-add (instant friend +
         // "[name] invited you" → seed chooser). Delay lets the session + Friends profile settle.
         try {
-          if (event === 'SIGNED_IN' && window.Friends && Friends.applyPendingAdd) {
-            setTimeout(() => { try { Friends.syncProfile && Friends.syncProfile(true); } catch(_){} try { Friends.applyPendingAdd(); } catch(_){} }, 900);
+          if (event === 'SIGNED_IN' && window.Friends) {
+            // (user) Signed in/up from the Friends page's Sign up popup → re-render the page IN PLACE
+            // so the Sign up CTA immediately flips to the signed-in friends view (no need to leave +
+            // come back). openList() also runs syncProfile + applyPendingAdd, covering the invite case.
+            if (state.currentPage === 'friends' && Friends.openList) {
+              setTimeout(() => { try { Friends.openList(); } catch (_) {} }, 300);
+            } else if (Friends.applyPendingAdd) {
+              setTimeout(() => { try { Friends.syncProfile && Friends.syncProfile(true); } catch(_){} try { Friends.applyPendingAdd(); } catch(_){} }, 900);
+            }
           }
         } catch (_) {}
       });
