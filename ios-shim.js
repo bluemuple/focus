@@ -490,6 +490,23 @@
       return ({ en: 'Break ' + n, ko: '휴식 ' + n, zh: '休息 ' + n, ja: '休憩 ' + n, es: 'Descanso ' + n, fr: 'Pause ' + n })[loc] || ('Break ' + n);
     }
 
+    // GTD goal/deadline as epoch-ms for the gauge widget's blue line. Mirrors the app's
+    // combineDateTime(deadlineDate, deadline, {rolling}) — daily ('every') scope rolls to
+    // today's time; a pinned date is used as-is. 0 when no goal is set.
+    function gtdGoalMs(state) {
+      const time = state.deadline;
+      if (!time) return 0;
+      const p = String(time).split(':'); const h = +p[0], m = +p[1];
+      if (isNaN(h) || isNaN(m)) return 0;
+      let dateStr = state.deadlineDate || '';
+      if (state.gtdScope === 'every') dateStr = '';   // daily → roll to today
+      const now = Date.now();
+      if (dateStr) { const dt = new Date(dateStr + 'T' + time); const ms = dt.getTime(); return isNaN(ms) ? 0 : ms; }
+      const d = new Date(now); d.setHours(h, m, 0, 0);
+      if (d.getTime() < now) d.setDate(d.getDate() + 1);   // passed today → tomorrow
+      return d.getTime();
+    }
+
     function buildPayload() {
       const state = window.state;
       if (!state) return null;
@@ -534,6 +551,7 @@
         tasksOpen: openTasks(state),
         tasks: openTaskNames(state),
         blocks: scheduleBlocks(state),
+        goalMs: gtdGoalMs(state),
         updatedMs: Date.now()
       };
     }
