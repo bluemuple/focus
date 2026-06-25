@@ -20203,7 +20203,10 @@ function _layoutCellHint(el) {
     for (let s = 0; s < SIZES.length; s++) {
       el.style.fontSize = SIZES[s] + 'rem';
       el.textContent = text;
-      if (lineCount() <= 1.4) return;                    // fits ONE line at this size → done
+      // (user) Must fit ONE line by HEIGHT *and* not overflow the cell's right inner edge by
+      // WIDTH. CJK (zh/ja) uses word-break:keep-all with no spaces, so it never wraps — the
+      // height check alone always read "1 line" and left a big font clipping on the right.
+      if (lineCount() <= 1.4 && el.scrollWidth <= el.clientWidth + 0.5) return;
     }
     // (user) ALWAYS single line — every matrix hint must sit at the SAME single-line position as
     // the others (q3). Even if the longest phrase won't fit at the smallest size, keep it on ONE
@@ -35559,6 +35562,20 @@ function openMasterQuadrantPicker(masterBtn) {
     // Colour each quadrant bar like ITS task bar (bidoroTaskBg/Text — theme-aware) instead of the
     // old hardcoded pastel, so the picker mirrors the real bars. !important beats the solarized rule.
     try { b.style.setProperty('background', bidoroTaskBg(q), 'important'); b.style.setProperty('color', bidoroTaskText(q), 'important'); } catch (_) {}
+    // (user) Style the struck "not" word like the MATRIX TITLE: faded word + a BOLD, theme-
+    // coloured (saturated accent) strikethrough drawn through the glyphs — far clearer than the
+    // default thin line, esp. for dense CJK (zh/ja).
+    try {
+      const _dk = (typeof bidoroDarkTheme === 'function') ? bidoroDarkTheme() : false;
+      const _acc = (typeof focusQuadAccent === 'function') ? focusQuadAccent(q) : 'currentColor';
+      b.querySelectorAll('s').forEach((_s) => {
+        _s.style.color = _dk ? 'rgba(255,255,255,0.42)' : 'rgba(17,24,39,0.40)';
+        _s.style.textDecorationColor = _acc;
+        _s.style.textDecorationThickness = '0.2em';
+        _s.style.textDecorationLine = 'line-through';
+        _s.style.textDecorationSkipInk = 'none';
+      });
+    } catch (_) {}
     picker.appendChild(b);
   });
   const cancel = document.createElement('button');
