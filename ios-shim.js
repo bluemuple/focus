@@ -466,7 +466,10 @@
             if (!(e > s)) s = e - 60000;                // min 1-min so a fresh one shows
           } else {
             if (!(e > s)) continue;
-            if (e <= now || s >= horizon) continue;     // outside the window
+            // (user) also keep RECENT-PAST blocks (above the now-line). The widget
+            // window starts ~20 min before now, so include anything ending within the
+            // last 40 min (buffer) up to the 12 h horizon.
+            if (e <= now - 40 * 60000 || s >= horizon) continue;
           }
           const isBreak = !!b.isBreak;
           out.push({
