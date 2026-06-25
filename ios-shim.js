@@ -437,9 +437,17 @@
         for (let i = 0; i < raw.length; i++) {
           const b = raw[i];
           if (!b || b._preview) continue;
-          const s = +b.startMs, e = +b.endMs;
-          if (!(e > s)) continue;
-          if (e <= now || s >= horizon) continue;       // outside the window
+          let s = +b.startMs, e = +b.endMs;
+          // The running q4 stopwatch block grows DOWN to the now-line: include it as
+          // [start, now] even though its end == now (which the normal filter drops).
+          const isActiveUp = !!(b.uptask && b.activeAt != null && !b.activeEndMs);
+          if (isActiveUp) {
+            e = now;
+            if (!(e > s)) s = e - 60000;                // min 1-min so a fresh one shows
+          } else {
+            if (!(e > s)) continue;
+            if (e <= now || s >= horizon) continue;     // outside the window
+          }
           const isBreak = !!b.isBreak;
           out.push({
             s: s,
