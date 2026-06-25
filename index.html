@@ -11567,7 +11567,19 @@ const defaultState = () => ({
   sbUrl: '',
   sbKey: '',
   sbUserId: 'me',
-  settingsUpdatedAt: 0   // last local change to settings (motivation/others) for last-write-wins sync
+  settingsUpdatedAt: 0,  // last local change to settings (motivation/others) for last-write-wins sync
+  // ---- Bidoro PRO (paywall) ----
+  // false = free tier: full app, but LOCAL-ONLY (no cross-device sync, no
+  // calendar sync, no Friends). Set true by the StoreKit bridge after a
+  // verified purchase / restore / launch entitlement check.
+  premium: false,
+  premiumPlan: '',       // 'monthly' | 'yearly' | '' (none)
+  premiumSince: 0,       // ms timestamp of first activation
+  // First-run onboarding: have we seeded the locale starter tasks + intro?
+  onboarded: false,
+  // App Store review prompt — count "wins" then ask once (Apple throttles too).
+  reviewWins: 0,
+  reviewAsked: false
 });
 
 let state = loadState();
@@ -12236,6 +12248,9 @@ function setAuthStatus(text, color) {
 let _webSyncState = 'notSignedIn';   // notSignedIn | ready | pausedAccountConflict | iCloudOnly
 function bidoroWebSyncState() { return _webSyncState; }
 function _webSyncBlocked() { return _webSyncState === 'pausedAccountConflict' || _webSyncState === 'iCloudOnly'; }
+// Bidoro PRO gate: web/cloud DATA sync only runs for premium users. Free users
+// can still sign up / sign in (identity), but their data stays local-only.
+function _premiumSyncOK() { try { return (typeof window.bidoroIsPremium === 'function') ? window.bidoroIsPremium() : true; } catch (_) { return true; } }
 function _mkUuid() { try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID(); } catch (_) {} return 'b' + Date.now().toString(36) + Math.random().toString(36).slice(2); }
 let _syncGroupCache = null;
 // The iCloud sync-group UUID — shared across the user's Apple devices. PRIMARY source
@@ -12360,6 +12375,7 @@ window.bidoroRenderICloudStatus = bidoroRenderICloudStatus;
 // sync is never broken for users who match (or before the SQL is run).
 async function ensureWebSyncBinding(opts) {
   opts = opts || {};
+  if (!_premiumSyncOK()) { return false; }   // Bidoro PRO: free tier is local-only (no "paused" warning)
   if (!_currentAuthUserId) { _webSyncState = 'notSignedIn'; return false; }
   let group = null; try { group = await bidoroSyncGroupId(); } catch (_) {}
   if (!group) { _webSyncState = 'ready'; return true; }
@@ -12390,6 +12406,7 @@ async function ensureWebSyncBinding(opts) {
 window.bidoroWebSyncState = bidoroWebSyncState;
 
 async function pushStatToCloud(entry) {
+  if (!_premiumSyncOK()) return false;   // Bidoro PRO: free tier is local-only
   // SYNC GUARD: don't upload session stats to the current account while paused.
   if (typeof _webSyncBlocked === 'function' && _webSyncBlocked()) return false;
   try {
@@ -12413,6 +12430,7 @@ async function pushStatToCloud(entry) {
   } catch(e) { console.warn('Supabase push failed:', e); return false; }
 }
 async function fetchStatsFromCloud() {
+  if (!_premiumSyncOK()) return null;   // Bidoro PRO: free tier is local-only
   try {
     const sb = await getSupabaseClient();
     if (!sb) return null;
@@ -12964,6 +12982,7 @@ async function _pollMemoSocial() {
 
 // Pull from cloud, then push any local entries not yet there.
 async function syncStatsBidi() {
+  if (!_premiumSyncOK()) return;   // Bidoro PRO: free tier is local-only
   const remote = await fetchStatsFromCloud();
   if (remote == null) return;
   const remoteTs = new Set(remote.map(s => s.timestamp));
@@ -13113,6 +13132,7 @@ function bidoroICloudWrite() {
 }
 
 async function pushSettingsToCloud() {
+  if (!_premiumSyncOK()) return false;   // Bidoro PRO: free tier is local-only
   // SYNC GUARD: never upload while web sync is paused by an iCloud↔account conflict
   // (or kept iCloud-only). iCloud sync + local UI continue unaffected.
   if (typeof _webSyncBlocked === 'function' && _webSyncBlocked()) {
@@ -13205,6 +13225,7 @@ function pushedFieldsSummary() {
   return fields;
 }
 async function fetchSettingsFromCloud() {
+  if (!_premiumSyncOK()) return null;   // Bidoro PRO: free tier is local-only
   try {
     const sb = await getSupabaseClient();
     if (!sb) return null;
@@ -13613,6 +13634,11 @@ function showPage(name) {
   // the Settings page at boot) — never shown; legacy 'setup' → focus. Unknown → focus.
   if (name === 'setup') name = 'focus';
   if (!pages[name]) name = 'focus';
+  // Friends is a Bidoro PRO feature — free users get the paywall instead.
+  if (name === 'friends' && typeof window.bidoroIsPremium === 'function' && !window.bidoroIsPremium()) {
+    try { window.bidoroOpenPaywall('friends'); } catch (_) {}
+    name = 'focus';
+  }
   // Navigating to a DIFFERENT page closes Edit so its floating panel (iPad/web)
   // doesn't carry over onto the new page. (Staying on 'focus' keeps Edit as-is.)
   if (name !== 'focus') { try { _exitEditForNav(); } catch (_) {} }
@@ -13644,6 +13670,7 @@ function showPage(name) {
   if (name === 'notes'    && typeof renderNotes   === 'function') { try { renderNotes(); }   catch(_){} }
   if (name === 'calendar' && typeof renderCalendar === 'function') { try { renderCalendar(); } catch(_){} try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){} try { if (typeof _gcalAutoSync === 'function') _gcalAutoSync(); } catch(_){} try { if (typeof _appleCalAutoSync === 'function') _appleCalAutoSync(); } catch(_){} }
   if (name === 'settings') {
+    try { if (typeof window._applyPremiumUI === 'function') window._applyPremiumUI(); } catch(_){}
     try { if (typeof _applyGcalConnUI === 'function') _applyGcalConnUI(); } catch(_){}
     try { if (typeof _syncSoundSeg === 'function') _syncSoundSeg(); } catch(_){}
     try { if (typeof _syncCellHintSeg === 'function') _syncCellHintSeg(); } catch(_){}
@@ -13794,6 +13821,464 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     _motDisp.addEventListener('click', () => { try { _ackNotesMenu(); } catch (_) {} showPage('notes'); scrollMainTop(); });
     _motDisp.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); try { _ackNotesMenu(); } catch (_) {} showPage('notes'); scrollMainTop(); } });
   }
+})();
+
+/* =========================================================================
+   BIDORO PRO — paywall.  Sync (iCloud + web), calendar sync, and Friends are
+   the paid features.  Everything else is free & local-only.  Self-contained:
+   injects its own CSS + modal so the rest of the markup stays untouched.
+   Native purchases are handled by the StoreKit bridge (window.BidoroIAP, set
+   up in ios-shim.js); on plain web the buttons explain that purchases happen
+   in the app.
+   ========================================================================= */
+(function bidoroPaywall(){
+  // ---- entitlement ----
+  window.bidoroIsPremium = function(){ try { return !!(state && state.premium); } catch(_) { return false; } };
+
+  // Called by the StoreKit bridge after purchase / restore / launch check.
+  window.bidoroSetPremium = function(on, plan){
+    const was = window.bidoroIsPremium();
+    try {
+      state.premium = !!on;
+      if (plan) state.premiumPlan = plan;
+      if (on && !state.premiumSince) state.premiumSince = Date.now();
+      saveState();
+    } catch(_){}
+    try { applyPremiumUI(); } catch(_){}
+    if (on && !was) { try { closePaywall(); } catch(_){} try { if (typeof bidoroToast==='function') bidoroToast(C().thanks); } catch(_){} }
+  };
+
+  // Native StoreKit can push localized App-Store prices in.
+  window.bidoroSetPrices = function(p){
+    try {
+      if (p && p.monthly) { const e=document.querySelector('#pw-buy-monthly .pw-price'); if(e) e.textContent=p.monthly; }
+      if (p && p.yearly)  { const e=document.querySelector('#pw-buy-yearly .pw-price');  if(e) e.textContent=p.yearly; }
+      if (p && p.yearlySub){ const e=document.querySelector('#pw-buy-yearly .pw-per'); if(e) e.textContent=p.yearlySub; }
+    } catch(_){}
+  };
+
+  function L(){ try { return (typeof bidoroLocale==='function') ? bidoroLocale() : 'en'; } catch(_) { return 'en'; } }
+
+  // ---- copy (en + ko; other locales fall back to en) ----
+  var COPY = {
+    en: {
+      brand:'Bidoro', pro:'PRO',
+      feats:[
+        ['☁️','Sync across all your devices','iPhone, iPad and the web stay in sync'],
+        ['📅','Apple & Google Calendar sync','See and write your events both ways'],
+        ['👫','Friends','Share focus and cheer each other on'],
+        ['💖','Support Bidoro','Help keep the app growing']
+      ],
+      trial:'7-day free trial, then…',
+      monthly:'month', yearly:'year',
+      restore:'Restore Purchases', terms:'Terms of Use', privacy:'Privacy Policy',
+      webOnly:'Purchases are available in the Bidoro iPhone / iPad app.',
+      thanks:'Welcome to Bidoro PRO 🎉',
+      upgrade:'Upgrade to Bidoro PRO', proActive:'Bidoro PRO active ✓',
+      title:'Unlock sync, calendar & friends'
+    },
+    ko: {
+      brand:'비도로', pro:'PRO',
+      feats:[
+        ['☁️','모든 기기에서 동기화','아이폰·아이패드·웹이 항상 같은 데이터'],
+        ['📅','애플·구글 캘린더 동기화','일정을 양방향으로 보고 쓰기'],
+        ['👫','친구','집중을 공유하고 서로 응원하기'],
+        ['💖','비도로 응원하기','앱이 계속 자랄 수 있도록']
+      ],
+      trial:'7일 무료 체험, 이후',
+      monthly:'월', yearly:'년',
+      restore:'구매 복원', terms:'이용약관', privacy:'개인정보 처리방침',
+      webOnly:'구매는 비도로 iPhone / iPad 앱에서 할 수 있어요.',
+      thanks:'비도로 PRO 시작! 🎉',
+      upgrade:'비도로 PRO로 업그레이드', proActive:'비도로 PRO 사용 중 ✓',
+      title:'동기화·캘린더·친구 잠금 해제'
+    }
+  };
+  function C(){ return COPY[L()] || COPY.en; }
+
+  // ---- inject CSS once ----
+  function ensureCSS(){
+    if (document.getElementById('pw-style')) return;
+    var s = document.createElement('style'); s.id='pw-style';
+    s.textContent = [
+      '#paywall-modal{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(17,24,39,.55);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);padding:18px;}',
+      '#paywall-modal.show{display:flex;}',
+      '.pw-card{position:relative;width:100%;max-width:430px;max-height:92vh;overflow:auto;background:var(--surface,#fff);color:var(--text-main,#1f2937);border-radius:22px;box-shadow:0 24px 70px rgba(0,0,0,.4);padding:26px 22px 18px;}',
+      '.pw-x{position:absolute;top:12px;left:12px;width:30px;height:30px;border:none;border-radius:50%;background:rgba(127,127,127,.14);color:var(--text-main,#374151);font-size:17px;line-height:1;cursor:pointer;}',
+      '.pw-head{display:flex;align-items:center;gap:8px;justify-content:center;margin:6px 0 2px;}',
+      '.pw-brand{font-size:1.9rem;font-weight:800;letter-spacing:-.5px;}',
+      '.pw-badge{background:#E0533D;color:#fff;font-weight:800;font-size:1.05rem;padding:3px 10px;border-radius:9px;}',
+      '.pw-sub{text-align:center;color:var(--text-dim,#6b7280);font-size:.92rem;margin:0 0 12px;}',
+      '.pw-hero{width:100%;max-width:230px;display:block;margin:4px auto 10px;}',
+      '.pw-feats{list-style:none;margin:8px 0 14px;padding:0;}',
+      '.pw-feat{display:flex;gap:11px;align-items:flex-start;padding:9px 2px;border-bottom:1px solid var(--card-border,rgba(127,127,127,.16));}',
+      '.pw-feat:last-child{border-bottom:none;}',
+      '.pw-fi{font-size:1.3rem;line-height:1.2;flex:0 0 auto;}',
+      '.pw-ft{font-weight:700;font-size:.98rem;}',
+      '.pw-fd{color:var(--text-dim,#6b7280);font-size:.82rem;margin-top:1px;}',
+      '.pw-trial{text-align:center;color:var(--text-dim,#6b7280);font-size:.9rem;margin:6px 0 10px;}',
+      '.pw-buy{display:block;width:100%;border:2px solid #E0533D;border-radius:14px;background:transparent;color:#E0533D;font-weight:800;padding:14px;margin:0 0 10px;cursor:pointer;font-size:1.18rem;position:relative;-webkit-tap-highlight-color:transparent;}',
+      '.pw-buy.fill{background:#E0533D;color:#fff;}',
+      '.pw-buy:active{transform:scale(.99);}',
+      '.pw-per{font-size:.95rem;font-weight:700;opacity:.9;}',
+      '.pw-off{position:absolute;top:-9px;right:12px;background:#E0533D;color:#fff;font-size:.72rem;font-weight:800;padding:2px 7px;border-radius:7px;border:2px solid var(--surface,#fff);}',
+      '.pw-restore{display:block;width:100%;text-align:center;background:none;border:none;color:#E0533D;font-weight:700;font-size:.95rem;padding:8px;margin-top:2px;cursor:pointer;}',
+      '.pw-legal{text-align:center;color:var(--text-dim,#9ca3af);font-size:.8rem;margin-top:4px;}',
+      '.pw-legal a{color:var(--text-dim,#9ca3af);text-decoration:none;}',
+      '.pw-legal a:active{text-decoration:underline;}',
+      // settings upgrade row + free-tier hiding of all sync controls
+      'body.bidoro-free .cal-sync-sec,body.bidoro-free #icloud-status-row,body.bidoro-free #auth-push-now,body.bidoro-free .account-row-2{display:none !important;}',
+      '#settings-pro-row{display:none;width:100%;border:none;border-radius:14px;background:linear-gradient(120deg,#E0533D,#f0794f);color:#fff;font-weight:800;font-size:1rem;padding:13px;margin:0 0 14px;cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;}',
+      'body.bidoro-free #settings-pro-row{display:block;}',
+      '#settings-pro-active{display:none;margin:0 0 14px;text-align:center;color:#16a34a;font-weight:800;font-size:.95rem;}',
+      'body:not(.bidoro-free) #settings-pro-active{display:block;}'
+    ].join('\n');
+    document.head.appendChild(s);
+  }
+
+  function nativeIAP(){ return (window.BidoroIAP && typeof window.BidoroIAP.purchase==='function') ? window.BidoroIAP : null; }
+
+  // ---- build modal once ----
+  function ensureModal(){
+    ensureCSS();
+    var m = document.getElementById('paywall-modal');
+    if (m) { fill(m); return m; }
+    m = document.createElement('div'); m.id='paywall-modal'; m.setAttribute('role','dialog'); m.setAttribute('aria-modal','true');
+    m.innerHTML =
+      '<div class="pw-card">'+
+        '<button class="pw-x" type="button" aria-label="Close">✕</button>'+
+        '<div class="pw-head"><span class="pw-brand" id="pw-brand">Bidoro</span><span class="pw-badge" id="pw-pro">PRO</span></div>'+
+        '<div class="pw-sub" id="pw-title"></div>'+
+        '<img class="pw-hero" id="pw-hero" src="images/paywall-hero.png" alt="" onerror="this.style.display=\'none\'">'+
+        '<ul class="pw-feats" id="pw-feats"></ul>'+
+        '<div class="pw-trial" id="pw-trial"></div>'+
+        '<button class="pw-buy" id="pw-buy-monthly" type="button"><span class="pw-price">$1.99</span> / <span class="pw-per pw-per-m"></span></button>'+
+        '<button class="pw-buy fill" id="pw-buy-yearly" type="button"><span class="pw-off">-37%</span><span class="pw-price">$14.99</span> / <span class="pw-per pw-per-y"></span></button>'+
+        '<button class="pw-restore" id="pw-restore" type="button"></button>'+
+        '<div class="pw-legal"><a href="https://bidoro.app/terms.html" target="_blank" rel="noopener" id="pw-terms"></a> · <a href="https://bidoro.app/privacy.html" target="_blank" rel="noopener" id="pw-privacy"></a></div>'+
+      '</div>';
+    document.body.appendChild(m);
+    m.addEventListener('click', function(e){ if (e.target === m) closePaywall(); });
+    m.querySelector('.pw-x').addEventListener('click', closePaywall);
+    m.querySelector('#pw-buy-monthly').addEventListener('click', function(){ buy('monthly'); });
+    m.querySelector('#pw-buy-yearly').addEventListener('click', function(){ buy('yearly'); });
+    m.querySelector('#pw-restore').addEventListener('click', restore);
+    document.addEventListener('keydown', function(e){ if (e.key==='Escape' && m.classList.contains('show')) closePaywall(); });
+    fill(m);
+    return m;
+  }
+
+  function fill(m){
+    var c = C();
+    m.querySelector('#pw-brand').textContent = c.brand;
+    m.querySelector('#pw-pro').textContent = c.pro;
+    m.querySelector('#pw-title').textContent = c.title;
+    m.querySelector('#pw-trial').textContent = c.trial;
+    m.querySelector('.pw-per-m').textContent = c.monthly;
+    m.querySelector('.pw-per-y').textContent = c.yearly;
+    m.querySelector('#pw-restore').textContent = c.restore;
+    m.querySelector('#pw-terms').textContent = c.terms;
+    m.querySelector('#pw-privacy').textContent = c.privacy;
+    var ul = m.querySelector('#pw-feats'); ul.innerHTML='';
+    c.feats.forEach(function(f){
+      var li=document.createElement('li'); li.className='pw-feat';
+      li.innerHTML='<span class="pw-fi">'+f[0]+'</span><div><div class="pw-ft"></div><div class="pw-fd"></div></div>';
+      li.querySelector('.pw-ft').textContent=f[1]; li.querySelector('.pw-fd').textContent=f[2];
+      ul.appendChild(li);
+    });
+  }
+
+  function buy(plan){
+    var iap = nativeIAP();
+    if (!iap) { try { if (typeof bidoroToast==='function') bidoroToast(C().webOnly); } catch(_){} return; }
+    try { iap.purchase(plan); } catch(_){ try { if (typeof bidoroToast==='function') bidoroToast(C().webOnly); } catch(_e){} }
+  }
+  function restore(){
+    var iap = nativeIAP();
+    if (!iap || typeof iap.restore!=='function') { try { if (typeof bidoroToast==='function') bidoroToast(C().webOnly); } catch(_){} return; }
+    try { iap.restore(); } catch(_){}
+  }
+
+  window.bidoroOpenPaywall = function(feature){
+    var m = ensureModal(); fill(m);
+    requestAnimationFrame(function(){ m.classList.add('show'); });
+    try { if (nativeIAP() && typeof nativeIAP().products==='function') nativeIAP().products(); } catch(_){}
+  };
+  function closePaywall(){ var m=document.getElementById('paywall-modal'); if (m) m.classList.remove('show'); }
+  window.bidoroClosePaywall = closePaywall;
+
+  // Gate helper: true if allowed (premium); else open paywall and return false.
+  window.bidoroRequirePremium = function(feature){
+    if (window.bidoroIsPremium()) return true;
+    window.bidoroOpenPaywall(feature);
+    return false;
+  };
+
+  // Show/hide sync controls + the settings upgrade row by entitlement.
+  function applyPremiumUI(){
+    var prem = window.bidoroIsPremium();
+    document.body.classList.toggle('bidoro-free', !prem);
+    // Inject the settings upgrade row / active badge once (anchored before the
+    // calendar-sync block in the Account panel).
+    var anchor = document.getElementById('acct-sync-sec');
+    if (anchor && !document.getElementById('settings-pro-row')) {
+      var up = document.createElement('button'); up.id='settings-pro-row'; up.type='button';
+      up.addEventListener('click', function(){ window.bidoroOpenPaywall('settings'); });
+      var act = document.createElement('div'); act.id='settings-pro-active';
+      anchor.parentNode.insertBefore(act, anchor);
+      anchor.parentNode.insertBefore(up, anchor);
+    }
+    var up2 = document.getElementById('settings-pro-row'); if (up2) up2.textContent = C().upgrade;
+    var act2 = document.getElementById('settings-pro-active'); if (act2) act2.textContent = C().proActive;
+  }
+  window._applyPremiumUI = applyPremiumUI;
+
+  // initial paint (deferred so the DOM/state are ready)
+  try { applyPremiumUI(); } catch(_){}
+  setTimeout(function(){ try { applyPremiumUI(); } catch(_){} }, 0);
+})();
+
+/* =========================================================================
+   FIRST-LAUNCH ONBOARDING — seed locale-aware starter tasks that double as a
+   guided tour of Bidoro's main features.  Runs ONCE, only on a truly fresh
+   install (empty localStorage → _wasFreshClient) with an empty matrix.  The
+   device's system language picks the language; anything outside Bidoro's six
+   locales falls back to English.  Names ≤ 4 words; details live in the memo as
+   bullet points (the same way the App Store welcome lists work).
+   ========================================================================= */
+(function bidoroOnboarding(){
+  function locale(){ try { return (typeof bidoroLocale==='function') ? bidoroLocale() : 'en'; } catch(_) { return 'en'; } }
+  var STARTERS = {
+    en: [
+      { q:'q1', text:'Try the Pomodoro',     note:'• Tap ▶ on a task to start a 25-min focus block\n• Stay off distractions while the bucket fills up\n• A 5-min break begins when it rings' },
+      { q:'q1', text:"Plan today's schedule", note:'• Open Time & Tasks to see your day on the gauge\n• Drag blocks to arrange when you focus\n• The red line is now' },
+      { q:'q2', text:'Build a daily habit',   note:'• Add a Routine that repeats on the days you pick\n• Watch your streak grow in Calendar → Routine\n• Small, every day, beats big and rare' },
+      { q:'q2', text:'Grow your garden',      note:'• Finish tasks to earn coins\n• Water plants and unlock new items\n• A calm reward for staying focused' },
+      { q:'q3', text:'Re-sort by priority',   note:'• This 2×2 is the Eisenhower Matrix\n• Drag a task to another box to re-prioritize\n• Urgent + important sits top-left' },
+      { q:'q4', text:'Explore Settings',      note:'• Change language, sounds and theme\n• Pick your focus music\n• Bidoro PRO adds sync, calendar & friends' }
+    ],
+    ko: [
+      { q:'q1', text:'포모도로 시작하기',  note:'• 할 일의 ▶를 눌러 25분 집중 시작\n• 물통이 차오르는 동안 딴짓은 금지\n• 끝나면 5분 휴식이 시작돼요' },
+      { q:'q1', text:'오늘 일정 짜기',     note:'• 시간 & 할 일에서 하루를 게이지로 보기\n• 블록을 드래그해 집중 시간 배치\n• 빨간 선이 지금 시각이에요' },
+      { q:'q2', text:'매일 습관 만들기',   note:'• 원하는 요일에 반복되는 루틴 추가\n• 캘린더 → 루틴에서 연속 기록 확인\n• 작게 매일이 크게 가끔을 이겨요' },
+      { q:'q2', text:'정원 키우기',        note:'• 할 일을 끝내면 코인 획득\n• 식물에 물을 주고 새 아이템 잠금 해제\n• 집중에 대한 잔잔한 보상' },
+      { q:'q3', text:'우선순위로 다시 정렬', note:'• 이 2×2는 아이젠하워 매트릭스예요\n• 할 일을 다른 칸으로 드래그해 우선순위 변경\n• 급하고 중요한 일은 왼쪽 위' },
+      { q:'q4', text:'설정 둘러보기',      note:'• 언어·소리·테마 변경\n• 집중 음악 고르기\n• 비도로 PRO로 동기화·캘린더·친구 추가' }
+    ],
+    ja: [
+      { q:'q1', text:'ポモドーロを試す',   note:'• タスクの▶を押して25分の集中を開始\n• バケツが満ちる間は他のことをしない\n• 鳴ったら5分休憩が始まります' },
+      { q:'q1', text:'今日の予定を立てる', note:'• 時間 & タスクで一日をゲージで確認\n• ブロックをドラッグして集中時間を配置\n• 赤い線が現在時刻です' },
+      { q:'q2', text:'毎日の習慣を作る',   note:'• 選んだ曜日に繰り返すルーティンを追加\n• カレンダー → ルーティンで連続記録を確認\n• 小さく毎日が大きくたまにに勝つ' },
+      { q:'q2', text:'庭を育てる',         note:'• タスクを終えてコインを獲得\n• 植物に水をやり新しいアイテムを解放\n• 集中への穏やかなご褒美' },
+      { q:'q3', text:'優先度で並べ替え',   note:'• この2×2はアイゼンハワー・マトリクスです\n• タスクを別の枠へドラッグして優先度を変更\n• 緊急かつ重要は左上' },
+      { q:'q4', text:'設定を見る',         note:'• 言語・音・テーマを変更\n• 集中用の音楽を選ぶ\n• Bidoro PROで同期・カレンダー・友だち' }
+    ],
+    zh: [
+      { q:'q1', text:'试试番茄钟',     note:'• 点任务的▶开始25分钟专注\n• 水桶蓄满前不要分心\n• 响铃后开始5分钟休息' },
+      { q:'q1', text:'安排今天日程',   note:'• 在时间 & 任务里用刻度查看一天\n• 拖动区块安排专注时间\n• 红线表示此刻' },
+      { q:'q2', text:'养成每日习惯',   note:'• 添加在选定日期重复的例程\n• 在日历 → 例程查看连续记录\n• 小而每天胜过大而偶尔' },
+      { q:'q2', text:'培育你的花园',   note:'• 完成任务赚取金币\n• 浇水并解锁新物品\n• 给专注的温和奖励' },
+      { q:'q3', text:'按优先级重排',   note:'• 这个2×2是艾森豪威尔矩阵\n• 把任务拖到其他格子改变优先级\n• 紧急且重要在左上角' },
+      { q:'q4', text:'逛逛设置',       note:'• 更改语言、声音和主题\n• 选择专注音乐\n• Bidoro PRO 提供同步、日历和好友' }
+    ],
+    es: [
+      { q:'q1', text:'Prueba el Pomodoro',     note:'• Toca ▶ en una tarea para enfocar 25 min\n• Evita distracciones mientras se llena el cubo\n• Suena y empieza un descanso de 5 min' },
+      { q:'q1', text:'Planifica tu día',       note:'• Abre Tiempo y Tareas para ver tu día\n• Arrastra bloques para ordenar tu enfoque\n• La línea roja es ahora' },
+      { q:'q2', text:'Crea un hábito diario',  note:'• Añade una Rutina que se repite los días que elijas\n• Mira tu racha en Calendario → Rutina\n• Poco cada día vence a mucho de vez en cuando' },
+      { q:'q2', text:'Cultiva tu jardín',      note:'• Termina tareas para ganar monedas\n• Riega plantas y desbloquea objetos\n• Una recompensa tranquila por enfocarte' },
+      { q:'q3', text:'Reordena por prioridad', note:'• Este 2×2 es la Matriz de Eisenhower\n• Arrastra una tarea a otra casilla\n• Urgente e importante va arriba a la izquierda' },
+      { q:'q4', text:'Explora los Ajustes',    note:'• Cambia idioma, sonidos y tema\n• Elige tu música de enfoque\n• Bidoro PRO añade sync, calendario y amigos' }
+    ],
+    fr: [
+      { q:'q1', text:'Essaie le Pomodoro',    note:'• Touche ▶ sur une tâche pour 25 min de focus\n• Évite les distractions pendant le remplissage\n• Une pause de 5 min démarre à la sonnerie' },
+      { q:'q1', text:'Planifie ta journée',   note:'• Ouvre Temps et Tâches pour voir ta journée\n• Fais glisser les blocs pour organiser ton focus\n• La ligne rouge, c\'est maintenant' },
+      { q:'q2', text:'Crée une habitude',     note:'• Ajoute une Routine répétée les jours choisis\n• Suis ta série dans Calendrier → Routine\n• Un peu chaque jour vaut mieux que beaucoup parfois' },
+      { q:'q2', text:'Fais pousser ton jardin', note:'• Termine des tâches pour gagner des pièces\n• Arrose les plantes et débloque des objets\n• Une récompense douce pour rester concentré' },
+      { q:'q3', text:'Trie par priorité',     note:'• Ce 2×2 est la matrice d\'Eisenhower\n• Fais glisser une tâche vers une autre case\n• Urgent et important en haut à gauche' },
+      { q:'q4', text:'Explore les Réglages',  note:'• Change la langue, les sons et le thème\n• Choisis ta musique de focus\n• Bidoro PRO ajoute sync, calendrier et amis' }
+    ]
+  };
+
+  function seed(){
+    var set = STARTERS[locale()] || STARTERS.en;
+    var now = Date.now();
+    set.forEach(function(t, i){
+      if (!state.tasks[t.q]) return;
+      state.tasks[t.q].push({
+        text: t.text, done:false, elapsedMs:0, segments:[],
+        bid: 10, addLogged:true, ord:i, createdAt: now + i,
+        // The memo is rich-text (HTML) — turn the bullet newlines into <br> so
+        // each point lands on its own line.
+        note: String(t.note).replace(/\n/g, '<br>')
+      });
+    });
+    state.onboarded = true;
+    try { saveState(); } catch(_){}
+  }
+
+  try {
+    var empty = state.tasks && !['q1','q2','q3','q4'].some(function(q){ return (state.tasks[q]||[]).length; });
+    var fresh = (typeof _wasFreshClient !== 'undefined') ? _wasFreshClient : false;
+    if (fresh && !state.onboarded && empty) {
+      seed();
+      // The initial render hasn't run yet at parse time, but re-paint defensively
+      // in case something already drew the (then-empty) matrix.
+      setTimeout(function(){
+        try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch(_){}
+        try { if (typeof renderMatrix === 'function') renderMatrix(); } catch(_){}
+        try { if (typeof initFocusPage === 'function') initFocusPage(); } catch(_){}
+      }, 0);
+    }
+  } catch(_){}
+})();
+
+/* =========================================================================
+   APP STORE REVIEW PROMPT — after a few genuine "wins" (finished tasks /
+   completed focus sessions), ask iOS to show the native rating sheet, exactly
+   once.  Apple additionally throttles to ~3 prompts/year, and the sheet only
+   appears inside the app — on plain web this is a harmless no-op.  Driven from
+   logEvent() so every finish funnels through one counter.
+   ========================================================================= */
+(function bidoroReview(){
+  window.bidoroMaybeAskReview = function(eventType){
+    if (eventType !== 'finish-task' && eventType !== 'pomodoro-done') return;   // count real wins only
+    try {
+      if (state.reviewAsked) return;                       // ask at most once
+      state.reviewWins = (state.reviewWins || 0) + 1;
+      if (state.reviewWins >= 3) {
+        var asked = false;
+        try {
+          if (window.BidoroReview && typeof window.BidoroReview.request === 'function') { window.BidoroReview.request(); asked = true; }
+          else if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroReview) { window.webkit.messageHandlers.bidoroReview.postMessage({}); asked = true; }
+        } catch(_){}
+        if (asked) state.reviewAsked = true;               // only mark when the native sheet was actually requested
+      }
+      saveState();
+    } catch(_){}
+  };
+})();
+
+/* =========================================================================
+   TASK-BAR QUICK ACTIONS for MOUSE (web/desktop only) — the left/right swipe
+   to reveal "Do it Tomorrow / Add to timeline / Delete" is hard with a mouse.
+   On a mouse environment we show a small ⋯ button on the hovered bar that opens
+   a menu; the items just trigger the SAME hidden swipe-action buttons, so all
+   the existing logic/animation is reused. Touch devices (iPad/iPhone) and the
+   native app keep the swipe and never see this (gated on hover+fine pointer).
+   ========================================================================= */
+(function taskBarMouseMenu(){
+  function mouseEnv(){
+    try {
+      var native = !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
+      var mouse = window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+      return !native && mouse;
+    } catch(_) { return false; }
+  }
+  if (!mouseEnv()) return;
+  document.body.classList.add('tb-mouse');
+
+  // styles
+  var st = document.createElement('style'); st.id = 'tb-more-style';
+  st.textContent = [
+    '.tb-more-btn{position:fixed;z-index:8000;transform:translateY(-50%);width:22px;height:22px;display:none;align-items:center;justify-content:center;border:none;border-radius:6px;background:rgba(0,0,0,.20);color:#fff;cursor:pointer;padding:0;box-shadow:0 1px 4px rgba(0,0,0,.20);-webkit-tap-highlight-color:transparent;}',
+    '.tb-more-btn:hover{background:rgba(0,0,0,.34);}',
+    '.tb-more-btn svg{fill:currentColor;display:block;}',
+    '.tb-more-pop{position:fixed;z-index:8001;background:var(--surface,#fff);color:var(--text-main,#1f2937);border:1px solid var(--card-border,rgba(0,0,0,.12));border-radius:10px;box-shadow:0 12px 34px rgba(0,0,0,.2);padding:5px;min-width:178px;}',
+    '.tb-more-pop button{display:flex;align-items:center;gap:9px;width:100%;border:none;background:transparent;color:inherit;padding:9px 11px;border-radius:7px;font-size:.9rem;font-weight:600;cursor:pointer;text-align:left;}',
+    '.tb-more-pop button:hover{background:rgba(127,127,127,.14);}',
+    '.tb-more-pop button.tb-more-del{color:#dc2626;}',
+    '.tb-more-pop svg{flex:0 0 auto;}'
+  ].join('\n');
+  (document.head || document.documentElement).appendChild(st);
+
+  var ICON_TMRW = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="12" x2="17" y2="12"/><polyline points="12 7 17 12 12 17"/></svg>';
+  var ICON_GAUGE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="7" x2="14" y2="7"/><line x1="4" y1="12" x2="13" y2="12"/><line x1="4" y1="17" x2="10" y2="17"/><line x1="18" y1="13.5" x2="18" y2="20.5"/><line x1="14.5" y1="17" x2="21.5" y2="17"/></svg>';
+  var ICON_DEL = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+  function L(k){ try { return (typeof tr === 'function') ? tr(k) : k; } catch(_) { return k; } }
+
+  var curRow = null, btn = null, pop = null, hideT = null;
+
+  function ensureBtn(){
+    if (btn) return btn;
+    btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'tb-more-btn'; btn.title = L('Quick actions'); btn.setAttribute('aria-label', L('Quick actions'));
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>';
+    btn.addEventListener('click', function(e){ e.stopPropagation(); e.preventDefault(); openPop(); });
+    btn.addEventListener('mouseenter', cancelHide);
+    btn.addEventListener('mouseleave', scheduleHide);
+    document.body.appendChild(btn);
+    return btn;
+  }
+  function place(row){
+    var b = ensureBtn();
+    var rr = row.getBoundingClientRect();
+    // Sit just LEFT of the leftmost trailing control (note dot / due / play) so
+    // the ⋯ never covers an existing icon.
+    var leftMost = rr.right - 6;
+    ['.task-note-dot', '.task-due', '.task-play', '.task-play-ph'].forEach(function(sel){
+      var el = row.querySelector(sel); if (!el) return;
+      var r = el.getBoundingClientRect(); if (r.width && r.left < leftMost) leftMost = r.left;
+    });
+    b.style.left = Math.round(leftMost - 26) + 'px';
+    b.style.top  = Math.round(rr.top + rr.height / 2) + 'px';
+    b.style.display = 'flex';
+    curRow = row;
+  }
+  function scheduleHide(){ cancelHide(); hideT = setTimeout(hideAll, 180); }
+  function cancelHide(){ if (hideT){ clearTimeout(hideT); hideT = null; } }
+  function hideAll(){ if (btn) btn.style.display = 'none'; closePop(); curRow = null; }
+
+  function onOver(e){
+    var row = e.target.closest && e.target.closest('#focus-matrix .task-row');
+    if (!row) return;
+    if (row.classList.contains('tr-reveal-left') || row.classList.contains('tr-reveal-right')) return;
+    cancelHide();
+    if (row !== curRow) { closePop(); place(row); }
+  }
+  function onOut(e){
+    var to = e.relatedTarget;
+    if (to && (to === btn || (btn && btn.contains(to)) || (pop && pop.contains(to)))) return;
+    var stillRow = to && to.closest && to.closest('#focus-matrix .task-row');
+    if (!stillRow) scheduleHide();
+  }
+  document.addEventListener('mouseover', onOver);
+  document.addEventListener('mouseout', onOut);
+
+  function closePop(){ if (pop){ pop.remove(); pop = null; } }
+  function openPop(){
+    if (!curRow) return;
+    var row = curRow; closePop();
+    pop = document.createElement('div'); pop.className = 'tb-more-pop';
+    [ { lbl: L('Do it Tomorrow'), ico: ICON_TMRW, sel: '.tr-act-tmrw', cls: '' },
+      { lbl: L('Add to timeline'), ico: ICON_GAUGE, sel: '.tr-act-gauge', cls: '' },
+      { lbl: L('Delete'),          ico: ICON_DEL,   sel: '.tr-act-del',  cls: 'tb-more-del' }
+    ].forEach(function(it){
+      var b2 = document.createElement('button'); b2.type = 'button'; b2.className = it.cls;
+      b2.innerHTML = it.ico + '<span>' + it.lbl + '</span>';
+      b2.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        var target = row.querySelector(it.sel);
+        hideAll();
+        if (target) { try { target.click(); } catch(_){} }
+      });
+      pop.appendChild(b2);
+    });
+    pop.addEventListener('mouseenter', cancelHide);
+    pop.addEventListener('mouseleave', scheduleHide);
+    document.body.appendChild(pop);
+    var rb = btn.getBoundingClientRect(), pw = pop.offsetWidth, ph = pop.offsetHeight;
+    var left = Math.max(8, Math.min(rb.right - pw, window.innerWidth - pw - 8));
+    var top = rb.bottom + 4;
+    if (top + ph > window.innerHeight - 8) top = Math.max(8, rb.top - ph - 4);
+    pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  }
+  document.addEventListener('click', function(e){
+    if (!pop) return;
+    if (e.target === btn || (btn && btn.contains(e.target)) || pop.contains(e.target)) return;
+    closePop();
+  });
+  window.addEventListener('scroll', hideAll, true);
+  window.addEventListener('resize', hideAll);
 })();
 
 /* =========================================================================
@@ -15552,6 +16037,9 @@ window.bidoroCalSync = bidoroCalSync;
   });
   document.querySelectorAll('.cal-sync-btn').forEach((b) => b.addEventListener('click', (e) => {
     e.preventDefault(); e.stopPropagation();
+    // Calendar sync is a Bidoro PRO feature (the buttons are hidden from free
+    // users, but guard the action too in case a copy slips through).
+    if (typeof window.bidoroRequirePremium === 'function' && !window.bidoroRequirePremium('calendar')) return;
     bidoroCalSync(b.dataset.prov);
   }));
   // (user) Disconnect button (per provider, both the Month + Account copies).
@@ -28654,6 +29142,7 @@ function logEvent(opts) {
   if (typeof markSettingsChanged === 'function') markSettingsChanged();
   if (typeof debouncedPushSettings === 'function') debouncedPushSettings();
   if (typeof renderWatchLog === 'function') renderWatchLog();
+  try { if (typeof window.bidoroMaybeAskReview === 'function') window.bidoroMaybeAskReview(entry.type); } catch (_) {}
   return entry;
 }
 // Money digits — the game economy is stored in USD; on display we CONVERT to the
@@ -41267,6 +41756,12 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         const _ipDrag = scene.classList.contains('b3d-in-panel');
         _drag.mode = (!_ipDrag && _drag.i >= 0 && vertical && (_drag.i === heightSel || _drag.fromDesc)) ? 'adjust' : 'rotate';
         if (_drag.mode === 'adjust' && _drag.fromDesc && heightSel !== _drag.i) { heightSel = _drag.i; _selClass(); }
+        // The moment a height-ADJUST drag actually begins, lock the page scroll
+        // (until release). This catches the cases the touchstart pre-lock misses,
+        // and — once locked — the non-passive touchmove preventDefault below stops
+        // the page scrolling for the rest of the gesture. Selection alone (a tap)
+        // never reaches here, so it stays scrollable as the user expects.
+        if (_drag.mode === 'adjust') _lockScroll();
       }
       if (_drag.mode === 'rotate') { if (scene) scene.classList.remove('b3d-anim'); spin = _drag.spin0 + dx * 0.55; apply(); return; }
       const lvl = Math.max(1, Math.min(10, Math.round((_drag.h0 - dy / H) * 10)));   // up = higher level
@@ -41293,6 +41788,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
         }
       }
       _drag = null;
+      _unlockScroll();   // release the page scroll lock when the adjust gesture ends
     }
     scene.addEventListener('pointerup', _endDrag);
     scene.addEventListener('pointercancel', () => { _drag = null; });

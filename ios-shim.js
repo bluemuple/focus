@@ -205,7 +205,12 @@
     const ICLOUD_KEYS = ['concentration-app-v1'];   // main state (STORAGE_KEY)
     let _pushDebounce = null;
 
+    // Bidoro PRO gate: cross-device iCloud sync is a paid feature. Free users
+    // stay fully local — never push to or pull from iCloud KV.
+    function _bidoroPremium() { try { return !!(window.state && window.state.premium); } catch (_) { return false; } }
+
     function pushICloud(key) {
+      if (!_bidoroPremium()) return;        // free tier: local-only
       if (_pushDebounce) clearTimeout(_pushDebounce);
       // Coalesce rapid saves (typing in a textbox etc.) — 600 ms idle.
       _pushDebounce = setTimeout(async () => {
@@ -217,6 +222,7 @@
     }
 
     async function pullICloudAndApply(key) {
+      if (!_bidoroPremium()) return;        // free tier: local-only
       try {
         const res = await P.ICloudKV.get({ key });
         const cloudVal = res && res.value;
@@ -267,6 +273,7 @@
     // Listen for external changes (another device pushed an update).
     try {
       P.ICloudKV.addListener('change', (data) => {
+        if (!_bidoroPremium()) return;       // free tier: ignore incoming iCloud changes
         if (!data || !data.key) return;
         if (ICLOUD_KEYS.indexOf(data.key) < 0) return;
         // Apply the new value coming FROM iCloud. Suppress the re-mirror by
@@ -623,5 +630,37 @@
     });
     window.addEventListener('pagehide', pushWidget);
     window.addEventListener('blur', pushWidget);
+  })();
+
+  // ---- 9. In-App Purchase (Bidoro PRO) + App Store review ----
+  // JS → native bridges. The StoreKit logic lives natively (StoreKitBridge.swift,
+  // wired through the "bidoroIAP" / "bidoroReview" WKScriptMessageHandlers in
+  // AppDelegate.swift). Native calls back into the page via:
+  //    window.bidoroSetPremium(on, plan)               — entitlement changed
+  //    window.bidoroSetPrices({monthly, yearly, ...})  — localized App-Store prices
+  // (both defined in index.html's paywall module). Product IDs:
+  //    com.moonleon.bidoro.pro.monthly / com.moonleon.bidoro.pro.yearly
+  (function iapBridge() {
+    function mh(name) {
+      return (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers[name]) || null;
+    }
+    window.BidoroIAP = {
+      products: function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'products' }); } catch (_) {} },
+      purchase: function (plan) { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'purchase', plan: plan }); } catch (_) {} },
+      restore:  function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'restore' }); } catch (_) {} },
+      status:   function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'status' }); } catch (_) {} }
+    };
+    window.BidoroReview = {
+      request: function () { const h = mh('bidoroReview'); if (h) try { h.postMessage({ action: 'request' }); } catch (_) {} }
+    };
+    // On launch, ask native for the live entitlement + localized prices so a
+    // returning subscriber is unlocked with no tap and the paywall shows real
+    // App Store prices.
+    window.addEventListener('load', function () {
+      setTimeout(function () {
+        const h = mh('bidoroIAP');
+        if (h) { try { h.postMessage({ action: 'status' }); h.postMessage({ action: 'products' }); } catch (_) {} }
+      }, 800);
+    });
   })();
 })();
