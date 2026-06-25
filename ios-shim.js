@@ -511,22 +511,32 @@
       const state = window.state;
       if (!state) return null;
       let phase = '', phaseStartMs = 0, phaseEndMs = 0, paused = false, taskTitle = '', sessionLabel = '';
+      let quad = -1, uptimer = false;
+      const _qIdx = (q) => ({ q1: 0, q2: 1, q3: 2, q4: 3 })[q];
+      const _taskName = (a) => { try { const arr = state.tasks && state.tasks[a.q]; const t = arr && arr[a.idx]; return (t && t.text) ? String(t.text).trim() : ''; } catch (_) { return ''; } };
       const at = state.activeTimer;
       if (at && at.type === 'pomodoro' && (at.phase === 'work' || at.phase === 'break')) {
         phase = at.phase;
         paused = !!at.paused;
+        quad = (_qIdx(at.q) != null) ? _qIdx(at.q) : -1;
         phaseStartMs = (+at.phaseStartedAt || +at.startedAt || 0);
         if (at.pendingPhaseConfirm) {
           phaseEndMs = Date.now();   // boundary reached, awaiting confirm → ~0
         } else {
           phaseEndMs = phaseStartMs + (+at.phaseDurationMs || 0);
         }
-        try {
-          const arr = state.tasks && state.tasks[at.q];
-          const t = arr && arr[at.idx];
-          taskTitle = (t && t.text) ? String(t.text).trim() : '';
-        } catch (_) {}
+        taskTitle = _taskName(at);
         sessionLabel = pomoSessionLabel(state, at, taskTitle);
+      } else if (at && at.type === 'uptask') {
+        // q4 distraction STOPWATCH — counts UP, no fixed end. Theme = q4 blue.
+        phase = 'work';
+        uptimer = true;
+        paused = !!at.paused;
+        quad = (_qIdx(at.q) != null) ? _qIdx(at.q) : 3;
+        phaseStartMs = (+at.startedAt || 0);
+        phaseEndMs = 0;            // open-ended
+        taskTitle = _taskName(at);
+        sessionLabel = '';         // q4 stopwatch has no "Session N" badge
       }
       const geo = bucketGeometry(state);
       return {
@@ -548,6 +558,8 @@
         paused: paused,
         taskTitle: taskTitle,
         sessionLabel: sessionLabel,
+        quad: quad,
+        uptimer: uptimer,
         tasksOpen: openTasks(state),
         tasks: openTaskNames(state),
         blocks: scheduleBlocks(state),
