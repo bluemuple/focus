@@ -5538,6 +5538,15 @@
      PC default: behave as a transparent passthrough so layout is unchanged.
      Phone default (stacked): vertical column. Phone split: 1:1 horizontal grid. */
   .time-tasks-wrap { display: contents; }
+  /* (user) Swipe hint behind the T&T section: when the wrap slides sideways it
+     reveals this centred GIF. The wrap goes opaque while sliding so the gif only
+     shows in the freed (blank) area, and the next pane covers it on landing. */
+  #tt-slide-ghost {
+    position: absolute; display: none; z-index: 0; pointer-events: none; overflow: hidden;
+    align-items: center; justify-content: center;
+  }
+  #tt-slide-ghost img { width: 46%; max-width: 190px; height: auto; object-fit: contain; }
+  .time-tasks-wrap.tt-sliding { position: relative; z-index: 1; background: var(--app-bg, #fff); }
   .split-view-toggle {
     /* Hidden on PC (matched by the same min-width: 701px rule below). */
     background: transparent; border: none; padding: 4px;
@@ -33640,6 +33649,40 @@ document.addEventListener('visibilitychange', () => {
   try { window.dispatchEvent(new Event('resize')); } catch (_) {}
   setTimeout(() => { try { window.dispatchEvent(new Event('resize')); } catch (_) {} }, 350);
 });
+// (user) Show/position a centred hint GIF BEHIND the T&T section while it slides
+// sideways (phone portrait). dir>0 (slide right) → slide-right.gif; dir<0 → slide-left.gif.
+// The ghost is pinned to the wrap's box in its (relative) parent so the sliding wrap
+// reveals it, then the landing pane covers it again.
+function _ttSlideGhost(show, dir) {
+  try {
+    const wrap = document.getElementById('time-tasks-wrap');
+    if (!wrap) return;
+    const phone = window.matchMedia && window.matchMedia('(max-width:700px)').matches;
+    const par = wrap.parentElement;
+    let g = document.getElementById('tt-slide-ghost');
+    if (show && phone && par) {
+      if (!g) {
+        g = document.createElement('div');
+        g.id = 'tt-slide-ghost'; g.setAttribute('aria-hidden', 'true');
+        g.innerHTML = '<img alt="">';
+      }
+      if (g.parentElement !== par) par.insertBefore(g, wrap);
+      if (!par.style.position) par.style.position = 'relative';
+      g.style.top = wrap.offsetTop + 'px';
+      g.style.left = wrap.offsetLeft + 'px';
+      g.style.width = wrap.offsetWidth + 'px';
+      g.style.height = wrap.offsetHeight + 'px';
+      const src = (dir > 0) ? 'images/slide-right.gif' : 'images/slide-left.gif';
+      const img = g.querySelector('img');
+      if (img && (img.getAttribute('src') || '') !== src) img.setAttribute('src', src);
+      g.style.display = 'flex';
+      wrap.classList.add('tt-sliding');
+    } else {
+      if (g) g.style.display = 'none';
+      wrap.classList.remove('tt-sliding');
+    }
+  } catch (_) {}
+}
 let _ttFlipBusy = false;
 function flipTimeTasks(toBack, swipeDir) {
   toBack = !!toBack;
@@ -33673,6 +33716,8 @@ function flipTimeTasks(toBack, swipeDir) {
   else { outX = toBack ? -100 : 100; inFromX = toBack ? 100 : -100; }
   const _par = wrap.parentElement, _parOvf = _par ? _par.style.overflowX : '';
   if (_par) _par.style.overflowX = 'hidden';
+  const _gdir = (outX > 0) ? 1 : -1;
+  _ttSlideGhost(true, _gdir);                 // (user) reveal the centred hint gif behind the slide
   // 1) current pane slides out
   wrap.style.transition = 'transform ' + HALF + 'ms cubic-bezier(.4,0,.2,1)';
   wrap.style.transform = 'translateX(' + outX + '%)';
@@ -33692,6 +33737,7 @@ function flipTimeTasks(toBack, swipeDir) {
     wrap.style.height = '';
     wrap.style.minHeight = _carry > 0 ? (_carry + 'px') : '';
     if (typeof drawTimeArea === 'function') drawTimeArea();   // destination fills its gauge to the carried height
+    _ttSlideGhost(true, _gdir);                 // re-align the hint to the (re-rendered) wrap box
     // 3) place the new pane off-screen on the opposite side, then slide it in
     wrap.style.transition = 'none';
     wrap.style.transform = 'translateX(' + inFromX + '%)';
@@ -33711,6 +33757,7 @@ function flipTimeTasks(toBack, swipeDir) {
       try { if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {}
       try { if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
       _ttFlipBusy = false;
+      try { _ttSlideGhost(false); } catch (_) {}   // landing pane covers the hint → hide it
       try { _ttShowPageDots(); } catch (_) {}   // brief "2 pages" dots in the handle, then back to bars
     }, HALF + 40);
   }, HALF + 10);
@@ -33741,7 +33788,7 @@ function _ttShowPageDots() {
 (function wireTtSwipe(){
   const wrap = document.getElementById('time-tasks-wrap'); if (!wrap) return;
   let sx = 0, sy = 0, tracking = false, decided = false, horiz = false, dragging = false;
-  let par = null, parOvf = '', paneW = 0;
+  let par = null, parOvf = '', paneW = 0, lastGhostDir = 0;
   function startDrag() {
     dragging = true; par = wrap.parentElement; parOvf = par ? par.style.overflowX : '';
     if (par) par.style.overflowX = 'hidden';
@@ -33751,7 +33798,7 @@ function _ttShowPageDots() {
   function snapBack() {
     wrap.style.transition = 'transform 180ms cubic-bezier(.4,0,.2,1)';
     wrap.style.transform = 'translateX(0)';
-    setTimeout(function(){ try { wrap.style.transition = ''; wrap.style.transform = ''; } catch (_) {} }, 200);
+    setTimeout(function(){ try { wrap.style.transition = ''; wrap.style.transform = ''; _ttSlideGhost(false); } catch (_) {} }, 200);
   }
   wrap.addEventListener('touchstart', (e) => {
     if (window.matchMedia && window.matchMedia('(min-width:701px)').matches) return;     // phone portrait only
@@ -33760,7 +33807,7 @@ function _ttShowPageDots() {
     if (_ttFlipBusy) return;
     if (!e.touches || e.touches.length !== 1) return;
     if (e.target.closest && e.target.closest('button, a, input, textarea, select, .tg-block, .time-block, .task-row, .mca, .sg-btn, .time-resize-handle')) return;
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true; decided = false; horiz = false; dragging = false;
+    sx = e.touches[0].clientX; sy = e.touches[0].clientY; tracking = true; decided = false; horiz = false; dragging = false; lastGhostDir = 0;
   }, { passive: true });
   wrap.addEventListener('touchmove', (e) => {
     if (!tracking || !e.touches || !e.touches.length) return;
@@ -33773,6 +33820,8 @@ function _ttShowPageDots() {
       e.preventDefault();   // block vertical scroll while horizontally dragging
       let tx = dx; if (tx > paneW) tx = paneW; if (tx < -paneW) tx = -paneW;   // clamp so it can't fling off
       wrap.style.transform = 'translateX(' + tx + 'px)';
+      const gd = (tx >= 0) ? 1 : -1;   // (user) finger right → slide-right.gif, left → slide-left.gif
+      if (gd !== lastGhostDir) { lastGhostDir = gd; _ttSlideGhost(true, gd); }
     }
   }, { passive: false });
   function onEnd(e) {
@@ -33790,7 +33839,7 @@ function _ttShowPageDots() {
     }
   }
   wrap.addEventListener('touchend', onEnd, { passive: true });
-  wrap.addEventListener('touchcancel', (e) => { if (dragging) { if (par) par.style.overflowX = parOvf; dragging = false; snapBack(); } tracking = false; }, { passive: true });
+  wrap.addEventListener('touchcancel', (e) => { if (dragging) { if (par) par.style.overflowX = parOvf; dragging = false; snapBack(); } else { _ttSlideGhost(false); } tracking = false; }, { passive: true });
 })();
 // FRONT button (2×2 grid icon, "Time & Tasks" header) → flip to the Tasks face.
 const _splitViewBtn = document.getElementById('split-view-toggle');
