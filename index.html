@@ -4772,6 +4772,7 @@
   body.garden-peek nav.tabs > button#topbar-menu-btn {
     opacity: 1; pointer-events: auto;
     width: 32px; min-width: 32px; padding: 0; margin: 0; border-width: 0; overflow: visible;
+    order: 1;   /* (user) keep the hamburger FAR RIGHT — the mini-pomodoro + task overlay (order 0) sits to its LEFT */
   }
   body.scrolled-now .topbar-now, body.garden-peek .topbar-now {
     position: static; opacity: 1; max-width: 55vw;   /* in-flow + right-anchored (col 3); cap so a long name can't eat the quote */
@@ -4780,10 +4781,12 @@
      "No task" — pointless. So whenever body.tb-no-task is set (renderImDoing's idle
      branch) keep the FULL button cluster (hamburger / home / calendar / always-on)
      visible and suppress the now-overlay, even while scrolled / in the garden peek. */
-  body.tb-no-task.scrolled-now nav.tabs,
-  body.tb-no-task.garden-peek nav.tabs { gap: 4px; }
-  body.tb-no-task.scrolled-now nav.tabs > button,
-  body.tb-no-task.garden-peek nav.tabs > button {
+  /* Home "scrolled-now" peek with no active task → keep the FULL button cluster (the overlay
+     would just read "No task"). (user) The GARDEN peek is excluded here: in the garden the 4
+     buttons NEVER come back — only the hamburger shows (base garden-peek rule), and the empty
+     overlay is hidden below. */
+  body.tb-no-task.scrolled-now nav.tabs { gap: 4px; }
+  body.tb-no-task.scrolled-now nav.tabs > button {
     opacity: 1; pointer-events: auto;
     width: 32px; min-width: 32px; padding: 0; border-width: 1px; overflow: visible;
   }
@@ -12933,6 +12936,7 @@ function _buildSettingsPayload(ts, versionsForPush) {
       startTime:    state.startTime    || '',
       deadline:     state.deadline     || '',
       deadlineDate: state.deadlineDate || '',
+      gtdScope:     state.gtdScope     || '',
       bedtime:      state.bedtime      || '',
       bedtimeDate:  state.bedtimeDate  || ''
     },
@@ -13257,6 +13261,10 @@ function applyRemoteSettings(remote) {
     if ('startTime'    in tg) state.startTime    = tg.startTime    || '';
     if ('deadline'     in tg) state.deadline     = tg.deadline     || '';
     if ('deadlineDate' in tg) state.deadlineDate = tg.deadlineDate || '';
+    if ('gtdScope'     in tg) state.gtdScope     = tg.gtdScope     || '';
+    // (user) Daily ("every") goal: never keep a pinned date — it must roll to TODAY's time each
+    // day. Clearing on load is what fixes "next day the time is stuck on yesterday → 43:19 left".
+    if (state.gtdScope === 'every') state.deadlineDate = '';
     if ('bedtime'      in tg) state.bedtime      = tg.bedtime      || '';
     if ('bedtimeDate'  in tg) state.bedtimeDate  = tg.bedtimeDate  || '';
     safeSetInput(typeof sdInput     !== 'undefined' ? sdInput     : null, state.startDate);
@@ -18458,6 +18466,7 @@ function bumpDeadlineBy(addMs) {
   const t = new Date(baseMs + addMs);
   state.deadlineDate = fmtDateLocal(t);
   state.deadline     = fmtTimeLocal(t);
+  state.gtdScope     = 'today';                 // pinning a specific time → no longer the daily/rolling goal
   if (dlInput)     dlInput.value     = state.deadline;
   if (dlDateInput) dlDateInput.value = state.deadlineDate;
   saveState(); updateCountdowns(); drawGauge();
@@ -23034,6 +23043,7 @@ const GtdCapsule = {
     const moved = !!(this.drag && this.drag.moved);
     this.drag = null;
     if (moved) {
+      state.gtdScope = 'today';                 // dragging the line pins a specific time → not the daily goal
       const di = document.getElementById('deadline'), dd = document.getElementById('deadline-date');
       if (di) di.value = state.deadline;
       if (dd) dd.value = state.deadlineDate;
@@ -25254,6 +25264,8 @@ function _doShufflePack() {
 const _GTD_CLOCK_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7.5 12 12 15 14"/></svg>';
 function _gtdRemainMs() {
   try {
+    // (user) Daily goal: keep the date un-pinned so combineDateTime rolls to today's time.
+    if (state.gtdScope === 'every' && state.deadlineDate) { state.deadlineDate = ''; }
     // Compute straight from the saved deadline so the capsule shows h:mm in EVERY
     // view. The 2×2 matrix gauge doesn't set _gtdMap, so GtdCapsule.deadlineMs()
     // returned null there and the capsule fell back to the clock icon. combineDateTime
@@ -28670,6 +28682,7 @@ const BIDORO_I18N = {
   "Notes":{ko:"노트",zh:"笔记",ja:"ノート",es:"Notas",fr:"Notes"},
   "Friends":{ko:"친구랑",zh:"好友",ja:"友だち",es:"Amigos",fr:"Amis"},
   "Details":{ko:"자세히",zh:"详情",ja:"詳細",es:"Detalles",fr:"Détails"},
+  "Me":{ko:"나",zh:"我",ja:"自分",es:"Yo",fr:"Moi"},
   "‹ Friends":{ko:"‹ 친구랑",zh:"‹ 好友",ja:"‹ 友だち",es:"‹ Amigos",fr:"‹ Amis"},
   "Timeline":{ko:"타임라인",zh:"时间线",ja:"タイムライン",es:"Cronología",fr:"Chronologie"},
   "Change Sharing":{ko:"공유 변경",zh:"更改共享",ja:"共有を変更",es:"Cambiar uso compartido",fr:"Modifier le partage"},
@@ -32450,7 +32463,7 @@ const Friends = (function(){
     const nl=document.createElement('div'); nl.className='fg-now'; nl.style.top=y(now)+'px'; container.appendChild(nl);
   }
   function _renderTimeline(body, data){
-    body.innerHTML = '<div class="fd-tl"><div class="fd-tl-col"><h4>You</h4><div class="fg-gauge" id="fd-tl-mine"></div></div>'
+    body.innerHTML = '<div class="fd-tl"><div class="fd-tl-col"><h4>Me</h4><div class="fg-gauge" id="fd-tl-mine"></div></div>'
                    + '<div class="fd-tl-col"><h4>'+_esc(_cur.nickname||'Friend')+'</h4><div class="fg-gauge" id="fd-tl-theirs"></div></div></div>';
     _gauge($('fd-tl-mine'), (state.scheduledBlocks||[]), true);
     _gauge($('fd-tl-theirs'), (data.scheduledBlocks||[]), false);   // names already stripped server-side
@@ -37030,20 +37043,16 @@ function _gardenPeekStop() {
 }
 function _gardenPeekStart() {
   _gardenPeekStop();
-  const buttonsPhase = () => {
-    document.body.classList.remove('garden-peek');                  // show the 4 nav buttons
-    _gardenPeekTimer = setTimeout(() => {
-      const running = !!(state.activeTimer && state.activeTimer.type === 'pomodoro');
-      if (running) {
-        try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // keep #tn-name/#tn-pomo fresh
-        document.body.classList.add('garden-peek');                 // show pomodoro + task
-        _gardenPeekTimer = setTimeout(buttonsPhase, 5000);
-      } else {
-        _gardenPeekTimer = setTimeout(buttonsPhase, 30000);         // nothing to peek → recheck later
-      }
-    }, 30000);
+  // (user) In the garden the 4 nav buttons NEVER show. Keep the peek state ON permanently so the
+  // top-bar right slot always reads:  [quote] | [mini-pomodoro] [task name] [hamburger]  — the
+  // hamburger staying in its original far-right position. No 30s/5s alternation. (When no task is
+  // running the overlay is empty → CSS keeps just the hamburger.)
+  const tick = () => {
+    try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}   // keep #tn-name/#tn-pomo fresh
+    document.body.classList.add('garden-peek');
+    _gardenPeekTimer = setTimeout(tick, 1000);
   };
-  buttonsPhase();
+  tick();
 }
 
 /* ===== Manual button inside the Account row ===== */
