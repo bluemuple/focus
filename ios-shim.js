@@ -410,11 +410,27 @@
         const out = [];
         ['q1', 'q2', 'q3', 'q4'].forEach(q => {
           const arr = (state.tasks && state.tasks[q]) || [];
-          for (let i = 0; i < arr.length && out.length < 8; i++) {
+          for (let i = 0; i < arr.length && out.length < 12; i++) {
             const t = arr[i];
             if (t && !t.done && t.text && String(t.text).trim()) {
               out.push(String(t.text).trim());
             }
+          }
+        });
+        return out;
+      } catch (_) { return []; }
+    }
+
+    // Parallel quadrant indices (0–3) for openTaskNames — the gauge widget's task
+    // list colours each bullet by quadrant.
+    function openTaskQuads(state) {
+      try {
+        const out = []; const qi = { q1: 0, q2: 1, q3: 2, q4: 3 };
+        ['q1', 'q2', 'q3', 'q4'].forEach(q => {
+          const arr = (state.tasks && state.tasks[q]) || [];
+          for (let i = 0; i < arr.length && out.length < 12; i++) {
+            const t = arr[i];
+            if (t && !t.done && t.text && String(t.text).trim()) out.push(qi[q]);
           }
         });
         return out;
@@ -570,6 +586,7 @@
         uptimer: uptimer,
         tasksOpen: openTasks(state),
         tasks: openTaskNames(state),
+        taskQuads: openTaskQuads(state),
         blocks: scheduleBlocks(state),
         goalMs: gtdGoalMs(state),
         updatedMs: Date.now()
