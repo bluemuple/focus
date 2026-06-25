@@ -28032,9 +28032,19 @@ function renderImDoing() {
     // (future createdAt — hidden from the matrix), so an empty-looking list says
     // "Add one." instead of "Nice list. Now press start.".
     const _idleTodayKey = (typeof _calDateKey === 'function') ? _calDateKey(new Date()) : null;
-    const _anyTask = ['q1','q2','q3','q4'].some(q => state.tasks && Array.isArray(state.tasks[q]) && state.tasks[q].some(t =>
-      t && t.text && String(t.text).trim() && !t.done &&
-      !(_idleTodayKey && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _idleTodayKey)));
+    // (user) Decide "any task" EXACTLY like the matrix bars do — via _tasksOnDate(today),
+    // counting only non-done tasks. The old check merely excluded FUTURE-dated tasks, so a
+    // task created on a PAST day (which the bar does NOT show today) still counted → the
+    // idle hero wrongly said "Nice list. Now press start." with an empty bar.
+    let _anyTask;
+    if (typeof _tasksOnDate === 'function' && _idleTodayKey) {
+      _anyTask = (_tasksOnDate(_idleTodayKey) || []).some(o =>
+        o && o.task && o.task.text && String(o.task.text).trim() && !o.task.done);
+    } else {
+      _anyTask = ['q1','q2','q3','q4'].some(q => state.tasks && Array.isArray(state.tasks[q]) && state.tasks[q].some(t =>
+        t && t.text && String(t.text).trim() && !t.done &&
+        !(_idleTodayKey && typeof t.createdAt === 'number' && _calDateKey(t.createdAt) > _idleTodayKey)));
+    }
     card.classList.toggle('fc-startnow', _anyTask);
     card.classList.toggle('fc-down', !_anyTask);
     const _ntImg = document.getElementById('fc-no-task');
