@@ -25162,7 +25162,10 @@ function _renderShuffleBtn() {
 let _arrangeSnap = null;
 function _setArrLabel(btn, text, undo) {
   if (!btn) return;
-  const l = btn.querySelector('.hd-lbl'); if (l) l.textContent = text;
+  // Store the English source on __i18nEn + translate now, so the label localises (and a later
+  // locale switch re-translates correctly) — same pattern as the Edit chip.
+  const l = btn.querySelector('.hd-lbl');
+  if (l) { l.__i18nEn = text; l.textContent = (typeof tr === 'function') ? tr(text) : text; }
   btn.classList.toggle('is-revert', !!undo);
 }
 function _renderArrangeBtns() {
@@ -27945,13 +27948,40 @@ function renderImDoing() {
     const _instant = !!window._fcRingInstant;
     if (_instant) { arc.style.transition = 'none'; knob.style.transition = 'none'; }
     arc.style.stroke = color;
+    const _clrExtraArcs = (from) => { let _n = from, _e; while ((_e = document.getElementById('fc-ring-arc-' + _n))) { _e.remove(); _n++; } };
     if (fillUp) {
       // (user) Extension / up-timer ring: starts ALL LIGHT, and the dark arc GROWS as the knob
       // sweeps (opposite of the normal countdown ring, which starts dark and drains to light).
+      _clrExtraArcs(1);
       const _fe = Math.max(0, Math.min(1, fracElapsed));
       arc.style.strokeDasharray  = (_fe * C).toFixed(1) + ' ' + C.toFixed(1);
       arc.style.strokeDashoffset = '0';
+    } else if (Array.isArray(segs) && segs.length > 1) {
+      // (user) Multi-task combined block (Strict Pomo / No Room) → SPLIT the card ring by task
+      // colour, exactly like the full-screen dial. Each segment draws only its REMAINING portion;
+      // clone the base arc per extra segment so the moving knob passes each task's colour.
+      const _svg = arc.parentNode;
+      let _prev = 0;
+      segs.forEach((sg, i) => {
+        const aFrac = _prev, bFrac = sg.endFrac; _prev = bFrac;
+        const vStart = Math.max(fracElapsed, aFrac);                 // visible (remaining) part of this segment
+        const id = (i === 0) ? 'fc-ring-arc' : ('fc-ring-arc-' + i);
+        let seg = document.getElementById(id);
+        if (!seg && _svg) { seg = arc.cloneNode(false); seg.id = id; _svg.insertBefore(seg, knob); }
+        if (seg) {
+          if (_instant) seg.style.transition = 'none';
+          seg.style.stroke = sg.color;
+          if (bFrac > vStart + 0.0005) {
+            seg.style.strokeDasharray  = ((bFrac - vStart) * C).toFixed(1) + ' ' + C.toFixed(1);
+            seg.style.strokeDashoffset = (-vStart * C).toFixed(1);
+          } else {
+            seg.style.strokeDasharray  = '0 ' + C.toFixed(1);        // fully elapsed → hidden
+          }
+        }
+      });
+      _clrExtraArcs(segs.length);                                    // drop stale extra arcs
     } else {
+      _clrExtraArcs(1);
       arc.style.strokeDasharray  = (rem * C).toFixed(1) + ' ' + C.toFixed(1);
       arc.style.strokeDashoffset = (-fracElapsed * C).toFixed(1);
     }
@@ -27966,6 +27996,7 @@ function renderImDoing() {
     if (_instant) {
       void getComputedStyle(arc).strokeDashoffset;   // flush the no-transition paint
       arc.style.transition = ''; knob.style.transition = '';   // restore CSS .9s for ticks
+      let _ri = 1, _re; while ((_re = document.getElementById('fc-ring-arc-' + _ri))) { _re.style.transition = ''; _ri++; }
       window._fcRingInstant = false;                 // consume (one-shot)
     }
     const timeEl = document.getElementById('fc-left'); if (timeEl) timeEl.style.color = color;
@@ -28876,6 +28907,9 @@ const BIDORO_I18N = {
   "Shared anonymously; others appear in":{ko:"익명으로 공유됩니다; 다른 사람의 메모는 여기에:",zh:"匿名分享；其他人的会出现在",ja:"匿名で共有されます。他の人のは次に表示:",es:"Se comparte de forma anónima; los demás aparecen en",fr:"Partagé anonymement ; les autres apparaissent dans"},
   "No Room":{ko:"공간 없음",zh:"没有空间",ja:"余白なし",es:"Sin espacio",fr:"Pas de place"},
   "Shuffle":{ko:"섞기",zh:"打乱",ja:"シャッフル",es:"Mezclar",fr:"Mélanger"},
+  "Strict Pomo":{ko:"뽀모 정렬",zh:"番茄整理",ja:"ポモ整列",es:"Pomo estricto",fr:"Pomo strict"},
+  "Prioritize":{ko:"우선순위",zh:"优先排序",ja:"優先順位",es:"Priorizar",fr:"Prioriser"},
+  "Undo":{ko:"되돌리기",zh:"撤销",ja:"元に戻す",es:"Deshacer",fr:"Annuler"},
   "+ Event":{ko:"+ 이벤트",zh:"+ 事件",ja:"+ 予定",es:"+ Evento",fr:"+ Événement"},
   "to get things done":{ko:"까지 끝내기",zh:"前完成",ja:"までに完了",es:"para terminar",fr:"pour finir"},
   "Finish today's tasks by...":{ko:"오늘 할 일 끝낼 시각...",zh:"今天的任务何时完成…",ja:"今日のタスクの完了時刻…",es:"Termina las tareas de hoy antes de...",fr:"Finir les tâches du jour avant..."},
@@ -33445,6 +33479,14 @@ function placeManaSlider() { /* no-op — sliders no longer surfaced */ }
    flip can't leave tt-edit stuck on in matrix mode. */
 function _syncEditClasses() {
   const on = !!state.splitActionsVisible;
+  // (user) Leaving Edit (편집 완료) ALWAYS resets the Strict Pomo / Prioritize toggles back to their
+  // action label — re-entering Edit (e.g. after adding a new block) must never show the lingering
+  // post-press "Undo". The Undo is only offered within the SAME Edit session.
+  if (!on && state.gaugeArrange) {
+    state.gaugeArrange = null;
+    try { saveState(); } catch (_) {}
+    try { if (typeof _renderArrangeBtns === 'function') _renderArrangeBtns(); } catch (_) {}
+  }
   const back = !!state.ttFlipped || _isPhoneLandscape();   // landscape = matrix face → never the tt-edit (Time & Tasks) on-gauge widget
   // On WIDE (web / iPad) the gauge is its own left-hand column, so the on-gauge edit
   // widget (tt-edit, the move/undo pad that replaces the mobile gauge) doesn't apply —
