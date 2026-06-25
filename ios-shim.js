@@ -403,38 +403,42 @@
       } catch (_) { return 0; }
     }
 
-    // The actual NAMES of the open tasks (q1→q4 order, important-first), capped so
-    // the JSON stays small — the Medium "balance" widget lists these as text.
-    function openTaskNames(state) {
+    // EXACTLY today's task bars (matches the matrix): uses the app's _tasksOnDate so
+    // future-deferred tasks are excluded and DONE tasks are included (shown checked).
+    // Returns { items: [{ n, q, d }] capped at 12, total } — incomplete first, done last.
+    function todayTasks(state) {
       try {
-        const out = [];
-        ['q1', 'q2', 'q3', 'q4'].forEach(q => {
-          const arr = (state.tasks && state.tasks[q]) || [];
-          for (let i = 0; i < arr.length && out.length < 12; i++) {
-            const t = arr[i];
-            if (t && !t.done && t.text && String(t.text).trim()) {
-              out.push(String(t.text).trim());
+        const qi = { q1: 0, q2: 1, q3: 2, q4: 3 };
+        let list = null;
+        const key = (typeof window._calDateKey === 'function') ? window._calDateKey(new Date()) : null;
+        if (key && typeof window._tasksOnDate === 'function') {
+          list = window._tasksOnDate(key);          // [{ q, idx, task, ... }]
+        }
+        let rows = [];
+        if (Array.isArray(list)) {
+          for (const o of list) {
+            if (!o || !o.task) continue;
+            const t = o.task;
+            const name = (t.text && String(t.text).trim()) || '';
+            if (!name) continue;
+            rows.push({ n: name.slice(0, 40), q: (qi[o.q] != null ? qi[o.q] : -1), d: !!t.done });
+          }
+        } else {
+          // Fallback (app too old / not loaded): matrix-style filter — drop future-deferred, keep done.
+          ['q1', 'q2', 'q3', 'q4'].forEach(q => {
+            const arr = (state.tasks && state.tasks[q]) || [];
+            for (let i = 0; i < arr.length; i++) {
+              const t = arr[i];
+              if (!t || !t.text || !String(t.text).trim()) continue;
+              if (key && typeof t.createdAt === 'number' && typeof window._calDateKey === 'function'
+                  && window._calDateKey(t.createdAt) > key) continue;
+              rows.push({ n: String(t.text).trim().slice(0, 40), q: qi[q], d: !!t.done });
             }
-          }
-        });
-        return out;
-      } catch (_) { return []; }
-    }
-
-    // Parallel quadrant indices (0–3) for openTaskNames — the gauge widget's task
-    // list colours each bullet by quadrant.
-    function openTaskQuads(state) {
-      try {
-        const out = []; const qi = { q1: 0, q2: 1, q3: 2, q4: 3 };
-        ['q1', 'q2', 'q3', 'q4'].forEach(q => {
-          const arr = (state.tasks && state.tasks[q]) || [];
-          for (let i = 0; i < arr.length && out.length < 12; i++) {
-            const t = arr[i];
-            if (t && !t.done && t.text && String(t.text).trim()) out.push(qi[q]);
-          }
-        });
-        return out;
-      } catch (_) { return []; }
+          });
+        }
+        rows.sort((a, b) => (a.d ? 1 : 0) - (b.d ? 1 : 0));   // incomplete first, done last (stable)
+        return { items: rows.slice(0, 12), total: rows.length };
+      } catch (_) { return { items: [], total: 0 }; }
     }
 
     // Upcoming SCHEDULED BLOCKS for the gauge widget. Mirrors state.scheduledBlocks
@@ -563,6 +567,7 @@
         sessionLabel = '';         // q4 stopwatch has no "Session N" badge
       }
       const geo = bucketGeometry(state);
+      const _tt = todayTasks(state);
       return {
         money: (typeof state.money === 'number') ? state.money : 0,
         todayDelta: todayDelta(state),
@@ -584,9 +589,10 @@
         sessionLabel: sessionLabel,
         quad: quad,
         uptimer: uptimer,
-        tasksOpen: openTasks(state),
-        tasks: openTaskNames(state),
-        taskQuads: openTaskQuads(state),
+        tasksOpen: _tt.total,
+        tasks: _tt.items.map(o => o.n),
+        taskQuads: _tt.items.map(o => o.q),
+        taskDone: _tt.items.map(o => o.d),
         blocks: scheduleBlocks(state),
         goalMs: gtdGoalMs(state),
         updatedMs: Date.now()
