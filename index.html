@@ -22787,15 +22787,13 @@ async function showPomoPhaseConfirm() {
       answer = await customConfirm(_tname ? trf('Time for {task}', { task: _tname }) : tr('Ready for the next focus?'), '',
                                    { yesLabel: tr('OK'), hideNo: true, yesColor: _focus });
       if (answer === false) answer = true;            // OK-only → advance to focus
-    } else if (!_deep) {
-      // POMODORO work end → single OK: "Break time".
-      answer = await customConfirm(tr('Break time'), tr('Time for a break.'),
-                                   { yesLabel: tr('OK'), hideNo: true, yesColor: _break });
-      if (answer === false) answer = true;            // OK-only → advance to break
     } else {
-      // DEEP FOCUS work end. If a DIFFERENT task block sits immediately below with NO break
-      // (user's scenario), DON'T auto-drop a break over it. Ask: keep going on THIS task, or move
-      // on to the next one — and default to NEXT (30s no-answer auto-advances to the next task).
+      // WORK end (manual Pomodoro OR Deep Focus). FOLLOW THE GAUGE FIRST: if a DIFFERENT task's
+      // block sits immediately below with NO break between, don't re-cycle the current task or
+      // drop a break over it — offer to move on to THAT task. This makes strict Pomodoro proceed
+      // exactly by the gauge blocks (task1 ends → task2, never re-running task1), the same way
+      // Full Auto advances silently and Deep Focus does. _nextTaskBlockBelow returns null when a
+      // real gap/break sits below, so the normal break flow still happens in that case.
       const _nextTb = _nextTaskBlockBelow(at);
       if (_nextTb) {
         _goNextTaskBlock = _nextTb;
@@ -22804,13 +22802,21 @@ async function showPomoPhaseConfirm() {
           fg: (typeof bidoroTaskText === 'function' ? bidoroTaskText(_nextTb.q, _nextTb.taskIdx) : '#fff')
         };
         const _q = _tname ? trf('Keep going on {task}?', { task: _tname }) : tr('Keep going?');
-        answer = await customConfirm(_q, '', {
+        const _nextOpts = {
           yesLabel: tr('Next task'), noLabel: tr('Keep going'),
-          yesColor: _nextColor, noColor: _focus,
-          countdownMs: 30000, countdownOn: 'yes', countdownAnswer: true   // 30s → Next task (move on)
-        });
+          yesColor: _nextColor, noColor: _focus
+        };
+        // Deep Focus / gentle auto-advances to the next task after 30s of no answer; strict
+        // Pomodoro (manual) waits for an explicit tap. Either way "Next task" is the primary.
+        if (_deep) { _nextOpts.countdownMs = 30000; _nextOpts.countdownOn = 'yes'; _nextOpts.countdownAnswer = true; }
+        answer = await customConfirm(_q, '', _nextOpts);
+      } else if (!_deep) {
+        // POMODORO work end, nothing different queued below → single OK: "Break time".
+        answer = await customConfirm(tr('Break time'), tr('Time for a break.'),
+                                     { yesLabel: tr('OK'), hideNo: true, yesColor: _break });
+        if (answer === false) answer = true;            // OK-only → advance to break
       } else {
-        // No task waiting below → the classic choice; if ignored, 30s auto = Keep going (continue).
+        // DEEP FOCUS work end, nothing waiting below → classic choice; if ignored, 30s auto = Keep going.
         answer = await customConfirm(gTitle, gMsg, {
           // Short label so the appended "(29s)" countdown can't overflow the button outline.
           yesLabel: tr('Take 5'), noLabel: tr('Keep going'),
