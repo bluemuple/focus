@@ -12249,10 +12249,33 @@ window.bidoroRenderICloudStatus = bidoroRenderICloudStatus;
 // THE GUARD: returns true only when web sync may proceed. Handles A/B/C + modals.
 // Fails OPEN (returns true) when the backend isn't deployed/reachable so existing
 // sync is never broken for users who match (or before the SQL is run).
+// (user) Web has NO shared iCloud key-value store: each account's data is partitioned by
+// user_id in Supabase, and switching accounts just loads that account's own rows. So the
+// "this iCloud data is linked to another account" pause + modal is NATIVE-ONLY (its real job
+// is stopping two accounts that share one iPhone/iPad iCloud from mixing one local dataset).
+// On the web a group mismatch instead means "this browser still holds the PREVIOUS account's
+// local cache" — we drop that cache so the signed-in account loads fresh and the stale data
+// can never be pushed up to it (the discarded copy is safe in its own account's cloud).
+function _discardLocalForWebAccountSwitch() {
+  _syncGroupCache = null;
+  try { localStorage.removeItem('icloud_sync_group_id'); } catch (_) {}
+  try {
+    const d = defaultState();
+    Object.keys(state).forEach(k => { try { delete state[k]; } catch (_) {} });   // reset IN PLACE (keep the live `state` binding)
+    Object.keys(d).forEach(k => { state[k] = d[k]; });
+    state.icloudSyncGroupId = null;        // a fresh group is generated + bound to the new account on next sync
+    state.settingsUpdatedAt = 0;           // cloud wins on the pull that follows
+  } catch (_) {}
+  try { stats.length = 0; } catch (_) {}   // clear the previous account's cached sessions too
+  try { localStorage.removeItem(STATS_KEY); } catch (_) {}
+  _wasFreshClient = true;                   // → syncSettingsBidi applies remote (pull), never pushes the old cache
+  try { saveState(); } catch (_) {}
+}
 async function ensureWebSyncBinding(opts) {
   opts = opts || {};
   if (!_premiumSyncOK()) { return false; }   // Bidoro PRO: free tier is local-only (no "paused" warning)
   if (!_currentAuthUserId) { _webSyncState = 'notSignedIn'; return false; }
+  const _native = (typeof bidoroIsNativeApp === 'function' && bidoroIsNativeApp());
   let group = null; try { group = await bidoroSyncGroupId(); } catch (_) {}
   if (!group) { _webSyncState = 'ready'; return true; }
   const uid = _currentAuthUserId, email = _currentAuthEmail || '';
@@ -12264,11 +12287,17 @@ async function ensureWebSyncBinding(opts) {
       try { await _syncRpc('focus_sync_binding_create', { p_group: group, p_email: email, p_device: _syncDeviceId() }); } catch (_) {}
       _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true;
     }
+    // Bound to a DIFFERENT account.
+    if (!_native) { _discardLocalForWebAccountSwitch(); _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true; }
     _webSyncState = 'pausedAccountConflict';
     _showSyncConflictModal(binding.web_email || tr('another account'), email, !!opts.launch);
     try { _renderSyncStatus(); } catch (_) {} return false;
   }
-  // Case A — no binding yet → ask before any sync.
+  // Case A — no binding yet. NATIVE asks to link (iCloud guard); WEB binds silently.
+  if (!_native) {
+    try { await _syncRpc('focus_sync_binding_create', { p_group: group, p_email: email, p_device: _syncDeviceId() }); } catch (_) {}
+    _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true;
+  }
   const linked = await _showSyncLinkModal(email);
   if (!linked) { _webSyncState = 'iCloudOnly'; try { _renderSyncStatus(); } catch (_) {} return false; }
   let created = null; try { created = await _syncRpc('focus_sync_binding_create', { p_group: group, p_email: email, p_device: _syncDeviceId() }); } catch (_) {}
