@@ -28190,6 +28190,10 @@ function _fcPlayTaskEnter() {
 const _CELEB_PHRASES = ["You're awesome!", "Pouring it in...", "Let's go.", "I'm with you."];
 let _celebActive = false, _celebLastPhrase = null, _celebStartFn = null, _celebTask = null, _celebTimers = [];
 function _qCelebImg(q) {
+  // (user) If the user uploaded a Hero image, the start beat ("I'm with you" + image) uses THAT —
+  // the [When there's a task] slot, or any uploaded slot — so the doro/qN art never flashes before
+  // the timer. Since the idle card already shows the same image, the beat shows no image change.
+  try { const u = (typeof window.bidoroHeroFor === 'function') ? window.bidoroHeroFor('task') : null; if (u) return u; } catch (_) {}
   if (q !== 'q1' && q !== 'q2' && q !== 'q3') return null;   // q4 (no image) → no beat
   const dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
   return 'images/focus/doro/' + q + (dk ? '-dark' : '') + '.png?v=qcel-2';
@@ -34363,15 +34367,12 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       if (nt) { const anyTask = ['q1', 'q2', 'q3', 'q4'].some(function (q) { return ((state.tasks || {})[q] || []).some(function (t) { return t && !t.done; }); });
         const u = _heroFor(anyTask ? 'task' : 'noTask'); if (u) nt.setAttribute('src', u); }
       const di = document.getElementById('fc-done-img'); const fu = _heroFor('finish'); if (di && fu) di.setAttribute('src', fu);
-      // (user) Section-swipe backdrop: paint the T&T wrap's BACKGROUND (centred). The gauge/matrix
-      // panels are opaque and cover it; when an iPhone swipe slides them, this peeks out behind.
-      const wrap = document.getElementById('time-tasks-wrap');
-      if (wrap) { const sw = _heroFor('swipe');
-        if (sw) { wrap.style.backgroundImage = 'url("' + sw.replace(/"/g, '%22') + '")'; wrap.style.backgroundSize = 'auto 56%'; wrap.style.backgroundPosition = 'center'; wrap.style.backgroundRepeat = 'no-repeat'; }
-        else if (wrap.style.backgroundImage) { wrap.style.backgroundImage = ''; } }
     } catch (_) {}
   }
   window.bidoroApplyHeroImg = bidoroApplyHeroImg;
+  // (user) Expose the slot resolver so the swipe-transition ghost (_ttSlideGhost) and the start-beat
+  // image (_qCelebImg) can reuse the uploaded Hero image (any one slot covers the rest).
+  window.bidoroHeroFor = _heroFor;
   // Re-apply after each render that resets the default art.
   if (typeof window.renderImDoing === 'function' && !window._heroPatchRID) { const _o = window.renderImDoing; window.renderImDoing = function () { const r = _o.apply(this, arguments); try { bidoroApplyHeroImg(); } catch (_) {} return r; }; window._heroPatchRID = true; }
   if (typeof window._fcShowDoneReward === 'function' && !window._heroPatchDone) { const _o2 = window._fcShowDoneReward; window._fcShowDoneReward = function () { const r = _o2.apply(this, arguments); setTimeout(function () { try { bidoroApplyHeroImg(); } catch (_) {} }, 0); return r; }; window._heroPatchDone = true; }
@@ -35134,7 +35135,10 @@ function _ttSlideGhost(show, dir) {
       g.style.left = wrap.offsetLeft + 'px';
       g.style.width = wrap.offsetWidth + 'px';
       g.style.height = wrap.offsetHeight + 'px';
-      const src = (dir > 0) ? 'images/slide-right.gif' : 'images/slide-left.gif';
+      // (user) A user-uploaded "Section swipe image" replaces BOTH slide gifs (one image for both
+      // directions). Falls back to the built-in left/right gifs when no Hero image is set.
+      let src = (dir > 0) ? 'images/slide-right.gif' : 'images/slide-left.gif';
+      try { const us = (typeof window.bidoroHeroFor === 'function') ? window.bidoroHeroFor('swipe') : null; if (us) src = us; } catch (_) {}
       const img = g.querySelector('img');
       if (img && (img.getAttribute('src') || '') !== src) img.setAttribute('src', src);
       // (user) nudge the hint sideways: slide-right.gif +17px right, slide-left.gif 17px left.
