@@ -4422,7 +4422,10 @@
      elapsed edge (NO dot at the 12-o'clock start); mm:ss + a pause button sit inside. */
   .focus-card .fc-ring-wrap { position: relative; flex: 0 0 auto; width: 108px; height: 108px; }
   .focus-card .fc-ring { width: 100%; height: 100%; display: block; overflow: visible; }
-  .focus-card .fc-ring-track { fill: none; stroke: #B23A5B; stroke-opacity: .14; stroke-width: 5; }
+  /* (user) The ELAPSED (passed) portion shows this track. Was a near-invisible .14 —
+     bumped so the consumed arc reads as a clear LIGHT theme colour (the JS sets the
+     stroke to the active task colour), matching the full-screen / target dial. */
+  .focus-card .fc-ring-track { fill: none; stroke: #B23A5B; stroke-opacity: .3; stroke-width: 5; }
   .focus-card .fc-ring-arc {
     fill: none; stroke: #B23A5B; stroke-width: 5; stroke-linecap: butt;   /* thinner so it doesn't overpower the number; butt = NO dot at 12-o'clock */
     transition: stroke-dasharray .9s linear, stroke-dashoffset .9s linear;
@@ -21327,9 +21330,12 @@ function renderFocusMatrix() {
         // leave the freed gap and offer the choice via a non-blocking toast. If there's
         // no later block (or no real gap) _offerFinishedEarly returns false → fall back
         // to the normal reflow below.
-        let _aOffered = false;
+        let _aOffered = false, _offerP = null;
         if (cb.checked && _earlyMark && typeof _offerFinishedEarly === 'function') {
-          _aOffered = _offerFinishedEarly(q, i);
+          const _o = _offerFinishedEarly(q, i);
+          // A promise back = the "pull up the block below?" popup is open; await it before paying.
+          if (_o && typeof _o.then === 'function') { _offerP = _o; _aOffered = true; }
+          else { _aOffered = !!_o; }
         }
         if (!_aOffered) {
           if (cb.checked && _wasRunning) {
@@ -21349,6 +21355,9 @@ function renderFocusMatrix() {
           const rw = computeTaskReward(task, q, _taskPlannedMs(task), taskActualWorkedMs(q, i));
           task.lastReward = rw.total;
           logEvent({ type: 'finish-task', name: task.text || '(task)', money: +rw.total, q });
+          // (user) Hold the pay droplet + money + "finished early" ment until the "pull up the
+          // block below?" popup is dismissed — they must not animate while a popup is still open.
+          if (_offerP && typeof _offerP.then === 'function') { try { await _offerP; } catch (_) {} }
           playFx('complete');
           if (rw.total > 0) _taskFinishMoneyFx(_sx, _sy, +rw.total, `Finished: ${task.text || '(task)'}`);
           // Pillar coupling: a pillar-tagged task grows that bucket face by a level.
@@ -25347,7 +25356,9 @@ function _offerFinishedEarly(q, i) {
   // (user) Button ORDER: [Pull up] on the LEFT, [Keep break (30s)] on the RIGHT. customConfirm
   // renders no-button left / yes-button right, so Pull = NO (left, pull colour) and Keep = YES
   // (right, the 30s default). ans===false → pull up; yes / timeout / dismiss → keep the gap.
-  customConfirm(_title, '', {
+  // (user) RETURN the popup promise so the completion handler can await its dismissal —
+  // the pay droplet + reward ment must play only AFTER this popup is closed, never on top of it.
+  return customConfirm(_title, '', {
     yesLabel: tr('Keep break'), noLabel: tr('Pull up'),
     noColor: _pullColor,
     countdownMs: 30000, countdownOn: 'yes', countdownAnswer: true   // 30s → keep the gap (default)
@@ -25361,7 +25372,6 @@ function _offerFinishedEarly(q, i) {
     }
     // no / timeout / dismiss → keep the gap (default): do nothing.
   });
-  return true;
 }
 
 /* (Spec C) COMPLETE DURING AN EXTENSION. The completing task is the keep-going
