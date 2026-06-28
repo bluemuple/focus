@@ -1009,9 +1009,10 @@
     #settings-page { position: fixed; inset: 0; z-index: 9500; display: flex; align-items: center; justify-content: center; gap: 0; padding: 24px; box-sizing: border-box; background: rgba(17,24,39,.45); overflow: visible; }
     body.set-wide-open main { overflow: hidden !important; }   /* (user) page behind the modal can't scroll */
     /* one continuous card: master(left) + detail(right) flush, a single shared shadow, divider between */
-    #settings-page > .set-master, #settings-page > .set-wide-detail { height: min(86vh, 720px); align-self: center; box-sizing: border-box; box-shadow: 0 24px 70px rgba(0,0,0,.32); }
-    #settings-page > .set-master { display: flex; flex-direction: column; gap: 16px; width: 290px; flex: 0 0 290px; overflow-y: auto; overscroll-behavior: contain; background: var(--card-bg, #fff); border-radius: 18px 0 0 18px; padding: 20px 14px; border-right: 1px solid var(--card-border, #e5e7eb); }
-    #settings-page > .set-wide-detail { display: flex; flex-direction: column; width: 560px; max-width: 58vw; background: var(--app-bg, var(--card-bg,#fff)); border-radius: 0 18px 18px 0; overflow: hidden; }
+    /* (user) directional shadows so NEITHER pane bleeds a gradient onto the centre divider line. */
+    #settings-page > .set-master, #settings-page > .set-wide-detail { height: min(86vh, 720px); align-self: center; box-sizing: border-box; }
+    #settings-page > .set-master { display: flex; flex-direction: column; gap: 16px; width: 290px; flex: 0 0 290px; overflow-y: auto; overscroll-behavior: contain; background: var(--card-bg, #fff); border-radius: 18px 0 0 18px; padding: 20px 14px; border-right: 1px solid var(--card-border, #e5e7eb); box-shadow: -18px 24px 62px -16px rgba(0,0,0,.34); }
+    #settings-page > .set-wide-detail { display: flex; flex-direction: column; width: 560px; max-width: 58vw; background: var(--app-bg, var(--card-bg,#fff)); border-radius: 0 18px 18px 0; overflow: hidden; box-shadow: 18px 24px 62px -16px rgba(0,0,0,.34); }
     #settings-page > .set-master::-webkit-scrollbar { width: 0; }
     /* phone chrome off; master always visible (no full-swap) */
     #settings-page > .set-back-head { display: none !important; }
@@ -1026,7 +1027,8 @@
     /* right pane header + scrolling body */
     .set-wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--card-border,#e5e7eb); flex: 0 0 auto; }
     .set-wd-title { font-size: 1.12rem; font-weight: 800; color: var(--text-main,#111827); }
-    .set-wd-x { width: 30px; height: 30px; flex: 0 0 auto; border: none; border-radius: 50%; background: var(--surface-2,#f3f4f6); color: var(--text-main,#111827); font-size: 15px; cursor: pointer; }
+    .set-wd-x { width: 42px; height: 42px; flex: 0 0 auto; border: none; border-radius: 50%; background: var(--surface-2,#f3f4f6); color: var(--text-main,#111827); font-size: 22px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .set-wd-x:active { transform: scale(.94); }
     .set-wd-body { flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; padding: 16px 20px 24px; }
     /* generated controls for select / toggle / value / action rows */
     .set-wd-ctl { display: flex; flex-direction: column; gap: 10px; }
@@ -34508,10 +34510,11 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   const THEMES = [{ key: 'default', label: 'Default', dot: '#FFFFFF' }, { key: 'warm', label: 'Feels Home', dot: '#FCFAF6' }, { key: 'tokyo', label: 'Summer Day', dot: '#EAEAED' }, { key: 'solarized', label: 'Dark', dot: '#002B36' }];
   function curTheme() { return document.documentElement.getAttribute('data-theme') || 'default'; }
 
-  let _popEl = null, _popOut = null, _popReposition = null, _popScroller = null;
+  let _popEl = null, _popOut = null, _popScrollClose = null, _popScroller = null, _popAnchor = null;
   function closePop() {
-    if (_popReposition) { try { window.removeEventListener('scroll', _popReposition, true); if (_popScroller) _popScroller.removeEventListener('scroll', _popReposition); } catch (_) {} _popReposition = null; _popScroller = null; }
+    if (_popScrollClose) { try { window.removeEventListener('scroll', _popScrollClose, true); if (_popScroller) _popScroller.removeEventListener('scroll', _popScrollClose); } catch (_) {} _popScrollClose = null; _popScroller = null; }
     if (_popEl) { _popEl.remove(); _popEl = null; } if (_popOut) { document.removeEventListener('click', _popOut, true); _popOut = null; }
+    _popAnchor = null;
   }
   function openSelect(anchor, items, curKey, onPick) {
     closePop();
@@ -34524,15 +34527,17 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       pop.appendChild(b);
     });
     document.body.appendChild(pop);
-    // (user) Keep the popup STUCK to its button: reposition on every scroll so it follows the anchor
-    // (instead of floating in place after the button scrolls away).
-    function position() { const r = anchor.getBoundingClientRect(); pop.style.top = Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 10) + 'px'; pop.style.right = Math.max(10, window.innerWidth - r.right) + 'px'; }
-    position();
-    _popReposition = position; _popScroller = document.querySelector('main');
-    try { window.addEventListener('scroll', position, true); if (_popScroller) _popScroller.addEventListener('scroll', position, { passive: true }); } catch (_) {}
-    _popOut = function (e) { if (_popEl && !_popEl.contains(e.target)) closePop(); };
+    const r = anchor.getBoundingClientRect();
+    pop.style.top = Math.min(r.bottom + 6, window.innerHeight - pop.offsetHeight - 10) + 'px';
+    pop.style.right = Math.max(10, window.innerWidth - r.right) + 'px';
+    // (user) NO sticky-follow: any scroll closes the popup. Tapping the same button again also closes
+    // it (handled in the row click). Outside-tap closes too, but a tap on the anchor is ignored here
+    // so the row's toggle can run instead of this re-opening it.
+    _popScrollClose = function () { closePop(); }; _popScroller = document.querySelector('main');
+    try { window.addEventListener('scroll', _popScrollClose, true); if (_popScroller) _popScroller.addEventListener('scroll', _popScrollClose, { passive: true }); } catch (_) {}
+    _popOut = function (e) { if (_popEl && !_popEl.contains(e.target) && !(_popAnchor && (_popAnchor === e.target || _popAnchor.contains(e.target)))) closePop(); };
     setTimeout(function () { document.addEventListener('click', _popOut, true); }, 0);
-    _popEl = pop;
+    _popAnchor = anchor; _popEl = pop;
   }
   let _gifEl = null, _gifT = null;
   function openGif(anchor, src) {
@@ -34648,7 +34653,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         if (typeof _isWideSettings === 'function' && _isWideSettings()) { selectWide(r, btn); return; }
         if (r.kind === 'page') { try { showPage(r.page); if (typeof scrollMainTop === 'function') scrollMainTop(); } catch (_) {} return; }
         if (r.kind === 'detail') { if (r.panel === 'setdetail-sync') ensureSyncMoved(); if (r.panel === 'setdetail-notesmix') ensureNotesMixMoved(); openDetail(r.panel, r.lbl); return; }
-        if (r.kind === 'select') { openSelect(btn, r.opts, r.cur(), function (k) { try { r.onPick(k, btn); } catch (_) {} setTimeout(function () { paintVal(btn, r); }, 30); }); return; }
+        if (r.kind === 'select') { if (_popEl && _popAnchor === btn) { closePop(); return; } openSelect(btn, r.opts, r.cur(), function (k) { try { r.onPick(k, btn); } catch (_) {} setTimeout(function () { paintVal(btn, r); }, 30); }); return; }
         if (r.kind === 'toggle') { try { r.onToggle(); } catch (_) {} setTimeout(function () { paintVal(btn, r); }, 20); if (r.desc) showExplain(r.desc.title, r.desc.body); return; }
         if (r.kind === 'value') { if (r.onClick) try { r.onClick(); } catch (_) {} return; }
         if (r.kind === 'action') { if (r.onClick) try { r.onClick(); } catch (_) {} return; }
