@@ -14095,7 +14095,11 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       // video, and raises the labels one by one. The pinned stage never overlaps the fixed footer.
       '.pw-pin{position:sticky;top:0;height:100%;}',
       '.pw-stage{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;z-index:0;pointer-events:none;will-change:opacity;}',
-      '.pw-video{width:auto;max-width:78%;max-height:84%;object-fit:contain;border-radius:16px;display:block;transform:scale(.96);will-change:transform;background:transparent;}',
+      // Fixed-size media box (so the rocket shows even before/without the video loading) — the
+      // fallback IMAGE sits behind, the video on top covers it when it plays. JS scales the box.
+      '.pw-media{position:relative;width:74%;max-width:230px;aspect-ratio:1/1;max-height:90%;transform:scale(.96);will-change:transform;}',
+      '.pw-media .pw-media-fallback,.pw-media .pw-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:16px;display:block;background:transparent;}',
+      '.pw-media .pw-video{z-index:1;}',
       '.pw-flabels{position:absolute;inset:0;pointer-events:none;}',
       '.pw-flabel{position:absolute;transform:translate(-50%,12px);white-space:nowrap;background:var(--surface-2,#f3f4f6);color:var(--text-dim,#9ca3af);font-size:.72rem;font-weight:600;padding:4px 11px;border-radius:999px;opacity:0;will-change:opacity,transform;box-shadow:0 2px 8px rgba(0,0,0,.05);}',
       '.pw-flabel:nth-child(1){top:8%;left:30%;}',
@@ -14148,9 +14152,12 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
         '<div class="pw-scroll" id="pw-scroll">'+
           '<div class="pw-pin">'+
             '<div class="pw-stage" id="pw-stage">'+
-              '<video class="pw-video" id="pw-video" muted playsinline preload="auto" poster="images/paywall-hero.png"><source src="images/rocket.mp4" type="video/mp4"></video>'+
+              '<div class="pw-media" id="pw-media">'+
+                '<img class="pw-media-fallback" src="images/paywall-hero.png" alt="" aria-hidden="true">'+
+                '<video class="pw-video" id="pw-video" muted playsinline webkit-playsinline preload="auto"><source src="images/rocket.mp4" type="video/mp4"></video>'+
+              '</div>'+
               '<div class="pw-flabels" id="pw-flabels">'+
-                '<span class="pw-flabel">Google Apps integration</span>'+
+                '<span class="pw-flabel">Bidoro on Google Play</span>'+
                 '<span class="pw-flabel">Advanced reminders</span>'+
                 '<span class="pw-flabel">Natural language input</span>'+
               '</div>'+
@@ -14180,7 +14187,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     // once · three future-feature labels fade in one-by-one and rise. Reduce-motion → plain crossfade.
     (function(){
       var sc = m.querySelector('#pw-scroll'); if (!sc) return;
-      var stage = m.querySelector('#pw-stage'), body = m.querySelector('#pw-body'),
+      var stage = m.querySelector('#pw-stage'), body = m.querySelector('#pw-body'), media = m.querySelector('#pw-media'),
           video = m.querySelector('#pw-video'), labels = m.querySelectorAll('#pw-flabels .pw-flabel');
       var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
       var playing = false, ticking = false;
@@ -14192,12 +14199,12 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
         if (reduce) {
           if (body) { body.style.transform = 'none'; body.style.opacity = String(1 - p); }
           if (stage) stage.style.opacity = String(p);
-          if (video) video.style.transform = 'none';
+          if (media) media.style.transform = 'none';
         } else {
           if (body) { body.style.transform = 'translateY(' + (-80 * p).toFixed(2) + '%)'; body.style.opacity = String(cl(1 - p)); }   // 80% scroll → ~20% of the list still faintly peeks
           var vp = ease(cl((p - 0.15) / 0.7));                 // video reveals from ~15% scroll
           if (stage) stage.style.opacity = String(vp);
-          if (video) video.style.transform = 'scale(' + (0.96 + 0.04 * vp).toFixed(3) + ')';
+          if (media) media.style.transform = 'scale(' + (0.96 + 0.04 * vp).toFixed(3) + ')';
           for (var i = 0; i < labels.length; i++) {           // staggered fade-in + rise
             var lp = ease(cl((p - (0.42 + i * 0.12)) / 0.3));
             labels[i].style.opacity = String(lp);
@@ -14211,7 +14218,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       }
       // Apply directly on each scroll (simple GPU-friendly transform/opacity writes → no jank).
       sc.addEventListener('scroll', apply, { passive:true });
-      m._pwResetReveal = function(){ try { sc.scrollTop = 0; } catch(_){} playing = false; if (video) { try { video.pause(); video.currentTime = 0; } catch(_){} } apply(); };
+      m._pwResetReveal = function(){ try { sc.scrollTop = 0; } catch(_){} playing = false; if (video) { try { video.muted = true; video.load(); video.pause(); video.currentTime = 0; } catch(_){} } apply(); };
     })();
     m.querySelector('#pw-buy-monthly').addEventListener('click', function(){ buy('monthly'); });
     m.querySelector('#pw-buy-yearly').addEventListener('click', function(){ buy('yearly'); });
