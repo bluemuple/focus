@@ -982,6 +982,12 @@
   #settings-page.set-detail-mode > .set-back-head { display: flex; }
   .set-back-btn { display: inline-flex; align-items: center; gap: 3px; background: transparent; border: none; color: var(--accent, #2563eb); font: inherit; font-weight: 700; font-size: 1rem; cursor: pointer; padding: 6px 4px; }
   .set-back-title { font-size: 1.08rem; font-weight: 800; color: var(--text-main, #111827); }
+  /* (user) iOS-style edge-swipe back: while dragging, the detail layer slides right over the
+     master list shown behind it. */
+  #settings-page.set-swiping { position: relative; }
+  #settings-page.set-swiping > .set-master { display: block !important; position: absolute; top: 0; left: 0; right: 0; z-index: 0; }
+  #settings-page.set-swiping > .set-back-head { display: flex; position: relative; z-index: 2; background: var(--app-bg, var(--card-bg, #fff)); }
+  #settings-page.set-swiping > .panel.set-active { position: relative; z-index: 2; box-shadow: -10px 0 22px rgba(0,0,0,.08); }
   /* Black explanation panel (slides up from the bottom; ✕ closes; 7 s auto-hide). */
   .set-explain { position: fixed; left: 12px; right: 12px; bottom: 14px; z-index: 9000; background: #111827; color: #f3f4f6; border-radius: 14px; padding: 14px 44px 14px 16px; box-shadow: 0 10px 34px rgba(0,0,0,.32); font-size: .92rem; line-height: 1.5; transform: translateY(150%); transition: transform .26s cubic-bezier(.2,.7,.3,1); pointer-events: none; }
   .set-explain.show { transform: translateY(0); pointer-events: auto; }
@@ -34615,6 +34621,39 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   window.bidoroSettingsShowMaster = showMaster;
   window.bidoroSettingsOpenDetail = openDetail;
 
+  // (user) iOS-style interactive edge-swipe-back: from a detail page, drag from the LEFT edge to the
+  // right → the detail slides off following the finger (master shown behind); release past 1/3 → back,
+  // else snap back. Touch only (phone / touch iPad).
+  (function wireSettingsSwipeBack() {
+    const sw = { on: false, drag: false, x0: 0, y0: 0, dx: 0, layer: [] };
+    function layerEls() { const a = []; const bh = page.querySelector(':scope > .set-back-head'); const ap = page.querySelector(':scope > .panel.set-active'); if (bh) a.push(bh); if (ap) a.push(ap); return a; }
+    function reset(toBack) {
+      const layer = sw.layer; const W = window.innerWidth || 360;
+      layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1)'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; });
+      setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; }); if (toBack) showMaster(); }, 250);
+    }
+    page.addEventListener('touchstart', function (e) {
+      if (!page.classList.contains('set-detail-mode') || e.touches.length !== 1) { sw.on = false; return; }
+      const t = e.touches[0]; if (t.clientX > 30) { sw.on = false; return; }   // must start at the left edge
+      sw.on = true; sw.drag = false; sw.x0 = t.clientX; sw.y0 = t.clientY; sw.dx = 0; sw.layer = layerEls();
+    }, { passive: true });
+    page.addEventListener('touchmove', function (e) {
+      if (!sw.on || e.touches.length !== 1) return;
+      const t = e.touches[0]; const ddx = t.clientX - sw.x0, ddy = t.clientY - sw.y0;
+      if (!sw.drag) {
+        if (Math.abs(ddx) < 8 && Math.abs(ddy) < 8) return;
+        if (Math.abs(ddy) > Math.abs(ddx)) { sw.on = false; return; }   // vertical → let it scroll
+        sw.drag = true; page.classList.add('set-swiping'); sw.layer.forEach(function (el) { el.style.transition = 'none'; });
+      }
+      sw.dx = Math.max(0, ddx);
+      sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + sw.dx + 'px)'; });
+      e.preventDefault();   // own the horizontal drag
+    }, { passive: false });
+    function end() { if (!sw.on) return; sw.on = false; if (!sw.drag) return; reset(sw.dx > (window.innerWidth || 360) * 0.33); }
+    page.addEventListener('touchend', end, { passive: true });
+    page.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true });
+  })();
+
   // Reset to the master list every time the Settings page is (re)opened.
   let _wasVis = page.style.display !== 'none';
   try {
@@ -46717,6 +46756,8 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     // otherwise dragging the open sheet DOWN drags the home (+ its loading layer) down with
     // it (the home rode down ~PULL_MAX px revealing the sync image behind the panel).
     function homeLocked() { return main.style.overflow === 'hidden'; }
+    // (user) The Settings page never syncs from a pull — keep the "Syncing" pill off there.
+    function onSettingsPage() { try { if (state && state.currentPage === 'settings') return true; } catch (_) {} const s = document.getElementById('settings-page'); return !!(s && s.style.display !== 'none' && s.offsetParent !== null); }
 
     document.addEventListener('touchstart', (e) => {
       if (syncing || e.touches.length !== 1) { candidate = false; return; }
@@ -46724,7 +46765,7 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
       if (window._gaugeBusy || window._timeGaugePinching) { candidate = false; return; }
       if (homeLocked()) { candidate = false; return; }
       const t = e.touches[0];
-      candidate = (scroller.scrollTop <= 0) && !blocked(e.target);
+      candidate = (scroller.scrollTop <= 0) && !blocked(e.target) && !onSettingsPage();
       pulling = false; startY = t.clientY; startX = t.clientX;
     }, { passive: true });
 
