@@ -34432,7 +34432,15 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     const fr = new FileReader();
     fr.onload = function () { const img = new Image(); img.onload = function () {
       const MAX = 300; let w = img.width, h = img.height; const s = Math.min(1, MAX / Math.max(w, h)); w = Math.max(1, Math.round(w * s)); h = Math.max(1, Math.round(h * s));
-      const c = document.createElement('canvas'); c.width = w; c.height = h; try { c.getContext('2d').drawImage(img, 0, 0, w, h); cb(c.toDataURL('image/jpeg', 0.85)); } catch (_) { cb(null); }
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      try {
+        const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+        // (user) Keep transparency: a transparent-PNG upload must NOT bake a black background. Export
+        // PNG when the image actually has translucent pixels; otherwise JPEG (smaller) for photos.
+        let hasAlpha = false;
+        try { const d = ctx.getImageData(0, 0, w, h).data; for (let i = 3; i < d.length; i += 4) { if (d[i] < 250) { hasAlpha = true; break; } } } catch (_) { hasAlpha = true; }
+        cb(hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', 0.85));
+      } catch (_) { cb(null); }
     }; img.onerror = function () { cb(null); }; img.src = fr.result; };
     fr.onerror = function () { cb(null); }; fr.readAsDataURL(file);
   }
@@ -34443,8 +34451,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const sb = (typeof getSupabaseClient === 'function') ? await getSupabaseClient() : null; if (!sb) return null;
       const { data: { session } } = await sb.auth.getSession(); const uid = session && session.user && session.user.id; if (!uid) return null;
       const blob = await (await fetch(dataUrl)).blob();
-      const path = uid + '/' + slot + '.jpg';
-      const up = await sb.storage.from('focus-hero').upload(path, blob, { upsert: true, contentType: 'image/jpeg', cacheControl: '0' });
+      const isPng = /^data:image\/png/i.test(dataUrl);   // keep transparency for PNG uploads
+      const path = uid + '/' + slot + (isPng ? '.png' : '.jpg');
+      const up = await sb.storage.from('focus-hero').upload(path, blob, { upsert: true, contentType: isPng ? 'image/png' : 'image/jpeg', cacheControl: '0' });
       if (up.error) { try { console.warn('hero upload failed (create the focus-hero bucket?):', up.error.message); } catch (_) {} return null; }
       const pub = sb.storage.from('focus-hero').getPublicUrl(path);
       const url = pub && pub.data && pub.data.publicUrl; return url ? (url + '?t=' + Date.now()) : null;
@@ -34889,7 +34898,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   window._bidoroUpdateAcctPro = updateAcctPro;
   (function redesignAccount() {
     const acct = document.getElementById('acct-panel-wrap'); if (!acct) return;
-    ['acct-nick-edit', 'acct-admin-pro'].forEach(function (id) { const e = document.getElementById(id); if (e) e.style.display = 'none'; });   // no inline change popup
+    { const e = document.getElementById('acct-nick-edit'); if (e) e.style.display = 'none'; }   // no inline nickname-change popup
+    // (user) Keep the admin Pro toggle button — repaint the Pro card/badge right after it fires.
+    { const ap = document.getElementById('acct-admin-pro'); if (ap) { ap.style.display = ''; ap.addEventListener('click', function () { setTimeout(function () { try { updateAcctPro(); if (window._bidoroSettingsRefreshRows) window._bidoroSettingsRefreshRows(); } catch (_) {} }, 60); }); } }
     let holder = document.getElementById('set-hidden-holder');
     if (!holder) { holder = document.createElement('div'); holder.id = 'set-hidden-holder'; holder.style.display = 'none'; document.body.appendChild(holder); }
     const cs = document.getElementById('acct-sync-sec'); if (cs) holder.appendChild(cs);   // cal sync → hidden holder (rows proxy it)
@@ -39125,6 +39136,17 @@ if (_motivationDisplayEl) {
    app. renderImDoing() drives the live update + auto-close on phase end. */
 const _FF_R = 132, _FF_C = 2 * Math.PI * 132, _FF_CX = 160, _FF_CY = 160;
 let _ffBuiltForMin = -1;
+// (user) Lighten a colour toward white by `amt` (0..1) — used for the elapsed-track ring so the
+// passed part of the full-screen dial is a PALE version of the theme accent, not grey.
+function _ffLightenColor(col, amt) {
+  try {
+    let r, g, b;
+    if (/^#/.test(col)) { let h = col.slice(1); if (h.length === 3) h = h.split('').map(c => c + c).join(''); r = parseInt(h.slice(0, 2), 16); g = parseInt(h.slice(2, 4), 16); b = parseInt(h.slice(4, 6), 16); }
+    else { const m = col.match(/(\d+)[,\s]+(\d+)[,\s]+(\d+)/); if (!m) return col; r = +m[1]; g = +m[2]; b = +m[3]; }
+    if ([r, g, b].some(isNaN)) return col;
+    return 'rgb(' + Math.round(r + (255 - r) * amt) + ',' + Math.round(g + (255 - g) * amt) + ',' + Math.round(b + (255 - b) * amt) + ')';
+  } catch (_) { return col; }
+}
 function _ffIsOpen() { const o = document.getElementById('focus-fullscreen'); return !!(o && !o.classList.contains('hidden')); }
 function _ffPauseIcon(paused) {
   return paused
@@ -39545,6 +39567,10 @@ function renderFocusFullscreen() {
       }
     }
   } catch (_) {}
+  // (user) The elapsed-track ring (behind the arcs) = a PALE version of the accent (light pink for a
+  // pink theme), not grey. Break → pale sky.
+  const _ffBaseRing = document.getElementById('ff-base');
+  if (_ffBaseRing) { const _trk = (at.phase !== 'work') ? '#38BDF8' : _ffWorkAccent; _ffBaseRing.setAttribute('stroke', _ffLightenColor(_trk, 0.74)); }
   const baseArc = document.getElementById('ff-arc');
   let knobColor = ffSegs.length ? ffSegs[0].color : '#38BDF8';
   if (baseArc) {
