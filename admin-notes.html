@@ -272,6 +272,32 @@ const STATUS_META = {
 };
 async function setMemoStatus(id, status){ await callAdmin('setMemoStatus', { id: +id, status: status }); load(); }
 
+// (user) "App issues" tab — the in-app "Report an issue" submissions (focus_app_issues).
+async function renderAppIssues(){
+  root.innerHTML = '<p class="empty">Loading…</p>';
+  let d; try { d = await callAdmin('appIssuesList'); }
+  catch(e){ root.innerHTML = '<div class="err">Could not load app issues (' + esc(e.message) + '). Deploy focus-admin-api + run the focus_app_issues SQL.</div>'; return; }
+  const issues = (d && d.issues) || [];
+  if (!issues.length) { root.innerHTML = '<p class="empty">No app issues reported 🎉</p>'; return; }
+  root.innerHTML = '';
+  issues.forEach(it => {
+    const st = it.status || 'open';
+    const who = it.nickname ? esc(it.nickname) : (it.email ? esc(it.email) : 'anonymous');
+    const card = document.createElement('div');
+    card.style.cssText = 'border:1px solid #e5e7eb;border-radius:12px;padding:12px 14px;margin-bottom:12px;background:#fff;' + (st === 'resolved' ? 'opacity:.55;' : '');
+    card.innerHTML =
+      '<div style="display:flex;justify-content:space-between;gap:10px;font-size:.82rem;color:#6b7280;margin-bottom:6px;"><span><b>' + who + '</b>' + (it.email ? ' · ' + esc(it.email) : '') + '</span><span>' + fmt(it.created_at) + '</span></div>'
+      + '<div style="white-space:pre-wrap;line-height:1.5;color:#111827;">' + esc(it.text) + '</div>'
+      + '<div style="font-size:.72rem;color:#9ca3af;margin-top:6px;word-break:break-all;">' + esc(it.device || '') + '</div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px;align-items:center;"><span class="tag ' + (st === 'resolved' ? 'heart' : 'reported') + '">' + esc(st) + '</span>'
+      + '<button data-id="' + it.id + '" data-st="resolved" style="margin-left:auto;">Resolve</button>'
+      + '<button data-id="' + it.id + '" data-st="open">Reopen</button>'
+      + '<button data-id="' + it.id + '" data-st="delete" style="color:#b91c1c;">Delete</button></div>';
+    root.appendChild(card);
+  });
+  root.querySelectorAll('button[data-st]').forEach(b => b.onclick = async () => { try { await callAdmin('appIssueStatus', { id: +b.getAttribute('data-id'), status: b.getAttribute('data-st') }); renderAppIssues(); } catch(e){ alert('Failed: ' + e.message); } });
+}
+
 function render(){
   const allComments = Object.values(_byMemo).flat();
   const live = _memos.filter(m => memoStatus(m) !== 'deleted');   // everything except the trash
@@ -293,12 +319,15 @@ function render(){
       + cap('t-ret', 'returned', 'Returned', nReturned ? ('· ' + nReturned) : '')
       + cap('t-rep', 'reported', 'Reported')
       + cap('t-del', 'deleted', 'Deleted', nDeleted ? ('· ' + nDeleted) : '')
+      + cap('t-issues', 'issues', 'App issues')
     + '</span>';
   document.getElementById('t-all').onclick     = () => { _statusFilter = 'all';      render(); };
   document.getElementById('t-pending').onclick = () => { _statusFilter = 'pending';  render(); };
   document.getElementById('t-ret').onclick     = () => { _statusFilter = 'returned'; render(); };
   document.getElementById('t-rep').onclick     = () => { _statusFilter = 'reported'; render(); };
   document.getElementById('t-del').onclick     = () => { _statusFilter = 'deleted';  render(); };
+  document.getElementById('t-issues').onclick  = () => { _statusFilter = 'issues';   render(); };
+  if (_statusFilter === 'issues') { renderAppIssues(); return; }
 
   let list;
   if      (_statusFilter === 'pending')  list = _memos.filter(m => memoStatus(m) === 'pending');

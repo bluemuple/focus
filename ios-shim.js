@@ -484,6 +484,9 @@
             e: e,
             q: isBreak ? -1 : (qIdx[b.q] != null ? qIdx[b.q] : -1),
             br: isBreak,
+            // (user) keep-going overrun (ㄱ-arm): the widget draws this as the full-width head →
+            // RIGHT-1/3 arm where a planned block sits below it, mirroring the app's gauge.
+            x: b._actualExt ? 1 : 0,
             t: isBreak ? '' : String(b.taskName || b.trackerName || '').trim().slice(0, 40)
           });
         }

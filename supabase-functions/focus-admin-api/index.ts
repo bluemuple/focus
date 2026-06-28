@@ -231,6 +231,20 @@ Deno.serve(async (req) => {
       await sb.from("focus_subscription_lists").delete().eq("id", b.id);
       return json({ ok: true });
     }
+    // (user) Bidoro "Report an issue" → the App-issues tab. focus_app_issues holds the reports.
+    if (action === "appIssuesList") {
+      const res = await sb.from("focus_app_issues")
+        .select("id, text, email, nickname, device, status, created_at, user_id")
+        .order("created_at", { ascending: false }).limit(500);
+      if (res.error) return json({ ok: true, issues: [] });   // table not created yet → empty, no crash
+      return json({ ok: true, issues: res.data || [] });
+    }
+    if (action === "appIssueStatus") {
+      if (b.id == null) return json({ ok: false, error: "id required" }, 400);
+      if (b.status === "delete") { await sb.from("focus_app_issues").delete().eq("id", b.id); return json({ ok: true }); }
+      await sb.from("focus_app_issues").update({ status: b.status || "open" }).eq("id", b.id);
+      return json({ ok: true });
+    }
     return json({ ok: false, error: "unknown action" }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e) }, 500);
