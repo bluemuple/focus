@@ -972,6 +972,15 @@
   .hero-prev-box .hero-prev-empty { font-size: .8rem; color: var(--text-muted, #9ca3af); padding: 8px; text-align: center; }
   .hero-prev-arrow { width: 36px; height: 36px; flex: 0 0 auto; border-radius: 50%; border: 1px solid var(--card-border, #e5e7eb); background: var(--card-bg, #fff); color: var(--text-main, #111827); font-size: 1rem; cursor: pointer; -webkit-tap-highlight-color: transparent; }
   .hero-prev-arrow:active { transform: scale(.94); }
+  /* (user) "Change the character images": a live replica of the home "Now focusing on" idle card —
+     [Choose images] swaps the character; one upload covers every state. */
+  .hero-char { margin-top: 4px; }
+  .hero-card-prev { display: flex; align-items: center; gap: 14px; background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e5e7eb); border-radius: 18px; box-shadow: 0 6px 22px rgba(40,60,90,.10); padding: 20px 22px; min-height: 128px; }
+  .hero-card-text { flex: 1 1 auto; font-size: 1.55rem; font-weight: 800; line-height: 1.18; color: var(--text-main, #0f172a); letter-spacing: -.01em; }
+  .hero-card-pic { flex: 0 0 auto; width: 112px; height: 112px; display: flex; align-items: center; justify-content: center; }
+  .hero-card-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .hero-char-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
+  .hero-rec { margin-top: 10px; }
   /* Master view: only the list shows — every relocated panel is hidden until its row is tapped. */
   #settings-page:not(.set-detail-mode) > .panel { display: none !important; }
   /* Detail mode: hide the master + every other panel, show only the active one + a Back header. */
@@ -34363,7 +34372,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const h3 = lp.querySelector('h3.fm-h'); const p = h3 && h3.nextElementSibling;
       [h3, p, seg].forEach(function (e) { if (e && e.parentNode === lp) holder.appendChild(e); }); } })();
   // HERO IMAGES — placeholder detail (full builder = later phase).
-  const heroPanel = mkPanel('setdetail-hero', 'Change the Hero Images');
+  const heroPanel = mkPanel('setdetail-hero', 'Change the character images');
   // (user) Pick custom pictures for the "Now focusing on" card. state.heroImages = {noTask, task,
   // finish, swipe}; adding ANY one fills the empty slots too. Stored locally now (persists + applies
   // live); Pro cross-device Supabase upload is the next layer. Output resized to longest side 300px.
@@ -34413,60 +34422,53 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   if (typeof window.renderImDoing === 'function' && !window._heroPatchRID) { const _o = window.renderImDoing; window.renderImDoing = function () { const r = _o.apply(this, arguments); try { bidoroApplyHeroImg(); } catch (_) {} return r; }; window._heroPatchRID = true; }
   if (typeof window._fcShowDoneReward === 'function' && !window._heroPatchDone) { const _o2 = window._fcShowDoneReward; window._fcShowDoneReward = function () { const r = _o2.apply(this, arguments); setTimeout(function () { try { bidoroApplyHeroImg(); } catch (_) {} }, 0); return r; }; window._heroPatchDone = true; }
   const HERO_DEFAULT = { noTask: 'images/focus/doro/add-small.png?v=doro-10', task: 'images/focus/doro/start-small.gif?v=doro-10', finish: 'images/focus/doro/comment.png?v=doro-6', swipe: '' };
-  let _heroPrevIdx = 0;
+  // (user) ONE "character" image covers every state. The page shows the home "Now focusing on" card
+  // as a live preview; [Choose images] swaps the character. The image is stored on `noTask` (the top
+  // image) and the active / finish / swipe states reuse it through _heroFor — so one upload replaces
+  // "When there's a task / When you finish a task / Section swipe image" too.
   (function buildHeroPage() {
-    if (heroPanel.querySelector('.hero-slots')) return;
+    if (heroPanel.querySelector('.hero-char')) return;
     heroPanel.insertAdjacentHTML('beforeend',
-      '<div class="hero-preview"><div class="hero-prev-label"></div><div class="hero-prev-row">' +
-      '<button type="button" class="hero-prev-arrow" data-d="-1" aria-label="Previous">‹</button>' +
-      '<div class="hero-prev-box"><img alt="" style="display:none;"><span class="hero-prev-empty" style="display:none;">No custom image — default shown</span></div>' +
-      '<button type="button" class="hero-prev-arrow" data-d="1" aria-label="Next">›</button></div></div>' +
-      '<p class="help">Pick your own pictures for the "Now focusing on" card. Add one and it fills the others too. The recommended shape is shown in grey.</p>' +
-      '<div class="hero-slots"></div>');
-    const prevLabel = heroPanel.querySelector('.hero-prev-label'), prevImg = heroPanel.querySelector('.hero-prev-box img'), prevEmpty = heroPanel.querySelector('.hero-prev-empty');
-    function paintPreview() {
-      const sl = HERO_SLOTS[_heroPrevIdx]; if (!sl) return;
-      prevLabel.textContent = sl.label;
-      const u = state.heroImages[sl.key] || HERO_DEFAULT[sl.key] || '';
-      const custom = !!state.heroImages[sl.key];
-      if (u) { prevImg.src = u; prevImg.style.display = ''; } else { prevImg.removeAttribute('src'); prevImg.style.display = 'none'; }
-      prevEmpty.style.display = (u && custom) ? 'none' : (u ? 'none' : '');   // show note only when no image at all; default art shows itself
+      '<div class="hero-char">' +
+        '<div class="hero-card-prev"><div class="hero-card-text">Add one.<br>I\'ll pour it in.</div>' +
+        '<div class="hero-card-pic"><img alt=""></div></div>' +
+        '<div class="hero-char-row"><button type="button" class="btn hero-pick2">Choose images</button>' +
+        '<button type="button" class="btn-link hero-clear2" style="display:none;">Remove</button></div>' +
+        '<p class="help hero-rec">Recommended: square, white / transparent background.</p>' +
+        '<input type="file" accept="image/*" class="hero-file2" style="display:none;"></div>');
+    const pic = heroPanel.querySelector('.hero-card-pic img');
+    const file = heroPanel.querySelector('.hero-file2');
+    const pickBtn = heroPanel.querySelector('.hero-pick2');
+    const clearBtn = heroPanel.querySelector('.hero-clear2');
+    function refresh() {
+      const u = state.heroImages.noTask || HERO_DEFAULT.noTask;
+      if (u) { pic.src = u; pic.style.display = ''; } else { pic.removeAttribute('src'); }
+      clearBtn.style.display = state.heroImages.noTask ? '' : 'none';
     }
-    heroPanel.querySelectorAll('.hero-prev-arrow').forEach(function (a) {
-      a.addEventListener('click', function () { _heroPrevIdx = (_heroPrevIdx + (+a.getAttribute('data-d') || 1) + HERO_SLOTS.length) % HERO_SLOTS.length; paintPreview(); });
-    });
-    window._heroPaintPreview = paintPreview;
-    const wrap = heroPanel.querySelector('.hero-slots');
-    HERO_SLOTS.forEach(function (sl) {
-      const row = document.createElement('div'); row.className = 'hero-slot';
-      row.innerHTML = '<div class="hero-thumb"><img alt="" style="display:none;"></div>' +
-        '<div class="hero-meta"><div class="hero-lbl"></div><div class="hero-ratio help"></div></div>' +
-        '<button type="button" class="btn hero-pick">Choose image</button>' +
-        '<button type="button" class="btn-link hero-clear" style="display:none;">Remove</button>' +
-        '<input type="file" accept="image/*" class="hero-file" style="display:none;">';
-      row.querySelector('.hero-lbl').textContent = sl.label;
-      row.querySelector('.hero-ratio').textContent = 'Recommended: ' + sl.ratio;
-      const thumb = row.querySelector('.hero-thumb img'), file = row.querySelector('.hero-file'), clearBtn = row.querySelector('.hero-clear');
-      function refresh() { const u = state.heroImages[sl.key]; if (u) { thumb.src = u; thumb.style.display = ''; clearBtn.style.display = ''; } else { thumb.removeAttribute('src'); thumb.style.display = 'none'; clearBtn.style.display = 'none'; } try { if (window._heroPaintPreview) window._heroPaintPreview(); } catch (_) {} }
-      const pickBtn = row.querySelector('.hero-pick');
-      pickBtn.addEventListener('click', function () { file.click(); });
-      file.addEventListener('change', function () {
-        const f = file.files && file.files[0]; if (!f) return;
-        const _lbl = pickBtn.textContent; pickBtn.disabled = true; pickBtn.textContent = isPro() ? 'Uploading…' : 'Saving…';
-        function done() { pickBtn.disabled = false; pickBtn.textContent = _lbl; }
-        _heroResize(f, function (d) {
-          if (!d) { done(); return; }
-          function store(val) { state.heroImages[sl.key] = val; try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {} refresh(); bidoroApplyHeroImg(); done(); }
-          if (isPro()) { _heroUpload(sl.key, d).then(function (url) { store(url || d); }); }   // upload fails → fall back to local data URL
-          else store(d);
-        });
-        file.value = '';
+    pickBtn.addEventListener('click', function () { file.click(); });
+    file.addEventListener('change', function () {
+      const f = file.files && file.files[0]; if (!f) return;
+      const _lbl = pickBtn.textContent; pickBtn.disabled = true; pickBtn.textContent = isPro() ? 'Uploading…' : 'Saving…';
+      function done() { pickBtn.disabled = false; pickBtn.textContent = _lbl; }
+      _heroResize(f, function (d) {
+        if (!d) { done(); return; }
+        function store(val) {
+          state.heroImages.noTask = val;
+          ['task', 'finish', 'swipe'].forEach(function (k) { delete state.heroImages[k]; });   // they reuse noTask via _heroFor
+          try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+          refresh(); bidoroApplyHeroImg(); try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {} done();
+        }
+        if (isPro()) { _heroUpload('noTask', d).then(function (url) { store(url || d); }); }   // upload fails → local data URL
+        else store(d);
       });
-      clearBtn.addEventListener('click', function () { delete state.heroImages[sl.key]; try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); } catch (_) {} refresh(); try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {} bidoroApplyHeroImg(); });
-      refresh();
-      wrap.appendChild(row);
+      file.value = '';
     });
-    paintPreview();
+    clearBtn.addEventListener('click', function () {
+      ['noTask', 'task', 'finish', 'swipe'].forEach(function (k) { delete state.heroImages[k]; });
+      try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
+      refresh(); bidoroApplyHeroImg(); try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
+    });
+    refresh();
   })();
   try { bidoroApplyHeroImg(); } catch (_) {}
   // NOTES MIX — the Notes page ⚙ tab (note-rotation weights + time) becomes a Settings page.
@@ -34567,7 +34569,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         cur: curTheme, opts: THEMES,
         valLabel: function () { const t = THEMES.find(function (x) { return x.key === curTheme(); }); return t ? t.label : '—'; },
         onPick: function (k) { const t = document.querySelector('.theme-tile[data-theme-key="' + k + '"]'); if (t) t.click(); } },
-      { lbl: 'Change the Hero Images', ico: 'image', kind: 'detail', panel: 'setdetail-hero' }
+      { lbl: 'Change the character images', ico: 'image', kind: 'detail', panel: 'setdetail-hero' }
     ] },
     { head: 'Sound', rows: [
       { lbl: 'Sound effect', ico: 'sound', kind: 'toggle',
