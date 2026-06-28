@@ -8343,8 +8343,8 @@
   /* Full-width grow ext (no block below): elapsed-time label sits BOTTOM-LEFT (the
      bottom-right corner reads cleaner for the square full-width foot). */
   .time-block-dur.tb-dur-left, .tg-block-dur.tb-dur-left { left: 8px; right: auto; text-align: left; }
-  .time-block.ext-parent-seam .time-block-dur,
-  .tg-block.ext-parent-seam .tg-block-dur { display: none !important; }
+  /* (user) The parent plan block KEEPS its own planned-duration label at the bottom-right (e.g. "30m")
+     — the ext block carries only its OWN overrun duration, so the two read separately. */
   /* ▲▼ arrows — visible ONLY when block is selected.
      ▲ sits at top-LEFT, ▼ at bottom-RIGHT (diagonal placement). Each button
      keeps the same edge distance (3 px from side, 15 px from top/bottom).
@@ -24608,11 +24608,10 @@ function drawTimeArea() {
     const durEl = document.createElement('div');
     durEl.className = 'time-block-dur';
     if (b._actualExt) {
-      // (user) Overrun arm: the duration GROWS (planned + extension) and rides the bottom of
-      // the 1/3 arm. Total = from the parent plan's start (so 30m planned + 1m over → "31m").
-      const _par = _renderBlocks.find(p => p && !p._actualExt && !p._preview &&
-        p.q === b.q && p.taskIdx === b.taskIdx && Math.abs(p.endMs - b.startMs) < 1000);
-      const _exStart = _par ? _par.startMs : b.startMs;
+      // (user) The ext block shows ONLY ITS OWN duration (NOT parent+ext combined) — measured from
+      // the ext's own start (= the plan's end). So a 30m plan + 20m overrun → parent keeps "30m",
+      // the ext shows "20m". It rides the bottom of the ext / the arm as it grows.
+      const _exStart = b.startMs;
       // A 5-min break tail (Take 5 during the extension) → its own "5m" label at the very bottom,
       // and the work-extension duration lifted to sit just ABOVE it.
       const _bkStart = (b.activeBreakAt != null) ? +b.activeBreakAt
@@ -24620,7 +24619,7 @@ function drawTimeArea() {
       const _hasBreak = (_bkStart != null && _bkStart > _exStart && _bkStart < b.endMs);
       const _totMs = (_hasBreak ? _bkStart : b.endMs) - _exStart;   // work-extension dur (excludes the break)
       if (div._extArm) { durEl.classList.add('tb-dur-stacked'); durEl.innerHTML = fmtTimeBlockDurStacked(_totMs); }
-      else { durEl.textContent = fmtTimeBlockDur(_totMs); durEl.classList.add('tb-dur-left'); }   // full-width ext → bottom-LEFT
+      else { durEl.textContent = fmtTimeBlockDur(_totMs); }   // (user) full-width ext → bottom-RIGHT (its own dur)
       if (_hasBreak) {
         const _blockH = (b.endMs - b.startMs) || 1;
         const _bkPct = ((b.endMs - _bkStart) / _blockH) * 100;
@@ -40219,15 +40218,16 @@ setInterval(() => {
       rectEl.style.left   = (Math.min(startX, mv.clientX) - ir.left) + 'px';
       rectEl.style.height = Math.abs(mv.clientY - startY) + 'px';
       rectEl.style.width  = Math.abs(mv.clientX - startX) + 'px';
-      // (user) Live feedback: outline (blue) the blocks the rectangle is currently covering, BEFORE
-      // mouse-up — same vertical-overlap rule the final selection uses.
+      // (user) Live feedback: outline (blue) every block the rectangle currently overlaps (partially
+      // OR fully) — true 2-D intersection, same rule the final selection uses.
+      const _selL = Math.min(startX, mv.clientX), _selR = Math.max(startX, mv.clientX);
       const _selT = Math.min(startY, mv.clientY), _selB = Math.max(startY, mv.clientY);
       gaugeInner.querySelectorAll('.tg-block').forEach(el => {
         const bid = el.getAttribute('data-bid');
         const bk = bid ? (state.scheduledBlocks || []).find(b => b && String(b.id) === bid) : null;
         if (!bk || bk.kind === 'tracker' || bk._preview) { el.classList.remove('tg-presel'); return; }
         const r = el.getBoundingClientRect();
-        el.classList.toggle('tg-presel', r.top < _selB && r.bottom > _selT);
+        el.classList.toggle('tg-presel', r.left < _selR && r.right > _selL && r.top < _selB && r.bottom > _selT);
       });
     };
     const onUp = (up) => {
@@ -40238,9 +40238,9 @@ setInterval(() => {
         if (_multiSel.size) { _clearMulti(); drawGauge(); }
         return;
       }
-      // (user) Select any block whose rendered box even PARTIALLY overlaps the rectangle
-      // VERTICALLY. Blocks span the full gauge width and the only empty space to start a
-      // drag is the thin left margin, so X is ignored — vertical overlap is the intent.
+      // (user) Select any block whose rendered box overlaps the rectangle — PARTIALLY OR FULLY
+      // (true 2-D intersection: the box you draw around blocks selects exactly those it touches).
+      const selL = Math.min(startX, up.clientX), selR = Math.max(startX, up.clientX);
       const selT = Math.min(startY, up.clientY), selB = Math.max(startY, up.clientY);
       _multiSel.clear();
       gaugeInner.querySelectorAll('.tg-block').forEach(el => {
@@ -40248,7 +40248,7 @@ setInterval(() => {
         const bk = (state.scheduledBlocks || []).find(b => b && String(b.id) === bid);
         if (!bk || bk.kind === 'tracker' || bk._preview) return;
         const r = el.getBoundingClientRect();
-        if (r.top < selB && r.bottom > selT) _multiSel.add(bk.id);   // vertical (partial) overlap
+        if (r.left < selR && r.right > selL && r.top < selB && r.bottom > selT) _multiSel.add(bk.id);
       });
       _arrowBlock = _multiBlocks()[0] || null;
       _didRect = Date.now();
@@ -40880,10 +40880,9 @@ setInterval(() => {
       const durEl = document.createElement('div');
       durEl.className = 'tg-block-dur';
       if (b._actualExt) {
-        // (user) Overrun arm: GROWING duration (planned + extension) at the bottom of the 1/3 arm.
-        const _par = blocks.find(p => p && !p._actualExt && !p._preview &&
-          p.q === b.q && p.taskIdx === b.taskIdx && Math.abs(p.endMs - b.startMs) < 1000);
-        const _totMs = b.endMs - (_par ? _par.startMs : b.startMs);
+        // (user) The ext block shows ONLY ITS OWN overrun duration (NOT parent+ext) — from the ext's
+        // own start. Parent keeps its planned label; this carries the overrun. At the bottom of the arm.
+        const _totMs = b.endMs - b.startMs;
         if (div._extArm) {
           durEl.classList.add('tb-dur-stacked');
           durEl.innerHTML = fmtTimeBlockDurStacked(_totMs);
@@ -40896,7 +40895,7 @@ setInterval(() => {
             durEl.style.bottom = 'auto';
             durEl.style.transform = 'translateY(-50%)';
           }
-        } else { durEl.textContent = fmtDur(_totMs); durEl.classList.add('tb-dur-left'); }   // full-width ext → bottom-LEFT
+        } else { durEl.textContent = fmtDur(_totMs); }   // (user) full-width ext → bottom-RIGHT (its own dur)
       } else {
         durEl.textContent = fmtDur(b.endMs - b.startMs);
       }
