@@ -28429,9 +28429,12 @@ function _fcPlayTaskEnter() {
 const _CELEB_PHRASES = ["You're awesome!", "Pouring it in...", "Let's go.", "I'm with you."];
 let _celebActive = false, _celebLastPhrase = null, _celebStartFn = null, _celebTask = null, _celebTimers = [];
 function _qCelebImg(q) {
-  // (user) If the user uploaded a Hero image, the start beat ("I'm with you" + image) uses THAT —
-  // the [When there's a task] slot, or any uploaded slot — so the doro/qN art never flashes before
-  // the timer. Since the idle card already shows the same image, the beat shows no image change.
+  // (user) If a HOME character image is set, SKIP the start beat entirely — pressing play jumps
+  // straight into the pomodoro (no qN flash), because the idle card already shows the home image.
+  // Only with NO home image does the beat play: the uploaded Pomodoro image if set, else the qN art.
+  try { if (typeof window.bidoroHomeChar === 'function' && window.bidoroHomeChar()) return null; } catch (_) {}
+  // No home image: the start beat ("I'm with you" + image) uses the uploaded Pomodoro image if set,
+  // so the doro/qN art never flashes before the timer; else it falls back to the default qN art.
   try { const u = (typeof window.bidoroHeroFor === 'function') ? window.bidoroHeroFor('task') : null; if (u) return u; } catch (_) {}
   if (q !== 'q1' && q !== 'q2' && q !== 'q3') return null;   // q4 (no image) → no beat
   const dk = (typeof bidoroDarkTheme === 'function' && bidoroDarkTheme());
@@ -34656,12 +34659,15 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     var c = 100, R = 82, sw = 13, N = 25, circ = 2 * Math.PI * R, out = '';
     for (var i = 0; i < N; i++) { var a = (-90 + i * 360 / N) * Math.PI / 180, big = (i % 5 === 0), r1 = R - (big ? 13 : 8), r2 = R - 1; out += '<line x1="' + (c + r1 * Math.cos(a)).toFixed(1) + '" y1="' + (c + r1 * Math.sin(a)).toFixed(1) + '" x2="' + (c + r2 * Math.cos(a)).toFixed(1) + '" y2="' + (c + r2 * Math.sin(a)).toFixed(1) + '" stroke="' + (big ? '#1f2937' : '#d9b5c2') + '" stroke-width="' + (big ? 2.4 : 1.3) + '" stroke-linecap="round"/>'; }
     var labs = ''; [['0', 0], ['5', 5], ['10', 10], ['15', 15], ['20', 20]].forEach(function (L) { var a = (-90 + L[1] * 360 / N) * Math.PI / 180, rr = R - 27; labs += '<text x="' + (c + rr * Math.cos(a)).toFixed(1) + '" y="' + (c + rr * Math.sin(a) + 4).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#1f2937">' + L[0] + '</text>'; });
-    var ka = (-90 - 15 * 360 / N) * Math.PI / 180;   // knob at 15, filled the CCW (left) way
+    // (user) Dark arc fills CLOCKWISE from the top for `frac` of the circle; the clock-hand knob
+    // sits at the ARC'S END (not a hardcoded tick), so they always line up.
+    var frac = 0.6, endPhi = frac * 2 * Math.PI;   // radians, measured clockwise from 12 o'clock
+    var kx = c + R * Math.sin(endPhi), ky = c - R * Math.cos(endPhi);
     return '<div class="cc-ring-box"><svg class="cc-ring" viewBox="0 0 200 200" aria-hidden="true">' +
       '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#efcfdb" stroke-width="' + sw + '"/>' +
-      '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#A8324F" stroke-width="' + sw + '" stroke-linecap="round" transform="rotate(-90 ' + c + ' ' + c + ') scale(-1 1) translate(-200 0)" stroke-dasharray="' + (0.6 * circ).toFixed(1) + ' ' + circ.toFixed(1) + '"/>' +
+      '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#A8324F" stroke-width="' + sw + '" stroke-linecap="round" transform="rotate(-90 ' + c + ' ' + c + ')" stroke-dasharray="' + (frac * circ).toFixed(1) + ' ' + circ.toFixed(1) + '"/>' +
       out + labs +
-      '<circle cx="' + (c + R * Math.cos(ka)).toFixed(1) + '" cy="' + (c + R * Math.sin(ka)).toFixed(1) + '" r="6.5" fill="#A8324F" stroke="#fff" stroke-width="2.5"/>' +
+      '<circle cx="' + kx.toFixed(1) + '" cy="' + ky.toFixed(1) + '" r="6.5" fill="#A8324F" stroke="#fff" stroke-width="2.5"/>' +
       '</svg><div class="cc-ring-center"><img class="cc-prev-img" alt=""></div></div>';
   }
 
@@ -46050,6 +46056,15 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
     const NAME_MAX = 12;                                      // (user) name length cap
     function _gLocale(){ return (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en'; }
     function _nameAskMsg(){ switch(_gLocale()){ case 'ko':return '내 이름을 지어줘…'; case 'zh':return '给我起个名字吧…'; case 'ja':return '名前をつけてね…'; case 'es':return 'Ponme un nombre…'; case 'fr':return 'Donne-moi un nom…'; default:return 'Give me a name…'; } }
+    // (user) The "…" bubble shows a RANDOM one of three "name me" lines each time it pops.
+    function _nameAskBubble(){ var L=_gLocale(), M={
+        en:['Give me a name…','What should you call me?','I’d love a name…'],
+        ko:['내 이름을 지어줘…','날 뭐라고 부를래?','이름 하나 갖고 싶어…'],
+        zh:['给我起个名字吧…','你想叫我什么呢？','好想要个名字…'],
+        ja:['名前をつけてね…','なんて呼んでくれる？','名前がほしいな…'],
+        es:['Ponme un nombre…','¿Cómo me llamarás?','Me encantaría un nombre…'],
+        fr:['Donne-moi un nom…','Comment vas-tu m’appeler ?','J’aimerais un nom…'] };
+      var a=M[L]||M.en; return a[Math.floor(Math.random()*a.length)]; }
     function _nameTitle(){ switch(_gLocale()){ case 'ko':return '이름 지어주기'; case 'zh':return '起名字'; case 'ja':return '名前をつける'; case 'es':return 'Ponle un nombre'; case 'fr':return 'Donner un nom'; default:return 'Name it'; } }
     function _josaIrago(name){ const s=(''+(name||'')).trim(); if(!s) return '라고'; const c=s.charCodeAt(s.length-1); if(c>=0xAC00&&c<=0xD7A3) return ((c-0xAC00)%28)?'이라고':'라고'; return '라고'; }
     function _callMeMsg(name){ switch(_gLocale()){ case 'ko':return '나를 '+name+_josaIrago(name)+' 불러줘.'; case 'zh':return '叫我'+name+'吧。'; case 'ja':return '私を'+name+'と呼んでね。'; case 'es':return 'Llámame '+name+'.'; case 'fr':return 'Appelle-moi '+name+'.'; default:return 'Call me '+name+'.'; } }
@@ -46232,19 +46247,15 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
               const ask = async (e) => {
                 e.preventDefault(); e.stopPropagation(); if (panMoved) return;
                 const s = seedAt(_nr, _nc); if (!s) return;
-                if (!s._nameAsk) {   // 1st tap → show the "name me" message; arm the dialog
-                  s._nameAsk = true;
-                  try { showGbMent(_nameAskMsg(), nb.getBoundingClientRect()); } catch (_) {}
-                  return;
-                }
-                // 2nd tap → name input dialog (boost it above the garden overlay z 9100).
+                // (user) ONE tap → flash a random "name me" bubble AND open the name dialog right away.
+                try { showGbMent(_nameAskBubble(), nb.getBoundingClientRect()); } catch (_) {}
                 const modal = document.getElementById('custom-prompt-modal');
                 let _pz; if (modal) { _pz = modal.style.zIndex; modal.style.zIndex = '9400'; }
                 let v = null;
                 try { v = await customPrompt(_nameTitle(), _nameAskMsg(), s.name || ''); } catch (_) {}
                 if (modal) modal.style.zIndex = _pz || '';
                 if (v != null) { v = String(v).trim().slice(0, NAME_MAX); if (v) s.name = v; }
-                delete s._nameAsk; try { persistSeeds(); } catch (_) {}
+                try { persistSeeds(); } catch (_) {}
                 if (s.name) { try { showGbMent(_callMeMsg(s.name), nb.getBoundingClientRect()); } catch (_) {} }
                 renderField();
               };
