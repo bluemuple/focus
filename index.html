@@ -14102,9 +14102,10 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       '.pw-media .pw-video{z-index:1;}',
       '.pw-flabels{position:absolute;inset:0;pointer-events:none;}',
       '.pw-flabel{position:absolute;transform:translate(-50%,12px);white-space:nowrap;background:var(--surface-2,#f3f4f6);color:var(--text-dim,#9ca3af);font-size:.72rem;font-weight:600;padding:4px 11px;border-radius:999px;opacity:0;will-change:opacity,transform;box-shadow:0 2px 8px rgba(0,0,0,.05);}',
-      '.pw-flabel:nth-child(1){top:8%;left:30%;}',
-      '.pw-flabel:nth-child(2){top:46%;left:80%;}',
-      '.pw-flabel:nth-child(3){top:82%;left:40%;}',
+      '.pw-flabel:nth-child(1){top:2%;left:70%;}',     /* Future features included — highest, right */
+      '.pw-flabel:nth-child(2){top:23%;left:56%;}',    /* Bidoro on Google Play — just below it */
+      '.pw-flabel:nth-child(3){top:55%;left:81%;}',    /* Advanced reminders — mid right */
+      '.pw-flabel:nth-child(4){top:86%;left:36%;}',    /* Natural language input — bottom left */
       '.pw-bodywrap{position:absolute;inset:0;overflow:hidden;z-index:1;}',
       '.pw-body{padding-top:6px;will-change:transform,opacity;}',
       '.pw-spacer{height:100%;}',
@@ -14157,6 +14158,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
                 '<video class="pw-video" id="pw-video" muted playsinline webkit-playsinline preload="auto"><source src="images/rocket.mp4" type="video/mp4"></video>'+
               '</div>'+
               '<div class="pw-flabels" id="pw-flabels">'+
+                '<span class="pw-flabel">Future features included</span>'+
                 '<span class="pw-flabel">Bidoro on Google Play</span>'+
                 '<span class="pw-flabel">Advanced reminders</span>'+
                 '<span class="pw-flabel">Natural language input</span>'+
@@ -14205,15 +14207,20 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           var vp = ease(cl((p - 0.15) / 0.7));                 // video reveals from ~15% scroll
           if (stage) stage.style.opacity = String(vp);
           if (media) media.style.transform = 'scale(' + (0.96 + 0.04 * vp).toFixed(3) + ')';
-          for (var i = 0; i < labels.length; i++) {           // staggered fade-in + rise
-            var lp = ease(cl((p - (0.42 + i * 0.12)) / 0.3));
+          // (user) each label rises from below at a DIFFERENT speed + distance, to its own position.
+          var LCFG = [[0.38,0.40,34],[0.46,0.30,22],[0.55,0.38,42],[0.62,0.26,28]];   // [startP, durP, risePx]
+          for (var i = 0; i < labels.length; i++) {
+            var c = LCFG[i] || [0.45,0.32,26];
+            var lp = ease(cl((p - c[0]) / c[1]));
             labels[i].style.opacity = String(lp);
-            labels[i].style.transform = 'translate(-50%, ' + (12 - 12 * lp).toFixed(1) + 'px)';
+            labels[i].style.transform = 'translate(-50%, ' + (c[2] * (1 - lp)).toFixed(1) + 'px)';
           }
         }
-        if (video) {
-          if (p > 0.2 && !playing) { playing = true; try { video.muted = true; video.currentTime = 0; var pr = video.play(); if (pr && pr.catch) pr.catch(function(){}); } catch(_){} }
-          else if (p <= 0.2 && playing) { playing = false; try { video.pause(); video.currentTime = 0; } catch(_){} }
+        // (user) Apple-style SCRUB: the video frame follows the scroll — scroll up → forward, stop →
+        // freeze, scroll down → backward. Kept paused; we only seek currentTime.
+        if (video && video.duration && isFinite(video.duration)) {
+          var vs = cl((p - 0.15) / 0.8);   // 15%→95% scroll maps to 0→end of the clip
+          try { if (!video.paused) video.pause(); video.currentTime = vs * video.duration; } catch(_){}
         }
       }
       // Apply directly on each scroll (simple GPU-friendly transform/opacity writes → no jank).
