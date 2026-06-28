@@ -1015,10 +1015,13 @@
   .cc-prev-home .hero-card-text { flex: 1 1 auto; font-size: 1.5rem; font-weight: 800; line-height: 1.18; color: var(--text-main,#0f172a); letter-spacing: -.01em; }
   .cc-prev-home .hero-card-pic { flex: 0 0 auto; width: 112px; height: 112px; display: flex; align-items: center; justify-content: center; }
   .cc-prev-home .hero-card-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  .cc-prev-pomo { justify-content: center; position: relative; }
-  .cc-ring { height: 100%; width: auto; aspect-ratio: 1 / 1; display: block; }
-  .cc-ring-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 44%; height: 44%; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-  .cc-ring-center img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .cc-prev-pomo { justify-content: center; }
+  .cc-ring-box { position: relative; height: 100%; aspect-ratio: 1 / 1; }
+  .cc-ring { width: 100%; height: 100%; display: block; }
+  /* (user) The character fills the inner circle (clipped to it) — like the full-screen dial: the part
+     of the image outside the ring is hidden, only the inside shows. */
+  .cc-ring-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 73%; height: 73%; border-radius: 50%; overflow: hidden; background: #FCF7F1; display: flex; align-items: center; justify-content: center; }
+  .cc-ring-center img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .cc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 2px; }
   .cc-pick { flex: 0 0 auto; }
   .cc-thumbs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -34551,12 +34554,12 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     for (var i = 0; i < N; i++) { var a = (-90 + i * 360 / N) * Math.PI / 180, big = (i % 5 === 0), r1 = R - (big ? 13 : 8), r2 = R - 1; out += '<line x1="' + (c + r1 * Math.cos(a)).toFixed(1) + '" y1="' + (c + r1 * Math.sin(a)).toFixed(1) + '" x2="' + (c + r2 * Math.cos(a)).toFixed(1) + '" y2="' + (c + r2 * Math.sin(a)).toFixed(1) + '" stroke="' + (big ? '#1f2937' : '#d9b5c2') + '" stroke-width="' + (big ? 2.4 : 1.3) + '" stroke-linecap="round"/>'; }
     var labs = ''; [['0', 0], ['5', 5], ['10', 10], ['15', 15], ['20', 20]].forEach(function (L) { var a = (-90 + L[1] * 360 / N) * Math.PI / 180, rr = R - 27; labs += '<text x="' + (c + rr * Math.cos(a)).toFixed(1) + '" y="' + (c + rr * Math.sin(a) + 4).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#1f2937">' + L[0] + '</text>'; });
     var ka = (-90 - 15 * 360 / N) * Math.PI / 180;   // knob at 15, filled the CCW (left) way
-    return '<svg class="cc-ring" viewBox="0 0 200 200" aria-hidden="true">' +
+    return '<div class="cc-ring-box"><svg class="cc-ring" viewBox="0 0 200 200" aria-hidden="true">' +
       '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#efcfdb" stroke-width="' + sw + '"/>' +
       '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#A8324F" stroke-width="' + sw + '" stroke-linecap="round" transform="rotate(-90 ' + c + ' ' + c + ') scale(-1 1) translate(-200 0)" stroke-dasharray="' + (0.6 * circ).toFixed(1) + ' ' + circ.toFixed(1) + '"/>' +
       out + labs +
       '<circle cx="' + (c + R * Math.cos(ka)).toFixed(1) + '" cy="' + (c + R * Math.sin(ka)).toFixed(1) + '" r="6.5" fill="#A8324F" stroke="#fff" stroke-width="2.5"/>' +
-      '</svg><div class="cc-ring-center"><img class="cc-prev-img" alt=""></div>';
+      '</svg><div class="cc-ring-center"><img class="cc-prev-img" alt=""></div></div>';
   }
 
   // One section (home | pomo): preview (cycles every 5 s when 2+) + up to 3 thumbnails (trash each) +
@@ -34583,12 +34586,12 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       a.forEach(function (u, i) { const t = document.createElement('div'); t.className = 'cc-thumb'; t.innerHTML = '<img alt=""><button type="button" class="cc-trash" aria-label="Remove">✕</button>'; t.querySelector('img').src = u;
         t.querySelector('.cc-trash').addEventListener('click', function () { a.splice(i, 1); prevIdx = 0; persist(); renderThumbs(); paintPreview(); applyChars(); }); thumbs.appendChild(t); });
     }
-    btn.addEventListener('click', function () { if (arr().length >= 3) { try { if (typeof bidoroToast === 'function') bidoroToast('Delete one image first (max 3).'); else alert('Delete one image first (max 3).'); } catch (_) {} return; } file.click(); });
+    btn.addEventListener('click', function () { file.click(); });   // (user) max 3 → adding a 4th drops the OLDEST (FIFO), no block
     file.addEventListener('change', function () {
       const f = file.files && file.files[0]; if (!f) return; const _l = btn.textContent; btn.disabled = true; btn.textContent = isPro() ? 'Uploading…' : 'Saving…';
       function done() { btn.disabled = false; btn.textContent = _l; }
       _heroResize(f, function (d) { if (!d) { done(); return; }
-        function store(val) { arr().push(val); persist(); renderThumbs(); paintPreview(); applyChars(); done(); }
+        function store(val) { const a = arr(); if (a.length >= 3) a.shift(); a.push(val); persist(); renderThumbs(); paintPreview(); applyChars(); done(); }
         if (isPro()) { _heroUpload(arrKey + '_' + arr().length + '_' + (Date.now() % 100000), d).then(function (url) { store(url || d); }); }
         else store(d);
       }); file.value = '';
@@ -39379,11 +39382,20 @@ function _ffBuildDial(durMin) {
    clip). A tap (no drag) adds / replaces a photo via the OS picker. */
 const FF_IMG_KEY = 'bidoro-ff-images';
 function _ffImages() {
-  try { const o = JSON.parse(localStorage.getItem(FF_IMG_KEY) || '{}');
-    return { task: Array.isArray(o.task) ? o.task.slice(0, 3) : [], break: Array.isArray(o.break) ? o.break.slice(0, 3) : [] };
-  } catch (_) { return { task: [], break: [] }; }
+  // (user) The WORK (task) photos ARE the Settings "Pomodoro character" set (state.pomoChars) — the
+  // full-screen carousel and the settings section stay in sync. Break photos stay in local storage.
+  let brk = [];
+  try { const o = JSON.parse(localStorage.getItem(FF_IMG_KEY) || '{}'); if (Array.isArray(o.break)) brk = o.break.slice(0, 3); } catch (_) {}
+  const task = (typeof state !== 'undefined' && Array.isArray(state.pomoChars)) ? state.pomoChars.slice(0, 3) : [];
+  return { task: task, break: brk };
 }
-function _ffSaveImages(o) { try { localStorage.setItem(FF_IMG_KEY, JSON.stringify(o)); } catch (_) {} }
+function _ffSaveImages(o) {
+  try {
+    if (o && Array.isArray(o.task)) { state.pomoChars = o.task.slice(0, 3); try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {} }
+    let brk = []; if (o && Array.isArray(o.break)) brk = o.break.slice(0, 3); else { try { const cur = JSON.parse(localStorage.getItem(FF_IMG_KEY) || '{}'); if (Array.isArray(cur.break)) brk = cur.break; } catch (_) {} }
+    localStorage.setItem(FF_IMG_KEY, JSON.stringify({ break: brk }));
+  } catch (_) {}
+}
 let _ffMode = 'task';                 // 'task' (work) | 'break'
 const _ffIdx = { task: 0, break: 0 }; // current slide index per mode
 let _ffSlides = [];
@@ -39481,8 +39493,7 @@ function _ffTapCentre() {
   if (cur.type === 'user') {
     _ffPending = { mode: _ffMode, replaceIndex: cur.num - 1 };               // tap a photo → replace it
   } else if (cur.type === 'add') {
-    _ffPending = (imgs.length < 3) ? { mode: _ffMode, addNew: true }          // tap "Touch here to add" → add (or replace #1 when full)
-                                   : { mode: _ffMode, replaceIndex: 0 };
+    _ffPending = { mode: _ffMode, addNew: true };   // (user) tap "add" → append; when full, _ffOnPicked drops the oldest (FIFO)
   } else {
     return;   // blank / default study|break image → not a tap target
   }
@@ -39501,12 +39512,17 @@ function _ffOnPicked(fileEl) {
       if (!w || !h) return;
       const s = Math.min(w, h), t = Math.min(s, 500);   // centre-square crop, capped at 500 px
       const cv = document.createElement('canvas'); cv.width = t; cv.height = t;
-      try { cv.getContext('2d').drawImage(im, (w - s) / 2, (h - s) / 2, s, s, 0, 0, t, t); } catch (_) { return; }
-      let url = ''; try { url = cv.toDataURL('image/jpeg', 0.86); } catch (_) { return; }
+      let url = '';
+      try {
+        const cx = cv.getContext('2d'); cx.drawImage(im, (w - s) / 2, (h - s) / 2, s, s, 0, 0, t, t);
+        // (user) Keep transparency: PNG when the image has translucent pixels (no black box), else JPEG.
+        let hasAlpha = false; try { const dd = cx.getImageData(0, 0, t, t).data; for (let i = 3; i < dd.length; i += 4) { if (dd[i] < 250) { hasAlpha = true; break; } } } catch (_) { hasAlpha = true; }
+        url = hasAlpha ? cv.toDataURL('image/png') : cv.toDataURL('image/jpeg', 0.86);
+      } catch (_) { return; }
       const all = _ffImages();
       const arr = all[pend.mode] || (all[pend.mode] = []);
       let num;
-      if (pend.addNew) { if (arr.length >= 3) { arr[2] = url; num = 3; } else { arr.push(url); num = arr.length; } }
+      if (pend.addNew) { if (arr.length >= 3) arr.shift(); arr.push(url); num = arr.length; }   // (user) FIFO: drop the oldest
       else { const ri = Math.max(0, Math.min(pend.replaceIndex, arr.length - 1)); if (arr.length) { arr[ri] = url; num = ri + 1; } else { arr.push(url); num = 1; } }
       _ffSaveImages(all);
       if (pend.mode === _ffMode) {
