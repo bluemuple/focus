@@ -994,10 +994,38 @@
   .set-explain-title { font-weight: 800; margin-bottom: 3px; }
   .set-explain-x { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: none; border-radius: 50%; background: rgba(255,255,255,.15); color: #f3f4f6; font-size: 14px; cursor: pointer; line-height: 1; }
   @media (min-width: 701px) {
-    /* iPad / web PC: the master list flows as a 2-column masonry of grouped cards (첨부5). */
-    #settings-page:not(.set-detail-mode) { display: block; }
-    #settings-page .set-master { display: block; column-count: 2; column-gap: 18px; }
-    #settings-page .set-master .set-group { break-inside: avoid; margin-bottom: 18px; }
+    /* (user) iPad / PC-web: Settings is a CENTERED MODAL over the previous page — left = a nav rail
+       of category buttons, right = the detail page / toggle for the selected button. (display has NO
+       !important so showPage's inline display:none can still hide it when navigating away.) */
+    #settings-page { position: fixed; inset: 0; z-index: 9500; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; background: rgba(17,24,39,.45); overflow: visible; }
+    #settings-page > .set-master, #settings-page > .set-wide-detail { height: min(86vh, 720px); align-self: center; box-sizing: border-box; box-shadow: 0 24px 70px rgba(0,0,0,.32); }
+    #settings-page > .set-master { display: flex; flex-direction: column; gap: 16px; width: 290px; flex: 0 0 290px; overflow-y: auto; background: var(--card-bg, #fff); border-radius: 18px 0 0 18px; padding: 20px 14px; }
+    #settings-page > .set-wide-detail { display: flex; flex-direction: column; width: 560px; max-width: 58vw; background: var(--app-bg, var(--card-bg,#fff)); border-radius: 0 18px 18px 0; overflow: hidden; }
+    #settings-page > .set-master::-webkit-scrollbar { width: 0; }
+    /* phone chrome off; master always visible (no full-swap) */
+    #settings-page > .set-back-head { display: none !important; }
+    #settings-page.set-detail-mode > .set-master { display: flex !important; }
+    #settings-page > .panel { display: none !important; }                 /* panels show only when MOVED into the pane */
+    #settings-page .set-wide-detail .set-wd-body > .panel { display: block !important; background: transparent; box-shadow: none; border: none; padding: 2px 0 0; margin: 0; }
+    #settings-page .set-wide-detail .set-wd-body > .panel > h2 { display: none; }   /* the pane header already shows the title */
+    /* nav rows: hide chevrons, show selection by highlight */
+    #settings-page > .set-master .set-group { margin: 0; }
+    #settings-page > .set-master .set-row .set-row-chev, #settings-page > .set-master .set-row .set-row-caret { display: none; }
+    #settings-page > .set-master .set-row.set-row-on { background: var(--surface-2, #eef2ff); border-radius: 10px; }
+    /* right pane header + scrolling body */
+    .set-wd-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--card-border,#e5e7eb); flex: 0 0 auto; }
+    .set-wd-title { font-size: 1.12rem; font-weight: 800; color: var(--text-main,#111827); }
+    .set-wd-x { width: 30px; height: 30px; flex: 0 0 auto; border: none; border-radius: 50%; background: var(--surface-2,#f3f4f6); color: var(--text-main,#111827); font-size: 15px; cursor: pointer; }
+    .set-wd-body { flex: 1 1 auto; overflow-y: auto; padding: 16px 20px 24px; }
+    /* generated controls for select / toggle / value / action rows */
+    .set-wd-ctl { display: flex; flex-direction: column; gap: 10px; }
+    .set-wd-opt { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border: 1px solid var(--card-border,#e5e7eb); border-radius: 12px; background: var(--card-bg,#fff); cursor: pointer; font: inherit; color: var(--text-main,#111827); text-align: left; }
+    .set-wd-opt.on { border-color: var(--accent,#2563eb); box-shadow: inset 0 0 0 1px var(--accent,#2563eb); }
+    .set-wd-opt .set-wd-dot { width: 16px; height: 16px; flex: 0 0 auto; border-radius: 50%; border: 1px solid rgba(0,0,0,.15); }
+    .set-wd-opt .set-wd-chk { margin-left: auto; color: var(--accent,#2563eb); font-weight: 800; }
+    .set-wd-desc { color: var(--text-muted,#6b7280); font-size: .92rem; line-height: 1.55; }
+    .set-wd-btn { align-self: flex-start; padding: 11px 18px; border-radius: 12px; border: none; background: var(--accent,#2563eb); color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+    .set-wd-btn.ghost { background: var(--surface-2,#f3f4f6); color: var(--text-main,#111827); }
     .set-explain { left: auto; right: 24px; width: 420px; max-width: 44vw; }
   }
   /* ===== Help page ===== */
@@ -13619,6 +13647,8 @@ function showPage(name) {
   // the Settings page at boot) — never shown; legacy 'setup' → focus. Unknown → focus.
   if (name === 'setup') name = 'focus';
   if (!pages[name]) name = 'focus';
+  // (user) Wide Settings is a MODAL over the previous page — remember where we came from.
+  if (name === 'settings' && state.currentPage && state.currentPage !== 'settings') window._settingsPrevPage = state.currentPage;
   // Friends is a Bidoro PRO feature — free users get the paywall instead.
   if (name === 'friends' && typeof window.bidoroIsPremium === 'function' && !window.bidoroIsPremium()) {
     try { window.bidoroOpenPaywall('friends'); } catch (_) {}
@@ -13635,6 +13665,11 @@ function showPage(name) {
     // grid (CSS @media ≥701px) can take effect; every other page stays 'block'.
     el.style.display = (k === name) ? (id === 'settings-page' ? '' : 'block') : 'none';
   });
+  // (user) Wide Settings modal: keep the PREVIOUS page painted behind the centered card.
+  if (name === 'settings' && window.matchMedia && window.matchMedia('(min-width:701px)').matches) {
+    const _pv = window._settingsPrevPage, _pid = _pv && pages[_pv];
+    if (_pid && _pv !== 'settings') { const _pe = document.getElementById(_pid); if (_pe) _pe.style.display = (_pid === 'settings-page') ? '' : 'block'; }
+  }
   // (user) Refresh the iCloud connection status whenever Settings is opened.
   if (name === 'settings') { try { if (typeof bidoroRenderICloudStatus === 'function') bidoroRenderICloudStatus(); } catch (_) {} }
   ['focus','stats'].forEach(k => {
@@ -13664,6 +13699,7 @@ function showPage(name) {
     try { if (typeof _pillarEditorLoad === 'function') _pillarEditorLoad(); } catch(_){}
     try { if (typeof _bucketViewLoad === 'function') _bucketViewLoad(); } catch(_){}
     try { if (typeof loadFocusPlaylist === 'function') loadFocusPlaylist().then(() => { try { syncMusicPlayBtn(); } catch(_){} }); } catch(_){}   // Focus Music: track title
+    try { if (typeof window._bidoroSettingsWideOpen === 'function') window._bidoroSettingsWideOpen(); } catch(_){}   // iPad/PC: init the 2-pane modal
   }
   if (name === 'stats') {
     renderStats();
@@ -34510,7 +34546,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         onPick: function (k, anchor) { segClick('timer-transition-seg', k); openGif(anchor, ''); } }
     ] },
     { head: 'Account', rows: [
-      { lbl: 'Sign in', ico: 'user', kind: 'action', hideIf: loggedIn, onClick: function () { openDetail('acct-panel-wrap', 'Account'); } },
+      { lbl: 'Sign in', ico: 'user', kind: 'detail', panel: 'acct-panel-wrap', hideIf: loggedIn },
       { lbl: 'Nickname', ico: 'user', kind: 'value', hideIf: function () { return !loggedIn(); },
         valHtml: function () { const a = document.getElementById('acct-avatar'), n = document.getElementById('acct-nick'); return '<span class="set-row-cv"><span class="set-row-val-emoji">' + esc((a && a.textContent) || '🙂') + '</span> ' + esc((n && n.textContent) || '—') + '</span>'; },
         onClick: function () { const b = document.getElementById('acct-nick-edit'); if (b) b.click(); } },
@@ -34589,8 +34625,11 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'set-row' + (r.accent ? ' set-row-accent' : '') + (r.danger ? ' set-row-danger' : '');
       btn.innerHTML = '<span class="set-row-ico">' + (ICO[r.ico] || '') + '</span><span class="set-row-lbl"></span>' + rightHtml(r);
       btn.querySelector('.set-row-lbl').textContent = r.lbl;
+      btn.__setRow = r;
       paintVal(btn, r);
       btn.addEventListener('click', function () {
+        // (user) iPad / PC-web: every row drives the RIGHT detail pane (controls live there, not inline).
+        if (typeof _isWideSettings === 'function' && _isWideSettings()) { selectWide(r, btn); return; }
         if (r.kind === 'page') { try { showPage(r.page); if (typeof scrollMainTop === 'function') scrollMainTop(); } catch (_) {} return; }
         if (r.kind === 'detail') { if (r.panel === 'setdetail-sync') ensureSyncMoved(); if (r.panel === 'setdetail-notesmix') ensureNotesMixMoved(); openDetail(r.panel, r.lbl); return; }
         if (r.kind === 'select') { openSelect(btn, r.opts, r.cur(), function (k) { try { r.onPick(k, btn); } catch (_) {} setTimeout(function () { paintVal(btn, r); }, 30); }); return; }
@@ -34621,6 +34660,77 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   const _bk = document.getElementById('set-back-btn'); if (_bk) _bk.addEventListener('click', showMaster);
   window.bidoroSettingsShowMaster = showMaster;
   window.bidoroSettingsOpenDetail = openDetail;
+
+  // ===== (user) iPad / PC-web: two-pane MODAL settings — LEFT nav rail of category buttons, RIGHT
+  // detail page / toggle for the selected button (phone keeps inline toggles + full-swap detail). =====
+  function _isWideSettings() { return !!(window.matchMedia && window.matchMedia('(min-width:701px)').matches); }
+  let _widePane = null, _wideMoved = null;
+  function closeWideSettings() { try { showPage(window._settingsPrevPage || 'focus'); } catch (_) {} }
+  function ensureWidePane() {
+    if (_widePane && _widePane.parentNode === page) return _widePane;
+    _widePane = document.createElement('div'); _widePane.className = 'set-wide-detail';
+    _widePane.innerHTML = '<div class="set-wd-head"><span class="set-wd-title"></span><button type="button" class="set-wd-x" aria-label="Close">✕</button></div><div class="set-wd-body"></div>';
+    _widePane.querySelector('.set-wd-x').addEventListener('click', closeWideSettings);
+    page.appendChild(_widePane);
+    return _widePane;
+  }
+  function _restoreWideMoved() { if (_wideMoved) { try { page.appendChild(_wideMoved); } catch (_) {} _wideMoved = null; } }
+  function selectWide(r, btn) {
+    // 'page' rows (Help) leave the modal entirely — handle BEFORE highlighting so they're never the
+    // remembered selection (otherwise reopening Settings would bounce straight back to that page).
+    if (r.kind === 'page') { try { closeWideSettings(); showPage(r.page); } catch (_) {} return; }
+    ensureWidePane();
+    _restoreWideMoved();
+    page.querySelectorAll('.set-master .set-row.set-row-on').forEach(function (x) { x.classList.remove('set-row-on'); });
+    if (btn) btn.classList.add('set-row-on');
+    const titleEl = _widePane.querySelector('.set-wd-title'); if (titleEl) titleEl.textContent = r.lbl;
+    const body = _widePane.querySelector('.set-wd-body'); body.innerHTML = '';
+    if (r.kind === 'detail') {
+      if (r.panel === 'setdetail-sync') ensureSyncMoved();
+      if (r.panel === 'setdetail-notesmix') ensureNotesMixMoved();
+      const panel = document.getElementById(r.panel);
+      if (panel) { body.appendChild(panel); _wideMoved = panel; }
+      return;
+    }
+    const ctl = document.createElement('div'); ctl.className = 'set-wd-ctl';
+    if (r.kind === 'select') {
+      const cur = r.cur();
+      r.opts.forEach(function (o) {
+        const b = document.createElement('button'); b.type = 'button'; b.className = 'set-wd-opt' + (o.key === cur ? ' on' : '');
+        b.innerHTML = (o.dot ? '<span class="set-wd-dot" style="background:' + o.dot + '"></span>' : '') + '<span>' + esc(o.label) + '</span>' + (o.key === cur ? '<span class="set-wd-chk">✓</span>' : '');
+        b.addEventListener('click', function () { try { r.onPick(o.key, b); } catch (_) {} setTimeout(function () { paintVal(btn, r); selectWide(r, btn); }, 30); });
+        ctl.appendChild(b);
+      });
+    } else if (r.kind === 'toggle') {
+      const on = !!(r.valLabel && r.valLabel() !== 'Off');
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'set-wd-opt' + (on ? ' on' : '');
+      b.innerHTML = '<span>' + esc(r.lbl) + '</span><span class="set-wd-chk">' + (on ? 'On' : 'Off') + '</span>';
+      b.addEventListener('click', function () { try { r.onToggle(); } catch (_) {} setTimeout(function () { paintVal(btn, r); selectWide(r, btn); }, 20); });
+      ctl.appendChild(b);
+      if (r.desc) { const d = document.createElement('div'); d.className = 'set-wd-desc'; d.textContent = r.desc.body; ctl.appendChild(d); }
+    } else if (r.kind === 'value') {
+      const d = document.createElement('div'); d.className = 'set-wd-desc'; if (r.valHtml) d.innerHTML = r.valHtml(); else d.textContent = r.valLabel ? r.valLabel() : ''; ctl.appendChild(d);
+      if (r.onClick) { const b = document.createElement('button'); b.className = 'set-wd-btn ghost'; b.textContent = 'Edit'; b.addEventListener('click', function () { try { r.onClick(); } catch (_) {} setTimeout(function () { paintVal(btn, r); selectWide(r, btn); }, 60); }); ctl.appendChild(b); }
+    } else if (r.kind === 'action') {
+      const b = document.createElement('button'); b.className = 'set-wd-btn' + (r.danger ? ' ghost' : ''); b.textContent = r.lbl;
+      b.addEventListener('click', function () { try { if (r.onClick) r.onClick(); } catch (_) {} });
+      ctl.appendChild(b);
+    }
+    body.appendChild(ctl);
+  }
+  function selectFirstWide() { const first = page.querySelector('.set-master .set-row'); if (first && first.__setRow) selectWide(first.__setRow, first); }
+  // backdrop click (the padding area outside the card) closes the modal
+  page.addEventListener('click', function (e) { if (_isWideSettings() && e.target === page) closeWideSettings(); });
+  // crossing back to phone width → put any moved panel back so phone openDetail/full-swap still works
+  window.addEventListener('resize', function () { if (!_isWideSettings()) _restoreWideMoved(); });
+  window._bidoroSettingsWideOpen = function () {
+    if (!_isWideSettings()) return; ensureWidePane();
+    // Re-render the remembered (or first) row each open → rebuilds the pane fresh and re-homes any
+    // panel that was moved into it last time.
+    const onRow = page.querySelector('.set-master .set-row.set-row-on');
+    const target = (onRow && onRow.__setRow) ? onRow : page.querySelector('.set-master .set-row');
+    if (target && target.__setRow) selectWide(target.__setRow, target);
+  };
 
   // (user) iOS-style interactive edge-swipe-back: from a detail page, drag from the LEFT edge to the
   // right → the detail slides off following the finger (master shown behind); release past 1/3 → back,
