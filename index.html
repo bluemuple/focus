@@ -947,6 +947,21 @@
   .set-music-ctrls .fm-ctrl svg { width: 15px; height: 15px; }
   .set-music-ctrls .fm-play { width: 32px; height: 32px; }
   .set-music-ctrls .fm-title { display: none; }
+  /* (user) Account row emoji icon (the logged-in avatar shown as the row icon). */
+  .set-row-ico-emoji { font-size: 20px; }
+  /* (user) Calendar rows: label + accent ✓ (left), Sync/Disconnect button (right). */
+  .set-cal-row { cursor: default; }
+  .set-cal-row .set-row-lbl { flex: 0 1 auto; }
+  .set-cal-chk { flex: 0 0 auto; color: var(--accent, #2563eb); font-weight: 900; font-size: 1rem; }
+  .set-cal-btn { margin-left: auto; flex: 0 0 auto; padding: 7px 14px; border-radius: 9px; border: 1px solid var(--accent, #2563eb); background: var(--accent, #2563eb); color: #fff; font: inherit; font-weight: 700; font-size: .85rem; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+  .set-cal-btn:active { transform: scale(.96); }
+  .set-cal-btn.is-disc { background: var(--card-bg, #fff); color: #dc2626; border-color: var(--card-border, #e5e7eb); }
+  /* (user) Pro hero card — premium treatment on the Account page. */
+  .acct-pro-card { margin: 0 0 14px; padding: 16px 18px; border-radius: 16px; color: #fff; background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 55%, #2563eb 100%); box-shadow: 0 8px 24px rgba(79,70,229,.32); }
+  .apc-badge { font-size: 1.18rem; font-weight: 900; }
+  .apc-sub { margin-top: 2px; font-size: .9rem; font-weight: 700; opacity: .92; }
+  .apc-benefit { margin-top: 8px; font-size: .82rem; font-weight: 600; opacity: .85; }
+  .acct-pro-badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: .7rem; font-weight: 800; color: #fff; background: linear-gradient(135deg, #7c3aed, #2563eb); vertical-align: middle; }
   .set-row-val.set-row-val-emoji { font-size: 1.15rem; }
   .set-row-val .set-row-cv { display: inline-flex; align-items: center; gap: 6px; }
   .set-row-val .set-row-caret { color: var(--text-muted, #9ca3af); }
@@ -13721,6 +13736,7 @@ function showPage(name) {
     try { if (typeof _pillarEditorLoad === 'function') _pillarEditorLoad(); } catch(_){}
     try { if (typeof _bucketViewLoad === 'function') _bucketViewLoad(); } catch(_){}
     try { if (typeof loadFocusPlaylist === 'function') loadFocusPlaylist().then(() => { try { syncMusicPlayBtn(); } catch(_){} }); } catch(_){}   // Focus Music: track title
+    try { if (typeof window._bidoroSettingsRefreshRows === 'function') window._bidoroSettingsRefreshRows(); } catch(_){}   // account/calendar row state
     try { if (typeof window._bidoroSettingsWideOpen === 'function') window._bidoroSettingsWideOpen(); } catch(_){}   // iPad/PC: init the 2-pane modal
   }
   if (name === 'stats') {
@@ -15885,6 +15901,8 @@ function _applyGcalConnUI() {
   });
   // Keep the Month section's minimized/full state in sync with the connection state.
   try { _applyCalSyncVis(); } catch (_) {}
+  // (user) Refresh the Settings Apple/Google calendar rows (✓ + Sync/Disconnect).
+  try { document.querySelectorAll('#settings-page .set-cal-row').forEach(function (r) { if (r.__paint) r.__paint(); }); } catch (_) {}
 }
 window._applyGcalConnUI = _applyGcalConnUI;
 /* (user) Disconnect Google Calendar: ask the Edge Function to delete the stored tokens (and revoke
@@ -34297,10 +34315,16 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   // THEME = theme-panel minus the timer row → relabel its heading.
   const themePanel = document.getElementById('theme-panel');
   if (themePanel) { const h = themePanel.querySelector('h2'); if (h) h.textContent = 'Theme'; }
-  // SYNC = the calendar-sync section. Lazy-moved on first open so the boot-time PRO-row insert
-  // (anchored on #acct-sync-sec) has already run and stays in the Account panel.
-  const syncPanel = mkPanel('setdetail-sync', 'Sync');
-  function ensureSyncMoved() { const s = document.getElementById('acct-sync-sec'); if (s && s.parentNode !== syncPanel) syncPanel.appendChild(s); }
+  // BIDORO BACKUPS = the backup VERSIONS list + the Device→Cloud push button (moved out of the
+  // Account panel). Calendar sync moved to the Apple/Google rows; it is NOT here anymore.
+  const syncPanel = mkPanel('setdetail-sync', 'Bidoro Backups');
+  function ensureSyncMoved() {
+    if (!syncPanel.querySelector('.bk-intro')) syncPanel.insertAdjacentHTML('beforeend', '<p class="help bk-intro">Save a backup of this device to the cloud. The latest backups are kept here.</p>');
+    const pushWrap = document.querySelector('#auth-logged-in .account-row-2');
+    if (pushWrap && pushWrap.parentNode !== syncPanel) syncPanel.appendChild(pushWrap);
+    const st = document.getElementById('auth-status2'); if (st && st.parentNode !== syncPanel) syncPanel.appendChild(st);
+    const vl = document.getElementById('versions-list'); if (vl && vl.parentNode !== syncPanel) syncPanel.appendChild(vl);
+  }
   // ABOUT — Bidoro's purpose.
   const aboutPanel = mkPanel('setdetail-about', 'About Bidoro');
   if (aboutPanel && aboutPanel.children.length <= 1) {
@@ -34570,20 +34594,16 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         onPick: function (k, anchor) { segClick('timer-transition-seg', k); openGif(anchor, ''); } }
     ] },
     { head: 'Account', rows: [
-      { lbl: 'Sign in', ico: 'user', kind: 'detail', panel: 'acct-panel-wrap', hideIf: loggedIn },
-      { lbl: 'Nickname', ico: 'user', kind: 'value', hideIf: function () { return !loggedIn(); },
-        valHtml: function () { const a = document.getElementById('acct-avatar'), n = document.getElementById('acct-nick'); return '<span class="set-row-cv"><span class="set-row-val-emoji">' + esc((a && a.textContent) || '🙂') + '</span> ' + esc((n && n.textContent) || '—') + '</span>'; },
-        onClick: function () { const b = document.getElementById('acct-nick-edit'); if (b) b.click(); } },
-      { lbl: 'Email', ico: 'mail', kind: 'value', hideIf: function () { return !loggedIn(); }, valLabel: function () { const e = document.getElementById('auth-email-display'); return (e && e.textContent) || '—'; } },
-      { lbl: 'Subscription', ico: 'star', kind: 'value', hideIf: function () { return !loggedIn(); }, valLabel: function () { return isPro() ? 'Pro' : 'Basic'; }, onClick: function () { if (!isPro()) { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } } },
+      // (user) ONE account row: "Sign in" when logged out, "[emoji] [nickname]" when logged in — the
+      // whole row opens the Account detail (no inline change popup). Purchase rows stay (also logged out).
+      { lbl: 'Sign in', ico: 'user', kind: 'account' },
       { lbl: 'Restore purchases', ico: 'restore', kind: 'action', hideIf: isPro, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
       { lbl: 'Upgrade to Bidoro Pro', ico: 'star', kind: 'action', accent: true, hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } },
-      { lbl: 'Buy Lifetime', ico: 'gift', kind: 'action', hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } },
-      { lbl: 'Sign out', ico: 'exit', kind: 'action', danger: true, hideIf: function () { return !loggedIn(); }, onClick: function () { const b = document.getElementById('auth-signout'); if (b) b.click(); } }
+      { lbl: 'Buy Lifetime', ico: 'gift', kind: 'action', hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } }
     ] },
     { head: 'Sync', rows: [
-      { lbl: 'Apple Calendar', ico: 'cal', kind: 'action', onClick: function () { ensureSyncMoved(); const b = document.querySelector('.cal-sync-btn[data-prov="apple"]'); if (b) b.click(); } },
-      { lbl: 'Google Calendar', ico: 'cal', kind: 'action', onClick: function () { ensureSyncMoved(); const b = document.querySelector('.cal-sync-btn[data-prov="google"]'); if (b) b.click(); } },
+      { lbl: 'Apple Calendar', ico: 'cal', kind: 'calendar', prov: 'apple' },
+      { lbl: 'Google Calendar', ico: 'cal', kind: 'calendar', prov: 'google' },
       { lbl: 'Bidoro Backups', ico: 'backup', kind: 'detail', panel: 'setdetail-sync' }
     ] },
     { head: 'Theme', rows: [
@@ -34660,6 +34680,37 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         const ctrls = mrow.querySelector('.set-music-ctrls');
         ['music-prev', 'music-play', 'music-next'].forEach(function (id) { const b = document.getElementById(id); if (b) ctrls.appendChild(b); });
         card.appendChild(mrow); return;
+      }
+      // (user) Account row: "Sign in" (logged out) / "[emoji] [nickname]" (logged in) → opens detail.
+      if (r.kind === 'account') {
+        const arow = document.createElement('button'); arow.type = 'button'; arow.className = 'set-row set-acct-row';
+        arow.innerHTML = '<span class="set-row-ico"></span><span class="set-row-lbl"></span>' + CHEV;
+        arow.__setRow = { kind: 'detail', panel: 'acct-panel-wrap', lbl: 'Account' };
+        function paintAcct() {
+          const ic = arow.querySelector('.set-row-ico'), lb = arow.querySelector('.set-row-lbl');
+          if (loggedIn()) { const a = document.getElementById('acct-avatar'), n = document.getElementById('acct-nick'); ic.textContent = (a && a.textContent) || '🙂'; ic.classList.add('set-row-ico-emoji'); lb.textContent = (n && n.textContent && n.textContent !== '—') ? n.textContent : 'Account'; }
+          else { ic.classList.remove('set-row-ico-emoji'); ic.innerHTML = ICO.user || ''; lb.textContent = 'Sign in'; }
+        }
+        paintAcct(); arow.__paint = paintAcct;
+        arow.addEventListener('click', function () { const title = loggedIn() ? 'Account' : 'Sign in'; if (typeof _isWideSettings === 'function' && _isWideSettings()) { selectWide({ kind: 'detail', panel: 'acct-panel-wrap', lbl: title }, arow); return; } openDetail('acct-panel-wrap', title); });
+        card.appendChild(arow); return;
+      }
+      // (user) Calendar row: label + accent ✓ (left) when connected, [Sync]/[Disconnect] button (right).
+      if (r.kind === 'calendar') {
+        const crow = document.createElement('div'); crow.className = 'set-row set-cal-row';
+        crow.innerHTML = '<span class="set-row-ico">' + (ICO.cal || '') + '</span><span class="set-row-lbl"></span><span class="set-cal-chk"></span><button type="button" class="set-cal-btn"></button>';
+        crow.querySelector('.set-row-lbl').textContent = r.lbl;
+        const chk = crow.querySelector('.set-cal-chk'), cbtn = crow.querySelector('.set-cal-btn');
+        function conn() { return !!(typeof state !== 'undefined' && (r.prov === 'apple' ? state.appleConnected : state.gcalConnected)); }
+        function paintCal() { const c = conn(); chk.textContent = c ? '✓' : ''; cbtn.textContent = c ? ((typeof tr === 'function') ? tr('Disconnect') : 'Disconnect') : ((typeof tr === 'function') ? tr('Sync') : 'Sync'); cbtn.classList.toggle('is-disc', c); }
+        paintCal(); crow.__paint = paintCal;
+        cbtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (conn()) { const db = document.querySelector('.gcal-conn-row[data-prov="' + r.prov + '"] .gcal-disconnect-btn'); if (db) db.click(); }
+          else { const sb = document.querySelector('.cal-sync-btn[data-prov="' + r.prov + '"]'); if (sb) sb.click(); }
+          setTimeout(paintCal, 600);
+        });
+        card.appendChild(crow); return;
       }
       const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'set-row' + (r.accent ? ' set-row-accent' : '') + (r.danger ? ' set-row-danger' : '');
       btn.innerHTML = '<span class="set-row-ico">' + (ICO[r.ico] || '') + '</span><span class="set-row-lbl"></span>' + rightHtml(r);
@@ -34813,6 +34864,41 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     page.addEventListener('touchend', end, { passive: true });
     page.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true });
   })();
+
+  // ===== (user) Account detail redesign: iCloud connected / emoji+nick / email / Pro card /
+  // Sign out / Delete account. Calendar sync + backups moved out (to their own rows/pages). =====
+  function _planLabel(p) { p = String(p || '').toLowerCase(); if (p.indexOf('year') >= 0) return 'Yearly'; if (p.indexOf('month') >= 0) return 'Monthly'; if (p.indexOf('life') >= 0) return 'Lifetime'; return ''; }
+  function updateAcctPro() {
+    const pro = isPro();
+    const c = document.getElementById('acct-pro-card');
+    if (c) { c.style.display = pro ? '' : 'none'; if (pro) { const sub = c.querySelector('.apc-sub'); if (sub) { const pl = _planLabel(state && state.premiumPlan); sub.textContent = 'Pro member' + (pl ? ' · ' + pl : ''); } } }
+    let badge = document.getElementById('acct-nick-probadge');
+    const nameRow = document.querySelector('#auth-logged-in .acct-id-name');
+    if (pro && nameRow && !badge) { badge = document.createElement('span'); badge.id = 'acct-nick-probadge'; badge.className = 'acct-pro-badge'; badge.textContent = 'Pro'; nameRow.appendChild(badge); }
+    if (badge) badge.style.display = pro ? '' : 'none';
+  }
+  window._bidoroUpdateAcctPro = updateAcctPro;
+  (function redesignAccount() {
+    const acct = document.getElementById('acct-panel-wrap'); if (!acct) return;
+    ['acct-nick-edit', 'acct-admin-pro'].forEach(function (id) { const e = document.getElementById(id); if (e) e.style.display = 'none'; });   // no inline change popup
+    let holder = document.getElementById('set-hidden-holder');
+    if (!holder) { holder = document.createElement('div'); holder.id = 'set-hidden-holder'; holder.style.display = 'none'; document.body.appendChild(holder); }
+    const cs = document.getElementById('acct-sync-sec'); if (cs) holder.appendChild(cs);   // cal sync → hidden holder (rows proxy it)
+    const li = document.getElementById('auth-logged-in');
+    if (li && !document.getElementById('acct-pro-card')) {
+      const c = document.createElement('div'); c.id = 'acct-pro-card'; c.className = 'acct-pro-card'; c.style.display = 'none';
+      c.innerHTML = '<div class="apc-badge">✨ Bidoro Pro</div><div class="apc-sub">Pro member</div><div class="apc-benefit">All features unlocked</div>';
+      li.insertBefore(c, li.firstChild);
+    }
+    const del = document.getElementById('delete-account'), rows = acct.querySelector('.account-rows');
+    if (del && rows && del.parentNode !== rows) { const w = document.createElement('div'); w.className = 'row-flex'; w.style.marginTop = '4px'; w.appendChild(del); rows.appendChild(w); }
+    try { ensureSyncMoved(); } catch (_) {}   // pull backups (versions + push) out into the Backups page now
+    try { updateAcctPro(); } catch (_) {}
+  })();
+  window._bidoroSettingsRefreshRows = function () {
+    document.querySelectorAll('#settings-page .set-acct-row, #settings-page .set-cal-row').forEach(function (r) { try { if (r.__paint) r.__paint(); } catch (_) {} });
+    try { updateAcctPro(); } catch (_) {}
+  };
 
   // Reset to the master list every time the Settings page is (re)opened.
   let _wasVis = page.style.display !== 'none';
