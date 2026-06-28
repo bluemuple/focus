@@ -1007,6 +1007,25 @@
   .hero-card-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
   .hero-char-row { display: flex; align-items: center; gap: 12px; margin-top: 16px; }
   .hero-rec { margin-top: 10px; }
+  /* (user) "Change the character": two equal-height sections (home card + Pomodoro ring), each with
+     up to 3 thumbnails (trash) + a rename button; the preview cycles every 5 s when 2+ images. */
+  .cc-page { display: flex; flex-direction: column; }
+  .cc-section { margin: 0 0 14px; }
+  .cc-prev { height: 150px; display: flex; align-items: center; gap: 14px; background: var(--card-bg,#fff); border: 1px solid var(--card-border,#e5e7eb); border-radius: 18px; box-shadow: 0 6px 22px rgba(40,60,90,.10); padding: 14px 20px; box-sizing: border-box; overflow: hidden; }
+  .cc-prev-home .hero-card-text { flex: 1 1 auto; font-size: 1.5rem; font-weight: 800; line-height: 1.18; color: var(--text-main,#0f172a); letter-spacing: -.01em; }
+  .cc-prev-home .hero-card-pic { flex: 0 0 auto; width: 112px; height: 112px; display: flex; align-items: center; justify-content: center; }
+  .cc-prev-home .hero-card-pic img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .cc-prev-pomo { justify-content: center; position: relative; }
+  .cc-ring { height: 100%; width: auto; aspect-ratio: 1 / 1; display: block; }
+  .cc-ring-center { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 44%; height: 44%; border-radius: 50%; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .cc-ring-center img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .cc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 2px; }
+  .cc-pick { flex: 0 0 auto; }
+  .cc-thumbs { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .cc-thumb { position: relative; width: 46px; height: 46px; flex: 0 0 auto; border-radius: 10px; border: 1px solid var(--card-border,#e5e7eb); overflow: visible; background: var(--surface-2,#f3f4f6); }
+  .cc-thumb img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; }
+  .cc-trash { position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; border: 1.5px solid var(--card-bg,#fff); border-radius: 50%; background: #dc2626; color: #fff; font-size: 10px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .cc-rec { margin-top: 8px; }
   /* Master view: only the list shows — every relocated panel is hidden until its row is tapped. */
   #settings-page:not(.set-detail-mode) > .panel { display: none !important; }
   /* Detail mode: hide the master + every other panel, show only the active one + a Back header. */
@@ -13157,6 +13176,8 @@ function _buildSettingsPayload(ts, versionsForPush) {
       soundMode:               state.soundMode || 'on',
       cellHints:               state.cellHints !== false,
       heroImages:              state.heroImages || {},   // (user) custom hero pics (Pro: Supabase Storage URLs → cross-device)
+      homeChars:               Array.isArray(state.homeChars) ? state.homeChars : [],   // (user) home character set (≤3)
+      pomoChars:               Array.isArray(state.pomoChars) ? state.pomoChars : [],   // (user) Pomodoro character set (≤3)
       locale:                  state.locale || 'auto',
       timerTransition:         (state.timerTransition === 'manual') ? 'manual' : 'gentleAuto',
       pomodoroAuto:            !!state.pomodoroAuto,
@@ -13538,7 +13559,10 @@ function applyRemoteSettings(remote) {
     else if (['loud','soft'].includes(ss.soundMode)) state.soundMode = 'on';
     if (typeof ss.cellHints === 'boolean') state.cellHints = ss.cellHints;
     // (user) Custom hero pictures — adopt the synced set (Pro: Supabase Storage URLs) + re-apply to the card.
-    if (ss.heroImages && typeof ss.heroImages === 'object') { state.heroImages = ss.heroImages; try { if (typeof window.bidoroApplyHeroImg === 'function') window.bidoroApplyHeroImg(); } catch (_) {} }
+    if (ss.heroImages && typeof ss.heroImages === 'object') { state.heroImages = ss.heroImages; }
+    if (Array.isArray(ss.homeChars)) state.homeChars = ss.homeChars;
+    if (Array.isArray(ss.pomoChars)) state.pomoChars = ss.pomoChars;
+    try { if (typeof window.bidoroApplyHeroImg === 'function') window.bidoroApplyHeroImg(); } catch (_) {}
     if (['auto','en','ko','zh','ja','es','fr'].includes(ss.locale)) state.locale = ss.locale;
     if (ss.timerTransition === 'manual' || ss.timerTransition === 'gentleAuto') state.timerTransition = ss.timerTransition;
     if (typeof ss.pomodoroAuto === 'boolean')          state.pomodoroAuto = ss.pomodoroAuto;
@@ -34449,7 +34473,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const h3 = lp.querySelector('h3.fm-h'); const p = h3 && h3.nextElementSibling;
       [h3, p, seg].forEach(function (e) { if (e && e.parentNode === lp) holder.appendChild(e); }); } })();
   // HERO IMAGES — placeholder detail (full builder = later phase).
-  const heroPanel = mkPanel('setdetail-hero', 'Change the character images');
+  const heroPanel = mkPanel('setdetail-hero', 'Change the character');
   // (user) Pick custom pictures for the "Now focusing on" card. state.heroImages = {noTask, task,
   // finish, swipe}; adding ANY one fills the empty slots too. Stored locally now (persists + applies
   // live); Pro cross-device Supabase upload is the next layer. Output resized to longest side 300px.
@@ -34492,69 +34516,89 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const url = pub && pub.data && pub.data.publicUrl; return url ? (url + '?t=' + Date.now()) : null;
     } catch (e) { try { console.warn('hero upload error:', e); } catch (_) {} return null; }
   }
+  // (user) TWO character sets: HOME (the "Now focusing on" card — random every 30 min when 2+) and
+  // POMODORO (start-beat / full-screen character). Up to 3 images each; migrate the old single image.
+  const HERO_DEFAULT_HOME = 'images/focus/doro/add-small.png?v=doro-10';
+  if (!Array.isArray(state.homeChars)) state.homeChars = [];
+  if (!Array.isArray(state.pomoChars)) state.pomoChars = [];
+  (function () { try { const old = state.heroImages && state.heroImages.noTask; if (old) { if (!state.homeChars.length) state.homeChars = [old]; if (!state.pomoChars.length) state.pomoChars = [old]; } } catch (_) {} })();
+  let _homePick = null, _homePickAt = 0;
+  function _homeCharNow() { const a = state.homeChars || []; if (!a.length) return null; if (a.length === 1) return a[0]; const now = Date.now(); if (!_homePick || a.indexOf(_homePick) < 0 || (now - _homePickAt) > 1800000) { _homePick = a[Math.floor(Math.random() * a.length)]; _homePickAt = now; } return _homePick; }   // random every 30 min
+  function _pomoCharNow() { const a = state.pomoChars || []; if (!a.length) return null; if (a.length === 1) return a[0]; return a[Math.floor(Math.random() * a.length)]; }
+  window.bidoroHomeChar = _homeCharNow; window.bidoroPomoChar = _pomoCharNow;
   function bidoroApplyHeroImg() {
-    try {
-      const nt = document.getElementById('fc-no-task');
-      if (nt) { const anyTask = ['q1', 'q2', 'q3', 'q4'].some(function (q) { return ((state.tasks || {})[q] || []).some(function (t) { return t && !t.done; }); });
-        const u = _heroFor(anyTask ? 'task' : 'noTask'); if (u) nt.setAttribute('src', u); }
-      const di = document.getElementById('fc-done-img'); const fu = _heroFor('finish'); if (di && fu) di.setAttribute('src', fu);
+    try { const u = _homeCharNow();
+      const nt = document.getElementById('fc-no-task'); if (nt && u) nt.setAttribute('src', u);
+      const di = document.getElementById('fc-done-img'); if (di && u) di.setAttribute('src', u);
     } catch (_) {}
   }
   window.bidoroApplyHeroImg = bidoroApplyHeroImg;
-  // (user) Expose the slot resolver so the swipe-transition ghost (_ttSlideGhost) and the start-beat
-  // image (_qCelebImg) can reuse the uploaded Hero image (any one slot covers the rest).
-  window.bidoroHeroFor = _heroFor;
-  // Re-apply after each render that resets the default art.
+  // back-compat shim: swipe ghost (_ttSlideGhost 'swipe') → home char; start-beat (_qCelebImg 'task') → pomo char.
+  window.bidoroHeroFor = function (slot) { return (slot === 'task' || slot === 'pomo') ? _pomoCharNow() : _homeCharNow(); };
   if (typeof window.renderImDoing === 'function' && !window._heroPatchRID) { const _o = window.renderImDoing; window.renderImDoing = function () { const r = _o.apply(this, arguments); try { bidoroApplyHeroImg(); } catch (_) {} return r; }; window._heroPatchRID = true; }
   if (typeof window._fcShowDoneReward === 'function' && !window._heroPatchDone) { const _o2 = window._fcShowDoneReward; window._fcShowDoneReward = function () { const r = _o2.apply(this, arguments); setTimeout(function () { try { bidoroApplyHeroImg(); } catch (_) {} }, 0); return r; }; window._heroPatchDone = true; }
-  const HERO_DEFAULT = { noTask: 'images/focus/doro/add-small.png?v=doro-10', task: 'images/focus/doro/start-small.gif?v=doro-10', finish: 'images/focus/doro/comment.png?v=doro-6', swipe: '' };
-  // (user) ONE "character" image covers every state. The page shows the home "Now focusing on" card
-  // as a live preview; [Choose images] swaps the character. The image is stored on `noTask` (the top
-  // image) and the active / finish / swipe states reuse it through _heroFor — so one upload replaces
-  // "When there's a task / When you finish a task / Section swipe image" too.
-  (function buildHeroPage() {
-    if (heroPanel.querySelector('.hero-char')) return;
-    heroPanel.insertAdjacentHTML('beforeend',
-      '<div class="hero-char">' +
-        '<div class="hero-card-prev"><div class="hero-card-text">Add one.<br>I\'ll pour it in.</div>' +
-        '<div class="hero-card-pic"><img alt=""></div></div>' +
-        '<div class="hero-char-row"><button type="button" class="btn hero-pick2">Choose images</button>' +
-        '<button type="button" class="btn-link hero-clear2" style="display:none;">Remove</button></div>' +
-        '<p class="help hero-rec">Recommended: square, white / transparent background.</p>' +
-        '<input type="file" accept="image/*" class="hero-file2" style="display:none;"></div>');
-    const pic = heroPanel.querySelector('.hero-card-pic img');
-    const file = heroPanel.querySelector('.hero-file2');
-    const pickBtn = heroPanel.querySelector('.hero-pick2');
-    const clearBtn = heroPanel.querySelector('.hero-clear2');
-    function refresh() {
-      const u = state.heroImages.noTask || HERO_DEFAULT.noTask;
-      if (u) { pic.src = u; pic.style.display = ''; } else { pic.removeAttribute('src'); }
-      clearBtn.style.display = state.heroImages.noTask ? '' : 'none';
+
+  // Decorative Pomodoro dial (pale track + maroon arc + ticks + 0/5/10/15/20 + knob) with the
+  // character image in the centre — mirrors the timer ring shown to the user.
+  function _pomoRingHTML() {
+    var c = 100, R = 82, sw = 13, N = 25, circ = 2 * Math.PI * R, out = '';
+    for (var i = 0; i < N; i++) { var a = (-90 + i * 360 / N) * Math.PI / 180, big = (i % 5 === 0), r1 = R - (big ? 13 : 8), r2 = R - 1; out += '<line x1="' + (c + r1 * Math.cos(a)).toFixed(1) + '" y1="' + (c + r1 * Math.sin(a)).toFixed(1) + '" x2="' + (c + r2 * Math.cos(a)).toFixed(1) + '" y2="' + (c + r2 * Math.sin(a)).toFixed(1) + '" stroke="' + (big ? '#1f2937' : '#d9b5c2') + '" stroke-width="' + (big ? 2.4 : 1.3) + '" stroke-linecap="round"/>'; }
+    var labs = ''; [['0', 0], ['5', 5], ['10', 10], ['15', 15], ['20', 20]].forEach(function (L) { var a = (-90 + L[1] * 360 / N) * Math.PI / 180, rr = R - 27; labs += '<text x="' + (c + rr * Math.cos(a)).toFixed(1) + '" y="' + (c + rr * Math.sin(a) + 4).toFixed(1) + '" text-anchor="middle" font-size="11" font-weight="800" fill="#1f2937">' + L[0] + '</text>'; });
+    var ka = (-90 - 15 * 360 / N) * Math.PI / 180;   // knob at 15, filled the CCW (left) way
+    return '<svg class="cc-ring" viewBox="0 0 200 200" aria-hidden="true">' +
+      '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#efcfdb" stroke-width="' + sw + '"/>' +
+      '<circle cx="' + c + '" cy="' + c + '" r="' + R + '" fill="none" stroke="#A8324F" stroke-width="' + sw + '" stroke-linecap="round" transform="rotate(-90 ' + c + ' ' + c + ') scale(-1 1) translate(-200 0)" stroke-dasharray="' + (0.6 * circ).toFixed(1) + ' ' + circ.toFixed(1) + '"/>' +
+      out + labs +
+      '<circle cx="' + (c + R * Math.cos(ka)).toFixed(1) + '" cy="' + (c + R * Math.sin(ka)).toFixed(1) + '" r="6.5" fill="#A8324F" stroke="#fff" stroke-width="2.5"/>' +
+      '</svg><div class="cc-ring-center"><img class="cc-prev-img" alt=""></div>';
+  }
+
+  // One section (home | pomo): preview (cycles every 5 s when 2+) + up to 3 thumbnails (trash each) +
+  // a rename button that opens the native picker (Photo Library / Take Photo / Choose File).
+  function buildCharSection(kind) {
+    const isPomo = (kind === 'pomo'), arrKey = isPomo ? 'pomoChars' : 'homeChars';
+    const sec = document.createElement('div'); sec.className = 'cc-section';
+    const prev = document.createElement('div'); prev.className = 'cc-prev ' + (isPomo ? 'cc-prev-pomo' : 'cc-prev-home');
+    prev.innerHTML = isPomo ? _pomoRingHTML() : '<div class="hero-card-text">Add one.<br>I\'ll pour it in.</div><div class="hero-card-pic"><img class="cc-prev-img" alt=""></div>';
+    const row = document.createElement('div'); row.className = 'cc-row';
+    const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'btn cc-pick'; btn.textContent = isPomo ? 'Change the Pomodoro character' : 'Change the home character';
+    const thumbs = document.createElement('div'); thumbs.className = 'cc-thumbs';
+    row.appendChild(btn); row.appendChild(thumbs);
+    const file = document.createElement('input'); file.type = 'file'; file.accept = 'image/*'; file.style.display = 'none';
+    sec.appendChild(prev); sec.appendChild(row); sec.appendChild(file);
+    const prevImg = prev.querySelector('.cc-prev-img');
+    function arr() { return state[arrKey] || (state[arrKey] = []); }
+    function persist() { try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {} }
+    function applyChars() { try { bidoroApplyHeroImg(); if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {} }
+    let prevIdx = 0;
+    function paintPreview() { const a = arr(); const u = a.length ? a[prevIdx % a.length] : (isPomo ? '' : HERO_DEFAULT_HOME); if (prevImg) { if (u) { prevImg.src = u; prevImg.style.display = ''; } else { prevImg.removeAttribute('src'); prevImg.style.display = 'none'; } } }
+    function renderThumbs() {
+      thumbs.innerHTML = ''; const a = arr();
+      a.forEach(function (u, i) { const t = document.createElement('div'); t.className = 'cc-thumb'; t.innerHTML = '<img alt=""><button type="button" class="cc-trash" aria-label="Remove">✕</button>'; t.querySelector('img').src = u;
+        t.querySelector('.cc-trash').addEventListener('click', function () { a.splice(i, 1); prevIdx = 0; persist(); renderThumbs(); paintPreview(); applyChars(); }); thumbs.appendChild(t); });
     }
-    pickBtn.addEventListener('click', function () { file.click(); });
+    btn.addEventListener('click', function () { if (arr().length >= 3) { try { if (typeof bidoroToast === 'function') bidoroToast('Delete one image first (max 3).'); else alert('Delete one image first (max 3).'); } catch (_) {} return; } file.click(); });
     file.addEventListener('change', function () {
-      const f = file.files && file.files[0]; if (!f) return;
-      const _lbl = pickBtn.textContent; pickBtn.disabled = true; pickBtn.textContent = isPro() ? 'Uploading…' : 'Saving…';
-      function done() { pickBtn.disabled = false; pickBtn.textContent = _lbl; }
-      _heroResize(f, function (d) {
-        if (!d) { done(); return; }
-        function store(val) {
-          state.heroImages.noTask = val;
-          ['task', 'finish', 'swipe'].forEach(function (k) { delete state.heroImages[k]; });   // they reuse noTask via _heroFor
-          try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
-          refresh(); bidoroApplyHeroImg(); try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {} done();
-        }
-        if (isPro()) { _heroUpload('noTask', d).then(function (url) { store(url || d); }); }   // upload fails → local data URL
+      const f = file.files && file.files[0]; if (!f) return; const _l = btn.textContent; btn.disabled = true; btn.textContent = isPro() ? 'Uploading…' : 'Saving…';
+      function done() { btn.disabled = false; btn.textContent = _l; }
+      _heroResize(f, function (d) { if (!d) { done(); return; }
+        function store(val) { arr().push(val); persist(); renderThumbs(); paintPreview(); applyChars(); done(); }
+        if (isPro()) { _heroUpload(arrKey + '_' + arr().length + '_' + (Date.now() % 100000), d).then(function (url) { store(url || d); }); }
         else store(d);
-      });
-      file.value = '';
+      }); file.value = '';
     });
-    clearBtn.addEventListener('click', function () {
-      ['noTask', 'task', 'finish', 'swipe'].forEach(function (k) { delete state.heroImages[k]; });
-      try { saveState(); if (typeof markSettingsChanged === 'function') markSettingsChanged(); if (typeof debouncedPushSettings === 'function') debouncedPushSettings(); } catch (_) {}
-      refresh(); bidoroApplyHeroImg(); try { if (typeof renderImDoing === 'function') renderImDoing(); } catch (_) {}
-    });
-    refresh();
+    renderThumbs(); paintPreview();
+    sec._cycle = function () { const a = arr(); if (a.length >= 2) { prevIdx = (prevIdx + 1) % a.length; paintPreview(); } };
+    return sec;
+  }
+  (function buildCharPage() {
+    if (heroPanel.querySelector('.cc-page')) return;
+    const pg = document.createElement('div'); pg.className = 'cc-page';
+    pg.appendChild(buildCharSection('home'));
+    pg.appendChild(buildCharSection('pomo'));
+    const rec = document.createElement('p'); rec.className = 'help cc-rec'; rec.textContent = 'Recommended: square, white / transparent background.'; pg.appendChild(rec);
+    heroPanel.appendChild(pg);
+    if (!window._ccCycleTimer) window._ccCycleTimer = setInterval(function () { try { document.querySelectorAll('#setdetail-hero .cc-section').forEach(function (s) { if (s._cycle) s._cycle(); }); } catch (_) {} }, 5000);
   })();
   try { bidoroApplyHeroImg(); } catch (_) {}
   // NOTES MIX — the Notes page ⚙ tab (note-rotation weights + time) becomes a Settings page.
@@ -34660,7 +34704,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         cur: curTheme, opts: THEMES,
         valLabel: function () { const t = THEMES.find(function (x) { return x.key === curTheme(); }); return t ? t.label : '—'; },
         onPick: function (k) { const t = document.querySelector('.theme-tile[data-theme-key="' + k + '"]'); if (t) t.click(); } },
-      { lbl: 'Change the character images', ico: 'image', kind: 'detail', panel: 'setdetail-hero' }
+      { lbl: 'Change the character', ico: 'image', kind: 'detail', panel: 'setdetail-hero' }
     ] },
     { head: 'Sound', rows: [
       { lbl: 'Sound effect', ico: 'sound', kind: 'toggle',
