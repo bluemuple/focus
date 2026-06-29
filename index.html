@@ -9118,7 +9118,15 @@
   .fl-pick{ margin:0 0 10px; }
   .fl-toggle{ margin:0 0 6px; }
   .fl-toggle.fl-on{ background:#dc2626 !important; border-color:#dc2626 !important; color:#fff !important; }
+  .fl-pwbtn{ display:block; width:100%; margin:0 0 4px; font-size:.92rem; }
+  .fl-pwbtn.fl-pw-on{ color:#3aa776; border-color:#3aa776; }
   .fl-note{ margin:8px 0 0; color:var(--text-dim,#9ca3af); font-size:.76rem; line-height:1.4; }
+  .fl-pwov{ position:fixed; inset:0; z-index:100000; display:flex; align-items:center; justify-content:center; background:rgba(17,24,39,.5); padding:18px; }
+  .fl-pwcard{ width:100%; max-width:320px; background:var(--surface,#fff); color:var(--text-main,#1f2937); border-radius:16px; padding:18px; box-shadow:0 18px 50px rgba(0,0,0,.4); }
+  .fl-pwtitle{ font-weight:700; font-size:.95rem; line-height:1.4; margin:0 0 12px; }
+  .fl-pwinput{ width:100%; box-sizing:border-box; padding:11px 12px; border:1px solid var(--card-border,#e5e7eb); border-radius:10px; font:inherit; background:var(--card-bg,#fff); color:var(--text-main,#111827); margin:0 0 12px; }
+  .fl-pwrow{ display:flex; gap:8px; }
+  .fl-pwrow .btn{ flex:1; }
   .fr-mycode{ display:flex;align-items:center;gap:8px;margin:6px 0 12px; }
   .fr-mycode b{ font-size:1.05rem;letter-spacing:.06em; }
   .fr-add{ display:flex;gap:8px;align-items:center; }
@@ -14417,15 +14425,27 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '<div class="fl-status" id="fl-status">…</div>'+
           '<button class="btn fl-pick" id="fl-pick" type="button">Choose apps &amp; sites</button>'+
           '<button class="btn primary fl-toggle" id="fl-toggle" type="button">Block now</button>'+
-          '<p class="fl-note">iPhone only · uses Screen Time. Pick once, then block/unblock anytime.</p>'+
+          '<button class="btn fl-pwbtn" id="fl-pwbtn" type="button">Require a password to unblock</button>'+
+          '<p class="fl-note">iPhone only · uses Screen Time. A family member can set a password so you can’t unblock yourself while studying. For full protection, also set an iOS Screen Time passcode.</p>'+
         '</div>';
       document.body.appendChild(m);
       m.querySelector('.fl-x').addEventListener('click', function(){ m.classList.remove('show'); });
       m.addEventListener('click', function(e){ if (e.target===m) m.classList.remove('show'); });
       m.querySelector('#fl-pick').addEventListener('click', function(){ _flSend({action:'pick'}); });
-      m.querySelector('#fl-toggle').addEventListener('click', function(){ var on = m.getAttribute('data-on')==='1'; _flSend({action:'block', on:!on}); });
+      m.querySelector('#fl-toggle').addEventListener('click', async function(){
+        var on = m.getAttribute('data-on')==='1';
+        // (user) Unblocking while a family-set password is on → must enter it first.
+        if (on && state.focusLockPw) {
+          var p = await _flPromptPassword('Enter the password to unblock.');
+          if (p == null) return;
+          if ((await _flHash(p)) !== state.focusLockPw) { try { bidoroToast('Wrong password.'); } catch(_){} return; }
+        }
+        _flSend({action:'block', on:!on});
+      });
+      m.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
     }
     requestAnimationFrame(function(){ m.classList.add('show'); });
+    _flPaintPw();
     if (_flNative()) _flSend({action:'status'});
     else { var st=document.getElementById('fl-status'); if (st) st.textContent = 'Available on the iPhone app only.'; var pk=document.getElementById('fl-pick'), tg=document.getElementById('fl-toggle'); if(pk)pk.disabled=true; if(tg)tg.disabled=true; }
   };
@@ -14440,6 +14460,42 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     if (tg){ tg.textContent = s.on ? 'Unblock' : 'Block now'; tg.classList.toggle('fl-on', !!s.on); tg.disabled = !s.count; }
     if (pk) pk.disabled = (s.auth==='unsupported');
   };
+  // (user) Optional password lock — a FAMILY MEMBER sets it so the studying user can't unblock themselves.
+  async function _flHash(pw){
+    try { var b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('bidoro-fl::' + pw)); return Array.from(new Uint8Array(b)).map(function(x){ return x.toString(16).padStart(2,'0'); }).join(''); }
+    catch(_){ var h = 5381; for (var i=0;i<pw.length;i++) h = ((h*33) ^ pw.charCodeAt(i)) >>> 0; return 'h' + h; }
+  }
+  function _flPromptPassword(title){
+    return new Promise(function(resolve){
+      var ov = document.createElement('div'); ov.className = 'fl-pwov';
+      ov.innerHTML = '<div class="fl-pwcard"><div class="fl-pwtitle"></div><input type="password" class="fl-pwinput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Password"><div class="fl-pwrow"><button type="button" class="btn fl-pwcancel">Cancel</button><button type="button" class="btn primary fl-pwok">OK</button></div></div>';
+      ov.querySelector('.fl-pwtitle').textContent = title;
+      document.body.appendChild(ov);
+      var inp = ov.querySelector('.fl-pwinput');
+      function done(v){ try { ov.remove(); } catch(_){} resolve(v); }
+      ov.querySelector('.fl-pwcancel').addEventListener('click', function(){ done(null); });
+      ov.querySelector('.fl-pwok').addEventListener('click', function(){ done(inp.value); });
+      inp.addEventListener('keydown', function(e){ if (e.key === 'Enter') done(inp.value); });
+      ov.addEventListener('click', function(e){ if (e.target === ov) done(null); });
+      setTimeout(function(){ try { inp.focus(); } catch(_){} }, 60);
+    });
+  }
+  async function _flSetPassword(){
+    var p1 = await _flPromptPassword('Set a password — have a family member type it so you can’t unblock yourself.');
+    if (p1 == null) return; if (!p1) { try { bidoroToast('Password can’t be empty.'); } catch(_){} return; }
+    var p2 = await _flPromptPassword('Confirm the password.');
+    if (p2 == null) return;
+    if (p1 !== p2) { try { bidoroToast('Passwords don’t match.'); } catch(_){} return; }
+    state.focusLockPw = await _flHash(p1); try { saveState(); } catch(_){}
+    _flPaintPw(); try { bidoroToast('Password lock on.'); } catch(_){}
+  }
+  async function _flRemovePassword(){
+    var p = await _flPromptPassword('Enter the password to turn the lock off.');
+    if (p == null) return;
+    if ((await _flHash(p)) === state.focusLockPw) { state.focusLockPw = null; try { saveState(); } catch(_){} _flPaintPw(); try { bidoroToast('Password lock off.'); } catch(_){} }
+    else { try { bidoroToast('Wrong password.'); } catch(_){} }
+  }
+  function _flPaintPw(){ var b = document.getElementById('fl-pwbtn'); if (b) { var on = !!(typeof state !== 'undefined' && state.focusLockPw); b.textContent = on ? '🔒 Password to unblock: On' : 'Require a password to unblock'; b.classList.toggle('fl-pw-on', on); } }
 
   // (user) Free-trial reminder — StoreKit hands us the period-end (= the date the free trial converts
   // to a paid charge). Schedule a LOCAL notification 2 days before billing, with a thank-you + the
