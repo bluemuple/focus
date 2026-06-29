@@ -7271,6 +7271,11 @@
     padding: 12px; margin-bottom: 10px;
   }
   .stats-day.session { background: var(--surface-2); }
+  /* (user) Collapsible Activity log header. */
+  .stats-log-head { display: flex; align-items: center; justify-content: space-between; width: 100%; background: none; border: none; padding: 0; margin: 0; cursor: pointer; font: inherit; color: inherit; -webkit-tap-highlight-color: transparent; }
+  .stats-log-head .stats-log-caret { transition: transform .2s ease; color: var(--text-dim, #9ca3af); font-size: .95rem; }
+  .stats-log-head.open .stats-log-caret { transform: rotate(180deg); }
+  .stats-log-body { margin-top: 8px; }
   /* Daily focus summary tiles (Tasks / Focused / Breaks / Rested). */
   .day-summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px; }
   .day-summary-grid .ds-item {
@@ -32373,50 +32378,26 @@ function renderStats() {
     ` : `<div class="help">No tasks completed.</div>`}`;
   list.appendChild(completedDiv);
 
-  // ---- Money chart (NEW — primary chart per spec) ----
-  const moneyChartDiv = document.createElement('div');
-  moneyChartDiv.className = 'stats-day session';
-  moneyChartDiv.innerHTML = `
-    <div class="row" style="align-items: center; justify-content: space-between;">
-      <strong>Money</strong>
-      <span class="money-scale-toggle" id="stats-money-scale" role="tablist">
-        <button data-scale="W" type="button">W</button>
-        <button data-scale="D" type="button" class="active">D</button>
-        <button data-scale="H" type="button">H</button>
-      </span>
-    </div>
-    <div id="stats-money-summary" class="bar-legend"></div>
-    <div id="daily-money-chart" class="line-chart"></div>`;
-  list.appendChild(moneyChartDiv);
-  renderDailyMoneyChart(document.getElementById('daily-money-chart'),
-                        document.getElementById('stats-money-summary'),
-                        state.moneyChartScale || 'D');
-  // Wire W/D/H toggle inside stats
-  const statsScaleEl = document.getElementById('stats-money-scale');
-  if (statsScaleEl) {
-    statsScaleEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.scale === (state.moneyChartScale || 'D')));
-    statsScaleEl.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('button[data-scale]');
-      if (!btn) return;
-      state.moneyChartScale = btn.dataset.scale;
-      saveState();
-      markSettingsChanged(); debouncedPushSettings();
-      statsScaleEl.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.scale === state.moneyChartScale));
-      renderDailyMoneyChart(document.getElementById('daily-money-chart'),
-                            document.getElementById('stats-money-summary'),
-                            state.moneyChartScale);
-      renderMoneyCard();
-    });
-  }
-
+  // ---- (Money chart removed per user request — low glance value; focus stats are what users check.) ----
   // ---- (Mana score chart removed per user request 2026-06-11) ----
 
-  // ---- Activity log for this day ----
+  // ---- Activity log for this day (COLLAPSIBLE — header toggles; state remembered) ----
   const logDiv = document.createElement('div');
   logDiv.className = 'stats-day session';
-  logDiv.innerHTML = `<div class="row"><strong>Activity log</strong></div>`;
+  const _logOpen = (state.statsLogOpen !== false);   // default open
+  const head = document.createElement('button');
+  head.type = 'button'; head.className = 'stats-log-head' + (_logOpen ? ' open' : '');
+  head.innerHTML = `<strong>${(typeof tr === 'function') ? tr('Activity log') : 'Activity log'}</strong><span class="stats-log-caret" aria-hidden="true">▾</span>`;
+  const body = document.createElement('div'); body.className = 'stats-log-body'; body.style.display = _logOpen ? '' : 'none';
+  head.addEventListener('click', function () {
+    const open = body.style.display === 'none';
+    body.style.display = open ? '' : 'none';
+    head.classList.toggle('open', open);
+    state.statsLogOpen = open; try { saveState(); } catch (_) {}
+  });
+  logDiv.appendChild(head); logDiv.appendChild(body);
   if (!todayWatch.length) {
-    logDiv.innerHTML += `<div class="help">No activities recorded.</div>`;
+    body.innerHTML = `<div class="help">No activities recorded.</div>`;
   } else {
     let totalMs = 0, totalMoney = 0, totalMana = 0;
     todayWatch.slice().reverse().forEach(entry => {
@@ -32424,14 +32405,14 @@ function renderStats() {
       totalMoney += +entry.money || 0;
       totalMana  += +entry.mana  || 0;
       // Use the same shared row builder as the Focus activity log.
-      logDiv.appendChild(buildActivityRow(entry));
+      body.appendChild(buildActivityRow(entry));
     });
     const tot = document.createElement('div');
     tot.className = 'watch-log-total';
     const moneyStr = (totalMoney > 0 ? '+' : '') + fmtMoney(totalMoney);
     const manaStr  = totalMana === 0 ? '' : ` · Mana ${totalMana > 0 ? '+' : ''}${totalMana}`;
     tot.textContent = `Total: ${fmtHMS(totalMs)} · Money: ${moneyStr}${manaStr}`;
-    logDiv.appendChild(tot);
+    body.appendChild(tot);
   }
   list.appendChild(logDiv);
 }
