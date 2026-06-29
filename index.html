@@ -35191,31 +35191,33 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   (function wireSettingsSwipeBack() {
     const sw = { on: false, drag: false, x0: 0, y0: 0, dx: 0, layer: [] };
     function layerEls() { const a = []; const bh = page.querySelector(':scope > .set-back-head'); const ap = page.querySelector(':scope > .panel.set-active'); if (bh) a.push(bh); if (ap) a.push(ap); return a; }
+    function paint(dx) { const W = window.innerWidth || 360; const op = Math.max(0, 1 - (dx / W) * 1.1); sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + dx + 'px)'; el.style.opacity = String(op); }); }
     function reset(toBack) {
       const layer = sw.layer; const W = window.innerWidth || 360;
-      layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1)'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; });
-      setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; }); if (toBack) showMaster(); }, 250);
+      layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1), opacity .26s ease'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; el.style.opacity = toBack ? '0' : '1'; });
+      setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; }); if (toBack) showMaster(); }, 260);
     }
+    // capture:true → we see the touch BEFORE other (bubble) handlers and can own the horizontal drag.
     page.addEventListener('touchstart', function (e) {
       if (!page.classList.contains('set-detail-mode') || e.touches.length !== 1) { sw.on = false; return; }
-      const t = e.touches[0]; if (t.clientX > 30) { sw.on = false; return; }   // must start at the left edge
+      const t = e.touches[0]; if (t.clientX > 34) { sw.on = false; return; }   // must start at the LEFT edge
       sw.on = true; sw.drag = false; sw.x0 = t.clientX; sw.y0 = t.clientY; sw.dx = 0; sw.layer = layerEls();
-    }, { passive: true });
+    }, { passive: true, capture: true });
     page.addEventListener('touchmove', function (e) {
       if (!sw.on || e.touches.length !== 1) return;
       const t = e.touches[0]; const ddx = t.clientX - sw.x0, ddy = t.clientY - sw.y0;
       if (!sw.drag) {
-        if (Math.abs(ddx) < 8 && Math.abs(ddy) < 8) return;
+        if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
         if (Math.abs(ddy) > Math.abs(ddx)) { sw.on = false; return; }   // vertical → let it scroll
         sw.drag = true; page.classList.add('set-swiping'); sw.layer.forEach(function (el) { el.style.transition = 'none'; });
       }
       sw.dx = Math.max(0, ddx);
-      sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + sw.dx + 'px)'; });
-      e.preventDefault();   // own the horizontal drag
-    }, { passive: false });
-    function end() { if (!sw.on) return; sw.on = false; if (!sw.drag) return; reset(sw.dx > (window.innerWidth || 360) * 0.33); }
-    page.addEventListener('touchend', end, { passive: true });
-    page.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true });
+      paint(sw.dx);                    // (user) follow the finger right + fade out
+      e.preventDefault(); e.stopPropagation();   // own the gesture (block page/edge handlers)
+    }, { passive: false, capture: true });
+    function end() { if (!sw.on) return; sw.on = false; if (!sw.drag) return; reset(sw.dx > (window.innerWidth || 360) * 0.3); }
+    page.addEventListener('touchend', end, { passive: true, capture: true });
+    page.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true, capture: true });
   })();
 
   // ===== (user) Account detail redesign: iCloud connected / emoji+nick / email / Pro card /
