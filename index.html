@@ -14253,14 +14253,14 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     m.querySelector('#pw-pro').textContent = c.pro;
     m.querySelector('#pw-title').textContent = c.title;
     m.querySelector('#pw-trial').textContent = c.trial;
-    // (user) Promise an email 2 days before the free trial converts to a paid charge.
+    // (user) Promise a reminder NOTIFICATION 2 days before the free trial converts to a paid charge.
     { var _tn = {
-        en:'We’ll email you 2 days before your free trial ends and billing begins.',
-        ko:'무료 체험이 끝나고 결제되기 2일 전에 이메일로 알려드려요.',
-        zh:'免费试用结束、开始计费的 2 天前，我们会发邮件提醒你。',
-        ja:'無料トライアル終了・課金開始の2日前にメールでお知らせします。',
-        es:'Te enviaremos un correo 2 días antes de que termine la prueba y empiece el cobro.',
-        fr:'Nous t’enverrons un e-mail 2 jours avant la fin de l’essai et le début de la facturation.' };
+        en:'We’ll send a reminder 2 days before your free trial ends and billing begins.',
+        ko:'무료 체험이 끝나고 결제되기 2일 전에 알림으로 알려드려요.',
+        zh:'免费试用结束、开始计费的 2 天前，我们会发通知提醒你。',
+        ja:'無料トライアル終了・課金開始の2日前に通知でお知らせします。',
+        es:'Te enviaremos un aviso 2 días antes de que termine la prueba y empiece el cobro.',
+        fr:'Nous t’enverrons un rappel 2 jours avant la fin de l’essai et le début de la facturation.' };
       var _tne = m.querySelector('#pw-trialnote'); if (_tne) _tne.textContent = _tn[L()] || _tn.en; }
     m.querySelector('.pw-per-m').textContent = c.monthly;
     m.querySelector('.pw-per-y').textContent = c.yearly;
@@ -14314,6 +14314,34 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   };
   function closePaywall(){ var m=document.getElementById('paywall-modal'); if (m) m.classList.remove('show'); }
   window.bidoroClosePaywall = closePaywall;
+
+  // (user) Free-trial reminder — StoreKit hands us the period-end (= the date the free trial converts
+  // to a paid charge). Schedule a LOCAL notification 2 days before billing, with a thank-you + the
+  // multi-device-sync benefit + the exact charge date. (Replaces the originally-requested email.)
+  window.bidoroTrialReminder = function(chargeMs){
+    try {
+      var P = window.Capacitor && window.Capacitor.Plugins, LN = P && P.LocalNotifications;
+      if (!LN || !chargeMs) return;
+      var fireAt = chargeMs - 2*86400*1000;                 // 2 days before billing
+      if (fireAt <= Date.now() + 60000) return;             // already within 2 days / past → skip
+      try { LN.requestPermissions && LN.requestPermissions(); } catch(_){}
+      var loc = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
+      var dateStr;
+      try { dateStr = new Date(chargeMs).toLocaleString(loc, { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+      catch(_){ dateStr = new Date(chargeMs).toLocaleString(); }
+      var T = {
+        en:{ t:'Bidoro PRO free trial', b:'Thanks for using Bidoro! You’re enjoying real-time sync across PC, iPhone and more. Your free trial converts to a paid plan in 2 days — on '+dateStr+'.' },
+        ko:{ t:'Bidoro PRO 무료 체험', b:'Bidoro를 이용해줘서 고마워요! PC·아이폰 등 모든 기기 실시간 동기화를 누리고 계세요. 무료 체험이 2일 뒤 '+dateStr+'에 유료로 결제 전환돼요.' },
+        zh:{ t:'Bidoro PRO 免费试用', b:'感谢使用 Bidoro！你正在享受 PC、iPhone 等多设备实时同步。免费试用将在 2 天后（'+dateStr+'）转为付费。' },
+        ja:{ t:'Bidoro PRO 無料トライアル', b:'Bidoroをご利用ありがとう！PC・iPhoneなど全デバイスのリアルタイム同期をお楽しみ中です。無料トライアルは2日後の'+dateStr+'に有料へ移行します。' },
+        es:{ t:'Prueba gratis de Bidoro PRO', b:'¡Gracias por usar Bidoro! Disfrutas de sincronización en tiempo real en PC, iPhone y más. Tu prueba gratis pasa a de pago en 2 días, el '+dateStr+'.' },
+        fr:{ t:'Essai gratuit Bidoro PRO', b:'Merci d’utiliser Bidoro ! Tu profites de la synchro en temps réel sur PC, iPhone et plus. Ton essai gratuit devient payant dans 2 jours, le '+dateStr+'.' }
+      };
+      var m = T[loc] || T.en;
+      try { LN.cancel({ notifications:[{ id: 7325 }] }); } catch(_){}
+      LN.schedule({ notifications: [{ id: 7325, title: m.t, body: m.b, schedule: { at: new Date(fireAt) } }] });
+    } catch(_){}
+  };
 
   // Gate helper: true if allowed (premium); else open paywall and return false.
   window.bidoroRequirePremium = function(feature){
@@ -23286,7 +23314,9 @@ async function showPomoPhaseConfirm() {
       // Full Auto advances silently and Deep Focus does. _nextTaskBlockBelow returns null when a
       // real gap/break sits below, so the normal break flow still happens in that case.
       const _nextTb = _nextTaskBlockBelow(at);
-      if (_nextTb) {
+      if (_nextTb && _deep) {
+        // (user) DEEP FOCUS only: offer "Next task / Keep going". POMODORO never shows this two-choice
+        // — it always falls through to the single-OK "Break time" popup below (standard work→break).
         _goNextTaskBlock = _nextTb;
         const _nextColor = {
           bg: (typeof bidoroTaskBg === 'function' ? bidoroTaskBg(_nextTb.q, _nextTb.taskIdx) : '#111827'),
