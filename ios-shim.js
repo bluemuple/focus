@@ -55,7 +55,7 @@
   let _scheduledForPhase = null;
   if (P.LocalNotifications) {
     try { P.LocalNotifications.requestPermissions(); } catch (_) {}
-    setInterval(scheduleNextPomoNotification, 1000);
+    setInterval(scheduleNextPomoNotification, 5000);   // (user) 5s (was 1s) — the notification fires at an absolute timestamp, so 1s polling wasted battery
   }
   function scheduleNextPomoNotification() {
     if (!P.LocalNotifications) return;

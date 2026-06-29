@@ -9626,6 +9626,7 @@
            toggled by the switch link; one primary button submits the active mode. -->
       <div id="auth-logged-out" class="auth-section auth-form acct-auth hidden" style="grid-template-columns:1fr;">
         <h3 id="acct-auth-title" style="grid-column:1/-1; margin:2px 0 6px; text-align:center; font-size:1.06rem; font-weight:800;">Create your account</h3>
+        <p class="help" id="acct-local-note" style="grid-column:1/-1; margin:0 0 8px; text-align:center; line-height:1.45;">Your data is already saved on this device. Sign in only to sync it across iPhone, iPad &amp; web.</p>
         <!-- Avatar (emoji) + nickname — sign-UP only (hidden in sign-in mode). -->
         <div class="login-id-row" id="acct-id-row" style="grid-column:1/-1; display:flex; align-items:center; gap:8px;">
           <button type="button" id="acct-signup-avatar" class="login-avatar-btn" title="Choose avatar" aria-label="Choose avatar">👤</button>
@@ -14333,6 +14334,15 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   }
 
   window.bidoroOpenPaywall = function(feature){
+    // (user) Don't NAG: tapping a Pro-gated feature (friends/calendar/…) only re-opens the full
+    // paywall once per 6h — within the cooldown it just toasts. An explicit Settings → Upgrade
+    // tap (feature 'settings') ALWAYS opens.
+    if (feature !== 'settings') {
+      var nowT = Date.now(), last = 0;
+      try { last = (+localStorage.getItem('bidoro-pw-auto-last')) || 0; } catch(_){}
+      if (nowT - last < 6 * 3600 * 1000) { try { if (typeof bidoroToast === 'function') bidoroToast(C().upgrade); } catch(_){} return; }
+      try { localStorage.setItem('bidoro-pw-auto-last', String(nowT)); } catch(_){}
+    }
     var m = ensureModal(); fill(m);
     requestAnimationFrame(function(){ m.classList.add('show'); });
     try { if (nativeIAP() && typeof nativeIAP().products==='function') nativeIAP().products(); } catch(_){}
@@ -31033,7 +31043,8 @@ function _itemThanksMsg(itemId, count){
   "Report Bidoro Issues":{ko:"Bidoro 문제 신고",zh:"报告 Bidoro 问题",ja:"Bidoro の問題を報告",es:"Informar de un problema",fr:"Signaler un problème"},
   "Specific Settings":{ko:"세부 설정",zh:"具体设置",ja:"詳細設定",es:"Ajustes específicos",fr:"Réglages spécifiques"},
   "Get Help":{ko:"도움 받기",zh:"获取帮助",ja:"ヘルプ",es:"Obtener ayuda",fr:"Obtenir de l'aide"},
-  "Language":{ko:"언어",zh:"语言",ja:"言語",es:"Idioma",fr:"Langue"}
+  "Language":{ko:"언어",zh:"语言",ja:"言語",es:"Idioma",fr:"Langue"},
+  "Your data is already saved on this device. Sign in only to sync it across iPhone, iPad & web.":{ko:"데이터는 이미 이 기기에 저장돼 있어요. 로그인은 아이폰·아이패드·웹 간 동기화를 위할 때만 하면 돼요.",zh:"你的数据已保存在此设备上。仅在需要跨 iPhone、iPad 和网页同步时才登录。",ja:"データはすでにこの端末に保存されています。サインインはiPhone・iPad・Web間で同期したいときだけでOK。",es:"Tus datos ya están guardados en este dispositivo. Inicia sesión solo para sincronizarlos entre iPhone, iPad y web.",fr:"Tes données sont déjà enregistrées sur cet appareil. Connecte-toi uniquement pour les synchroniser entre iPhone, iPad et le web."}
 });
 /* i18n-ext-6 — Change-the-character page + Account Pro card. */
 (function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
@@ -34951,12 +34962,12 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
             var L = (typeof bidoroLocale === 'function') ? bidoroLocale() : 'en';
             var T = { en:'Sound Effect', ko:'효과음', zh:'音效', ja:'効果音', es:'Efecto de sonido', fr:'Effet sonore' };
             var B = {
-              en:'Keep the screen on and you’ll hear a soft sound when the timer ends.',
-              ko:'화면을 켜 두면 타이머가 끝날 때 작은 소리가 들려요.',
-              zh:'保持屏幕开启，计时器结束时会响起轻柔的提示音。',
-              ja:'画面をつけたままにすると、タイマー終了時に小さな音が鳴ります。',
-              es:'Mantén la pantalla encendida y oirás un suave sonido cuando termine el temporizador.',
-              fr:'Garde l’écran allumé pour entendre un léger son à la fin du minuteur.' };
+              en:'Keep the screen on and you’ll hear a soft sound when the timer ends. In Silent mode iOS shows a banner without sound — check the widget or Lock Screen for live progress.',
+              ko:'화면을 켜 두면 타이머가 끝날 때 작은 소리가 들려요. 무음 모드에서는 소리 없이 배너만 떠요 — 진행 상황은 위젯이나 잠금화면에서 확인하세요.',
+              zh:'保持屏幕开启，计时器结束时会响起轻柔的提示音。静音模式下 iOS 只显示横幅而无声音——可在小组件或锁定屏幕查看进度。',
+              ja:'画面をつけたままにすると、タイマー終了時に小さな音が鳴ります。サイレントモードでは音なしのバナーのみ — 進行状況はウィジェットやロック画面で確認できます。',
+              es:'Mantén la pantalla encendida y oirás un suave sonido cuando termine el temporizador. En modo Silencio iOS muestra un aviso sin sonido — revisa el widget o la pantalla de bloqueo para ver el progreso.',
+              fr:'Garde l’écran allumé pour entendre un léger son à la fin du minuteur. En mode Silencieux, iOS affiche une bannière sans son — consulte le widget ou l’écran verrouillé pour le suivi.' };
             try { showExplain(T[L] || T.en, B[L] || B.en); } catch (_) {}
           }
         } },
@@ -35200,7 +35211,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     // capture:true → we see the touch BEFORE other (bubble) handlers and can own the horizontal drag.
     page.addEventListener('touchstart', function (e) {
       if (!page.classList.contains('set-detail-mode') || e.touches.length !== 1) { sw.on = false; return; }
-      const t = e.touches[0]; if (t.clientX > 34) { sw.on = false; return; }   // must start at the LEFT edge
+      const t = e.touches[0]; if (t.clientX > 44) { sw.on = false; return; }   // start anywhere in the LEFT edge band
       sw.on = true; sw.drag = false; sw.x0 = t.clientX; sw.y0 = t.clientY; sw.dx = 0; sw.layer = layerEls();
     }, { passive: true, capture: true });
     page.addEventListener('touchmove', function (e) {
@@ -35208,7 +35219,10 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const t = e.touches[0]; const ddx = t.clientX - sw.x0, ddy = t.clientY - sw.y0;
       if (!sw.drag) {
         if (Math.abs(ddx) < 6 && Math.abs(ddy) < 6) return;
-        if (Math.abs(ddy) > Math.abs(ddx)) { sw.on = false; return; }   // vertical → let it scroll
+        // Started at the edge → treat a RIGHTWARD move as a back-swipe; only a clearly VERTICAL
+        // gesture is handed back to scrolling (forgives the finger's natural up/down wobble).
+        if (ddx <= 2) { sw.on = false; return; }
+        if (Math.abs(ddy) > ddx * 1.5) { sw.on = false; return; }
         sw.drag = true; page.classList.add('set-swiping'); sw.layer.forEach(function (el) { el.style.transition = 'none'; });
       }
       sw.dx = Math.max(0, ddx);
