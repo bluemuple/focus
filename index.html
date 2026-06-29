@@ -1049,11 +1049,12 @@
      master list shown behind it. */
   #settings-page.set-swiping { position: relative; }
   #settings-page.set-swiping > .set-master { display: block !important; position: absolute; top: 0; left: 0; right: 0; z-index: 0; }
-  #settings-page.set-swiping > .set-back-head { display: flex; position: relative; z-index: 2; background: var(--app-bg, var(--card-bg, #fff)); }
-  #settings-page.set-swiping > .panel.set-active { position: relative; z-index: 2; box-shadow: -10px 0 22px rgba(0,0,0,.08); background: var(--app-bg, var(--card-bg, #fff)); }
-  /* (user) The whole detail page (back-head + panel) slides as ONE solid sheet — give the page itself the
-     app background while swiping so nothing shows through and the surroundings don't vanish. */
-  #settings-page.set-swiping { background: var(--app-bg, var(--bg, #fff)); }
+  #settings-page.set-swiping > .set-back-head { display: flex; position: relative; z-index: 2; }
+  #settings-page.set-swiping > .panel.set-active { position: relative; z-index: 2; box-shadow: -10px 0 22px rgba(0,0,0,.08); }
+  /* (user) Solid backdrop sheet (z between the master and the sliding detail) so the detail page's
+     background slides as ONE opaque sheet — the master shows only in the area the sheet has moved off. */
+  #settings-page .set-swipe-bg { display: none; }
+  #settings-page.set-swiping > .set-swipe-bg { display: block; position: absolute; top: 0; left: 0; right: 0; z-index: 1; pointer-events: none; }
   /* Black explanation panel (slides up from the bottom; ✕ closes; 7 s auto-hide). */
   .set-explain { position: fixed; left: 12px; right: 12px; bottom: 14px; z-index: 9000; background: #111827; color: #f3f4f6; border-radius: 14px; padding: 14px 44px 14px 16px; box-shadow: 0 10px 34px rgba(0,0,0,.32); font-size: .92rem; line-height: 1.5; transform: translateY(150%); transition: transform .26s cubic-bezier(.2,.7,.3,1); pointer-events: none; }
   .set-explain.show { transform: translateY(0); pointer-events: auto; }
@@ -35249,7 +35250,19 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   // else snap back. Touch only (phone / touch iPad).
   (function wireSettingsSwipeBack() {
     const sw = { on: false, drag: false, x0: 0, y0: 0, dx: 0, layer: [] };
-    function layerEls() { const a = []; const bh = page.querySelector(':scope > .set-back-head'); const ap = page.querySelector(':scope > .panel.set-active'); if (bh) a.push(bh); if (ap) a.push(ap); return a; }
+    let _swBg = null;
+    function ensureSwBg() { if (!_swBg) { _swBg = document.createElement('div'); _swBg.className = 'set-swipe-bg'; page.appendChild(_swBg); } return _swBg; }
+    function layerEls() {
+      const a = [];
+      // (user) A SOLID backdrop sheet (page/body background colour) that slides WITH the detail page, so the
+      // detail's background doesn't go transparent — the master is only revealed as the sheet moves off.
+      const bg = ensureSwBg();
+      bg.style.background = getComputedStyle(document.body).backgroundColor || '#fff';
+      bg.style.height = Math.max(page.scrollHeight, window.innerHeight) + 'px';
+      a.push(bg);
+      const bh = page.querySelector(':scope > .set-back-head'); const ap = page.querySelector(':scope > .panel.set-active');
+      if (bh) a.push(bh); if (ap) a.push(ap); return a;
+    }
     // (user) Slide only — NO fade. The detail page stays fully opaque (solid background) as it moves.
     function paint(dx) { sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + dx + 'px)'; }); }
     function reset(toBack) {
@@ -35274,9 +35287,11 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         if (ddx <= 1) { sw.on = false; return; }
         if (Math.abs(ddy) > ddx * 1.5) { sw.on = false; return; }
         sw.drag = true; page.classList.add('set-swiping');
-        // (user) Show the master behind at the SAME scroll position it'll land on (the detail opened at
-        // top → main.scrollTop is 0, so offset the absolutely-positioned master up by the remembered scroll).
-        const mst = page.querySelector(':scope > .set-master'); if (mst) mst.style.top = (-(_setMasterScroll || 0)) + 'px';
+        // (user) Show the master behind at the SAME scroll position it'll land on. The detail opened at
+        // top (main.scrollTop 0); offset the absolutely-positioned master up by the remembered scroll, PLUS
+        // the back-head height (which occupies the top in detail mode) so it doesn't jump down on release.
+        const mst = page.querySelector(':scope > .set-master');
+        if (mst) { const bhe = page.querySelector(':scope > .set-back-head'); const bhH = bhe ? (bhe.offsetHeight + (parseFloat(getComputedStyle(bhe).marginBottom) || 0)) : 0; mst.style.top = (bhH - (_setMasterScroll || 0)) + 'px'; }
         sw.layer.forEach(function (el) { el.style.transition = 'none'; });
       }
       sw.dx = Math.max(0, ddx);
@@ -35288,33 +35303,26 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     document.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true, capture: true });
   })();
 
-  // (user) Settings rows darken on a real TAP, not while scroll-touching: add .set-pressed only after a
-  // brief hold, and cancel it the moment the finger moves (a scroll). A quick tap flashes on release.
+  // (user) Settings rows darken INSTANTLY on press (so a tap clearly shows feedback before it navigates),
+  // and un-darken the moment the finger moves — so a scroll-touch doesn't stay highlighted.
   (function wireSettingsPressFeedback() {
-    let row = null, t = null, x0 = 0, y0 = 0, moved = false, pressed = false;
-    function clearPress() { if (t) { clearTimeout(t); t = null; } if (row) row.classList.remove('set-pressed'); row = null; pressed = false; moved = false; }
+    let row = null, x0 = 0, y0 = 0;
+    function clear() { if (row) { row.classList.remove('set-pressed'); row = null; } }
     document.addEventListener('touchstart', function (e) {
-      if (page.style.display === 'none' || e.touches.length !== 1) return;
-      const r = e.target.closest && e.target.closest('#settings-page .set-row');
-      if (!r) { clearPress(); return; }
-      clearPress();
+      if (e.touches.length !== 1) { clear(); return; }
+      const r = e.target.closest && e.target.closest('#settings-page .set-master .set-row');
+      if (!r) { clear(); return; }
+      clear();
       row = r; const tt = e.touches[0]; x0 = tt.clientX; y0 = tt.clientY;
-      t = setTimeout(function () { t = null; if (row && !moved) { row.classList.add('set-pressed'); pressed = true; } }, 90);
+      r.classList.add('set-pressed');
     }, { passive: true, capture: true });
     document.addEventListener('touchmove', function (e) {
       if (!row || e.touches.length !== 1) return;
       const tt = e.touches[0];
-      if (Math.abs(tt.clientX - x0) > 8 || Math.abs(tt.clientY - y0) > 8) { moved = true; if (t) { clearTimeout(t); t = null; } row.classList.remove('set-pressed'); pressed = false; }
+      if (Math.abs(tt.clientX - x0) > 8 || Math.abs(tt.clientY - y0) > 8) clear();   // became a scroll → undarken
     }, { passive: true, capture: true });
-    document.addEventListener('touchend', function () {
-      if (!row) return;
-      const r = row; const wasMoved = moved;
-      if (t) { clearTimeout(t); t = null; }
-      if (!wasMoved) { if (!pressed) r.classList.add('set-pressed'); setTimeout(function () { r.classList.remove('set-pressed'); }, 130); }
-      else { r.classList.remove('set-pressed'); }
-      row = null; pressed = false; moved = false;
-    }, { passive: true, capture: true });
-    document.addEventListener('touchcancel', clearPress, { passive: true, capture: true });
+    document.addEventListener('touchend', function () { const r = row; row = null; if (r) setTimeout(function () { r.classList.remove('set-pressed'); }, 90); }, { passive: true, capture: true });
+    document.addEventListener('touchcancel', clear, { passive: true, capture: true });
   })();
 
   // ===== (user) Account detail redesign: iCloud connected / emoji+nick / email / Pro card /
