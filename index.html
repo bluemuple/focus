@@ -14122,7 +14122,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       '.pw-fd{color:var(--text-dim,#6b7280);font-size:.82rem;margin-top:1px;}',
       '.pw-trial{text-align:center;color:var(--text-dim,#6b7280);font-size:.9rem;margin:6px 0 10px;}',
       '.pw-info-wrap{position:relative;display:inline-block;}',
-      '.pw-info{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;margin-left:5px;border-radius:50%;border:1.3px solid var(--text-dim,#9ca3af);background:transparent;color:var(--text-dim,#9ca3af);font-size:10px;font-weight:800;font-style:italic;line-height:1;cursor:pointer;vertical-align:middle;-webkit-tap-highlight-color:transparent;}',
+      '.pw-info{display:inline-flex;align-items:center;justify-content:center;margin-left:5px;padding:0;border:none;background:transparent;color:var(--text-dim,#9ca3af);font-size:15px;line-height:1;cursor:pointer;vertical-align:middle;-webkit-tap-highlight-color:transparent;}',
       '.pw-infobubble{position:absolute;bottom:calc(100% + 9px);right:-2px;left:auto;width:max-content;max-width:min(230px,78vw);background:#fff;color:#6b7280;font-size:.74rem;line-height:1.4;text-align:left;padding:9px 12px;border-radius:11px;box-shadow:0 5px 18px rgba(0,0,0,.18);border:1px solid rgba(0,0,0,.06);display:none;z-index:6;}',
       '.pw-infobubble::after{content:"";position:absolute;top:100%;right:7px;border:6px solid transparent;border-top-color:#fff;}',
       '.pw-infobubble.show{display:block;}',
@@ -14137,7 +14137,6 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       '.pw-per{font-size:.95rem;font-weight:700;opacity:.9;}',
       '.pw-off{position:absolute;top:-9px;right:12px;background:#3aa776;color:#fff;font-size:.72rem;font-weight:800;padding:2px 7px;border-radius:7px;border:2px solid var(--surface,#fff);}',
       '.pw-restore{display:block;width:100%;text-align:center;background:none;border:none;color:#3aa776;font-weight:700;font-size:.95rem;padding:8px;margin-top:2px;cursor:pointer;}',
-      '.pw-renew{text-align:center;color:var(--text-dim,#9ca3af);font-size:.68rem;line-height:1.35;margin:2px 4px 6px;}',
       '.pw-legal{text-align:center;color:var(--text-dim,#9ca3af);font-size:.8rem;margin-top:4px;}',
       '.pw-legal a{color:var(--text-dim,#9ca3af);text-decoration:none;}',
       '.pw-legal a:active{text-decoration:underline;}',
@@ -14188,13 +14187,12 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '<div class="pw-spacer" aria-hidden="true"></div>'+
         '</div>'+
         '<div class="pw-foot">'+
-          '<div class="pw-trial" id="pw-trial"><span id="pw-trial-txt"></span><span class="pw-info-wrap"><button type="button" class="pw-info" id="pw-trial-i" aria-label="info">i</button><span class="pw-infobubble" id="pw-trial-bubble"></span></span></div>'+
+          '<div class="pw-trial" id="pw-trial"><span id="pw-trial-txt"></span><span class="pw-info-wrap"><button type="button" class="pw-info" id="pw-trial-i" aria-label="info" translate="no">ⓘ</button><span class="pw-infobubble" id="pw-trial-bubble"></span></span></div>'+
           '<div class="pw-buy-row">'+
             '<button class="pw-buy pw-buy-half" id="pw-buy-monthly" type="button"><span class="pw-price">$1.99</span><span class="pw-perline">/ <span class="pw-per pw-per-m"></span></span></button>'+
             '<button class="pw-buy pw-buy-half fill" id="pw-buy-yearly" type="button"><span class="pw-off">-37%</span><span class="pw-price">$14.99</span><span class="pw-perline">/ <span class="pw-per pw-per-y"></span></span></button>'+
           '</div>'+
           '<button class="pw-buy" id="pw-buy-lifetime" type="button"></button>'+
-          '<div class="pw-renew" id="pw-renew"></div>'+
           '<div class="pw-legal"><a href="https://bidoro.app/terms.html" target="_blank" rel="noopener" id="pw-terms"></a> · <a href="https://bidoro.app/privacy.html" target="_blank" rel="noopener" id="pw-privacy"></a></div>'+
         '</div>'+
       '</div>';
@@ -14215,28 +14213,40 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       function apply(){
         ticking = false;
         var max = sc.scrollHeight - sc.clientHeight, p = max > 0 ? cl(sc.scrollTop / max) : 0;
+        // Update the feature-list slide FIRST so the gonePx measurement below reflects the NEW position.
+        if (body) {
+          if (reduce) { body.style.transform = 'none'; body.style.opacity = String(1 - p); }
+          // Slide the list up FAST enough that it fully clears the window, then fade it out.
+          else { body.style.transform = 'translateY(' + (-200 * p).toFixed(2) + '%)'; body.style.opacity = String(cl(1 - p * 2)); }
+        }
+        // (user) The rocket video + labels start ONLY once the LAST feature ("Future features included")
+        // has scrolled up out of the window — measured live (gonePx = px its bottom is above the top).
+        var gonePx = 0;
+        try {
+          var lastFeat = body && body.querySelector('.pw-feat:last-child');
+          var stageTop = stage ? stage.getBoundingClientRect().top : 0;
+          if (lastFeat) gonePx = stageTop - lastFeat.getBoundingClientRect().bottom;
+        } catch (_) {}
         if (reduce) {
-          if (body) { body.style.transform = 'none'; body.style.opacity = String(1 - p); }
           if (stage) stage.style.opacity = String(p);
           if (media) media.style.transform = 'none';
         } else {
-          if (body) { body.style.transform = 'translateY(' + (-80 * p).toFixed(2) + '%)'; body.style.opacity = String(cl(1 - p * 0.9)); }   // (user) features stay visible LONGER; the reveal needs more scroll
-          var vp = cl((p - 0.35) / 0.40);                      // (user) video only fades in after ~35% scroll (later, needs more scrolling)
+          var vp = cl(gonePx / 120);                            // video fades in over 120px after the last feature leaves
           if (stage) stage.style.opacity = String(vp);
           if (media) media.style.transform = 'scale(' + (0.96 + 0.04 * vp).toFixed(3) + ')';
-          // (user) each label rises from below at a DIFFERENT speed + distance — but later (after the video).
-          var LCFG = [[0.46,0.40,34],[0.54,0.32,22],[0.62,0.34,42],[0.70,0.28,28]];   // [startP, durP, risePx] (later)
+          // labels rise (each at its own speed/distance), keyed to how far past the features we've scrolled.
+          var LCFG = [[60,120,34],[110,120,22],[160,120,42],[210,110,28]];   // [startGonePx, rangePx, risePx]
           for (var i = 0; i < labels.length; i++) {
-            var c = LCFG[i] || [0.45,0.32,26];
-            var lp = ease(cl((p - c[0]) / c[1]));
+            var c = LCFG[i] || [120,120,26];
+            var lp = ease(cl((gonePx - c[0]) / c[1]));
             labels[i].style.opacity = String(lp);
             labels[i].style.transform = 'translate(-50%, ' + (c[2] * (1 - lp)).toFixed(1) + 'px)';
           }
         }
-        // (user) Apple-style SCRUB: the video frame follows the scroll — scroll up → forward, stop →
-        // freeze, scroll down → backward. Kept paused; we only seek currentTime.
+        // (user) Apple-style SCRUB: the rocket plays as you scroll past the features — forward on
+        // scroll-up, freeze on stop, backward on scroll-down. Kept paused; we only seek currentTime.
         if (video && video.duration && isFinite(video.duration)) {
-          var vs = cl((p - 0.35) / 0.55);   // (user) scrub starts at ~35% scroll → the rocket plays only after more scrolling
+          var vs = reduce ? p : cl(gonePx / 240);   // (user) scrub starts only once the last feature is gone
           try { if (!video.paused) video.pause(); video.currentTime = vs * video.duration; } catch(_){}
         }
       }
@@ -14287,15 +14297,6 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       for (var _i = 0; _i < _ln.length; _i++) { if (_ls[_i]) _ln[_i].textContent = _ls[_i]; } }
     m.querySelector('#pw-terms').textContent = c.terms;
     m.querySelector('#pw-privacy').textContent = c.privacy;
-    // (Apple 3.1.2) Auto-renewal + payment disclosure, shown at the point of purchase.
-    { var _renew = {
-        en:'Monthly and yearly plans auto-renew at the price shown unless cancelled at least 24 hours before the period ends. Manage or cancel anytime in your Apple ID settings. Lifetime is a one-time purchase. Payment is charged to your Apple ID at confirmation.',
-        ko:'월간·연간 요금제는 기간 종료 24시간 전까지 취소하지 않으면 표시된 가격으로 자동 갱신됩니다. Apple ID 설정에서 언제든 관리·취소할 수 있어요. 평생 이용권은 1회 결제입니다. 결제는 확인 시 Apple ID로 청구됩니다.',
-        zh:'月度和年度套餐将按所示价格自动续订，除非在当前周期结束前至少 24 小时取消。可随时在 Apple ID 设置中管理或取消。终身版为一次性购买。确认后将向您的 Apple ID 收费。',
-        ja:'月額・年額プランは、期間終了の24時間前までに解約しない限り、表示価格で自動更新されます。Apple IDの設定でいつでも管理・解約できます。買い切りは一度のみのお支払いです。お支払いは確認時にApple IDに請求されます。',
-        es:'Los planes mensual y anual se renuevan automáticamente al precio indicado salvo que se cancelen al menos 24 horas antes de que termine el periodo. Gestiónalos o cancélalos cuando quieras en los ajustes de tu Apple ID. La opción de por vida es un pago único. El cargo se realiza en tu Apple ID al confirmar.',
-        fr:'Les forfaits mensuel et annuel se renouvellent automatiquement au prix indiqué sauf annulation au moins 24 heures avant la fin de la période. Gérez ou annulez à tout moment dans les réglages de votre identifiant Apple. L\'achat à vie est un paiement unique. Le paiement est débité sur votre identifiant Apple à la confirmation.' };
-      var _re = m.querySelector('#pw-renew'); if (_re) _re.textContent = _renew[L()] || _renew.en; }
     { var _soon = m.querySelector('#pw-soon'); if (_soon) _soon.textContent = c.soon || ''; }
     try { if (typeof m._pwResetReveal === 'function') m._pwResetReveal(); } catch(_){}   // reset the scroll-reveal on open
     var ul = m.querySelector('#pw-feats'); ul.innerHTML='';
