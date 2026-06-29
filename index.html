@@ -34791,7 +34791,16 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   const HERO_DEFAULT_HOME = 'images/focus/doro/add-small.png?v=doro-10';
   if (!Array.isArray(state.homeChars)) state.homeChars = [];
   if (!Array.isArray(state.pomoChars)) state.pomoChars = [];
-  (function () { try { const old = state.heroImages && state.heroImages.noTask; if (old) { if (!state.homeChars.length) state.homeChars = [old]; if (!state.pomoChars.length) state.pomoChars = [old]; } } catch (_) {} })();
+  // (user) Migrate the OLD single hero image into the new home/pomo sets — but ONLY ONCE, ever.
+  // (The old code re-seeded whenever a set was empty, so DELETING the home character brought it back
+  // on the next launch — re-adding the shared/Pomodoro image into Home. Flag-guard so a deletion sticks.)
+  (function () { try {
+    if (state.heroCharsMigrated) return;
+    state.heroCharsMigrated = true;
+    const old = state.heroImages && state.heroImages.noTask;
+    if (old) { if (!state.homeChars.length) state.homeChars = [old]; if (!state.pomoChars.length) state.pomoChars = [old]; }
+    try { saveState(); } catch (_) {}
+  } catch (_) {} })();
   let _homePick = null, _homePickAt = 0;
   function _homeCharNow() { const a = state.homeChars || []; if (!a.length) return null; if (a.length === 1) return a[0]; const now = Date.now(); if (!_homePick || a.indexOf(_homePick) < 0 || (now - _homePickAt) > 1800000) { _homePick = a[Math.floor(Math.random() * a.length)]; _homePickAt = now; } return _homePick; }   // random every 30 min
   function _pomoCharNow() { const a = state.pomoChars || []; if (!a.length) return null; if (a.length === 1) return a[0]; return a[Math.floor(Math.random() * a.length)]; }
@@ -34975,8 +34984,8 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       // (user) ONE account row: "Sign in" when logged out, "[emoji] [nickname]" when logged in — the
       // whole row opens the Account detail (no inline change popup). Purchase rows stay (also logged out).
       { lbl: 'Sign In', ico: 'user', kind: 'account' },
-      { lbl: 'Restore Purchases', ico: 'restore', kind: 'action', hideIf: isLifetime, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
       { lbl: 'Upgrade to Bidoro Pro', ico: 'star', kind: 'action', accent: true, hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } },
+      { lbl: 'Restore Purchases', ico: 'restore', kind: 'action', hideIf: isLifetime, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
       // (user) ONE consolidated Sync row (Pro) at the bottom of Account — opens the Sync page
       // (Apple/Google Calendar + Bidoro Backups). Replaces the separate Sync group → fewer Pro tags.
       { lbl: 'Sync', ico: 'sync', kind: 'detail', panel: 'setdetail-sync', pro: true, proFeature: 'sync' }
