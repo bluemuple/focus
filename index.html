@@ -985,7 +985,7 @@
   .set-gifpop { position: fixed; z-index: 9400; background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e5e7eb); border-radius: 14px; box-shadow: 0 12px 36px rgba(0,0,0,.22); padding: 10px; }
   .set-gifpop img { display: block; width: 100%; border-radius: 8px; }
   /* (user) Timer pop-up demo clip: phone → CENTRED at 80% of the screen width; wide (iPad/PC) → dropped right below the chosen option button. */
-  .set-gifpop.set-gifpop-center { left: 50%; top: 50%; transform: translate(-50%, -50%); width: 80vw; max-width: 420px; }
+  .set-gifpop.set-gifpop-phone { width: 80vw; max-width: 420px; }
   .set-gifpop.set-gifpop-wide { width: min(340px, 40vw); }
   .set-gifpop-x { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border: none; border-radius: 50%; background: rgba(0,0,0,.5); color: #fff; font-size: 13px; cursor: pointer; }
   .set-gifpop-note { font-size: .82rem; color: var(--text-muted, #6b7280); padding: 4px 2px 0; }
@@ -34859,35 +34859,36 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     _popAnchor = anchor; _popEl = pop;
   }
   let _gifEl = null, _gifT = null;
-  function openGif(anchor, src) {
+  function openGif(anchor, src, dur) {
     if (_gifEl) { _gifEl.remove(); _gifEl = null; } if (_gifT) clearTimeout(_gifT);
     const g = document.createElement('div'); g.className = 'set-gifpop';
     g.innerHTML = '<button type="button" class="set-gifpop-x" aria-label="Close">✕</button>' +
       (src ? '<img src="' + src + '" alt="" onerror="this.style.display=\'none\'">' : '<div class="set-gifpop-note">Demo clip coming soon.</div>');
     const close = function () { if (_gifEl) { _gifEl.remove(); _gifEl = null; } if (_gifT) clearTimeout(_gifT); };
     g.querySelector('.set-gifpop-x').addEventListener('click', close);
+    // (user) Both phone and wide drop the clip RIGHT BELOW the anchor button (the Timer pop-up row on
+    // phone, the chosen option in the wide pane). Phone keeps 80% width, centred horizontally.
     const wide = !!(window.matchMedia && window.matchMedia('(min-width:701px)').matches);
-    if (wide && anchor) {
-      // (user) wide (iPad / PC): drop the clip RIGHT BELOW the chosen option button.
-      g.classList.add('set-gifpop-wide'); document.body.appendChild(g);
+    g.classList.add(wide ? 'set-gifpop-wide' : 'set-gifpop-phone');
+    document.body.appendChild(g);
+    if (anchor) {
       const r = anchor.getBoundingClientRect();
       g.style.top = Math.min(window.innerHeight - g.offsetHeight - 10, r.bottom + 8) + 'px';
-      g.style.left = Math.max(10, Math.min(r.left, window.innerWidth - g.offsetWidth - 10)) + 'px';
-    } else {
-      // (user) phone: CENTRED on screen at 80% width (handled by .set-gifpop-center CSS).
-      g.classList.add('set-gifpop-center'); document.body.appendChild(g);
+      g.style.left = wide
+        ? Math.max(10, Math.min(r.left, window.innerWidth - g.offsetWidth - 10)) + 'px'
+        : Math.round((window.innerWidth - g.offsetWidth) / 2) + 'px';
     }
-    _gifEl = g; _gifT = setTimeout(close, 7000);
+    _gifEl = g; _gifT = setTimeout(close, dur || 7000);
   }
 
   // ---- The user's 7 categories, each expanded into per-item bars ----
   const GROUPS = [
     { head: 'Modes', rows: [
-      { lbl: 'Timer pop-up', ico: 'modes', kind: 'select',
+      { lbl: 'Timer pop-up', ico: 'modes', kind: 'select', noVal: true,
         cur: function () { return segSel('timer-transition-seg'); },
         opts: [{ key: 'gentleAuto', label: 'Deep Focus' }, { key: 'manual', label: 'Pomodoro' }, { key: 'fullAuto', label: 'Auto' }],
         valLabel: function () { const m = { gentleAuto: 'Deep Focus', manual: 'Pomodoro', fullAuto: 'Auto' }; return m[segSel('timer-transition-seg')] || '—'; },
-        onPick: function (k, anchor) { segClick('timer-transition-seg', k); var _f = { gentleAuto: 'deep-focus.gif', manual: 'pomo.jpg', fullAuto: 'auto.jpg' }[k]; openGif(anchor, _f ? ('images/explain/' + _f + '?v=tmode-1') : ''); } }
+        onPick: function (k, anchor) { segClick('timer-transition-seg', k); var _f = { gentleAuto: 'deep-focus.gif', manual: 'pomo.jpg', fullAuto: 'auto.jpg' }[k]; var _dur = (k === 'gentleAuto') ? 24000 : 3000; openGif(anchor, _f ? ('images/explain/' + _f + '?v=tmode-2') : '', _dur); } }
     ] },
     { head: 'Account', rows: [
       // (user) ONE account row: "Sign in" when logged out, "[emoji] [nickname]" when logged in — the
@@ -34944,7 +34945,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   master.className = 'set-master';
   function rightHtml(r) {
     if (r.kind === 'detail' || r.kind === 'page') return CHEV;
-    if (r.kind === 'select') return '<span class="set-row-val"><span class="set-row-cv set-row-selval"></span>' + CARET + '</span>';
+    if (r.kind === 'select') return r.noVal ? CHEV : ('<span class="set-row-val"><span class="set-row-cv set-row-selval"></span>' + CARET + '</span>');
     if (r.kind === 'toggle') return '<span class="set-row-val set-row-toggleval"></span>';
     if (r.kind === 'value') return '<span class="set-row-val set-row-valbox"></span>' + (r.onClick ? CHEV : '');
     if (r.kind === 'action') return CHEV;
