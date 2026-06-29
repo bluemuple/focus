@@ -921,7 +921,9 @@
   .set-card { background: var(--card-bg, #fff); border: 1px solid var(--card-border, #e5e7eb); border-radius: 14px; overflow: hidden; }
   .set-row { display: flex; align-items: center; gap: 13px; width: 100%; background: transparent; border: none; padding: 14px 15px; cursor: pointer; text-align: left; font: inherit; color: var(--text-main, #111827); -webkit-tap-highlight-color: transparent; }
   .set-row + .set-row { border-top: 1px solid var(--card-border, #e5e7eb); }
-  .set-row:active { background: rgba(127,127,127,.09); }
+  /* (user) Darken on TAP only — driven by .set-pressed (added after a short hold, removed on scroll),
+     NOT :active (which would flash while scroll-touching a row). */
+  .set-row.set-pressed { background: rgba(127,127,127,.09); }
   .set-row-ico { flex: 0 0 auto; width: 22px; height: 22px; color: var(--text-main, #111827); display: flex; align-items: center; justify-content: center; }
   /* (user) "Change the character" row uses the hero.png face; a white-line dark variant for the dark (solarized) theme. */
   /* (user) Green "Pro" badge next to the nickname in the Settings account row (premium users). */
@@ -14165,7 +14167,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       // settings upgrade row + free-tier hiding of all sync controls
       'body.bidoro-free .cal-sync-sec,body.bidoro-free #icloud-status-row,body.bidoro-free #auth-push-now,body.bidoro-free .account-row-2{display:none !important;}',
       '#settings-pro-row{display:none;width:100%;border:none;border-radius:14px;background:linear-gradient(120deg,#3aa776,#46c08a);color:#fff;font-weight:800;font-size:1rem;padding:13px;margin:0 0 14px;cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;}',
-      'body.bidoro-free #settings-pro-row{display:block;}',
+      /* (user) Account-page "Upgrade to Pro" button removed — the master-list Upgrade row + Sync [Pro] tag cover it. */
       '#settings-pro-active{display:none;margin:0 0 14px;text-align:center;color:#16a34a;font-weight:800;font-size:.95rem;}',
       'body:not(.bidoro-free) #settings-pro-active{display:block;}'
     ].join('\n');
@@ -34626,8 +34628,15 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   if (themePanel) { const h = themePanel.querySelector('h2'); if (h) h.textContent = 'Theme'; }
   // BIDORO BACKUPS = the backup VERSIONS list + the Device→Cloud push button (moved out of the
   // Account panel). Calendar sync moved to the Apple/Google rows; it is NOT here anymore.
-  const syncPanel = mkPanel('setdetail-sync', 'Bidoro Backups');
+  const syncPanel = mkPanel('setdetail-sync', 'Sync');
   function ensureSyncMoved() {
+    // (user) Calendar sync (Apple left / Google right) sits at the TOP of the Sync page; backup below.
+    const calSec = document.getElementById('acct-sync-sec');
+    if (calSec && calSec.parentNode !== syncPanel) {
+      calSec.classList.remove('cal-sync-hidden');
+      const h = syncPanel.querySelector('h2');
+      if (h && h.nextSibling) syncPanel.insertBefore(calSec, h.nextSibling); else syncPanel.appendChild(calSec);
+    }
     if (!syncPanel.querySelector('.bk-intro')) syncPanel.insertAdjacentHTML('beforeend', '<p class="help bk-intro">Save a backup of this device to the cloud. The latest backups are kept here.</p>');
     const pushWrap = document.querySelector('#auth-logged-in .account-row-2');
     if (pushWrap && pushWrap.parentNode !== syncPanel) syncPanel.appendChild(pushWrap);
@@ -34953,12 +34962,10 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       // whole row opens the Account detail (no inline change popup). Purchase rows stay (also logged out).
       { lbl: 'Sign In', ico: 'user', kind: 'account' },
       { lbl: 'Restore Purchases', ico: 'restore', kind: 'action', hideIf: isLifetime, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
-      { lbl: 'Upgrade to Bidoro Pro', ico: 'star', kind: 'action', accent: true, hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } }
-    ] },
-    { head: 'Sync', rows: [
-      { lbl: 'Apple Calendar', ico: 'cal', kind: 'calendar', prov: 'apple' },
-      { lbl: 'Google Calendar', ico: 'cal', kind: 'calendar', prov: 'google' },
-      { lbl: 'Bidoro Backups', ico: 'backup', kind: 'detail', panel: 'setdetail-sync', pro: true, proFeature: 'backup' }
+      { lbl: 'Upgrade to Bidoro Pro', ico: 'star', kind: 'action', accent: true, hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } },
+      // (user) ONE consolidated Sync row (Pro) at the bottom of Account — opens the Sync page
+      // (Apple/Google Calendar + Bidoro Backups). Replaces the separate Sync group → fewer Pro tags.
+      { lbl: 'Sync', ico: 'sync', kind: 'detail', panel: 'setdetail-sync', pro: true, proFeature: 'sync' }
     ] },
     { head: 'Theme', rows: [
       { lbl: 'Appearance', ico: 'theme', kind: 'select',
@@ -35233,13 +35240,14 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1), opacity .26s ease'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; el.style.opacity = toBack ? '0' : '1'; });
       setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; }); if (toBack) showMaster(); }, 260);
     }
-    // capture:true → we see the touch BEFORE other (bubble) handlers and can own the horizontal drag.
-    page.addEventListener('touchstart', function (e) {
-      if (!page.classList.contains('set-detail-mode') || e.touches.length !== 1) { sw.on = false; return; }
-      const t = e.touches[0]; if (t.clientX > 44) { sw.on = false; return; }   // start anywhere in the LEFT edge band
+    // (user) Listen on DOCUMENT in the capture phase → we see the touch before ANY other handler,
+    // so a left-edge swipe is caught whether the finger lands on the screen or slides in from the edge.
+    document.addEventListener('touchstart', function (e) {
+      if (!page.classList.contains('set-detail-mode') || page.style.display === 'none' || e.touches.length !== 1) { sw.on = false; return; }
+      const t = e.touches[0]; if (t.clientX > 48) { sw.on = false; return; }   // anywhere from the 1px edge to 48px in
       sw.on = true; sw.drag = false; sw.x0 = t.clientX; sw.y0 = t.clientY; sw.dx = 0; sw.layer = layerEls();
     }, { passive: true, capture: true });
-    page.addEventListener('touchmove', function (e) {
+    document.addEventListener('touchmove', function (e) {
       if (!sw.on || e.touches.length !== 1) return;
       const t = e.touches[0]; const ddx = t.clientX - sw.x0, ddy = t.clientY - sw.y0;
       if (!sw.drag) {
@@ -35255,8 +35263,37 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       e.preventDefault(); e.stopPropagation();   // own the gesture (block page/edge handlers)
     }, { passive: false, capture: true });
     function end() { if (!sw.on) return; sw.on = false; if (!sw.drag) return; reset(sw.dx > (window.innerWidth || 360) * 0.3); }
-    page.addEventListener('touchend', end, { passive: true, capture: true });
-    page.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true, capture: true });
+    document.addEventListener('touchend', end, { passive: true, capture: true });
+    document.addEventListener('touchcancel', function () { if (sw.on && sw.drag) { sw.on = false; reset(false); } else { sw.on = false; } }, { passive: true, capture: true });
+  })();
+
+  // (user) Settings rows darken on a real TAP, not while scroll-touching: add .set-pressed only after a
+  // brief hold, and cancel it the moment the finger moves (a scroll). A quick tap flashes on release.
+  (function wireSettingsPressFeedback() {
+    let row = null, t = null, x0 = 0, y0 = 0, moved = false, pressed = false;
+    function clearPress() { if (t) { clearTimeout(t); t = null; } if (row) row.classList.remove('set-pressed'); row = null; pressed = false; moved = false; }
+    document.addEventListener('touchstart', function (e) {
+      if (page.style.display === 'none' || e.touches.length !== 1) return;
+      const r = e.target.closest && e.target.closest('#settings-page .set-row');
+      if (!r) { clearPress(); return; }
+      clearPress();
+      row = r; const tt = e.touches[0]; x0 = tt.clientX; y0 = tt.clientY;
+      t = setTimeout(function () { t = null; if (row && !moved) { row.classList.add('set-pressed'); pressed = true; } }, 90);
+    }, { passive: true, capture: true });
+    document.addEventListener('touchmove', function (e) {
+      if (!row || e.touches.length !== 1) return;
+      const tt = e.touches[0];
+      if (Math.abs(tt.clientX - x0) > 8 || Math.abs(tt.clientY - y0) > 8) { moved = true; if (t) { clearTimeout(t); t = null; } row.classList.remove('set-pressed'); pressed = false; }
+    }, { passive: true, capture: true });
+    document.addEventListener('touchend', function () {
+      if (!row) return;
+      const r = row; const wasMoved = moved;
+      if (t) { clearTimeout(t); t = null; }
+      if (!wasMoved) { if (!pressed) r.classList.add('set-pressed'); setTimeout(function () { r.classList.remove('set-pressed'); }, 130); }
+      else { r.classList.remove('set-pressed'); }
+      row = null; pressed = false; moved = false;
+    }, { passive: true, capture: true });
+    document.addEventListener('touchcancel', clearPress, { passive: true, capture: true });
   })();
 
   // ===== (user) Account detail redesign: iCloud connected / emoji+nick / email / Pro card /
