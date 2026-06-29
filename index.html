@@ -69,25 +69,14 @@
     window.__bidoroSystemAppearance = function (mode) {
       try {
         mode = (mode === 'dark') ? 'dark' : 'light';
+        // (user) AUTO mode (saved theme 'auto' or none) follows the system Light/Dark setting.
+        // A specific saved theme (default/warm/tokyo/solarized) is FIXED and ignores the system.
+        var saved = null; try { saved = localStorage.getItem('bidoro-theme'); } catch (_) {}
+        var valid = ['default', 'warm', 'tokyo', 'solarized'];
+        if (saved && valid.indexOf(saved) >= 0) return;        // fixed theme → don't follow system
         var want = (mode === 'dark') ? 'solarized' : 'default';
-        var lastSys = null;
-        try { lastSys = localStorage.getItem('bidoro-system-mode'); } catch (_) {}
-        if (lastSys === mode) return;                          // not a real change → keep current theme
-        var firstSeed = (lastSys === null);
-        try { localStorage.setItem('bidoro-system-mode', mode); } catch (_) {}
-        // First time we ever learn the real system mode: just record the baseline —
-        // don't override a theme the user had already chosen before this code existed.
-        // (Real CHANGES after this always win.) But if there's no theme yet, DO apply,
-        // so a fresh user / a WKWebView that mis-reported at boot still follows system.
-        if (firstSeed) {
-          var hasTheme = false;
-          try { hasTheme = !!localStorage.getItem('bidoro-theme'); } catch (_) {}
-          if (hasTheme) return;
-        }
-        // The system change is now the most-recent theme decision → apply + persist it.
-        try { localStorage.setItem('bidoro-theme', want); } catch (_) {}
-        if (document.documentElement.getAttribute('data-theme') === want) return;
-        if (window.__applyThemeKey) window.__applyThemeKey(want, true);    // full re-render once app JS is up
+        if (document.documentElement.getAttribute('data-theme') === want) return;   // already correct
+        if (window.__applyThemeKey) window.__applyThemeKey(want, true);    // full re-render once app JS is up (fromSystem → keeps 'auto')
         else document.documentElement.setAttribute('data-theme', want);   // pre-app: just set the attribute
       } catch (_) {}
     };
@@ -27333,9 +27322,16 @@ function openEventModal(existing, opts) {
    no layout/logic is touched. */
 (function wireThemePicker() {
   const THEMES = ['default', 'warm', 'tokyo', 'solarized'];
+  // (user) 'auto' = follow the device Light/Dark setting (Dark → solarized, Light → default).
+  // Saved 'auto' or nothing → Auto mode; a specific saved theme is fixed.
   function current() {
-    let t = document.documentElement.getAttribute('data-theme') || 'default';
-    return THEMES.indexOf(t) >= 0 ? t : 'default';
+    let s = null; try { s = localStorage.getItem('bidoro-theme'); } catch (_) {}
+    if (s === 'auto' || s === null) return 'auto';
+    return THEMES.indexOf(s) >= 0 ? s : 'default';
+  }
+  function resolveAuto() {
+    const dk = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return dk ? 'solarized' : 'default';
   }
   function markSelected(key) {
     document.querySelectorAll('#theme-grid .theme-tile').forEach(tile => {
@@ -27344,12 +27340,19 @@ function openEventModal(existing, opts) {
     });
   }
   function apply(key, fromSystem) {
-    if (THEMES.indexOf(key) < 0) key = 'default';
-    document.documentElement.setAttribute('data-theme', key);
-    // System-driven (auto-follow) changes must NOT persist — otherwise they'd
-    // look like an explicit choice and permanently stop auto-following.
-    if (!fromSystem) { try { localStorage.setItem('bidoro-theme', key); } catch (_) {} }
-    markSelected(key);
+    let dataTheme;
+    if (key === 'auto') {
+      if (!fromSystem) { try { localStorage.setItem('bidoro-theme', 'auto'); } catch (_) {} }
+      dataTheme = resolveAuto();
+    } else {
+      if (THEMES.indexOf(key) < 0) key = 'default';
+      // System-driven (auto-follow) changes must NOT persist — otherwise they'd
+      // look like an explicit choice and permanently stop auto-following.
+      if (!fromSystem) { try { localStorage.setItem('bidoro-theme', key); } catch (_) {} }
+      dataTheme = key;
+    }
+    document.documentElement.setAttribute('data-theme', dataTheme);
+    markSelected(current());
     // Re-render the JS-coloured task bars + gauge + ring so their per-task
     // light/dark colours follow the new theme.
     try { if (typeof renderFocusMatrix === 'function') renderFocusMatrix(); } catch (_) {}
@@ -31012,7 +31015,8 @@ function _itemThanksMsg(itemId, count){
   "Notes Mix":{ko:"노트 비율",zh:"便签比例",ja:"ノート配分",es:"Mezcla de notas",fr:"Mélange de notes"},
   "Report Bidoro Issues":{ko:"Bidoro 문제 신고",zh:"报告 Bidoro 问题",ja:"Bidoro の問題を報告",es:"Informar de un problema",fr:"Signaler un problème"},
   "Specific Settings":{ko:"세부 설정",zh:"具体设置",ja:"詳細設定",es:"Ajustes específicos",fr:"Réglages spécifiques"},
-  "Get Help":{ko:"도움 받기",zh:"获取帮助",ja:"ヘルプ",es:"Obtener ayuda",fr:"Obtenir de l'aide"}
+  "Get Help":{ko:"도움 받기",zh:"获取帮助",ja:"ヘルプ",es:"Obtener ayuda",fr:"Obtenir de l'aide"},
+  "Language":{ko:"언어",zh:"语言",ja:"言語",es:"Idioma",fr:"Langue"}
 });
 /* i18n-ext-6 — Change-the-character page + Account Pro card. */
 (function(x){for(var k in x){if(!(k in BIDORO_I18N))BIDORO_I18N[k]=x[k];}})({
@@ -34833,8 +34837,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   function loggedIn() { const a = document.getElementById('auth-logged-in'); return !!(a && !a.classList.contains('hidden')); }
   function segSel(id) { const s = document.querySelector('#' + id + ' .seg-btn.selected'); if (!s) return ''; return s.getAttribute('data-tt') || s.getAttribute('data-sm') || s.getAttribute('data-ch') || ''; }
   function segClick(id, val) { const b = document.querySelector('#' + id + ' .seg-btn[data-tt="' + val + '"], #' + id + ' .seg-btn[data-sm="' + val + '"], #' + id + ' .seg-btn[data-ch="' + val + '"]'); if (b) b.click(); }
-  const THEMES = [{ key: 'default', label: 'Default', dot: '#FFFFFF' }, { key: 'warm', label: 'Feels Home', dot: '#FCFAF6' }, { key: 'tokyo', label: 'Summer Day', dot: '#EAEAED' }, { key: 'solarized', label: 'Dark', dot: '#002B36' }];
-  function curTheme() { return document.documentElement.getAttribute('data-theme') || 'default'; }
+  const THEMES = [{ key: 'default', label: 'Default', dot: '#FFFFFF' }, { key: 'warm', label: 'Feels Home', dot: '#FCFAF6' }, { key: 'tokyo', label: 'Summer Day', dot: '#EAEAED' }, { key: 'solarized', label: 'Dark', dot: '#002B36' }, { key: 'auto', label: 'Auto', dot: '#9CA3AF' }];
+  // (user) 'auto' = follow the device Light/Dark setting. Saved theme 'auto' or none → Auto.
+  function curTheme() { var s = null; try { s = localStorage.getItem('bidoro-theme'); } catch (_) {} if (s === 'auto' || s === null) return 'auto'; return document.documentElement.getAttribute('data-theme') || 'default'; }
 
   let _popEl = null, _popOut = null, _popScrollClose = null, _popScroller = null, _popAnchor = null;
   function closePop() {
@@ -34914,7 +34919,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       { lbl: 'Appearance', ico: 'theme', kind: 'select',
         cur: curTheme, opts: THEMES,
         valLabel: function () { const t = THEMES.find(function (x) { return x.key === curTheme(); }); return t ? t.label : '—'; },
-        onPick: function (k) { const t = document.querySelector('.theme-tile[data-theme-key="' + k + '"]'); if (t) t.click(); } },
+        onPick: function (k) { if (k === 'auto') { if (window.__applyThemeKey) window.__applyThemeKey('auto'); return; } const t = document.querySelector('.theme-tile[data-theme-key="' + k + '"]'); if (t) t.click(); } },
       { lbl: 'Change the Character', ico: 'hero', kind: 'detail', panel: 'setdetail-hero' }
     ] },
     { head: 'Sound', rows: [
@@ -34948,7 +34953,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         onToggle: function () { segClick('cellhint-seg', state.cellHints ? 'off' : 'on'); },
         desc: { title: 'Matrix Hints', body: 'Shows a short "how to handle this" tip in empty matrix cells.' } },
       { lbl: 'Notes Mix', ico: 'note', kind: 'detail', panel: 'setdetail-notesmix' },
-      { lbl: 'Translation', ico: 'globe', kind: 'select',
+      { lbl: 'Language', ico: 'globe', kind: 'select',
         cur: function () { return state.locale || 'auto'; },
         opts: [{ key: 'auto', label: 'Auto' }, { key: 'en', label: 'English' }, { key: 'ko', label: '한국어' }, { key: 'zh', label: '中文' }, { key: 'ja', label: '日本語' }, { key: 'es', label: 'Español' }, { key: 'fr', label: 'Français' }],
         valLabel: function () { const m = { auto: 'Auto', en: 'English', ko: '한국어', zh: '中文', ja: '日本語', es: 'Español', fr: 'Français' }; return m[state.locale || 'auto'] || 'Auto'; },
