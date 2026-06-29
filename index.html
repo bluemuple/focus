@@ -924,6 +924,8 @@
   .set-row:active { background: rgba(127,127,127,.09); }
   .set-row-ico { flex: 0 0 auto; width: 22px; height: 22px; color: var(--text-main, #111827); display: flex; align-items: center; justify-content: center; }
   /* (user) "Change the character" row uses the hero.png face; a white-line dark variant for the dark (solarized) theme. */
+  /* (user) Green "Pro" badge next to the nickname in the Settings account row (premium users). */
+  .set-pro-badge { display: inline-block; margin-left: 7px; background: #3aa776; color: #fff; font-weight: 800; font-size: .68rem; line-height: 1.4; padding: 1px 7px; border-radius: 7px; vertical-align: middle; letter-spacing: .02em; }
   .set-ico-hero { width: 100%; height: 100%; object-fit: contain; display: block; }
   .set-ico-hero-d { display: none; }
   :root[data-theme="solarized"] .set-ico-hero-l { display: none; }
@@ -13938,6 +13940,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       saveState();
     } catch(_){}
     try { applyPremiumUI(); } catch(_){}
+    try { if (typeof window._bidoroSettingsRefreshRows === 'function') window._bidoroSettingsRefreshRows(); } catch(_){}   // hide/show purchase rows + Pro badge
     if (on && !was) { try { closePaywall(); } catch(_){} try { if (typeof bidoroToast==='function') bidoroToast(C().thanks); } catch(_){} }
   };
 
@@ -34834,6 +34837,8 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   // ---- helpers for inline controls ----
   const esc = (typeof escapeHTML === 'function') ? escapeHTML : function (s) { return String(s == null ? '' : s); };
   function isPro() { try { return (typeof window.bidoroIsPremium === 'function') && window.bidoroIsPremium(); } catch (_) { return false; } }
+  // (user) Lifetime owners hide ALL purchase rows; subscribers only hide "Upgrade".
+  function isLifetime() { try { return isPro() && state && state.premiumPlan === 'lifetime'; } catch (_) { return false; } }
   function loggedIn() { const a = document.getElementById('auth-logged-in'); return !!(a && !a.classList.contains('hidden')); }
   function segSel(id) { const s = document.querySelector('#' + id + ' .seg-btn.selected'); if (!s) return ''; return s.getAttribute('data-tt') || s.getAttribute('data-sm') || s.getAttribute('data-ch') || ''; }
   function segClick(id, val) { const b = document.querySelector('#' + id + ' .seg-btn[data-tt="' + val + '"], #' + id + ' .seg-btn[data-sm="' + val + '"], #' + id + ' .seg-btn[data-ch="' + val + '"]'); if (b) b.click(); }
@@ -34906,9 +34911,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       // (user) ONE account row: "Sign in" when logged out, "[emoji] [nickname]" when logged in — the
       // whole row opens the Account detail (no inline change popup). Purchase rows stay (also logged out).
       { lbl: 'Sign In', ico: 'user', kind: 'account' },
-      { lbl: 'Restore Purchases', ico: 'restore', kind: 'action', hideIf: isPro, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
+      { lbl: 'Restore Purchases', ico: 'restore', kind: 'action', hideIf: isLifetime, onClick: function () { try { if (window.BidoroIAP && window.BidoroIAP.restore) window.BidoroIAP.restore(); else if (typeof bidoroToast === 'function') bidoroToast('Restore purchases works in the iPhone / iPad app.'); } catch (_) {} } },
       { lbl: 'Upgrade to Bidoro Pro', ico: 'star', kind: 'action', accent: true, hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } },
-      { lbl: 'Buy Lifetime', ico: 'gift', kind: 'action', hideIf: isPro, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } }
+      { lbl: 'Buy Lifetime', ico: 'gift', kind: 'action', hideIf: isLifetime, onClick: function () { try { window.bidoroOpenPaywall('settings'); } catch (_) {} } }
     ] },
     { head: 'Sync', rows: [
       { lbl: 'Apple Calendar', ico: 'cal', kind: 'calendar', prov: 'apple' },
@@ -35015,6 +35020,8 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
           const ic = arow.querySelector('.set-row-ico'), lb = arow.querySelector('.set-row-lbl');
           if (loggedIn()) { const a = document.getElementById('acct-avatar'), n = document.getElementById('acct-nick'); ic.textContent = (a && a.textContent) || '🙂'; ic.classList.add('set-row-ico-emoji'); lb.textContent = (n && n.textContent && n.textContent !== '—') ? n.textContent : 'Account'; }
           else { ic.classList.remove('set-row-ico-emoji'); ic.innerHTML = ICO.user || ''; lb.textContent = 'Sign In'; }
+          // (user) Green "Pro" badge right after the nickname when premium (subscriber or lifetime).
+          if (loggedIn() && isPro()) { const b = document.createElement('span'); b.className = 'set-pro-badge'; b.textContent = 'Pro'; b.setAttribute('translate', 'no'); lb.appendChild(b); }
         }
         paintAcct(); arow.__paint = paintAcct;
         arow.addEventListener('click', function () { const title = loggedIn() ? 'Account' : 'Sign In'; if (typeof _isWideSettings === 'function' && _isWideSettings()) { selectWide({ kind: 'detail', panel: 'acct-panel-wrap', lbl: title }, arow); return; } openDetail('acct-panel-wrap', title); });
@@ -35232,6 +35239,11 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   })();
   window._bidoroSettingsRefreshRows = function () {
     document.querySelectorAll('#settings-page .set-acct-row, #settings-page .set-cal-row').forEach(function (r) { try { if (r.__paint) r.__paint(); } catch (_) {} });
+    // (user) Re-apply each row's hideIf so the purchase rows hide/show live when premium changes
+    // (admin toggle, real purchase, restore) — without rebuilding the whole list.
+    document.querySelectorAll('#settings-page .set-master .set-row').forEach(function (el) {
+      var r = el.__setRow; if (r && typeof r.hideIf === 'function') { try { el.style.display = r.hideIf() ? 'none' : ''; } catch (_) {} }
+    });
     try { updateAcctPro(); } catch (_) {}
   };
 
