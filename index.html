@@ -9126,6 +9126,11 @@
   .fl-schedrow input{ width:18px; height:18px; flex:0 0 18px; }
   .fl-page .fl-toggle{ margin-top:16px; }
   .fl-page .fl-note{ text-align:center; }
+  /* (user) Focus Lock as a real page (not a modal). */
+  #fl-pagepanel .fl-page{ max-width:480px; margin:0 auto; }
+  .fl-sched-master{ font-weight:700; margin-bottom:10px; }
+  .fl-sched-body{ transition:opacity .18s ease; }
+  .fl-sched-body.fl-sched-off{ opacity:.38; pointer-events:none; }
   .fl-x{ position:absolute; top:12px; left:12px; width:30px; height:30px; border:none; border-radius:50%; background:rgba(127,127,127,.14); color:var(--text-main,#374151); font-size:16px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   .fl-iconwrap{ color:#3aa776; margin:2px 0 8px; }
   .fl-title{ margin:0 0 4px; font-size:1.5rem; font-weight:800; }
@@ -10237,6 +10242,11 @@
       <button class="btn danger" id="clear-stats">Erase all data</button>
       <button class="btn danger" id="delete-account">Delete Account</button>
     </div>
+  </section>
+
+  <!-- (user) Focus Lock — a real PAGE (not a popup). Content is rendered by _flRenderPage(). -->
+  <section id="focuslock-page" style="display:none;">
+    <div class="panel fl-pagepanel" id="fl-pagepanel"></div>
   </section>
 
   <!-- ============================== PAGE 4 — SETTINGS ============================== -->
@@ -13772,7 +13782,7 @@ document.addEventListener('visibilitychange', () => {
 /* ===========================================================
    ROUTING
 =========================================================== */
-const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page', settings: 'settings-page', help: 'help-page', notes: 'notes-page', calendar: 'calendar-page', friends: 'friends-page', friendDetail: 'friend-detail-page' };
+const pages = { setup: 'setup-page', focus: 'focus-page', stats: 'stats-page', settings: 'settings-page', help: 'help-page', notes: 'notes-page', calendar: 'calendar-page', friends: 'friends-page', friendDetail: 'friend-detail-page', focuslock: 'focuslock-page' };
 function showPage(name) {
   // Navigating to a page closes the garden full-screen overlay if it's open (e.g. picked a
   // page from the over-the-garden menu). The "My Garden" item re-opens it right after.
@@ -14429,13 +14439,14 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   // The native AppDelegate "bidoroFocusLock" handler does the real work; here we just drive its UI.
   function _flNative(){ try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroFocusLock; } catch(_) { return null; } }
   function _flSend(msg){ var n=_flNative(); if (n) { try { n.postMessage(msg); } catch(_){} } }
+  var _flBlockOn = false;
+  function _flPaintSchedBody(){ var body=document.getElementById('fl-sched-body'), chk=document.getElementById('fl-sched-on'); if(body&&chk) body.classList.toggle('fl-sched-off', !chk.checked); }
   window.bidoroOpenFocusLock = function(){
-    var m = document.getElementById('focuslock-modal');
-    if (!m){
-      m = document.createElement('div'); m.id='focuslock-modal'; m.className='fl-modal';
-      m.innerHTML =
-        '<div class="fl-card fl-page">'+
-          '<button class="fl-x" type="button" aria-label="Close">✕</button>'+
+    var panel = document.getElementById('fl-pagepanel');
+    if (panel && !panel.__flBuilt){
+      panel.__flBuilt = true;
+      panel.innerHTML =
+        '<div class="fl-page">'+
           '<div class="fl-hero">'+
             '<div class="fl-iconwrap"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>'+
             '<h2 class="fl-title" translate="no">Focus Lock</h2>'+
@@ -14449,9 +14460,12 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '</div>'+
           '<div class="fl-step">'+
             '<div class="fl-step-h"><span class="fl-step-n">2</span> When to lock</div>'+
-            '<div class="fl-days" id="fl-days"></div>'+
-            '<div class="fl-times"><input type="time" id="fl-start" value="16:00"><span class="fl-dash">–</span><input type="time" id="fl-end" value="18:00"></div>'+
-            '<label class="fl-schedrow"><input type="checkbox" id="fl-sched-on"><span>Auto-lock on this schedule</span></label>'+
+            '<label class="fl-schedrow fl-sched-master"><input type="checkbox" id="fl-sched-on"><span>Auto-lock on a schedule</span></label>'+
+            '<div class="fl-sched-body" id="fl-sched-body">'+
+              '<div class="fl-days" id="fl-days"></div>'+
+              '<div class="fl-times"><input type="time" id="fl-start" value="16:00"><span class="fl-dash">–</span><input type="time" id="fl-end" value="18:00"></div>'+
+              '<p class="fl-sub">Locks automatically on the chosen days &amp; times. Use “Lock now” below to lock right away instead.</p>'+
+            '</div>'+
           '</div>'+
           '<div class="fl-step">'+
             '<div class="fl-step-h"><span class="fl-step-n">3</span> Hand off the key</div>'+
@@ -14459,43 +14473,39 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
             '<button class="btn fl-pwbtn" id="fl-pwbtn" type="button">Hand over to set a password</button>'+
           '</div>'+
           '<button class="btn primary fl-toggle" id="fl-toggle" type="button">Lock now</button>'+
-          '<p class="fl-note">iPhone only · uses Screen Time. A scheduled lock turns on while Bidoro is open during the window. For a tamper-proof lock, also set an iOS Screen Time passcode.</p>'+
+          '<p class="fl-note">iPhone only · uses Screen Time. For a tamper-proof lock, also set an iOS Screen Time passcode.</p>'+
         '</div>';
-      document.body.appendChild(m);
-      m.querySelector('.fl-x').addEventListener('click', function(){ m.classList.remove('show'); });
-      m.addEventListener('click', function(e){ if (e.target===m) m.classList.remove('show'); });
-      m.querySelector('#fl-pick').addEventListener('click', function(){ _flSend({action:'pick'}); });
-      m.querySelector('#fl-toggle').addEventListener('click', async function(){
-        var on = m.getAttribute('data-on')==='1';
-        // (user) Unblocking while a family-set password is on → must enter it first.
-        if (on && state.focusLockPw) {
+      panel.querySelector('#fl-pick').addEventListener('click', function(){ _flSend({action:'pick'}); });
+      panel.querySelector('#fl-toggle').addEventListener('click', async function(){
+        // (user) Unlocking while a family-set password is on → must enter it first.
+        if (_flBlockOn && state.focusLockPw) {
           var p = await _flPromptPassword('Enter the password to unblock.');
           if (p == null) return;
           if ((await _flHash(p)) !== state.focusLockPw) { try { bidoroToast('Wrong password.'); } catch(_){} return; }
         }
-        _flSend({action:'block', on:!on});
+        _flSend({action:'block', on:!_flBlockOn});
       });
-      m.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
-      // (user) Schedule (days + time window) — auto-lock during study hours.
-      var DAYLBL=['S','M','T','W','T','F','S'], sc=_flSched(), daysEl=m.querySelector('#fl-days');
+      panel.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
+      var DAYLBL=['S','M','T','W','T','F','S'], sc=_flSched(), daysEl=panel.querySelector('#fl-days');
       DAYLBL.forEach(function(d,i){ var b=document.createElement('button'); b.type='button'; b.className='fl-day'+(sc.days.indexOf(i)>=0?' on':''); b.textContent=d; b.setAttribute('aria-label','day'+i);
         b.addEventListener('click', function(){ var s=_flSched(); var ix=s.days.indexOf(i); if(ix>=0) s.days.splice(ix,1); else s.days.push(i); _flSaveSched(s); b.classList.toggle('on'); _flCheckSchedule(); });
         daysEl.appendChild(b); });
-      var startEl=m.querySelector('#fl-start'), endEl=m.querySelector('#fl-end'), schedOn=m.querySelector('#fl-sched-on');
+      var startEl=panel.querySelector('#fl-start'), endEl=panel.querySelector('#fl-end'), schedOn=panel.querySelector('#fl-sched-on');
       startEl.value=sc.start; endEl.value=sc.end; schedOn.checked=!!sc.on;
       startEl.addEventListener('change', function(){ var s=_flSched(); s.start=startEl.value||'16:00'; _flSaveSched(s); _flCheckSchedule(); });
       endEl.addEventListener('change', function(){ var s=_flSched(); s.end=endEl.value||'18:00'; _flSaveSched(s); _flCheckSchedule(); });
-      schedOn.addEventListener('change', function(){ var s=_flSched(); s.on=schedOn.checked; _flSaveSched(s); _flCheckSchedule(); if(s.on){ try{ bidoroToast('Schedule on — locks automatically during the window.'); }catch(_){} } });
+      schedOn.addEventListener('change', function(){ var s=_flSched(); s.on=schedOn.checked; _flSaveSched(s); _flPaintSchedBody(); _flCheckSchedule(); if(s.on){ try{ bidoroToast('Schedule on — locks automatically during the window.'); }catch(_){} } });
+      _flPaintSchedBody();
     }
-    requestAnimationFrame(function(){ m.classList.add('show'); });
+    showPage('focuslock'); if (typeof scrollMainTop==='function') scrollMainTop();
     _flPaintPw();
     if (_flNative()) _flSend({action:'status'});
     else { var st=document.getElementById('fl-status'); if (st) st.textContent = 'Available on the iPhone app only.'; var pk=document.getElementById('fl-pick'), tg=document.getElementById('fl-toggle'); if(pk)pk.disabled=true; if(tg)tg.disabled=true; }
   };
   window.__bidoroFocusLockStatus = function(s){
-    var m = document.getElementById('focuslock-modal'); if (!m) return; s = s || {};
-    m.setAttribute('data-on', s.on ? '1':'0');
+    s = s || {}; _flBlockOn = !!s.on;
     var st=document.getElementById('fl-status'), tg=document.getElementById('fl-toggle'), pk=document.getElementById('fl-pick');
+    if (!st && !tg) return;
     if (s.auth==='denied') { if(st) st.textContent='Screen Time access was denied. Allow it in iOS Settings → Screen Time.'; }
     else if (s.auth==='unsupported') { if(st) st.textContent='Needs iOS 16 or later.'; }
     else if (!s.count) { if(st) st.textContent='No apps or sites chosen yet — tap “Choose apps & sites”.'; }
