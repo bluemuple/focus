@@ -1050,7 +1050,10 @@
   #settings-page.set-swiping { position: relative; }
   #settings-page.set-swiping > .set-master { display: block !important; position: absolute; top: 0; left: 0; right: 0; z-index: 0; }
   #settings-page.set-swiping > .set-back-head { display: flex; position: relative; z-index: 2; background: var(--app-bg, var(--card-bg, #fff)); }
-  #settings-page.set-swiping > .panel.set-active { position: relative; z-index: 2; box-shadow: -10px 0 22px rgba(0,0,0,.08); }
+  #settings-page.set-swiping > .panel.set-active { position: relative; z-index: 2; box-shadow: -10px 0 22px rgba(0,0,0,.08); background: var(--app-bg, var(--card-bg, #fff)); }
+  /* (user) The whole detail page (back-head + panel) slides as ONE solid sheet — give the page itself the
+     app background while swiping so nothing shows through and the surroundings don't vanish. */
+  #settings-page.set-swiping { background: var(--app-bg, var(--bg, #fff)); }
   /* Black explanation panel (slides up from the bottom; ✕ closes; 7 s auto-hide). */
   .set-explain { position: fixed; left: 12px; right: 12px; bottom: 14px; z-index: 9000; background: #111827; color: #f3f4f6; border-radius: 14px; padding: 14px 44px 14px 16px; box-shadow: 0 10px 34px rgba(0,0,0,.32); font-size: .92rem; line-height: 1.5; transform: translateY(150%); transition: transform .26s cubic-bezier(.2,.7,.3,1); pointer-events: none; }
   .set-explain.show { transform: translateY(0); pointer-events: auto; }
@@ -31062,6 +31065,7 @@ function _itemThanksMsg(itemId, count){
   "Specific Settings":{ko:"세부 설정",zh:"具体设置",ja:"詳細設定",es:"Ajustes específicos",fr:"Réglages spécifiques"},
   "Get Help":{ko:"도움 받기",zh:"获取帮助",ja:"ヘルプ",es:"Obtener ayuda",fr:"Obtenir de l'aide"},
   "Language":{ko:"언어",zh:"语言",ja:"言語",es:"Idioma",fr:"Langue"},
+  "Back up now":{ko:"지금 백업",zh:"立即备份",ja:"今すぐバックアップ",es:"Hacer copia ahora",fr:"Sauvegarder"},
   "Your data is already saved on this device. Sign in only to sync it across iPhone, iPad & web.":{ko:"데이터는 이미 이 기기에 저장돼 있어요. 로그인은 아이폰·아이패드·웹 간 동기화를 위할 때만 하면 돼요.",zh:"你的数据已保存在此设备上。仅在需要跨 iPhone、iPad 和网页同步时才登录。",ja:"データはすでにこの端末に保存されています。サインインはiPhone・iPad・Web間で同期したいときだけでOK。",es:"Tus datos ya están guardados en este dispositivo. Inicia sesión solo para sincronizarlos entre iPhone, iPad y web.",fr:"Tes données sont déjà enregistrées sur cet appareil. Connecte-toi uniquement pour les synchroniser entre iPhone, iPad et le web."}
 });
 /* i18n-ext-6 — Change-the-character page + Account Pro card. */
@@ -34637,11 +34641,20 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       const h = syncPanel.querySelector('h2');
       if (h && h.nextSibling) syncPanel.insertBefore(calSec, h.nextSibling); else syncPanel.appendChild(calSec);
     }
-    if (!syncPanel.querySelector('.bk-intro')) syncPanel.insertAdjacentHTML('beforeend', '<p class="help bk-intro">Save a backup of this device to the cloud. The latest backups are kept here.</p>');
+    // (user) Box the backup part in its OWN section, like the calendar section above.
+    let box = syncPanel.querySelector('.bk-sec');
+    if (!box) {
+      box = document.createElement('div'); box.className = 'cal-sync-sec bk-sec';
+      box.innerHTML = '<div class="cal-sync-title">Bidoro Backups</div><p class="help bk-intro">Save a backup of this device to the cloud. The latest backups are kept here.</p>';
+      syncPanel.appendChild(box);
+    }
     const pushWrap = document.querySelector('#auth-logged-in .account-row-2');
-    if (pushWrap && pushWrap.parentNode !== syncPanel) syncPanel.appendChild(pushWrap);
-    const st = document.getElementById('auth-status2'); if (st && st.parentNode !== syncPanel) syncPanel.appendChild(st);
-    const vl = document.getElementById('versions-list'); if (vl && vl.parentNode !== syncPanel) syncPanel.appendChild(vl);
+    if (pushWrap && pushWrap.parentNode !== box) box.appendChild(pushWrap);
+    const st = document.getElementById('auth-status2'); if (st && st.parentNode !== box) box.appendChild(st);
+    const vl = document.getElementById('versions-list'); if (vl && vl.parentNode !== box) box.appendChild(vl);
+    // (user) Backup button → TEXT, styled like the calendar sync buttons (not an icon).
+    const pushBtn = document.getElementById('auth-push-now');
+    if (pushBtn) { pushBtn.classList.add('cal-sync-btn'); if (pushBtn.getAttribute('data-bk-txt') !== '1') { pushBtn.textContent = (typeof tr === 'function' ? tr('Back up now') : 'Back up now'); pushBtn.setAttribute('data-bk-txt', '1'); } }
   }
   // ABOUT — Bidoro's purpose.
   const aboutPanel = mkPanel('setdetail-about', 'About Bidoro');
@@ -35039,8 +35052,9 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   }
   GROUPS.forEach(function (g) {
     const rows = g.rows.filter(function (r) {
-      if (r.hideIf && r.hideIf()) return false;
-      if (r.kind === 'detail') { const el = document.getElementById(r.panel); return el && (el.children.length || (el.textContent || '').trim()); }
+      // (user) Do NOT skip hideIf rows at build — that permanently drops e.g. "Upgrade to Pro" if the
+      // app loaded while premium, so going free later can't bring it back. Build them, toggle display.
+      if (r.kind === 'detail' && !r.pro) { const el = document.getElementById(r.panel); return el && (el.children.length || (el.textContent || '').trim()); }
       return true;
     });
     if (!rows.length) return;
@@ -35105,6 +35119,8 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       paintVal(btn, r);
       // (user) Pro-gated row → grey [Pro] button (free) instead of the chevron; re-paints on premium change.
       if (r.pro) { btn.__paint = function () { const rt = btn.querySelector('.set-row-rt'); if (rt) rt.innerHTML = isPro() ? CHEV : '<span class="set-pro-btn" translate="no">Pro</span>'; }; btn.__paint(); }
+      // (user) hideIf rows (Restore / Upgrade) are always built; set their initial visibility here.
+      if (r.hideIf) { try { btn.style.display = r.hideIf() ? 'none' : ''; } catch (_) {} }
       btn.addEventListener('click', function () {
         // (user) Free user tapping a Pro-gated row → open the paywall, not the detail page.
         if (r.pro && !isPro()) { try { window.bidoroOpenPaywall(r.proFeature || 'settings'); } catch (_) {} return; }
@@ -35234,11 +35250,12 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
   (function wireSettingsSwipeBack() {
     const sw = { on: false, drag: false, x0: 0, y0: 0, dx: 0, layer: [] };
     function layerEls() { const a = []; const bh = page.querySelector(':scope > .set-back-head'); const ap = page.querySelector(':scope > .panel.set-active'); if (bh) a.push(bh); if (ap) a.push(ap); return a; }
-    function paint(dx) { const W = window.innerWidth || 360; const op = Math.max(0, 1 - (dx / W) * 1.1); sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + dx + 'px)'; el.style.opacity = String(op); }); }
+    // (user) Slide only — NO fade. The detail page stays fully opaque (solid background) as it moves.
+    function paint(dx) { sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + dx + 'px)'; }); }
     function reset(toBack) {
       const layer = sw.layer; const W = window.innerWidth || 360;
-      layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1), opacity .26s ease'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; el.style.opacity = toBack ? '0' : '1'; });
-      setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; }); if (toBack) showMaster(); }, 260);
+      layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1)'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; });
+      setTimeout(function () { page.classList.remove('set-swiping'); layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; }); if (toBack) showMaster(); }, 260);
     }
     // (user) Listen on DOCUMENT in the capture phase → we see the touch before ANY other handler,
     // so a left-edge swipe is caught whether the finger lands on the screen or slides in from the edge.
