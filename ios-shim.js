@@ -102,6 +102,18 @@
     } catch (_) {}
   }
 
+  // (user) Tapping ANY Bidoro notification — from another in-app screen, another app, or with the
+  // screen off — must land on the app HOME, so the timer-end menu (showPomoPhaseConfirm) is right
+  // there to choose from. Navigate home, then nudge the phase-confirm (it self-guards if nothing's due).
+  if (P.LocalNotifications && typeof P.LocalNotifications.addListener === 'function') {
+    try {
+      P.LocalNotifications.addListener('localNotificationActionPerformed', function () {
+        try { if (typeof window.showPage === 'function') window.showPage('focus'); } catch (_) {}
+        setTimeout(function () { try { if (typeof window.showPomoPhaseConfirm === 'function') window.showPomoPhaseConfirm(); } catch (_) {} }, 450);
+      });
+    } catch (_) {}
+  }
+
   // ---- 4. Keyboard body-class hooks ----
   // On keyboardWillShow the plugin reports the keyboard's pixel height. We
   // publish it as the CSS variable --kb-height on <html> and add the
