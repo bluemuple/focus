@@ -15281,6 +15281,31 @@ function _calOpenDayPop(key) {
 function _calCloseDayPop() { const p = document.getElementById('cal-daypop'); if (p) { p.classList.add('hidden'); p.setAttribute('aria-hidden', 'true'); } }
 /* Due entries lead the list (the deadline is the headline for that day). */
 function _calSortDue(arr) { return arr.slice().sort((a, b) => (b._due ? 1 : 0) - (a._due ? 1 : 0)); }
+/* (user) Interactive-widget action queue handler — the native AppDelegate drains the App Group queue
+   on becomeActive and hands the {action, taskId} list here. We map id → (q,i) and apply via the same
+   functions the UI uses (complete / start / pause), then save + re-push the widget snapshot. */
+window.__bidoroWidgetActions = function (actions) {
+  if (!Array.isArray(actions)) return;
+  function findById(id) {
+    if (!id) return null;
+    var qs = ['q1', 'q2', 'q3', 'q4'];
+    for (var k = 0; k < qs.length; k++) {
+      var q = qs[k], arr = (state.tasks && state.tasks[q]) || [];
+      for (var i = 0; i < arr.length; i++) { if (arr[i] && String(arr[i].id) === String(id)) return { q: q, i: i, task: arr[i] }; }
+    }
+    return null;
+  }
+  actions.forEach(function (a) {
+    try {
+      if (!a || !a.action) return;
+      if (a.action === 'complete') { var f = findById(a.taskId); if (f && !f.task.done && typeof bidoroSetTaskDone === 'function') bidoroSetTaskDone(f.q, f.i, true); }
+      else if (a.action === 'play') { var f2 = findById(a.taskId); if (f2 && typeof startUpTask === 'function') startUpTask(f2.q, f2.i); }
+      else if (a.action === 'pause') { if (typeof pausePomodoro === 'function') pausePomodoro(); }
+    } catch (_) {}
+  });
+  try { saveState(); } catch (_) {}
+  try { if (window.__bidoroPushWidget) window.__bidoroPushWidget(); } catch (_) {}
+};
 /* (user) Toggle a task's done state from OUTSIDE the matrix (e.g. the calendar tick) — same money /
    timer-stop / block-trim / reward logic as the home checkbox, so the two stay in sync. */
 function bidoroSetTaskDone(q, i, done) {

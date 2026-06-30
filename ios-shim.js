@@ -440,7 +440,7 @@
             const t = o.task;
             const name = (t.text && String(t.text).trim()) || '';
             if (!name) continue;
-            rows.push({ n: name.slice(0, 40), q: (qi[o.q] != null ? qi[o.q] : -1), d: !!t.done });
+            rows.push({ n: name.slice(0, 40), q: (qi[o.q] != null ? qi[o.q] : -1), d: !!t.done, id: t.id || '' });
           }
         } else {
           // Fallback (app too old / not loaded): matrix-style filter — drop future-deferred, keep done.
@@ -451,7 +451,7 @@
               if (!t || !t.text || !String(t.text).trim()) continue;
               if (key && typeof t.createdAt === 'number' && typeof window._calDateKey === 'function'
                   && window._calDateKey(t.createdAt) > key) continue;
-              rows.push({ n: String(t.text).trim().slice(0, 40), q: qi[q], d: !!t.done });
+              rows.push({ n: String(t.text).trim().slice(0, 40), q: qi[q], d: !!t.done, id: t.id || '' });
             }
           });
         }
@@ -618,6 +618,7 @@
         tasks: _tt.items.map(o => o.n),
         taskQuads: _tt.items.map(o => o.q),
         taskDone: _tt.items.map(o => o.d),
+        taskIds: _tt.items.map(o => o.id || ''),   // (user) stable ids → interactive widget play/complete
         blocks: scheduleBlocks(state),
         goalMs: gtdGoalMs(state),
         updatedMs: Date.now()
