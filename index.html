@@ -9139,6 +9139,10 @@
   .fl-switch:checked{ background:#3aa776; }
   .fl-switch::after{ content:''; position:absolute; top:2px; left:2px; width:22px; height:22px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.25); transition:left .2s; }
   .fl-switch:checked::after{ left:20px; }
+  /* (user) "SAMPLE" watermark for free users previewing a Pro page. */
+  .sample-wm{ position:absolute; inset:0; pointer-events:none; z-index:6; overflow:hidden; }
+  .sample-wm::before{ content:'SAMPLE'; position:absolute; top:46%; left:50%; transform:translate(-50%,-50%) rotate(-26deg); font-size:23vw; font-weight:900; color:rgba(120,124,134,.11); letter-spacing:.08em; white-space:nowrap; }
+  #fl-pagepanel{ position:relative; }
   .fl-x{ position:absolute; top:12px; left:12px; width:30px; height:30px; border:none; border-radius:50%; background:rgba(127,127,127,.14); color:var(--text-main,#374151); font-size:16px; line-height:1; cursor:pointer; -webkit-tap-highlight-color:transparent; }
   .fl-iconwrap{ color:#3aa776; margin:2px 0 8px; }
   .fl-title{ margin:0 0 4px; font-size:1.5rem; font-weight:800; }
@@ -13801,11 +13805,8 @@ function showPage(name) {
   if (!pages[name]) name = 'focus';
   // (user) Wide Settings is a MODAL over the previous page — remember where we came from.
   if (name === 'settings' && state.currentPage && state.currentPage !== 'settings') window._settingsPrevPage = state.currentPage;
-  // Friends is a Bidoro PRO feature — free users get the paywall instead.
-  if (name === 'friends' && typeof window.bidoroIsPremium === 'function' && !window.bidoroIsPremium()) {
-    try { window.bidoroOpenPaywall('friends'); } catch (_) {}
-    name = 'focus';
-  }
+  // (user) Friends is a Bidoro PRO feature — free users now ENTER a SAMPLE page (watermarked, read-only)
+  // instead of the paywall, so they can preview it; the real actions prompt the upgrade.
   // Navigating to a DIFFERENT page closes Edit so its floating panel (iPad/web)
   // doesn't carry over onto the new page. (Staying on 'focus' keeps Edit as-is.)
   if (name !== 'focus') { try { _exitEditForNav(); } catch (_) {} }
@@ -13983,11 +13984,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   wire('tmd-stats',    () => { showPage('stats');    scrollMainTop(); });
   wire('tmd-notes',    () => { try { _ackNotesMenu(); } catch (_) {} showPage('notes'); scrollMainTop(); });
   wire('tmd-friends',  () => { showPage('friends'); scrollMainTop(); });
-  // (user) Focus Lock — Pro feature (block apps/sites). Free users get the paywall.
-  wire('tmd-focuslock', () => {
-    if (typeof window.bidoroIsPremium === 'function' && !window.bidoroIsPremium()) { try { window.bidoroOpenPaywall('focuslock'); } catch (_) {} return; }
-    try { window.bidoroOpenFocusLock(); } catch (_) {}
-  });
+  // (user) Focus Lock — Pro feature. Free users ENTER a sample (watermarked) page; the actions paywall.
+  wire('tmd-focuslock', () => { try { window.bidoroOpenFocusLock(); } catch (_) {} });
   wire('tmd-settings', () => {
     // (user) If we're already inside a Settings DETAIL sub-page, the hamburger's Settings returns to
     // the main Settings list (instead of doing nothing).
@@ -14447,6 +14445,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   // The native AppDelegate "bidoroFocusLock" handler does the real work; here we just drive its UI.
   function _flNative(){ try { return window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroFocusLock; } catch(_) { return null; } }
   function _flSend(msg){ var n=_flNative(); if (n) { try { n.postMessage(msg); } catch(_){} } }
+  // (user) Free users can browse the SAMPLE Focus Lock page, but any real action prompts the upgrade.
+  function _flFree(){ try { return (typeof window.bidoroIsPremium==='function') && !window.bidoroIsPremium(); } catch(_) { return false; } }
+  function _flGateFree(){ if (_flFree()) { try { window.bidoroOpenPaywall('focuslock'); } catch(_){} return true; } return false; }
   var _flBlockOn = false;
   function _flPaintSched(){ var step=document.getElementById('fl-sched-step'), chk=document.getElementById('fl-sched-on'); if(step&&chk) step.classList.toggle('fl-collapsed', !chk.checked); }
   window.bidoroOpenFocusLock = function(){
@@ -14481,8 +14482,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '<button class="btn primary fl-toggle" id="fl-toggle" type="button">Lock now</button>'+
           '<p class="fl-note">iPhone only · uses Screen Time. For a tamper-proof lock, also set an iOS Screen Time passcode.</p>'+
         '</div>';
-      panel.querySelector('#fl-pick').addEventListener('click', function(){ _flSend({action:'pick'}); });
+      panel.querySelector('#fl-pick').addEventListener('click', function(){ if (_flGateFree()) return; _flSend({action:'pick'}); });
       panel.querySelector('#fl-toggle').addEventListener('click', async function(){
+        if (_flGateFree()) return;   // (user) Lock now on the sample page → upgrade prompt
         // (user) Unlocking while a family-set password is on → must enter it first.
         if (_flBlockOn && state.focusLockPw) {
           var p = await _flPromptPassword('Enter the password to unblock.');
@@ -14491,7 +14493,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
         }
         _flSend({action:'block', on:!_flBlockOn});
       });
-      panel.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
+      panel.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (_flGateFree()) return; if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
       var DAYLBL=['S','M','T','W','T','F','S'], sc=_flSched(), daysEl=panel.querySelector('#fl-days');
       DAYLBL.forEach(function(d,i){ var b=document.createElement('button'); b.type='button'; b.className='fl-day'+(sc.days.indexOf(i)>=0?' on':''); b.textContent=d; b.setAttribute('aria-label','day'+i);
         b.addEventListener('click', function(){ var s=_flSched(); var ix=s.days.indexOf(i); if(ix>=0) s.days.splice(ix,1); else s.days.push(i); _flSaveSched(s); b.classList.toggle('on'); _flApplySchedule(); });
@@ -14504,6 +14506,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       _flPaintSched();
     }
     showPage('focuslock'); if (typeof scrollMainTop==='function') scrollMainTop();
+    // (user) Sample watermark while previewing as a free user.
+    try { var pp=document.getElementById('fl-pagepanel'); var wm=pp&&pp.querySelector('.sample-wm'); if(_flFree()){ if(!wm){ wm=document.createElement('div'); wm.className='sample-wm'; pp.appendChild(wm); } wm.style.display=''; } else if(wm){ wm.style.display='none'; } } catch(_){}
     _flPaintPw();
     if (_flNative()) { _flSend({action:'status'}); _flPushSchedule(); }
     else { var st=document.getElementById('fl-status'); if (st) st.textContent = 'Available on the iPhone app only.'; var pk=document.getElementById('fl-pick'), tg=document.getElementById('fl-toggle'); if(pk)pk.disabled=true; if(tg)tg.disabled=true; }
@@ -14561,9 +14565,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   function _flSaveSched(s){ if(typeof state!=='undefined') state.focusLockSchedule=s; try{ saveState(); }catch(_){} }
   function _flInWindow(s){ if(!s.on || !s.days || !s.days.length) return false; var now=new Date(); if(s.days.indexOf(now.getDay())<0) return false; var cur=now.getHours()*60+now.getMinutes(); function mn(t){ var p=String(t||'').split(':'); return (+p[0]||0)*60+(+p[1]||0); } var a=mn(s.start), b=mn(s.end); if(a===b) return false; return a<b ? (cur>=a&&cur<b) : (cur>=a||cur<b); }
   var _flSchedBlocking=false;
-  function _flCheckSchedule(){ if(!_flNative()) return; var should=_flInWindow(_flSched()); if(should && !_flSchedBlocking){ _flSchedBlocking=true; _flSend({action:'block',on:true}); } else if(!should && _flSchedBlocking){ _flSchedBlocking=false; _flSend({action:'block',on:false}); } }
+  function _flCheckSchedule(){ if(!_flNative()||_flFree()) return; var should=_flInWindow(_flSched()); if(should && !_flSchedBlocking){ _flSchedBlocking=true; _flSend({action:'block',on:true}); } else if(!should && _flSchedBlocking){ _flSchedBlocking=false; _flSend({action:'block',on:false}); } }
   // (user) Register the DeviceActivity schedule with native → BACKGROUND auto-lock (works when Bidoro is closed).
-  function _flPushSchedule(){ var s=_flSched(); var sp=String(s.start||'16:00').split(':'), ep=String(s.end||'18:00').split(':'); _flSend({action:'schedule', on:!!s.on, days:(s.days||[]), startH:(+sp[0]||0), startM:(+sp[1]||0), endH:(+ep[0]||0), endM:(+ep[1]||0)}); }
+  function _flPushSchedule(){ if(_flFree()) return; var s=_flSched(); var sp=String(s.start||'16:00').split(':'), ep=String(s.end||'18:00').split(':'); _flSend({action:'schedule', on:!!s.on, days:(s.days||[]), startH:(+sp[0]||0), startM:(+sp[1]||0), endH:(+ep[0]||0), endM:(+ep[1]||0)}); }
   function _flApplySchedule(){ _flPushSchedule(); _flCheckSchedule(); }   // register background + apply now if in-window
   window.__bidoroFocusLockPushSchedule = _flPushSchedule;
   if(!window._flSchedStarted){ window._flSchedStarted=true; setInterval(function(){ try{ _flCheckSchedule(); }catch(_){} }, 30000); document.addEventListener('visibilitychange', function(){ if(!document.hidden){ try{ _flCheckSchedule(); }catch(_){} } }); }
@@ -33863,7 +33867,7 @@ const Friends = (function(){
     });
   }
   async function refresh(){
-    if (!signedIn()) { _renderSignedOut(); _badge(0); return; }
+    if (!signedIn()) { if (_frFree()) { _render(); _badge(0); return; } _renderSignedOut(); _badge(0); return; }
     // (user) Signed in → flip to the signed-in shell IMMEDIATELY (hide the Sign up CTA + signin note,
     // show the friends panel), before the list RPC. So logging in from the Friends page's Sign up
     // popup switches the page in place, even if the RPC is slow / not deployed. _render() repopulates.
@@ -33925,14 +33929,31 @@ const Friends = (function(){
     if ($('fr-signup-btn')) $('fr-signup-btn').style.display = '';   // (user) show the Sign up CTA when signed out
   }
   function _esc(s){ return String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  // (user) Free users preview Friends as a SAMPLE — fake friends + watermark; real actions paywall.
+  function _frFree(){ try { return (typeof window.bidoroIsPremium==='function') && !window.bidoroIsPremium(); } catch(_) { return false; } }
+  function _sampleFriends(){
+    var L=(typeof bidoroLocale==='function')?bidoroLocale():'en';
+    var NM={ en:['Peter','Jane','Marcus','Emma'], ko:['민준','서연','지후','하은'], zh:['伟','静','磊','娜'], ja:['大翔','陽菜','蓮','結衣'], es:['Mateo','Lucía','Diego','Valeria'], fr:['Lucas','Emma','Hugo','Léa'] };
+    var n=NM[L]||NM.en;
+    return [
+      { sample:true, avatar:'🧑‍🎓', nickname:n[0], focusing:true,  focusing_q:'q1', persona:'highschool' },
+      { sample:true, avatar:'📚',   nickname:n[1], focusing:false,                  persona:'toefl' },
+      { sample:true, avatar:'💼',   nickname:n[2], focusing:true,  focusing_q:'q2', persona:'office' },
+      { sample:true, avatar:'🎓',   nickname:n[3], focusing:false,                  persona:'university' }
+    ];
+  }
+  function _frToggleWatermark(on){ try { var host=$('fr-main'); if(!host) return; host.style.position='relative'; var wm=host.querySelector('.sample-wm'); if(on){ if(!wm){ wm=document.createElement('div'); wm.className='sample-wm'; host.appendChild(wm); } wm.style.display=''; } else if(wm){ wm.style.display='none'; } } catch(_){} }
   function _render(){
     if ($('fr-signin-note')) $('fr-signin-note').classList.add('hidden');
     if ($('fr-signup-btn')) $('fr-signup-btn').style.display = 'none';
     if ($('fr-main')) $('fr-main').style.display = '';
     const list = $('fr-list'); if (!list) return;
-    if (!_friends.length) { list.innerHTML = '<div class="help" style="padding:18px 4px;">No friends yet. Share your code or add a friend’s code above.</div>'; return; }
+    const _sample = _frFree();
+    _frToggleWatermark(_sample);
+    const _list = _sample ? _sampleFriends() : _friends;
+    if (!_list.length) { list.innerHTML = '<div class="help" style="padding:18px 4px;">No friends yet. Share your code or add a friend’s code above.</div>'; return; }
     list.innerHTML = '';
-    _friends.forEach(f => {
+    _list.forEach(f => {
       const bar = document.createElement('div'); bar.className = 'friend-bar';
       const av = document.createElement('span'); av.className = 'fb-av'; av.textContent = f.avatar || '🙂';
       const info = document.createElement('div'); info.className = 'fb-info';
@@ -33954,7 +33975,7 @@ const Friends = (function(){
           const req = _btn('● Sharing request','primary', () => _openShareReq(f));
           acts.appendChild(req);
         }
-        acts.appendChild(_btn('Details','', () => openDetail(f)));
+        acts.appendChild(_btn('Details','', () => { if (f.sample) { try { window.bidoroOpenPaywall('friends'); } catch(_){} return; } openDetail(f); }));
       }
       info.appendChild(nm); info.appendChild(st);
       bar.appendChild(av); bar.appendChild(info); bar.appendChild(acts);
