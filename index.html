@@ -9110,7 +9110,7 @@
   .fl-modal.show{ display:flex; }
   .fl-card{ width:100%; max-width:400px; max-height:92vh; overflow-y:auto; -webkit-overflow-scrolling:touch; background:var(--surface,#fff); color:var(--text-main,#1f2937); border-radius:20px; padding:26px 22px 18px; position:relative; box-shadow:0 24px 70px rgba(0,0,0,.4); text-align:center; }
   .fl-page{ text-align:left; }
-  .fl-hero{ text-align:center; margin-bottom:14px; }
+  .fl-hero{ text-align:center; margin-bottom:8px; }
   .fl-tagline{ font-weight:800; font-size:1.04rem; margin:2px 0 6px; }
   .fl-step{ border-top:1px solid var(--card-border,#e5e7eb); padding:15px 0 6px; }
   .fl-step-h{ display:flex; align-items:center; gap:9px; font-weight:800; font-size:.98rem; margin:0 0 11px; }
@@ -9128,7 +9128,7 @@
   .fl-page .fl-note{ text-align:center; }
   /* (user) Focus Lock as a real page (not a modal). */
   #fl-pagepanel .fl-page{ max-width:480px; margin:0 auto; }
-  .fl-heroimg{ display:block; width:180px; max-width:62%; height:auto; margin:0 auto 6px; }
+  .fl-heroimg{ display:block; width:172px; max-width:58%; height:auto; margin:-6px auto 0; }
   /* (user) When-to-lock: master switch in the header; days/times expand only when ON; section dims while collapsed. */
   .fl-sched-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; }
   .fl-sched-head .fl-step-h{ margin:0; }
@@ -9161,6 +9161,14 @@
   .fl-pwinput{ width:100%; box-sizing:border-box; padding:11px 12px; border:1px solid var(--card-border,#e5e7eb); border-radius:10px; font:inherit; background:var(--card-bg,#fff); color:var(--text-main,#111827); margin:0 0 12px; }
   .fl-pwrow{ display:flex; gap:8px; }
   .fl-pwrow .btn{ flex:1; }
+  .fl-webcard{ max-width:340px; }
+  .fl-webmodes{ display:flex; gap:6px; margin:0 0 12px; }
+  .fl-webmode{ flex:1; padding:8px 4px; border:1px solid var(--card-border,#e5e7eb); background:var(--card-bg,#fff); color:var(--text-dim,#6b7280); border-radius:9px; font:inherit; font-size:.8rem; font-weight:700; cursor:pointer; -webkit-tap-highlight-color:transparent; }
+  .fl-webmode.on{ background:#3aa776; border-color:#3aa776; color:#fff; }
+  .fl-webta{ width:100%; box-sizing:border-box; min-height:110px; padding:10px 12px; border:1px solid var(--card-border,#e5e7eb); border-radius:10px; font:inherit; font-size:.92rem; background:var(--card-bg,#fff); color:var(--text-main,#111827); resize:vertical; margin:0 0 8px; }
+  .fl-websub{ margin:0 0 12px; color:var(--text-dim,#9ca3af); font-size:.78rem; line-height:1.4; }
+  .fl-webrules{ display:block; width:100%; margin-top:8px; }
+  .fl-page .fl-pick{ display:block; width:100%; }
   .fr-mycode{ display:flex;align-items:center;gap:8px;margin:6px 0 12px; }
   .fr-mycode b{ font-size:1.05rem;letter-spacing:.06em; }
   .fr-add{ display:flex;gap:8px;align-items:center; }
@@ -14448,6 +14456,33 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   // (user) Free users can browse the SAMPLE Focus Lock page, but any real action prompts the upgrade.
   function _flFree(){ try { return (typeof window.bidoroIsPremium==='function') && !window.bidoroIsPremium(); } catch(_) { return false; } }
   function _flGateFree(){ if (_flFree()) { try { window.bidoroOpenPaywall('focuslock'); } catch(_){} return true; } return false; }
+  // (user) Website whitelist / blacklist — typed domains applied via Screen Time webContent filter.
+  function _flWeb(){ var w=(typeof state!=='undefined') && state.focusLockWeb; if(!w||typeof w!=='object'){ w={mode:'off',domains:[]}; if(typeof state!=='undefined') state.focusLockWeb=w; } if(!Array.isArray(w.domains)) w.domains=[]; return w; }
+  function _flOpenWebRules(){
+    var w=_flWeb(), mode=w.mode||'off';
+    var ov=document.createElement('div'); ov.className='fl-pwov';
+    ov.innerHTML='<div class="fl-pwcard fl-webcard">'+
+      '<div class="fl-pwtitle">Block websites</div>'+
+      '<div class="fl-webmodes" id="fl-webmodes">'+
+        '<button type="button" data-m="off" class="fl-webmode">Off</button>'+
+        '<button type="button" data-m="blacklist" class="fl-webmode">Block these</button>'+
+        '<button type="button" data-m="whitelist" class="fl-webmode">Allow only these</button>'+
+      '</div>'+
+      '<textarea class="fl-webta" id="fl-webta" placeholder="youtube.com\ninstagram.com\n(one per line)"></textarea>'+
+      '<p class="fl-websub" id="fl-websub"></p>'+
+      '<div class="fl-pwrow"><button type="button" class="btn fl-pwcancel">Cancel</button><button type="button" class="btn primary fl-pwok">Save</button></div>'+
+    '</div>';
+    document.body.appendChild(ov);
+    var ta=ov.querySelector('#fl-webta'); ta.value=(w.domains||[]).join('\n');
+    var modesEl=ov.querySelector('#fl-webmodes'), sub=ov.querySelector('#fl-websub');
+    function paint(){ modesEl.querySelectorAll('.fl-webmode').forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-m')===mode); }); ta.style.display=(mode==='off')?'none':''; sub.textContent = mode==='whitelist' ? 'Only these sites work; everything else is blocked.' : (mode==='blacklist' ? 'These sites are blocked (+ Apple’s adult-content filter).' : 'Website blocking is off.'); }
+    modesEl.querySelectorAll('.fl-webmode').forEach(function(b){ b.addEventListener('click', function(){ mode=b.getAttribute('data-m'); paint(); }); });
+    paint();
+    function done(save){ if(save){ var domains=ta.value.split(/[\n,]+/).map(function(s){ return s.trim().replace(/^https?:\/\//,'').replace(/^www\./,'').replace(/\/.*$/,''); }).filter(Boolean); var w2=_flWeb(); w2.mode=mode; w2.domains=domains; if(typeof state!=='undefined'){ state.focusLockWeb=w2; try{ saveState(); }catch(_){} } _flSend({action:'webRules', mode:mode, domains:domains}); try{ bidoroToast(mode==='off'?'Website blocking off.':'Website rules saved.'); }catch(_){} } try{ ov.remove(); }catch(_){} }
+    ov.querySelector('.fl-pwcancel').addEventListener('click', function(){ done(false); });
+    ov.querySelector('.fl-pwok').addEventListener('click', function(){ done(true); });
+    ov.addEventListener('click', function(e){ if(e.target===ov) done(false); });
+  }
   var _flBlockOn = false;
   function _flPaintSched(){ var step=document.getElementById('fl-sched-step'), chk=document.getElementById('fl-sched-on'); if(step&&chk) step.classList.toggle('fl-collapsed', !chk.checked); }
   window.bidoroOpenFocusLock = function(){
@@ -14463,7 +14498,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '</div>'+
           '<div class="fl-step">'+
             '<div class="fl-step-h"><span class="fl-step-n">1</span> Choose what to block</div>'+
-            '<button class="btn fl-pick" id="fl-pick" type="button">Choose apps &amp; sites</button>'+
+            '<button class="btn fl-pick" id="fl-pick" type="button">Choose apps</button>'+
+            '<button class="btn fl-webrules" id="fl-webrules" type="button">Block websites</button>'+
             '<div class="fl-sub" id="fl-status">…</div>'+
           '</div>'+
           '<div class="fl-step fl-sched-step fl-collapsed" id="fl-sched-step">'+
@@ -14483,6 +14519,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '<p class="fl-note">iPhone only · uses Screen Time. For a tamper-proof lock, also set an iOS Screen Time passcode.</p>'+
         '</div>';
       panel.querySelector('#fl-pick').addEventListener('click', function(){ if (_flGateFree()) return; _flSend({action:'pick'}); });
+      panel.querySelector('#fl-webrules').addEventListener('click', function(){ if (_flGateFree()) return; _flOpenWebRules(); });
       panel.querySelector('#fl-toggle').addEventListener('click', async function(){
         if (_flGateFree()) return;   // (user) Lock now on the sample page → upgrade prompt
         // (user) Unlocking while a family-set password is on → must enter it first.
