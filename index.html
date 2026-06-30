@@ -35338,7 +35338,6 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     hideExplain();
     // (user) Returning to the master list restores the scroll position it had when you left it.
     try { const m = document.querySelector('main'); if (m) m.scrollTo({ top: _setMasterScroll, behavior: 'auto' }); } catch (_) {}
-    try { if (window.__setSwDbgAfter) window.__setSwDbgAfter(); } catch (_) {}   // TEMP swipe-debug AFTER capture
   }
   function openDetail(panelId, title) {
     const panel = document.getElementById(panelId); if (!panel) return;
@@ -35450,9 +35449,6 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
     }
     // (user) TEMP swipe-offset debug panel — shows the master's top DURING vs AFTER the swipe so the
     // exact device offset can be read off-screen and the correction tuned. Remove once dialed in.
-    function _swDbg(k, v){ var p=document.getElementById('set-swipe-dbg'); if(!p){ p=document.createElement('div'); p.id='set-swipe-dbg'; p.style.cssText='position:fixed;top:max(8px,env(safe-area-inset-top));left:6px;right:6px;z-index:2147483647;background:rgba(0,0,0,.85);color:#3f6;font:12px/1.5 ui-monospace,Menlo,monospace;padding:7px 9px;border-radius:9px;pointer-events:none;white-space:pre;'; document.body.appendChild(p); p.__d={}; } p.__d[k]=v; var d=p.__d; p.textContent='SETTINGS SWIPE DEBUG\nsetMasterScroll: '+d.sMS+'\nbackHeadH(corr): '+d.bhH+'\nmaster top set:  '+d.mTop+'\nDURING top:      '+d.dur+'\nAFTER top:       '+d.aft+'\nΔ (after−during):'+d.delta; }
-    // Backup AFTER-capture: fires whenever the master is (re)shown — runs on a real swipe-back release.
-    window.__setSwDbgAfter = function(){ try { var p=document.getElementById('set-swipe-dbg'); if(!p||!p.__d||typeof p.__d.dur!=='number') return; setTimeout(function(){ var mst=page.querySelector(':scope > .set-master'); if(mst){ var aft=Math.round(mst.getBoundingClientRect().top); _swDbg('aft', aft); _swDbg('delta', aft - p.__d.dur); } }, 50); } catch(_){} };
     // (user) Slide only — NO fade. The detail page stays fully opaque (solid background) as it moves.
     function paint(dx) { sw.layer.forEach(function (el) { el.style.transform = 'translateX(' + dx + 'px)'; }); }
     function reset(toBack) {
@@ -35460,7 +35456,7 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
       layer.forEach(function (el) { el.style.transition = 'transform .26s cubic-bezier(.22,1,.36,1)'; el.style.transform = 'translateX(' + (toBack ? W : 0) + 'px)'; });
       setTimeout(function () {
         page.classList.remove('set-swiping'); const mst = page.querySelector(':scope > .set-master'); if (mst) mst.style.top = ''; layer.forEach(function (el) { el.style.transition = ''; el.style.transform = ''; });
-        if (toBack) { showMaster(); setTimeout(function(){ try { var m2 = page.querySelector(':scope > .set-master'); if (m2){ var aft = Math.round(m2.getBoundingClientRect().top); var p=document.getElementById('set-swipe-dbg'); var dur = p && p.__d ? p.__d.dur : null; _swDbg('aft', aft); _swDbg('delta', (typeof dur==='number') ? (aft - dur) : '?'); } } catch(_){} }, 40); }
+        if (toBack) showMaster();
       }, 260);
     }
     // (user) Listen on DOCUMENT in the capture phase → we see the touch before ANY other handler,
@@ -35484,10 +35480,10 @@ setTimeout(function () { try { maybeShowRecoveryPrompt(); } catch (_) {} }, 3500
         // top (main.scrollTop 0); offset the absolutely-positioned master up by the remembered scroll, PLUS
         // the back-head height (which occupies the top in detail mode) so it doesn't jump down on release.
         const mst = page.querySelector(':scope > .set-master');
-        if (mst) { const bhe = page.querySelector(':scope > .set-back-head'); const bhH = bhe ? (bhe.offsetHeight + (parseFloat(getComputedStyle(bhe).marginBottom) || 0)) : 0; const mTop = (bhH - (_setMasterScroll || 0)); mst.style.top = mTop + 'px';
-          // (user) TEMP swipe-offset debug — captures the master's top DURING the swipe.
-          try { _swDbg('sMS', Math.round(_setMasterScroll||0)); _swDbg('bhH', Math.round(bhH)); _swDbg('mTop', Math.round(mTop)); _swDbg('dur', Math.round(mst.getBoundingClientRect().top)); _swDbg('aft', '—'); _swDbg('delta', '(release to measure)'); } catch (_) {}
-        }
+        // (user) The master is absolute INSIDE #settings-page, which scrolls with <main>. So its viewport
+        // position = (topbar − main.scrollTop) + style.top. To land it exactly where it sits after the
+        // swipe (master in flow at _setMasterScroll), style.top must cancel both: detailScroll − masterScroll.
+        if (mst) { const mn = document.querySelector('main'); const detailScroll = mn ? mn.scrollTop : 0; mst.style.top = (detailScroll - (_setMasterScroll || 0)) + 'px'; }
         sw.layer.forEach(function (el) { el.style.transition = 'none'; });
       }
       sw.dx = Math.max(0, ddx);
