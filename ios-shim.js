@@ -54,8 +54,26 @@
   // alarm sound + popup are only seen when the WebView is foregrounded.
   let _scheduledForPhase = null;
   if (P.LocalNotifications) {
-    try { P.LocalNotifications.requestPermissions(); } catch (_) {}
+    try {
+      // (user) Capture the permission RESULT, not just fire-and-forget — if the user denies,
+      // every schedule() below fails silently and the pomodoro end-alert never rings. The web
+      // app surfaces a banner (denied) / one-time silent-mode note (granted) from this state.
+      P.LocalNotifications.requestPermissions()
+        .then(function (r) { _publishNotifPerm(r && r.display); })
+        .catch(function () { _refreshNotifPerm(); });
+    } catch (_) {}
     setInterval(scheduleNextPomoNotification, 5000);   // (user) 5s (was 1s) — the notification fires at an absolute timestamp, so 1s polling wasted battery
+    // Re-check when the app returns to the foreground — the user may have toggled the
+    // permission in iOS Settings while we were backgrounded.
+    try { document.addEventListener('visibilitychange', function () { if (!document.hidden) _refreshNotifPerm(); }); } catch (_) {}
+  }
+  function _publishNotifPerm(display) {
+    try { window.__bidoroNotifPermState = display || 'unknown'; } catch (_) {}
+    try { if (typeof window.bidoroSetNotifPermission === 'function') window.bidoroSetNotifPermission(window.__bidoroNotifPermState); } catch (_) {}
+  }
+  function _refreshNotifPerm() {
+    if (!P.LocalNotifications || !P.LocalNotifications.checkPermissions) return;
+    try { P.LocalNotifications.checkPermissions().then(function (r) { _publishNotifPerm(r && r.display); }).catch(function () {}); } catch (_) {}
   }
   function scheduleNextPomoNotification() {
     if (!P.LocalNotifications) return;

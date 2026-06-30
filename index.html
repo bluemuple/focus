@@ -11716,6 +11716,7 @@ const defaultState = () => ({
   // calendar sync, no Friends). Set true by the StoreKit bridge after a
   // verified purchase / restore / launch entitlement check.
   premium: false,
+  adminPremium: false,   // (user) ADMIN/TEST plan toggle — persists across launches independently of the StoreKit check
   premiumPlan: '',       // 'monthly' | 'yearly' | '' (none)
   premiumSince: 0,       // ms timestamp of first activation
   // First-run onboarding: have we seeded the locale starter tasks + intro?
@@ -12562,7 +12563,17 @@ async function ensureWebSyncBinding(opts) {
       _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true;
     }
     // Bound to a DIFFERENT account.
-    if (!_native) { _discardLocalForWebAccountSwitch(); _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true; }
+    if (!_native) {
+      // (user) Don't SILENTLY wipe this browser's local data on a web account switch — confirm first.
+      // Declining keeps the local data and pauses sync (the caller's pull aborts on `false`), so no loss.
+      const _ok = await customConfirm(
+        tr('Switch account on this device?'),
+        tr("This browser's data is linked to a different account. Switching clears this device and replaces it with the new account's cloud data."),
+        { yesLabel: tr('Switch and replace'), noLabel: tr('Keep my data'), yesColor: { bg: '#dc2626' } }
+      );
+      if (_ok !== true) { _webSyncState = 'pausedAccountConflict'; try { _renderSyncStatus(); } catch (_) {} return false; }
+      _discardLocalForWebAccountSwitch(); _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true;
+    }
     _webSyncState = 'pausedAccountConflict';
     _showSyncConflictModal(binding.web_email || tr('another account'), email, !!opts.launch);
     try { _renderSyncStatus(); } catch (_) {} return false;
@@ -14038,7 +14049,11 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
    ========================================================================= */
 (function bidoroPaywall(){
   // ---- entitlement ----
-  window.bidoroIsPremium = function(){ try { return !!(state && state.premium); } catch(_) { return false; } };
+  // (user) `premium` = a real verified StoreKit purchase (the bridge sets it true/false on
+  // every launch). `adminPremium` = the ADMIN/TEST plan toggle — a SEPARATE persistent flag so
+  // the launch entitlement check (which finds no real purchase and pushes bidoroSetPremium(false))
+  // can't silently downgrade a test account back to Basic and re-gate Focus Lock.
+  window.bidoroIsPremium = function(){ try { return !!(state && (state.premium || state.adminPremium)); } catch(_) { return false; } };
 
   // Called by the StoreKit bridge after purchase / restore / launch check.
   window.bidoroSetPremium = function(on, plan){
@@ -14523,8 +14538,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
           '</div>'+
           '<div class="fl-step">'+
             '<div class="fl-step-h"><span class="fl-step-n">3</span> Hand off the key</div>'+
-            '<p class="fl-sub">Let a parent or partner set the password, so only they can unblock.</p>'+
+            '<p class="fl-sub">Let someone you trust set the password — then only they hold the key to unlock. That’s the point: you can’t talk yourself out of it.</p>'+
             '<button class="btn fl-pwbtn" id="fl-pwbtn" type="button">Hand over to set a password</button>'+
+            '<div class="fl-escape" id="fl-escape" style="margin-top:10px"></div>'+
           '</div>'+
           '<button class="btn primary fl-toggle" id="fl-toggle" type="button">Lock now</button>'+
           '<p class="fl-note">iPhone only · uses Screen Time. For a tamper-proof lock, also set an iOS Screen Time passcode.</p>'+
@@ -14558,6 +14574,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     // (user) Sample watermark while previewing as a free user.
     try { var pp=document.getElementById('fl-pagepanel'); var wm=pp&&pp.querySelector('.sample-wm'); if(_flFree()){ if(!wm){ wm=document.createElement('div'); wm.className='sample-wm'; pp.appendChild(wm); } wm.style.display=''; } else if(wm){ wm.style.display='none'; } } catch(_){}
     _flPaintPw();
+    try { _flCheckUnlockExpiry(); } catch(_){}
+    try { _flPaintEscape(); } catch(_){}
     if (_flNative()) { _flSend({action:'status'}); _flPushSchedule(); }
     else { var st=document.getElementById('fl-status'); if (st) st.textContent = 'Available on the iPhone app only.'; var pk=document.getElementById('fl-pick'), tg=document.getElementById('fl-toggle'); if(pk)pk.disabled=true; if(tg)tg.disabled=true; }
   };
@@ -14609,6 +14627,75 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
     else { try { bidoroToast('Wrong password.'); } catch(_){} }
   }
   function _flPaintPw(){ var b = document.getElementById('fl-pwbtn'); if (b) { var on = !!(typeof state !== 'undefined' && state.focusLockPw); b.textContent = on ? '🔒 Password set — only they can unblock' : 'Hand over to set a password'; b.classList.toggle('fl-pw-on', on); } }
+  // (user) ===== Escape hatch — "request unlock → 24h wait → auto-release" (Ulysses contract) =====
+  // For when the key holder is unreachable / the password is lost. The 24-hour delay is the friction:
+  // an impulse can't end the lock instantly, but you're never PERMANENTLY locked out (which would be a
+  // 1-star trap). When the wait elapses the password is cleared AND the schedule is turned off, returning
+  // you to honour-mode self-control — to get the strong lock back you must hand the key off again. That
+  // "full disarm + re-handoff" cost is what stops it from being gamed as a daily one-day-ahead bypass.
+  function _flFmtDur(ms){ if(ms<0)ms=0; var totalMin=Math.ceil(ms/60000); var h=Math.floor(totalMin/60), m=totalMin%60; return h>0 ? (h+'h '+m+'m') : (m+'m'); }
+  function _flScheduleUnlockNotif(at){
+    try { var P=window.Capacitor&&window.Capacitor.Plugins, LN=P&&P.LocalNotifications; if(!LN||!at) return;
+      try { LN.requestPermissions && LN.requestPermissions(); } catch(_){}
+      LN.schedule({ notifications:[{ id:7326, title:'Focus Lock', body:'Your 24-hour unlock wait is over — open Bidoro to release the lock.', schedule:{ at:new Date(at) } }] });
+    } catch(_){}
+  }
+  function _flCancelUnlockNotif(){ try { var P=window.Capacitor&&window.Capacitor.Plugins, LN=P&&P.LocalNotifications; if(LN) LN.cancel({ notifications:[{ id:7326 }] }); } catch(_){} }
+  async function _flRequestUnlock(){
+    if (_flGateFree()) return;
+    var ok = await customConfirm(
+      'Request unlock?',
+      'This releases Focus Lock — but only after a 24-hour wait, so an impulse can’t end it instantly. When the wait is over the password is cleared and the schedule turns off, returning you to self-control. To get the strong lock back, hand the key to someone again.',
+      { yesLabel:'Request (24h)', noLabel:'Never mind' }
+    );
+    if (ok !== true) return;
+    state.focusLockUnlockAt = Date.now() + 24*60*60*1000;
+    try { saveState(); } catch(_){}
+    _flScheduleUnlockNotif(state.focusLockUnlockAt);
+    _flPaintEscape();
+    try { bidoroToast('Unlock requested — releases in 24 hours.'); } catch(_){}
+  }
+  function _flCancelUnlockReq(){
+    state.focusLockUnlockAt = 0;
+    try { saveState(); } catch(_){}
+    _flCancelUnlockNotif();
+    _flPaintEscape();
+    try { bidoroToast('Unlock request cancelled — still locked.'); } catch(_){}
+  }
+  function _flCheckUnlockExpiry(){
+    var until = (typeof state!=='undefined' && +state.focusLockUnlockAt) || 0;
+    if (!until || Date.now() < until) return;
+    // 24h elapsed → full release: clear password, turn the schedule off, lift any current shield.
+    state.focusLockUnlockAt = 0;
+    state.focusLockPw = null;
+    var s=_flSched(); s.on=false; _flSaveSched(s);
+    _flSchedBlocking=false; _flBlockOn=false;
+    try { saveState(); } catch(_){}
+    _flCancelUnlockNotif();
+    if (_flNative()) { _flSend({action:'block', on:false}); _flPushSchedule(); _flSend({action:'status'}); }
+    try { var so=document.getElementById('fl-sched-on'); if(so) so.checked=false; _flPaintSched(); } catch(_){}
+    try { _flPaintPw(); } catch(_){}
+    try { _flPaintEscape(); } catch(_){}
+    try { bidoroToast('Focus Lock released — the 24-hour wait is over.'); } catch(_){}
+  }
+  function _flPaintEscape(){
+    var box=document.getElementById('fl-escape'); if(!box) return;
+    var hasPw = !!(typeof state!=='undefined' && state.focusLockPw);
+    var until = (typeof state!=='undefined' && +state.focusLockUnlockAt) || 0;
+    if (until > Date.now()) {
+      box.style.display='';
+      box.innerHTML = '<div class="fl-sub" style="margin:0 0 6px"><span style="opacity:.85">⏳ Unlock requested — releases in <b>'+_flFmtDur(until-Date.now())+'</b>.</span></div>'+
+        '<button class="btn" id="fl-esc-cancel" type="button">Cancel request — stay locked</button>';
+      var c=document.getElementById('fl-esc-cancel'); if(c) c.addEventListener('click', _flCancelUnlockReq);
+    } else if (hasPw) {
+      box.style.display='';
+      box.innerHTML = '<p class="fl-sub" style="margin:0 0 6px">No one to hold the key? You can release it yourself — but it takes 24 hours, long enough for the urge to pass.</p>'+
+        '<button class="btn" id="fl-esc-req" type="button">Request unlock (24-hour wait)</button>';
+      var r=document.getElementById('fl-esc-req'); if(r) r.addEventListener('click', _flRequestUnlock);
+    } else {
+      box.style.display='none'; box.innerHTML='';
+    }
+  }
   // (user) Schedule — auto-lock on chosen days within a time window. App-driven (runs while Bidoro is
   // open + on resume); the native shield persists even after Bidoro closes, until the window ends.
   function _flSched(){ var s = (typeof state!=='undefined') && state.focusLockSchedule; if(!s || typeof s!=='object'){ s={on:false,days:[1,2,3,4,5],start:'16:00',end:'18:00'}; if(typeof state!=='undefined') state.focusLockSchedule=s; } if(!Array.isArray(s.days)) s.days=[1,2,3,4,5]; return s; }
@@ -14620,7 +14707,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   function _flPushSchedule(){ if(_flFree()) return; var s=_flSched(); var sp=String(s.start||'16:00').split(':'), ep=String(s.end||'18:00').split(':'); _flSend({action:'schedule', on:!!s.on, days:(s.days||[]), startH:(+sp[0]||0), startM:(+sp[1]||0), endH:(+ep[0]||0), endM:(+ep[1]||0)}); }
   function _flApplySchedule(){ _flPushSchedule(); _flCheckSchedule(); }   // register background + apply now if in-window
   window.__bidoroFocusLockPushSchedule = _flPushSchedule;
-  if(!window._flSchedStarted){ window._flSchedStarted=true; setInterval(function(){ try{ _flCheckSchedule(); }catch(_){} }, 30000); document.addEventListener('visibilitychange', function(){ if(!document.hidden){ try{ _flCheckSchedule(); }catch(_){} } }); }
+  if(!window._flSchedStarted){ window._flSchedStarted=true; setInterval(function(){ try{ _flCheckSchedule(); }catch(_){} try{ _flCheckUnlockExpiry(); }catch(_){} try{ if(document.getElementById('fl-escape')) _flPaintEscape(); }catch(_){} }, 30000); document.addEventListener('visibilitychange', function(){ if(!document.hidden){ try{ _flCheckSchedule(); }catch(_){} try{ _flCheckUnlockExpiry(); }catch(_){} } }); }
 
   // (user) Free-trial reminder — StoreKit hands us the period-end (= the date the free trial converts
   // to a paid charge). Schedule a LOCAL notification 2 days before billing, with a thank-you + the
@@ -14692,6 +14779,8 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   document.querySelectorAll('.acct-admin-plan').forEach(function(b){
     b.addEventListener('click', function(){
       var plan = b.getAttribute('data-plan');
+      // (user) Set the persistent admin override FIRST so it survives the next launch's StoreKit check.
+      try { state.adminPremium = !!plan; } catch(_){}
       if (plan) window.bidoroSetPremium(true, plan); else window.bidoroSetPremium(false, '');
       try { saveState(); } catch(_){}
       try { if (typeof bidoroToast === 'function') bidoroToast(plan ? ('Plan: ' + plan + ' (test)') : 'Free (test)'); } catch(_){}
@@ -19615,6 +19704,54 @@ function _exitGardenForDialog() {
     }
   } catch (_) {}
 }
+// (user) Notification-permission UX (native app only; the web/Capacitor shim pushes the state):
+//  A — if the user DENIED notifications, the pomodoro end-alert silently never fires. A
+//      dismissible banner tells them to re-enable it (re-armed after 24h so it's not nagging).
+//  B — when GRANTED, a one-time toast notes that silent mode shows a banner only (no sound),
+//      so a muted user isn't surprised when the timer ends without a sound.
+function _bidoroRenderNotifBanner(show) {
+  var id = 'bidoro-notif-banner';
+  var el = document.getElementById(id);
+  if (!show) { if (el) try { el.remove(); } catch (_) {} return; }
+  if (el) return;   // already shown
+  el = document.createElement('div');
+  el.id = id;
+  el.setAttribute('style', [
+    'position:fixed', 'left:12px', 'right:12px', 'bottom:calc(env(safe-area-inset-bottom,0px) + 12px)',
+    'z-index:99999', 'background:#1f2937', 'color:#fff', 'border-radius:14px',
+    'padding:12px 14px', 'box-shadow:0 6px 20px rgba(0,0,0,.28)', 'display:flex',
+    'align-items:flex-start', 'gap:10px', 'font-size:14px', 'line-height:1.35', 'max-width:520px', 'margin:0 auto'
+  ].join(';'));
+  var txt = document.createElement('div');
+  txt.style.flex = '1';
+  txt.textContent = tr("Notifications are off, so the timer won't ring when a session ends. Turn them on in Settings > Bidoro > Notifications.");
+  var x = document.createElement('button');
+  x.textContent = '✕';
+  x.setAttribute('aria-label', 'Dismiss');
+  x.setAttribute('style', 'background:transparent;border:0;color:#9ca3af;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer;flex:0 0 auto');
+  x.onclick = function () { try { el.remove(); } catch (_) {} try { localStorage.setItem('bidoroNotifBannerDismissed', String(Date.now())); } catch (_) {} };
+  el.appendChild(txt); el.appendChild(x);
+  document.body.appendChild(el);
+}
+window.bidoroSetNotifPermission = function (stateStr) {
+  try {
+    if (stateStr === 'denied') {
+      var ts = 0; try { ts = +localStorage.getItem('bidoroNotifBannerDismissed') || 0; } catch (_) {}
+      if (Date.now() - ts > 24 * 60 * 60 * 1000) _bidoroRenderNotifBanner(true);
+    } else {
+      _bidoroRenderNotifBanner(false);
+      if (stateStr === 'granted') {
+        try {
+          if (!localStorage.getItem('bidoroSilentModeTipShown')) {
+            localStorage.setItem('bidoroSilentModeTipShown', '1');
+            if (typeof bidoroToast === 'function') bidoroToast(tr('In silent mode the timer shows a banner only, with no sound.'));
+          }
+        } catch (_) {}
+      }
+    }
+  } catch (_) {}
+};
+
 function customConfirm(title, message, opts) {
   opts = opts || {};
   return new Promise((resolve) => {
@@ -30287,6 +30424,12 @@ window.bidoroLocale = bidoroLocale; window.bidoroCur = bidoroCur;
 /* Core string dictionary (key = English source). Translations are kept CONCISE so a
    1-line button never wraps to 2 lines; calendar tabs use short forms (Bilan, 习惯…). */
 const BIDORO_I18N = {
+  "Notifications are off, so the timer won't ring when a session ends. Turn them on in Settings > Bidoro > Notifications.":{ko:"알림이 꺼져 있어 세션이 끝나도 타이머 알림이 울리지 않아요. 설정 > Bidoro > 알림에서 켜주세요.",zh:"通知已关闭，计时结束时不会提醒你。请在 设置 > Bidoro > 通知 中开启。",ja:"通知がオフのため、セッション終了時に音が鳴りません。設定 > Bidoro > 通知 でオンにしてください。",es:"Las notificaciones están desactivadas, así que el temporizador no sonará al terminar. Actívalas en Ajustes > Bidoro > Notificaciones.",fr:"Les notifications sont désactivées, le minuteur ne sonnera pas à la fin. Activez-les dans Réglages > Bidoro > Notifications."},
+  "In silent mode the timer shows a banner only, with no sound.":{ko:"무음 모드에서는 타이머가 소리 없이 배너만 표시돼요.",zh:"静音模式下计时器只显示横幅，没有声音。",ja:"サイレントモードではタイマーはバナーのみ表示され、音は鳴りません。",es:"En modo silencio el temporizador solo muestra un aviso, sin sonido.",fr:"En mode silencieux, le minuteur n'affiche qu'une bannière, sans son."},
+  "Switch account on this device?":{ko:"이 기기에서 계정을 전환할까요?",zh:"在此设备上切换账户？",ja:"この端末でアカウントを切り替えますか？",es:"¿Cambiar de cuenta en este dispositivo?",fr:"Changer de compte sur cet appareil ?"},
+  "This browser's data is linked to a different account. Switching clears this device and replaces it with the new account's cloud data.":{ko:"이 브라우저의 데이터는 다른 계정에 연결돼 있어요. 전환하면 이 기기의 데이터가 지워지고 새 계정의 클라우드 데이터로 대체됩니다.",zh:"此浏览器的数据已关联到另一个账户。切换将清除此设备的数据，并用新账户的云端数据替换。",ja:"このブラウザのデータは別のアカウントに紐づいています。切り替えるとこの端末のデータは消去され、新しいアカウントのクラウドデータに置き換わります。",es:"Los datos de este navegador están vinculados a otra cuenta. Cambiar borrará este dispositivo y lo reemplazará con los datos en la nube de la nueva cuenta.",fr:"Les données de ce navigateur sont liées à un autre compte. Changer effacera cet appareil et le remplacera par les données cloud du nouveau compte."},
+  "Switch and replace":{ko:"전환하고 대체",zh:"切换并替换",ja:"切り替えて置き換える",es:"Cambiar y reemplazar",fr:"Changer et remplacer"},
+  "Keep my data":{ko:"내 데이터 유지",zh:"保留我的数据",ja:"データを保持",es:"Conservar mis datos",fr:"Garder mes données"},
   "Early":{ko:"일찍",zh:"提前",ja:"早め",es:"Pronto",fr:"En avance"},
   "Take 5":{ko:"5분 휴식",zh:"休息5分",ja:"5分休憩",es:"Pausa 5",fr:"Pause 5"},
   "Finished early —":{ko:"일찍 끝났어요 —",zh:"提前完成 —",ja:"早く終わった —",es:"Terminaste antes —",fr:"Fini en avance —"},
@@ -48168,6 +48311,6 @@ window.bidoroTaskWaterDrop = function (row, q, opts) {
 <!-- iOS Capacitor shim — no-op on plain web; activates inside the iOS app
      to hide the splash screen, style the status bar, schedule pomodoro-end
      local notifications, and add haptic feedback. Safe to load everywhere. -->
-<script defer src="ios-shim.js?v=ios-widget-5"></script>
+<script defer src="ios-shim.js?v=ios-widget-6"></script>
 </body>
 </html>
