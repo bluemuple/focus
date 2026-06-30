@@ -2905,7 +2905,7 @@
      typical iPhone keyboard + 12px gap) — NOT var(--kb-height) which resets to 0 on dismiss.
      When the real keyboard opens, body.ios-kb-open overrides with the exact height (!important). */
   html.platform-ios #login-modal:not(.lm-compact) { align-items: flex-end; padding-bottom: 312px; }
-  html.platform-ios #login-modal:not(.lm-compact) .login-modal-content { margin-top: 0; max-height: calc(100dvh - 336px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  html.platform-ios #login-modal:not(.lm-compact) .login-modal-content { margin-top: 0; max-height: calc(100dvh - 392px); overflow-y: auto; -webkit-overflow-scrolling: touch; }   /* (user) shorter cap → the popup's TOP edge sits ~80px down, clear of the status-bar clock */
   /* (user) The Friends Sign-up COMPACT popup stays TOP-anchored even with the keyboard up, so the iOS
      AutoFill accessory bar (shown on Email/Password focus — NOT Nickname) changing --kb-height can't
      reposition it. That keyboard-height swing was the quick down-then-back jitter. Overrides the
@@ -10935,9 +10935,7 @@
          the landing popup. translate="no" keeps the i18n engine from rewriting it. Collapses while the
          iOS keyboard is open so the form stays above the keyboard on small screens (12 mini). -->
     <section class="login-about" translate="no">
-      <p>Bidoro helps you plan your day, manage routines, and stay focused.</p>
-      <p>Google Calendar sync is optional and keeps your schedule up to date.</p>
-      <p>Calendar data is used only to display and sync your schedule.</p>
+      <p>Bidoro helps you plan and stay focused. Optional Google Calendar sync is used only to display and update your schedule.</p>
     </section>
     <div class="login-foot">
       <a href="https://bidoro.app/privacy.html">Privacy Policy</a>
@@ -12490,9 +12488,35 @@ function _showSyncConflictModal(linkedEmail, currentEmail, paused) {
        (native ? tr('To prevent your data from mixing, Bidoro did not connect this iCloud data to the current account.')
                : tr("To prevent your data from mixing, Bidoro did not connect this browser's data to the current account.")));
   _syncGuardModal(title, msg, [
-    { label: trf('Switch to {email}', { email: linkedEmail }), primary: true, onClick: _useLinked },
-    { label: trf(native ? 'Keep {email} on this device only' : 'Keep {email} on this browser only', { email: currentEmail }), onClick: _hereOnly }
+    { label: trf(native ? 'Switch to {email} and sync' : 'Switch to {email}', { email: linkedEmail }), primary: true, onClick: _useLinked },
+    { label: trf(native ? 'Stay on {email} (no iCloud sync)' : 'Keep {email} on this browser only', { email: currentEmail }), onClick: _hereOnly }
   ]);
+}
+let _webAcctSwitchPending = false;
+// (user) WEB-only account-switch confirm — a DEDICATED modal (NOT customConfirm) so the 1-second
+// sync poll can't re-enter ensureWebSyncBinding and auto-close it mid-prompt. Icon-topped, full-width
+// buttons (no text clipping). Resolves true = switch & replace, false = keep this device's data.
+function _showWebAccountSwitchModal(linkedEmail, currentEmail) {
+  return new Promise(function (resolve) {
+    let done = false; const fin = function (v) { if (done) return; done = true; try { ov.remove(); } catch (_) {} resolve(v); };
+    try { document.querySelectorAll('.sync-guard-overlay').forEach(function (e) { e.remove(); }); } catch (_) {}
+    var ov = document.createElement('div'); ov.className = 'sync-guard-overlay';
+    var card = document.createElement('div'); card.className = 'sync-guard-card'; card.setAttribute('role', 'dialog'); card.setAttribute('aria-modal', 'true');
+    var keepSvg = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>';
+    var switchSvg = '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9a8 8 0 0 1 13.7-4L20 7"/><path d="M20 3v4h-4"/><path d="M20 15a8 8 0 0 1-13.7 4L4 17"/><path d="M4 21v-4h4"/></svg>';
+    var bstyle = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:7px;padding:14px 8px;border-radius:14px;font-weight:800;font-size:.95rem;line-height:1.2;text-align:center;cursor:pointer;';
+    card.innerHTML =
+      '<div class="sg-title">' + _escH(tr('Switch account on this device?')) + '</div>' +
+      '<div class="sg-msg">' + tr("This browser's data is linked to a different account. Switching clears this device and replaces it with the new account's cloud data.") + '</div>' +
+      '<div style="display:flex;gap:10px;margin-top:4px">' +
+        '<button type="button" id="wacs-keep" style="' + bstyle + 'border:1px solid var(--card-border,#e5e7eb);background:var(--surface-2,#f3f4f6);color:var(--text-main,#1f2937)">' + keepSvg + '<span>' + _escH(tr('Keep my data')) + '</span></button>' +
+        '<button type="button" id="wacs-switch" style="' + bstyle + 'border:0;background:#dc2626;color:#fff">' + switchSvg + '<span>' + _escH(tr('Switch and replace')) + '</span></button>' +
+      '</div>';
+    ov.appendChild(card); document.body.appendChild(ov);
+    card.querySelector('#wacs-keep').addEventListener('click', function () { fin(false); });
+    card.querySelector('#wacs-switch').addEventListener('click', function () { fin(true); });
+    ov.addEventListener('click', function (e) { if (e.target === ov) fin(false); });   // backdrop = keep (safe default)
+  });
 }
 function _renderSyncStatus() {
   const el = document.getElementById('sync-guard-status'); if (!el) return;
@@ -12566,11 +12590,12 @@ async function ensureWebSyncBinding(opts) {
     if (!_native) {
       // (user) Don't SILENTLY wipe this browser's local data on a web account switch — confirm first.
       // Declining keeps the local data and pauses sync (the caller's pull aborts on `false`), so no loss.
-      const _ok = await customConfirm(
-        tr('Switch account on this device?'),
-        tr("This browser's data is linked to a different account. Switching clears this device and replaces it with the new account's cloud data."),
-        { yesLabel: tr('Switch and replace'), noLabel: tr('Keep my data'), yesColor: { bg: '#dc2626' } }
-      );
+      // Guard re-entry: the 1s sync poll calls this again while the modal is open — don't re-prompt.
+      if (_webAcctSwitchPending) return false;
+      _webAcctSwitchPending = true;
+      let _ok = false;
+      try { _ok = await _showWebAccountSwitchModal(binding.web_email || tr('another account'), email); }
+      finally { _webAcctSwitchPending = false; }
       if (_ok !== true) { _webSyncState = 'pausedAccountConflict'; try { _renderSyncStatus(); } catch (_) {} return false; }
       _discardLocalForWebAccountSwitch(); _webSyncState = 'ready'; try { _renderSyncStatus(); } catch (_) {} return true;
     }
@@ -14209,7 +14234,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       '.pw-top{flex:0 0 auto;position:relative;z-index:3;background:var(--surface,#fff);padding:24px 22px 12px;border-radius:22px 22px 0 0;}',
       // (user) Roomier window: 4 features fully visible (Support Bidoro NOT cut) + the 5th ("Future
       // features") just peeking — a clear "scroll for more / the rocket" cue without feeling cramped.
-      '.pw-scroll{flex:0 0 auto;height:min(46vh,300px);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding:0 22px;position:relative;z-index:1;}',
+      // (user) Flexible (was fixed height) so when the card hits its 92vh cap on a SHORT window
+      // (web PC / iPad), the scroll area shrinks FIRST — the footer (buy buttons) is never clipped.
+      '.pw-scroll{flex:1 1 auto;min-height:120px;max-height:min(46vh,300px);overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;padding:0 22px;position:relative;z-index:1;}',
       '.pw-scroll::-webkit-scrollbar{width:0;}',
       '.pw-foot{flex:0 0 auto;position:relative;z-index:3;background:var(--surface,#fff);padding:10px 22px 16px;box-shadow:0 -7px 14px -9px rgba(0,0,0,.18);border-radius:0 0 22px 22px;}',
       '.pw-note{text-align:center;color:var(--text-dim,#9ca3af);font-size:.82rem;margin:10px 0 2px;}',
@@ -14271,6 +14298,9 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       '.pw-foot::before{content:"";position:absolute;left:0;right:0;top:-26px;height:26px;background:linear-gradient(to top,var(--surface,#fff),rgba(255,255,255,0));pointer-events:none;}',
       // (user) Smaller buy buttons on phone so the taller feature window keeps the popup height calm.
       '@media (max-width:500px){.pw-card{max-height:94vh;}.pw-buy{padding:11px;font-size:1.05rem;}.pw-buy-row .pw-buy-half{min-height:70px;padding:11px 8px;}.pw-buy-half .pw-price{font-size:1.3rem;}.pw-buy-half .pw-perline{font-size:.86rem;}}',
+      // (user) Short windows (web PC / iPad in portrait) — shrink the buy buttons + scroll so the full
+      // footer incl. the Lifetime button always fits without being cut off.
+      '@media (max-height:760px){.pw-buy{padding:10px;font-size:1.04rem;margin-bottom:8px;}.pw-buy-row{margin-bottom:8px;}.pw-buy-row .pw-buy-half{min-height:62px;padding:9px 8px;}.pw-buy-half .pw-price{font-size:1.22rem;}.pw-buy-half .pw-perline{font-size:.84rem;}.pw-scroll{max-height:min(34vh,210px);}.pw-trial{margin:4px 0 7px;}}',
       // settings upgrade row + free-tier hiding of all sync controls
       'body.bidoro-free .cal-sync-sec,body.bidoro-free #icloud-status-row,body.bidoro-free #auth-push-now,body.bidoro-free .account-row-2{display:none !important;}',
       '#settings-pro-row{display:none;width:100%;border:none;border-radius:14px;background:linear-gradient(120deg,#3aa776,#46c08a);color:#fff;font-weight:800;font-size:1rem;padding:13px;margin:0 0 14px;cursor:pointer;text-align:center;-webkit-tap-highlight-color:transparent;}',
@@ -19709,6 +19739,11 @@ function _exitGardenForDialog() {
 //      dismissible banner tells them to re-enable it (re-armed after 24h so it's not nagging).
 //  B — when GRANTED, a one-time toast notes that silent mode shows a banner only (no sound),
 //      so a muted user isn't surprised when the timer ends without a sound.
+function _bidoroOpenAppSettings() {
+  // Native iOS opens Settings › Bidoro via the bidoroOpenSettings bridge; no-op on the web.
+  try { var h = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bidoroOpenSettings; if (h) { h.postMessage({}); return true; } } catch (_) {}
+  return false;
+}
 function _bidoroRenderNotifBanner(show) {
   var id = 'bidoro-notif-banner';
   var el = document.getElementById(id);
@@ -19722,15 +19757,21 @@ function _bidoroRenderNotifBanner(show) {
     'padding:12px 14px', 'box-shadow:0 6px 20px rgba(0,0,0,.28)', 'display:flex',
     'align-items:flex-start', 'gap:10px', 'font-size:14px', 'line-height:1.35', 'max-width:520px', 'margin:0 auto'
   ].join(';'));
+  var col = document.createElement('div');
+  col.style.flex = '1';
   var txt = document.createElement('div');
-  txt.style.flex = '1';
-  txt.textContent = tr("Notifications are off, so the timer won't ring when a session ends. Turn them on in Settings > Bidoro > Notifications.");
+  txt.textContent = tr("Notifications are off, so the timer won't ring when a session ends.");
+  var open = document.createElement('button');
+  open.textContent = tr('Open Settings');
+  open.setAttribute('style', 'margin-top:8px;background:#fff;color:#1f2937;border:0;border-radius:9px;font-size:13px;font-weight:700;padding:6px 12px;cursor:pointer');
+  open.onclick = function () { _bidoroOpenAppSettings(); };
+  col.appendChild(txt); col.appendChild(open);
   var x = document.createElement('button');
   x.textContent = '✕';
   x.setAttribute('aria-label', 'Dismiss');
   x.setAttribute('style', 'background:transparent;border:0;color:#9ca3af;font-size:16px;line-height:1;padding:2px 4px;cursor:pointer;flex:0 0 auto');
   x.onclick = function () { try { el.remove(); } catch (_) {} try { localStorage.setItem('bidoroNotifBannerDismissed', String(Date.now())); } catch (_) {} };
-  el.appendChild(txt); el.appendChild(x);
+  el.appendChild(col); el.appendChild(x);
   document.body.appendChild(el);
 }
 window.bidoroSetNotifPermission = function (stateStr) {
@@ -19744,7 +19785,7 @@ window.bidoroSetNotifPermission = function (stateStr) {
         try {
           if (!localStorage.getItem('bidoroSilentModeTipShown')) {
             localStorage.setItem('bidoroSilentModeTipShown', '1');
-            if (typeof bidoroToast === 'function') bidoroToast(tr('In silent mode the timer shows a banner only, with no sound.'));
+            if (typeof bidoroToast === 'function') bidoroToast(tr('Silent mode: banner only, no sound.'));
           }
         } catch (_) {}
       }
@@ -30424,8 +30465,11 @@ window.bidoroLocale = bidoroLocale; window.bidoroCur = bidoroCur;
 /* Core string dictionary (key = English source). Translations are kept CONCISE so a
    1-line button never wraps to 2 lines; calendar tabs use short forms (Bilan, 习惯…). */
 const BIDORO_I18N = {
-  "Notifications are off, so the timer won't ring when a session ends. Turn them on in Settings > Bidoro > Notifications.":{ko:"알림이 꺼져 있어 세션이 끝나도 타이머 알림이 울리지 않아요. 설정 > Bidoro > 알림에서 켜주세요.",zh:"通知已关闭，计时结束时不会提醒你。请在 设置 > Bidoro > 通知 中开启。",ja:"通知がオフのため、セッション終了時に音が鳴りません。設定 > Bidoro > 通知 でオンにしてください。",es:"Las notificaciones están desactivadas, así que el temporizador no sonará al terminar. Actívalas en Ajustes > Bidoro > Notificaciones.",fr:"Les notifications sont désactivées, le minuteur ne sonnera pas à la fin. Activez-les dans Réglages > Bidoro > Notifications."},
-  "In silent mode the timer shows a banner only, with no sound.":{ko:"무음 모드에서는 타이머가 소리 없이 배너만 표시돼요.",zh:"静音模式下计时器只显示横幅，没有声音。",ja:"サイレントモードではタイマーはバナーのみ表示され、音は鳴りません。",es:"En modo silencio el temporizador solo muestra un aviso, sin sonido.",fr:"En mode silencieux, le minuteur n'affiche qu'une bannière, sans son."},
+  "Notifications are off, so the timer won't ring when a session ends.":{ko:"알림이 꺼져 있어 세션이 끝나도 타이머 알림이 울리지 않아요.",zh:"通知已关闭，计时结束时不会提醒你。",ja:"通知がオフのため、セッション終了時に音が鳴りません。",es:"Las notificaciones están desactivadas, así que el temporizador no sonará al terminar.",fr:"Les notifications sont désactivées, le minuteur ne sonnera pas à la fin."},
+  "Open Settings":{ko:"설정 열기",zh:"打开设置",ja:"設定を開く",es:"Abrir Ajustes",fr:"Ouvrir Réglages"},
+  "Switch to {email} and sync":{ko:"{email}(으)로 전환하고 동기화",zh:"切换到 {email} 并同步",ja:"{email} に切り替えて同期",es:"Cambiar a {email} y sincronizar",fr:"Passer à {email} et synchroniser"},
+  "Stay on {email} (no iCloud sync)":{ko:"{email} 유지 (iCloud 동기화 안 함)",zh:"保持 {email}（不使用 iCloud 同步）",ja:"{email} のまま（iCloud 同期なし）",es:"Seguir con {email} (sin sincronización iCloud)",fr:"Rester sur {email} (sans sync iCloud)"},
+  "Silent mode: banner only, no sound.":{ko:"무음 모드: 소리 없이 배너만.",zh:"静音模式：只有横幅，没有声音。",ja:"サイレントモード：バナーのみ、音は鳴りません。",es:"Modo silencio: solo aviso, sin sonido.",fr:"Mode silencieux : bannière seule, sans son."},
   "Switch account on this device?":{ko:"이 기기에서 계정을 전환할까요?",zh:"在此设备上切换账户？",ja:"この端末でアカウントを切り替えますか？",es:"¿Cambiar de cuenta en este dispositivo?",fr:"Changer de compte sur cet appareil ?"},
   "This browser's data is linked to a different account. Switching clears this device and replaces it with the new account's cloud data.":{ko:"이 브라우저의 데이터는 다른 계정에 연결돼 있어요. 전환하면 이 기기의 데이터가 지워지고 새 계정의 클라우드 데이터로 대체됩니다.",zh:"此浏览器的数据已关联到另一个账户。切换将清除此设备的数据，并用新账户的云端数据替换。",ja:"このブラウザのデータは別のアカウントに紐づいています。切り替えるとこの端末のデータは消去され、新しいアカウントのクラウドデータに置き換わります。",es:"Los datos de este navegador están vinculados a otra cuenta. Cambiar borrará este dispositivo y lo reemplazará con los datos en la nube de la nueva cuenta.",fr:"Les données de ce navigateur sont liées à un autre compte. Changer effacera cet appareil et le remplacera par les données cloud du nouveau compte."},
   "Switch and replace":{ko:"전환하고 대체",zh:"切换并替换",ja:"切り替えて置き換える",es:"Cambiar y reemplazar",fr:"Changer et remplacer"},
