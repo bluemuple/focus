@@ -14494,18 +14494,18 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
       panel.querySelector('#fl-pwbtn').addEventListener('click', function(){ if (state.focusLockPw) _flRemovePassword(); else _flSetPassword(); });
       var DAYLBL=['S','M','T','W','T','F','S'], sc=_flSched(), daysEl=panel.querySelector('#fl-days');
       DAYLBL.forEach(function(d,i){ var b=document.createElement('button'); b.type='button'; b.className='fl-day'+(sc.days.indexOf(i)>=0?' on':''); b.textContent=d; b.setAttribute('aria-label','day'+i);
-        b.addEventListener('click', function(){ var s=_flSched(); var ix=s.days.indexOf(i); if(ix>=0) s.days.splice(ix,1); else s.days.push(i); _flSaveSched(s); b.classList.toggle('on'); _flCheckSchedule(); });
+        b.addEventListener('click', function(){ var s=_flSched(); var ix=s.days.indexOf(i); if(ix>=0) s.days.splice(ix,1); else s.days.push(i); _flSaveSched(s); b.classList.toggle('on'); _flApplySchedule(); });
         daysEl.appendChild(b); });
       var startEl=panel.querySelector('#fl-start'), endEl=panel.querySelector('#fl-end'), schedOn=panel.querySelector('#fl-sched-on');
       startEl.value=sc.start; endEl.value=sc.end; schedOn.checked=!!sc.on;
-      startEl.addEventListener('change', function(){ var s=_flSched(); s.start=startEl.value||'16:00'; _flSaveSched(s); _flCheckSchedule(); });
-      endEl.addEventListener('change', function(){ var s=_flSched(); s.end=endEl.value||'18:00'; _flSaveSched(s); _flCheckSchedule(); });
-      schedOn.addEventListener('change', function(){ var s=_flSched(); s.on=schedOn.checked; _flSaveSched(s); _flPaintSched(); _flCheckSchedule(); if(s.on){ try{ bidoroToast('Schedule on — locks automatically during the window.'); }catch(_){} } });
+      startEl.addEventListener('change', function(){ var s=_flSched(); s.start=startEl.value||'16:00'; _flSaveSched(s); _flApplySchedule(); });
+      endEl.addEventListener('change', function(){ var s=_flSched(); s.end=endEl.value||'18:00'; _flSaveSched(s); _flApplySchedule(); });
+      schedOn.addEventListener('change', function(){ var s=_flSched(); s.on=schedOn.checked; _flSaveSched(s); _flPaintSched(); _flApplySchedule(); if(s.on){ try{ bidoroToast('Schedule on — locks automatically during the window.'); }catch(_){} } });
       _flPaintSched();
     }
     showPage('focuslock'); if (typeof scrollMainTop==='function') scrollMainTop();
     _flPaintPw();
-    if (_flNative()) _flSend({action:'status'});
+    if (_flNative()) { _flSend({action:'status'}); _flPushSchedule(); }
     else { var st=document.getElementById('fl-status'); if (st) st.textContent = 'Available on the iPhone app only.'; var pk=document.getElementById('fl-pick'), tg=document.getElementById('fl-toggle'); if(pk)pk.disabled=true; if(tg)tg.disabled=true; }
   };
   window.__bidoroFocusLockStatus = function(s){
@@ -14562,6 +14562,10 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
   function _flInWindow(s){ if(!s.on || !s.days || !s.days.length) return false; var now=new Date(); if(s.days.indexOf(now.getDay())<0) return false; var cur=now.getHours()*60+now.getMinutes(); function mn(t){ var p=String(t||'').split(':'); return (+p[0]||0)*60+(+p[1]||0); } var a=mn(s.start), b=mn(s.end); if(a===b) return false; return a<b ? (cur>=a&&cur<b) : (cur>=a||cur<b); }
   var _flSchedBlocking=false;
   function _flCheckSchedule(){ if(!_flNative()) return; var should=_flInWindow(_flSched()); if(should && !_flSchedBlocking){ _flSchedBlocking=true; _flSend({action:'block',on:true}); } else if(!should && _flSchedBlocking){ _flSchedBlocking=false; _flSend({action:'block',on:false}); } }
+  // (user) Register the DeviceActivity schedule with native → BACKGROUND auto-lock (works when Bidoro is closed).
+  function _flPushSchedule(){ var s=_flSched(); var sp=String(s.start||'16:00').split(':'), ep=String(s.end||'18:00').split(':'); _flSend({action:'schedule', on:!!s.on, days:(s.days||[]), startH:(+sp[0]||0), startM:(+sp[1]||0), endH:(+ep[0]||0), endM:(+ep[1]||0)}); }
+  function _flApplySchedule(){ _flPushSchedule(); _flCheckSchedule(); }   // register background + apply now if in-window
+  window.__bidoroFocusLockPushSchedule = _flPushSchedule;
   if(!window._flSchedStarted){ window._flSchedStarted=true; setInterval(function(){ try{ _flCheckSchedule(); }catch(_){} }, 30000); document.addEventListener('visibilitychange', function(){ if(!document.hidden){ try{ _flCheckSchedule(); }catch(_){} } }); }
 
   // (user) Free-trial reminder — StoreKit hands us the period-end (= the date the free trial converts
