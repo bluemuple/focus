@@ -34043,7 +34043,7 @@ const Friends = (function(){
           const req = _btn('● Sharing request','primary', () => _openShareReq(f));
           acts.appendChild(req);
         }
-        acts.appendChild(_btn('Details','', () => { if (f.sample) { try { window.bidoroOpenPaywall('friends'); } catch(_){} return; } openDetail(f); }));
+        acts.appendChild(_btn('Details','', () => openDetail(f)));   // (user) sample friends open a watermarked sample detail
       }
       info.appendChild(nm); info.appendChild(st);
       bar.appendChild(av); bar.appendChild(info); bar.appendChild(acts);
@@ -34182,9 +34182,31 @@ const Friends = (function(){
     document.querySelectorAll('.fd-tab').forEach(t => t.classList.toggle('active', t.dataset.tab==='timeline'));
     _renderTab();
   }
+  function _frDetailWatermark(on){ try { var p=document.getElementById('friend-detail-page'); if(!p) return; p.style.position='relative'; var wm=p.querySelector('.sample-wm'); if(on){ if(!wm){ wm=document.createElement('div'); wm.className='sample-wm'; p.appendChild(wm); } wm.style.display=''; } else if(wm){ wm.style.display='none'; } } catch(_){} }
+  function _frSampleBlocks(){
+    var now=Date.now(), h=3600000; // a few realistic blocks around now
+    return [
+      { startMs: now-2*h, endMs: now-1.5*h, q:0, taskName:'' },
+      { startMs: now-1*h, endMs: now, q:2, taskName:'' },
+      { startMs: now+0.5*h, endMs: now+1.5*h, q:1, taskName:'' },
+      { startMs: now+2*h, endMs: now+3*h, q:3, taskName:'' }
+    ];
+  }
   async function _renderTab(){
     const body = $('fd-body'); if (!body || !_cur) return;
     const f = _cur, tab = _curTab;
+    // (user) Sample friend → watermarked preview using your OWN data as a realistic stand-in
+    // (falls back to canned blocks if you have none yet). No server fetch, no sharing checks.
+    if (f.sample) {
+      _frDetailWatermark(true);
+      var myBlocks = (state.scheduledBlocks && state.scheduledBlocks.length) ? state.scheduledBlocks : _frSampleBlocks();
+      var sData = { ok:true, scheduledBlocks: myBlocks, watch_log: (state.watchLog||[]), tasks: (state.tasks||{}) };
+      if (tab === 'timeline') _renderTimeline(body, sData);
+      else if (tab === 'balance') _renderBalance(body, sData);
+      else _renderRoutine(body, sData);
+      return;
+    }
+    _frDetailWatermark(false);
     const shared = (tab==='timeline'&&f.share_timeline) || (tab==='balance'&&f.share_balance) || (tab==='routine'&&f.share_routine);
     if (!shared) { body.innerHTML = '<div class="fd-empty">' + _esc(f.nickname||'Your friend') + ' isn’t sharing their ' + tab + ' yet.<br>Use <b>Change Sharing</b> below to request it.</div>'; return; }
     body.innerHTML = '<div class="fd-empty">Loading…</div>';
@@ -34275,16 +34297,20 @@ const Friends = (function(){
     draw();
   }
   // ---- change sharing ----
+  // (user) Watermark a sample-preview modal.
+  function _frModalWatermark(id, on){ try { var box=document.querySelector('#'+id+' .modal, #'+id+' .modal-box, #'+id); if(!box) return; box.style.position='relative'; var wm=box.querySelector('.sample-wm'); if(on){ if(!wm){ wm=document.createElement('div'); wm.className='sample-wm'; box.appendChild(wm); } wm.style.display=''; } else if(wm){ wm.style.display='none'; } } catch(_){} }
   function _openChangeSharing(){
     if (!_cur) return; _csFid = _cur.friendship_id;
     $('cs-timeline').checked = !!_cur.share_timeline;
     $('cs-balance').checked = !!_cur.share_balance;
     $('cs-routine').checked = !!_cur.share_routine;
     if ($('cs-notes')) $('cs-notes').checked = !!_cur.share_notes;
-    $('cs-message').value = ''; $('cs-status').textContent = '';
+    $('cs-message').value = ''; $('cs-status').textContent = _cur.sample ? 'Sample preview — sign up to share with real friends.' : '';
     _showModal('change-sharing-modal');
+    _frModalWatermark('change-sharing-modal', !!_cur.sample);
   }
   async function _sendSharing(){
+    if (_cur && _cur.sample) { try { bidoroToast('Sample — sign up to send a real request.'); } catch(_){} return; }
     if (!_csFid) return;
     const t=$('cs-timeline').checked, b=$('cs-balance').checked, r=$('cs-routine').checked, n=($('cs-notes')?$('cs-notes').checked:false), msg=$('cs-message').value||'';
     $('cs-status').textContent = 'Sending…';
@@ -34305,10 +34331,12 @@ const Friends = (function(){
     const nm = _cur.nickname || 'this friend';
     if ($('uf-detail')) $('uf-detail').textContent = trf('Remove {name} from your friends? They’ll be notified.', { name: nm });
     if ($('uf-message')) $('uf-message').value = '';
-    if ($('uf-status')) $('uf-status').textContent = '';
+    if ($('uf-status')) $('uf-status').textContent = _cur.sample ? 'Sample preview.' : '';
     _showModal('unfriend-modal');
+    _frModalWatermark('unfriend-modal', !!_cur.sample);
   }
   async function _doUnfriend(){
+    if (_cur && _cur.sample) { try { bidoroToast('Sample — these are example friends.'); } catch(_){} return; }
     if (!_cur) return;
     const fid = _cur.friendship_id, msg = ($('uf-message') ? $('uf-message').value : '') || '';
     if ($('uf-status')) $('uf-status').textContent = 'Removing…';
