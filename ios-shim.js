@@ -682,7 +682,10 @@
       products: function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'products' }); } catch (_) {} },
       purchase: function (plan) { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'purchase', plan: plan }); } catch (_) {} },
       restore:  function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'restore' }); } catch (_) {} },
-      status:   function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'status' }); } catch (_) {} }
+      status:   function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'status' }); } catch (_) {} },
+      // (user) Open the native "Manage Subscriptions" sheet so a user who just bought Lifetime can
+      // cancel their now-redundant auto-renewing subscription (avoids double-billing).
+      manageSubscriptions: function () { const h = mh('bidoroIAP'); if (h) try { h.postMessage({ action: 'manageSubscriptions' }); } catch (_) {} }
     };
     window.BidoroReview = {
       request: function () { const h = mh('bidoroReview'); if (h) try { h.postMessage({ action: 'request' }); } catch (_) {} }
